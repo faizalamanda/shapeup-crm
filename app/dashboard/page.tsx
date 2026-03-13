@@ -1,84 +1,52 @@
 "use client"
-import { useEffect, useState } from 'react'
-import { supabase } from '../../lib/supabase'
-import { useRouter } from 'next/navigation'
-
-export default function Dashboard() {
-  const [user, setUser] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-  const router = useRouter()
-
-  useEffect(() => {
-    const checkUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      
-      if (!user) {
-        // Jika tidak ada user, tendang kembali ke halaman login
-        router.push('/login')
-      } else {
-        setUser(user)
-        setLoading(false)
-      }
-    }
-    checkUser()
-  }, [router])
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push('/login')
-  }
-
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-white text-black font-bold">
-        Memuat Data...
-      </div>
-    )
-  }
+export default function DashboardPage() {
+  const stats = [
+    { label: 'Total Customers', value: '1,284', grow: '+12%', icon: '👤' },
+    { label: 'Total Revenue', value: 'Rp 45.2M', grow: '+8.4%', icon: '💰' },
+    { label: 'Open Opportunities', value: '24', grow: '-2', icon: '🎯' },
+    { label: 'Abandoned Carts', value: '12', grow: '+5', icon: '🛒' },
+  ]
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Navbar Sederhana */}
-      <nav className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center">
-        <h1 className="text-xl font-bold text-blue-600">ShapeUp CRM</h1>
-        <button 
-          onClick={handleLogout}
-          className="bg-red-50 text-red-600 px-4 py-2 rounded-lg font-semibold hover:bg-red-100 transition-colors"
-        >
-          Keluar
-        </button>
-      </nav>
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-3xl font-bold text-slate-900">Selamat Datang, Chief! 👋</h1>
+        <p className="text-slate-500">Inilah performa bisnis Anda hari ini.</p>
+      </div>
 
-      {/* Konten Utama */}
-      <main className="p-8 max-w-4xl mx-auto">
-        <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 text-black">
-          <h2 className="text-2xl font-bold mb-2">Selamat Datang! 👋</h2>
-          <p className="text-slate-500 mb-6">Berikut adalah ringkasan akun bisnis Anda.</p>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Nama Bisnis</p>
-              <p className="text-lg font-semibold text-slate-800">
-                {user.user_metadata?.business_name || 'Bisnis Tanpa Nama'}
-              </p>
+      {/* STATS GRID */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {stats.map((stat, i) => (
+          <div key={i} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+            <div className="flex justify-between items-start mb-4">
+              <span className="text-2xl">{stat.icon}</span>
+              <span className={`text-xs font-bold px-2 py-1 rounded ${stat.grow.startsWith('+') ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                {stat.grow}
+              </span>
             </div>
-            
-            <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Email Akun</p>
-              <p className="text-lg font-semibold text-slate-800">{user.email}</p>
-            </div>
+            <p className="text-sm font-medium text-slate-500 uppercase tracking-wider">{stat.label}</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{stat.value}</p>
           </div>
+        ))}
+      </div>
 
-          <div className="mt-8 p-6 border-2 border-dashed border-slate-200 rounded-2xl text-center">
-            <p className="text-slate-500 font-medium">
-              Data pelanggan dari WooCommerce akan muncul di sini.
-            </p>
-            <button className="mt-4 bg-blue-600 text-white px-6 py-2 rounded-lg font-bold">
-              Hubungkan WooCommerce
-            </button>
-          </div>
+      {/* ROW 2: CHART PLACEHOLDER & RECENT ACTIVITY */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 h-80 flex flex-col justify-center items-center text-slate-400">
+           <span className="text-4xl mb-2">📈</span>
+           <p>Grafik Penjualan akan muncul di sini</p>
         </div>
-      </main>
+        <div className="bg-white p-6 rounded-2xl border border-slate-200">
+           <h3 className="font-bold mb-4">Aktivitas Terbaru</h3>
+           <div className="space-y-4">
+              {[1,2,3].map(i => (
+                <div key={i} className="flex gap-3 text-sm border-l-2 border-blue-500 pl-3">
+                  <p className="text-slate-600"><span className="font-bold text-slate-900">Andi</span> baru saja melakukan pembelian.</p>
+                </div>
+              ))}
+           </div>
+        </div>
+      </div>
     </div>
   )
 }
