@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 
 export default function StaffSettings() {
@@ -18,30 +18,44 @@ export default function StaffSettings() {
   const [name, setName] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
+  // Gunakan useCallback agar fungsi bisa dipanggil berulang dengan aman
+  const fetchStaff = useCallback(async () => {
+    setLoading(true)
+    try {
+      // 1. Ambil user login saat ini
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // 2. Ambil business_id dari profil Anda sendiri
+      const { data: myProfile, error: profileError } = await supabase
+        .from('profiles')
+        .select('business_id')
+        .eq('id', user.id)
+        .single()
+
+      if (profileError) throw profileError
+
+      if (myProfile?.business_id) {
+        // 3. Ambil SEMUA profil yang memiliki business_id yang sama
+        const { data: staff, error: staffError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('business_id', myProfile.business_id)
+          .order('role', { ascending: true }) // Admin biasanya muncul paling atas
+        
+        if (staffError) throw staffError
+        setStaffList(staff || [])
+      }
+    } catch (error: any) {
+      console.error("Error fetching staff:", error.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [supabase])
+
   useEffect(() => {
     fetchStaff()
-  }, [])
-
-  async function fetchStaff() {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profile?.business_id) {
-      const { data: staff } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('business_id', profile.business_id)
-      
-      if (staff) setStaffList(staff)
-    }
-    setLoading(false)
-  }
+  }, [fetchStaff])
 
   async function handleCreateStaff(e: React.FormEvent) {
     e.preventDefault()
@@ -55,87 +69,150 @@ export default function StaffSettings() {
       })
 
       const result = await res.json()
+      
       if (res.ok) {
-        alert("Staff berhasil dibuat!")
+        alert("Akun Staff berhasil dibuat dan diaktifkan!")
         setIsModalOpen(false)
         setEmail(''); setPassword(''); setName('')
+        // Refresh daftar setelah berhasil
         fetchStaff()
       } else {
         alert(result.error || "Gagal membuat staff")
       }
     } catch (err) {
-      alert("Terjadi kesalahan koneksi")
+      alert("Terjadi kesalahan koneksi ke server")
     } finally {
       setSubmitting(false)
     }
   }
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <header className="flex justify-between items-center mb-8">
+    <div className="max-w-5xl mx-auto">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
         <div>
           <h1 className="text-3xl font-black text-slate-900 tracking-tight">Manajemen Tim</h1>
-          <p className="text-slate-500 font-medium">Buat akun untuk karyawan Anda.</p>
+          <p className="text-slate-500 font-medium">Kelola akses anggota tim ke dashboard {staffList[0]?.businesses?.name || 'bisnis'}.</p>
         </div>
         <button 
           onClick={() => setIsModalOpen(true)}
-          className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all"
+          className="bg-blue-600 text-white px-7 py-3.5 rounded-2xl font-bold shadow-xl shadow-blue-200 hover:bg-blue-700 hover:-translate-y-0.5 active:translate-y-0 transition-all flex items-center gap-2"
         >
-          + Tambah Staff
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
+          </svg>
+          Tambah Anggota
         </button>
       </header>
 
       {/* Tabel Staff */}
-      <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50 border-b border-slate-100">
-            <tr>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Nama</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Email</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Role</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-50">
-            {staffList.map((s) => (
-              <tr key={s.id}>
-                <td className="px-6 py-4 font-bold text-slate-700">{s.full_name || 'Staff'}</td>
-                <td className="px-6 py-4 text-slate-500">{s.email}</td>
-                <td className="px-6 py-4">
-                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${s.role === 'admin' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
-                    {s.role}
-                  </span>
-                </td>
+      <div className="bg-white border border-slate-200/60 rounded-[2rem] overflow-hidden shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50/50 border-b border-slate-100">
+                <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest">Nama Lengkap</th>
+                <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest">Email</th>
+                <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest">Role</th>
+                <th className="px-8 py-5 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {loading ? (
+                <tr>
+                  <td colSpan={4} className="px-8 py-12 text-center text-slate-400 font-medium animate-pulse">
+                    Menyinkronkan data tim...
+                  </td>
+                </tr>
+              ) : staffList.length > 0 ? (
+                staffList.map((s) => (
+                  <tr key={s.id} className="hover:bg-slate-50/50 transition-colors group">
+                    <td className="px-8 py-5 font-bold text-slate-700">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-sm font-black">
+                          {s.full_name?.charAt(0).toUpperCase() || 'S'}
+                        </div>
+                        {s.full_name || 'Staff Tanpa Nama'}
+                      </div>
+                    </td>
+                    <td className="px-8 py-5 text-slate-500 font-medium">{s.email}</td>
+                    <td className="px-8 py-5">
+                      <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-tight ${
+                        s.role === 'admin' 
+                        ? 'bg-blue-100 text-blue-700' 
+                        : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        {s.role}
+                      </span>
+                    </td>
+                    <td className="px-8 py-5 text-right">
+                      <div className="flex items-center justify-end gap-2 text-green-500 text-xs font-bold">
+                        <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+                        Aktif
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={4} className="px-8 py-20 text-center">
+                    <p className="text-slate-400 font-medium">Belum ada staff yang terdaftar.</p>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* MODAL FORM */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
-            <h2 className="text-2xl font-black mb-6">Tambah Staff Baru</h2>
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] p-10 w-full max-w-md shadow-2xl transform transition-all scale-100">
+            <div className="text-center mb-8">
+               <h2 className="text-3xl font-black text-slate-900 tracking-tight">Tambah Tim</h2>
+               <p className="text-slate-500 mt-2 font-medium">Buat kredensial login untuk staff Anda.</p>
+            </div>
+            
             <form onSubmit={handleCreateStaff} className="space-y-4">
-              <input 
-                type="text" placeholder="Nama Lengkap" required
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500"
-                value={name} onChange={e => setName(e.target.value)}
-              />
-              <input 
-                type="email" placeholder="Email Staff" required
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500"
-                value={email} onChange={e => setEmail(e.target.value)}
-              />
-              <input 
-                type="password" placeholder="Password untuk Staff" required
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500"
-                value={password} onChange={e => setPassword(e.target.value)}
-              />
-              <div className="flex gap-3 mt-6">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3 font-bold text-slate-500">Batal</button>
-                <button type="submit" disabled={submitting} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold">
-                  {submitting ? 'Menyimpan...' : 'Buat Akun'}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 ml-1 uppercase tracking-wider">Nama Lengkap</label>
+                <input 
+                  type="text" placeholder="Contoh: Budi Santoso" required
+                  className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-medium text-slate-800"
+                  value={name} onChange={e => setName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 ml-1 uppercase tracking-wider">Email Kerja</label>
+                <input 
+                  type="email" placeholder="budi@shapeup.com" required
+                  className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-medium text-slate-800"
+                  value={email} onChange={e => setEmail(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-500 ml-1 uppercase tracking-wider">Password Awal</label>
+                <input 
+                  type="password" placeholder="Min. 6 karakter" required
+                  className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-medium text-slate-800"
+                  value={password} onChange={e => setPassword(e.target.value)}
+                />
+              </div>
+
+              <div className="flex gap-4 mt-10">
+                <button 
+                  type="button" 
+                  onClick={() => setIsModalOpen(false)} 
+                  className="flex-1 py-4 font-bold text-slate-500 hover:text-slate-800 transition-colors"
+                >
+                  Batal
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={submitting} 
+                  className="flex-[1.5] py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all disabled:opacity-50"
+                >
+                  {submitting ? 'Mendaftarkan...' : 'Buat Akun'}
                 </button>
               </div>
             </form>
