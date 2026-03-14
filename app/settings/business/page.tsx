@@ -17,7 +17,7 @@ export default function BusinessSettings() {
     fetchBusiness()
   }, [])
 
-  async function fetchBusiness() {
+ async function fetchBusiness() {
     const { data: { user } } = await supabase.auth.getUser()
     if (user) {
       const { data: profile } = await supabase
@@ -26,8 +26,15 @@ export default function BusinessSettings() {
         .eq('id', user.id)
         .single()
       
+      // Tambahkan type casting 'as any' atau arahkan ke objek tunggal
       if (profile?.businesses) {
-        setBusiness(profile.businesses)
+        const bizData = profile.businesses as any;
+        setBusiness({
+          id: bizData.id || '',
+          name: bizData.name || '',
+          address: bizData.address || '',
+          phone: bizData.phone || '',
+        })
       }
     }
     setLoading(false)
