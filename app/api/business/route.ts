@@ -3,6 +3,7 @@ import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 
 export async function POST(req: Request) {
+  // 1. WAJIB AWAIT COOKIES di Next.js terbaru
   const cookieStore = await cookies()
   
   const supabase = createServerClient(
@@ -12,29 +13,52 @@ export async function POST(req: Request) {
       cookies: {
         getAll() { return cookieStore.getAll() },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options))
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            )
+          } catch {
+            // Ini normal jika dipanggil dari Server Component
+          }
         },
       },
     }
   )
 
-  const { name, address, phone } = await req.json()
-  const { data: { user } } = await supabase.auth.getUser()
-
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-
   try {
+    const { name, address, phone } = await req.json()
+    
+    // 2. Ambil User
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: "Sesi habis, silakan login ulang" }, { status: 401 })
+    }
+
+    // 3. Simpan Bisnis
     const { data: biz, error: bizError } = await supabase
       .from('businesses')
-      .insert({ name, address, phone, owner_id: user.id })
-      .select().single()
+      .insert({ 
+        name, 
+        address, 
+        phone, 
+        owner_id: user.id 
+      })
+      .select()
+      .single()
 
     if (bizError) throw bizError
 
-    await supabase.from('profiles').update({ business_id: biz.id }).eq('id', user.id)
+    // 4. Update Profile User
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ business_id: biz.id })
+      .eq('id', user.id)
+
+    if (profileError) throw profileError
 
     return NextResponse.json({ success: true, business: biz })
   } catch (err: any) {
+    console.error("Setup Error:", err.message)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
