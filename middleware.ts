@@ -1,4 +1,3 @@
-// middleware.ts
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
@@ -14,9 +13,15 @@ export async function middleware(request: NextRequest) {
       cookies: {
         getAll() { return request.cookies.getAll() },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value, options))
+          // Perbaikan di sini: Request cookies set hanya butuh name & value
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
+          
           response = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options))
+
+          // Response cookies tetap butuh options lengkap
+          cookiesToSet.forEach(({ name, value, options }) => 
+            response.cookies.set(name, value, options)
+          )
         },
       },
     }
@@ -24,16 +29,17 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  // PROTEKSI: Jika belum login dan mencoba buka halaman dashboard/settings/orders
-  if (!user && (
+  // Proteksi rute
+  const isProtectedRoute = 
     request.nextUrl.pathname.startsWith('/dashboard') ||
     request.nextUrl.pathname.startsWith('/settings') ||
-    request.nextUrl.pathname.startsWith('/orders')
-  )) {
+    request.nextUrl.pathname.startsWith('/orders') ||
+    request.nextUrl.pathname.startsWith('/customers')
+
+  if (!user && isProtectedRoute) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // Jika sudah login tapi mencoba akses login/register, lempar ke dashboard
   if (user && (request.nextUrl.pathname === '/login' || request.nextUrl.pathname === '/register')) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
