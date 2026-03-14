@@ -22,34 +22,32 @@ export default function StaffSettings() {
   const fetchStaff = useCallback(async () => {
     setLoading(true)
     try {
-      // 1. Ambil user login saat ini
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+        const { data: { user } } = await supabase.auth.getUser()
+        console.log("1. User Login ID:", user?.id) // DEBUG
 
-      // 2. Ambil business_id dari profil Anda sendiri
-      const { data: myProfile, error: profileError } = await supabase
+        const { data: myProfile } = await supabase
         .from('profiles')
-        .select('business_id')
-        .eq('id', user.id)
+        .select('business_id, role')
+        .eq('id', user?.id)
         .single()
 
-      if (profileError) throw profileError
+        console.log("2. Profile Anda di DB:", myProfile) // DEBUG
 
-      if (myProfile?.business_id) {
-        // 3. Ambil SEMUA profil yang memiliki business_id yang sama
+        if (myProfile?.business_id) {
         const { data: staff, error: staffError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('business_id', myProfile.business_id)
-          .order('role', { ascending: true }) // Admin biasanya muncul paling atas
+            .from('profiles')
+            .select('*')
+            .eq('business_id', myProfile.business_id)
+        
+        console.log("3. Data Staff yang didapat:", staff) // DEBUG
         
         if (staffError) throw staffError
         setStaffList(staff || [])
-      }
-    } catch (error: any) {
-      console.error("Error fetching staff:", error.message)
+        }
+    } catch (error) {
+        console.error("Error detail:", error)
     } finally {
-      setLoading(false)
+        setLoading(false)
     }
   }, [supabase])
 
