@@ -7,59 +7,83 @@ export function CustomerTable({ customers, onSelect }: { customers: any[], onSel
   const copyToClipboard = (e: React.MouseEvent, text: string) => {
     e.stopPropagation(); 
     navigator.clipboard.writeText(text);
-    alert("Nomor WA berhasil disalin!");
+    alert("Nomor WA disalin!");
   };
 
   return (
-    <div className="bg-white border border-slate-300 shadow-sm rounded overflow-hidden">
-      <table className="w-full text-left border-collapse font-sans text-sm">
-        <thead className="bg-[#f8f9fa] border-b border-slate-300 text-[10px] uppercase text-slate-500 font-bold tracking-widest text-center">
+    <div className="bg-white border border-slate-300 shadow-sm rounded overflow-x-auto">
+      <table className="w-full text-left border-collapse font-sans">
+        <thead className="bg-[#f8f9fa] border-b border-slate-300 text-[10px] uppercase text-slate-500 font-bold tracking-widest">
           <tr>
-            <th className="px-8 py-4 text-left">Nama & Kontak</th>
-            <th className="px-8 py-4">Repeat</th>
-            <th className="px-8 py-4">LTV / AOV</th>
-            <th className="px-8 py-4 text-right">Aksi</th>
+            <th className="px-6 py-3 min-w-[200px]">Nama Pelanggan</th>
+            <th className="px-4 py-3 text-center">Tipe</th>
+            <th className="px-6 py-3">WhatsApp</th>
+            <th className="px-4 py-3 text-center">Order</th>
+            <th className="px-6 py-3 text-right">LTV</th>
+            <th className="px-6 py-3 text-right">AOV</th>
+            <th className="px-6 py-3 text-right">Aksi</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-200 text-center">
+        <tbody className="divide-y divide-slate-100 text-sm">
           {customers.map((c) => (
-            <tr key={c.id} className="hover:bg-[#fffdf0] cursor-pointer group transition-colors" onClick={() => onSelect(c)}>
-              <td className="px-8 py-5 text-left">
-                <div className="font-bold text-blue-700 group-hover:underline flex items-center gap-2">
-                  {c.name}
-                  {c.category === 'VIP' && <span className="text-[9px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded border border-yellow-200 font-black uppercase tracking-tighter">VIP</span>}
-                </div>
-                <div className="flex items-center gap-2 text-slate-500 mt-1">
-                  <span className="text-xs">{c.phone}</span>
+            <tr 
+              key={c.id} 
+              className="hover:bg-[#fffdf0] cursor-pointer group transition-colors" 
+              onClick={() => onSelect(c)}
+            >
+              {/* NAMA */}
+              <td className="px-6 py-3 font-bold text-blue-700 truncate max-w-[200px]">
+                {c.name}
+              </td>
+
+              {/* TIPE / KATEGORI */}
+              <td className="px-4 py-3 text-center">
+                <span className={`text-[9px] px-1.5 py-0.5 rounded border font-black uppercase tracking-tighter ${
+                  c.category === 'VIP' 
+                  ? 'bg-yellow-50 text-yellow-700 border-yellow-200' 
+                  : 'bg-slate-50 text-slate-500 border-slate-200'
+                }`}>
+                  {c.category}
+                </span>
+              </td>
+
+              {/* WHATSAPP + COPY */}
+              <td className="px-6 py-3 text-slate-500 font-medium whitespace-nowrap">
+                <div className="flex items-center gap-2 group/wa">
+                  <span>{c.phone}</span>
                   <button 
                     onClick={(e) => copyToClipboard(e, c.phone)}
-                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-slate-200 rounded transition-all"
-                    title="Salin Nomor"
+                    className="opacity-0 group-hover/wa:opacity-100 p-0.5 hover:bg-slate-200 rounded transition-all"
                   >
                     📋
                   </button>
                 </div>
               </td>
-              <td className="px-8 py-5">
-                <div className={`font-bold ${c.order_count > 1 ? 'text-green-600' : 'text-slate-400'}`}>
-                  {c.order_count}x
-                </div>
+
+              {/* JUMLAH ORDER */}
+              <td className="px-4 py-3 text-center font-bold text-slate-600">
+                {c.order_count}x
               </td>
-              <td className="px-8 py-5">
-                <div className="font-bold text-slate-800">{formatIDR(c.ltv)}</div>
-                {/* AOV Dibuat Lebih Kontras */}
-                <div className="text-[11px] text-slate-600 uppercase tracking-tighter font-bold mt-0.5">
-                  AOV: <span className="text-slate-900">{formatIDR(c.ltv / c.order_count)}</span>
-                </div>
+
+              {/* LTV */}
+              <td className="px-6 py-3 text-right font-bold text-slate-800 whitespace-nowrap">
+                {formatIDR(c.ltv)}
               </td>
-              <td className="px-8 py-5 text-right">
+
+              {/* AOV (Satu Baris, Kontras) */}
+              <td className="px-6 py-3 text-right font-bold text-slate-600 whitespace-nowrap">
+                {formatIDR(c.ltv / c.order_count)}
+              </td>
+
+              {/* AKSI */}
+              <td className="px-6 py-3 text-right">
                 <a 
                   href={`https://wa.me/${c.phone}`} 
                   target="_blank" 
                   onClick={(e) => e.stopPropagation()} 
-                  className="inline-flex items-center gap-2 bg-[#25D366] hover:bg-[#128C7E] text-white px-4 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest shadow-sm transition-colors"
+                  className="inline-flex items-center gap-1.5 bg-[#25D366] hover:bg-[#128C7E] text-white px-3 py-1 rounded text-[10px] font-bold uppercase tracking-widest transition-transform active:scale-95 shadow-sm"
                 >
-                  <span>💬</span> WA
+                  WA
                 </a>
               </td>
             </tr>
