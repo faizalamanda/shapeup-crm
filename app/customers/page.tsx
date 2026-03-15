@@ -5,7 +5,6 @@ export default function CustomerPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null)
   const [activeTab, setActiveTab] = useState<'order' | 'contact' | 'notes'>('order')
 
-  // Data Dummy untuk simulasi tampilan
   const customers = [
     { 
       id: 1, name: 'Budi Santoso', phone: '628123456789', 
@@ -26,171 +25,146 @@ export default function CustomerPage() {
   const formatIDR = (val: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val)
 
   return (
-    <div className="max-w-6xl mx-auto px-6 pb-20">
-      {/* HEADER */}
-      <header className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-12">
-        <div>
-          <h1 className="text-5xl font-black text-slate-900 tracking-tighter">Database</h1>
-          <p className="text-slate-400 font-bold uppercase text-xs tracking-[0.2em] mt-2">Asset Pelanggan & Profitabilitas</p>
-        </div>
-        <button className="h-14 px-8 bg-blue-600 text-white rounded-2xl font-black shadow-xl shadow-blue-200 hover:scale-105 active:scale-95 transition-all">
-          + Pelanggan Baru
-        </button>
-      </header>
+    <div className="min-h-screen bg-[#fcfaf7] text-[#2e2e2e] font-sans p-8">
+      <div className="max-w-5xl mx-auto">
+        
+        {/* HEADER BASECAMP STYLE */}
+        <header className="border-b-2 border-slate-200 pb-6 mb-8 flex justify-between items-end">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Pelanggan</h1>
+            <p className="text-slate-500 text-sm mt-1">Daftar semua orang yang pernah bertransaksi dengan bisnis Anda.</p>
+          </div>
+          <button className="bg-[#2e8540] hover:bg-[#246632] text-white px-5 py-2 rounded shadow-sm font-bold text-sm transition-colors">
+            + Tambah Pelanggan
+          </button>
+        </header>
 
-      {/* SEARCH & FILTER (Visual Only) */}
-      <div className="flex gap-4 mb-8">
-        <div className="flex-1 relative">
-          <input 
-            type="text" 
-            placeholder="Cari nama atau nomor hp..." 
-            className="w-full h-14 pl-14 pr-6 bg-white border border-slate-200 rounded-2xl outline-none focus:border-blue-600 font-bold transition-all shadow-sm"
-          />
-          <span className="absolute left-6 top-4 opacity-30 text-xl">🔍</span>
-        </div>
-        <button className="h-14 px-6 bg-white border border-slate-200 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 transition-all">Filter</button>
-      </div>
-
-      {/* TABLE LIST */}
-      <div className="bg-white border border-slate-200 rounded-[2.5rem] overflow-hidden shadow-sm">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-slate-50/50">
-              <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest pl-10">Info Pelanggan</th>
-              <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Frekuensi</th>
-              <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Metrik (LTV/AOV)</th>
-              <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right pr-10">Aksi</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {customers.map((c) => (
-              <tr 
-                key={c.id} 
-                onClick={() => setSelectedCustomer(c)}
-                className="group cursor-pointer hover:bg-slate-50/80 transition-all"
-              >
-                <td className="p-6 pl-10">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black">
-                      {c.name.charAt(0)}
-                    </div>
-                    <div>
-                      <p className="font-black text-slate-800 text-lg tracking-tight">{c.name}</p>
-                      <p className="text-slate-400 font-bold text-xs">{c.phone}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="p-6 text-center">
-                  <div className="inline-block px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full font-black text-xs">
-                    {c.order_count}x Beli
-                  </div>
-                </td>
-                <td className="p-6">
-                  <p className="font-black text-slate-800 text-sm">{formatIDR(c.ltv)} <span className="text-slate-300 font-medium">LTV</span></p>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
-                    AOV: {formatIDR(c.ltv / c.order_count)}
-                  </p>
-                </td>
-                <td className="p-6 text-right pr-10">
-                  <div className="flex justify-end gap-2">
-                    <a 
-                      href={`https://wa.me/${c.phone}`} 
-                      onClick={(e) => e.stopPropagation()}
-                      className="w-10 h-10 bg-green-500 text-white rounded-xl flex items-center justify-center hover:bg-green-600 transition-all shadow-lg shadow-green-100"
-                    >
-                      📞
-                    </a>
-                  </div>
-                </td>
+        {/* LIST - KOTAK LEBIH TEGAS */}
+        <div className="bg-white border border-slate-300 shadow-sm rounded-md overflow-hidden">
+          <table className="w-full text-left">
+            <thead className="bg-[#f8f9fa] border-b border-slate-300">
+              <tr className="text-xs uppercase text-slate-500 font-semibold tracking-wider">
+                <th className="px-6 py-3">Nama & Kontak</th>
+                <th className="px-6 py-3">Transaksi</th>
+                <th className="px-6 py-3 text-right">LTV / AOV</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {customers.map((c) => (
+                <tr 
+                  key={c.id} 
+                  onClick={() => setSelectedCustomer(c)}
+                  className="hover:bg-[#fffdf0] cursor-pointer transition-colors"
+                >
+                  <td className="px-6 py-4">
+                    <div className="font-bold text-blue-700 hover:underline">{c.name}</div>
+                    <div className="text-sm text-slate-500">{c.phone}</div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="text-sm font-medium">{c.order_count} kali order</div>
+                    <div className="text-[11px] text-slate-400">Terakhir: {c.last_contact}</div>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <div className="text-sm font-bold text-slate-800">{formatIDR(c.ltv)}</div>
+                    <div className="text-[11px] text-slate-500 uppercase tracking-tighter">AOV: {formatIDR(c.ltv / c.order_count)}</div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* FOOTER KECIL */}
+        <footer className="mt-8 text-center text-slate-400 text-xs">
+          Menampilkan {customers.length} pelanggan terdaftar.
+        </footer>
       </div>
 
-      {/* DETAIL DRAWER (SLIDE-OVER) */}
+      {/* DETAIL DRAWER / SLIDE-IN (Khas Basecamp Modal) */}
       {selectedCustomer && (
-        <>
-          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100]" onClick={() => setSelectedCustomer(null)} />
-          <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-white z-[101] shadow-2xl p-0 flex flex-col animate-in slide-in-from-right duration-300">
+        <div className="fixed inset-0 z-[100] flex justify-center items-start pt-10 pb-10 overflow-y-auto bg-[#2e2e2e]/50 backdrop-blur-[1px]">
+          <div className="bg-white w-full max-w-3xl border-2 border-slate-400 shadow-2xl rounded-sm p-12 relative min-h-[80vh]">
             
-            {/* Drawer Header */}
-            <div className="p-10 pb-6 border-b border-slate-50">
-              <div className="flex justify-between items-start mb-6">
-                 <span className="px-4 py-1.5 bg-blue-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-100">
-                    {selectedCustomer.category}
-                 </span>
-                 <button onClick={() => setSelectedCustomer(null)} className="text-slate-300 hover:text-slate-900 transition-colors font-bold uppercase text-[10px] tracking-widest">Tutup Esc</button>
-              </div>
-              <h2 className="text-4xl font-black text-slate-900 tracking-tight">{selectedCustomer.name}</h2>
-              <div className="flex gap-4 mt-2">
-                <p className="text-slate-400 font-bold">{selectedCustomer.email}</p>
-                <span className="text-slate-200">|</span>
-                <p className="text-slate-400 font-bold">{selectedCustomer.phone}</p>
+            <button 
+              onClick={() => setSelectedCustomer(null)}
+              className="absolute top-8 right-12 text-slate-400 hover:text-red-600 font-bold"
+            >
+              [ Tutup ]
+            </button>
+
+            <div className="border-b border-slate-100 pb-8 mb-8">
+              <div className="text-xs font-bold text-blue-600 uppercase tracking-widest mb-2">Profil Pelanggan</div>
+              <h2 className="text-4xl font-bold mb-2">{selectedCustomer.name}</h2>
+              <div className="flex gap-4 text-slate-500">
+                <span>{selectedCustomer.phone}</span>
+                <span>•</span>
+                <span className="italic">{selectedCustomer.email}</span>
               </div>
             </div>
 
-            {/* Drawer Body (Scrollable) */}
-            <div className="flex-1 overflow-y-auto p-10 pt-8 space-y-10">
-              
-              {/* ALAMAT */}
-              <div className="space-y-2">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Alamat Pengiriman</p>
-                <p className="font-bold text-slate-700 leading-relaxed bg-slate-50 p-6 rounded-3xl border border-slate-100">
-                   {selectedCustomer.address}
-                </p>
+            <div className="grid grid-cols-3 gap-12">
+              <div className="col-span-2 space-y-10">
+                {/* TABS KOTAK TEGAS */}
+                <div>
+                  <div className="flex gap-6 border-b border-slate-200 mb-6">
+                    {['order', 'contact', 'notes'].map((tab) => (
+                      <button 
+                        key={tab}
+                        onClick={() => setActiveTab(tab as any)}
+                        className={`pb-3 text-sm font-bold transition-all ${activeTab === tab ? 'border-b-4 border-yellow-400 text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
+                      >
+                        {tab === 'order' ? 'Riwayat Pesanan' : tab === 'contact' ? 'Kontak' : 'Catatan'}
+                      </button>
+                    ))}
+                  </div>
+
+                  {activeTab === 'order' && (
+                    <div className="space-y-3">
+                      <div className="flex justify-between p-3 border border-slate-200 rounded text-sm bg-slate-50">
+                        <span className="font-bold">Order #1209 — <span className="text-slate-500 font-normal italic">14 Feb 2024</span></span>
+                        <span className="font-bold text-slate-700">{formatIDR(1250000)}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTab === 'notes' && (
+                    <div className="p-6 bg-[#fffde7] border-l-4 border-yellow-400 text-slate-800 text-sm leading-relaxed italic">
+                      {selectedCustomer.notes}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* TABS */}
-              <div>
-                <div className="flex gap-8 border-b border-slate-100 mb-8">
-                  {['order', 'contact', 'notes'].map((tab) => (
-                    <button 
-                      key={tab}
-                      onClick={() => setActiveTab(tab as any)}
-                      className={`pb-4 text-xs font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'border-b-2 border-blue-600 text-blue-600' : 'text-slate-300'}`}
-                    >
-                      {tab === 'order' ? 'History Order' : tab === 'contact' ? 'Kontak' : 'Catatan'}
-                    </button>
-                  ))}
+              {/* SIDEBAR DETAIL */}
+              <div className="space-y-8 bg-[#f9f9f9] p-6 border border-slate-200 rounded">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Alamat Utama</label>
+                  <p className="text-xs font-medium leading-relaxed">{selectedCustomer.address}</p>
+                </div>
+                
+                <div className="pt-4 border-t border-slate-200">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-2">Ringkasan Nilai</label>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs font-bold">
+                      <span className="text-slate-500">Total Order:</span>
+                      <span>{selectedCustomer.order_count}x</span>
+                    </div>
+                    <div className="flex justify-between text-xs font-bold">
+                      <span className="text-slate-500">LTV:</span>
+                      <span className="text-blue-700">{formatIDR(selectedCustomer.ltv)}</span>
+                    </div>
+                  </div>
                 </div>
 
-                {/* TAB CONTENT: ORDER */}
-                {activeTab === 'order' && (
-                  <div className="space-y-4">
-                    <div className="p-5 bg-white border border-slate-100 rounded-2xl flex justify-between items-center hover:border-blue-100 transition-all">
-                       <div>
-                         <p className="font-black text-slate-800 tracking-tight">Order #1209</p>
-                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">14 Feb 2024 • 3 Items</p>
-                       </div>
-                       <p className="font-black text-slate-900">{formatIDR(1250000)}</p>
-                    </div>
-                    <div className="p-5 bg-white border border-slate-100 rounded-2xl flex justify-between items-center opacity-50">
-                       <div>
-                         <p className="font-black text-slate-800 tracking-tight">Order #1102</p>
-                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">22 Jan 2024 • 1 Items</p>
-                       </div>
-                       <p className="font-black text-slate-900">{formatIDR(450000)}</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* TAB CONTENT: NOTES */}
-                {activeTab === 'notes' && (
-                  <div className="bg-yellow-50 p-6 rounded-3xl border border-yellow-100">
-                    <p className="text-yellow-800 font-bold italic leading-relaxed">"{selectedCustomer.notes}"</p>
-                  </div>
-                )}
+                <div className="pt-4">
+                  <button className="w-full bg-[#2e8540] text-white py-2 rounded text-xs font-bold shadow-sm">
+                    Hubungi via WhatsApp
+                  </button>
+                </div>
               </div>
             </div>
-
-            {/* Quick Action Footer */}
-            <div className="p-8 border-t border-slate-50 bg-slate-50/50 flex gap-4">
-               <button className="flex-1 h-14 bg-white border border-slate-200 text-slate-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-white transition-all">Edit Profil</button>
-               <button className="flex-1 h-14 bg-green-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-green-600 shadow-lg shadow-green-100 transition-all">Chat WhatsApp</button>
-            </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   )
