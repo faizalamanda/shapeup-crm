@@ -5,7 +5,7 @@ export function FilterBar({ searchQuery, setSearchQuery, filterCategory, setFilt
         <input 
           type="text" 
           placeholder="Cari nama atau nomor hp..." 
-          className="w-full h-10 pl-10 pr-4 bg-white border border-slate-300 rounded outline-none focus:border-blue-500 text-sm font-medium"
+          className="w-full h-10 pl-10 pr-4 bg-white border border-slate-300 rounded outline-none focus:border-blue-500 text-sm font-medium transition-all"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
