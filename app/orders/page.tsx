@@ -24,7 +24,6 @@ export default function OrderPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // 1. Ambil Bisnis Aktif
       const { data: profile } = await supabase
         .from('profiles')
         .select('active_business_id, businesses!active_business_id(name)')
@@ -34,16 +33,13 @@ export default function OrderPage() {
       if (profile?.active_business_id) {
         setActiveBiz(profile.businesses)
 
-        // 2. Ambil Data Orders Real
         const { data: orderData, error } = await supabase
           .from('orders')
           .select('*')
           .eq('business_id', profile.active_business_id)
-          .order('created_at', { ascending: false }) // Coba urutkan berdasarkan created_at
+          .order('created_at', { ascending: false })
 
         if (error) throw error
-        
-        console.log("Data Order Masuk:", orderData) // Cek di console browser
         setOrders(orderData || [])
       }
     } catch (err) {
@@ -56,7 +52,6 @@ export default function OrderPage() {
   return (
     <div className="min-h-screen bg-[#fcfaf7] p-8 md:p-12 text-[#2e2e2e]">
       <div className="max-w-[100%] mx-auto">
-        
         <header className="border-b-2 border-slate-200 pb-8 mb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
           <div>
             <div className="flex items-center gap-3">
@@ -68,16 +63,14 @@ export default function OrderPage() {
               )}
             </div>
             <p className="text-slate-500 text-sm mt-1 font-medium italic">
-              Menampilkan transaksi real-time dari unit bisnis terpilih.
+              Data transaksi real-time dari unit bisnis aktif.
             </p>
           </div>
-          <button className="bg-[#2e8540] hover:bg-[#246632] text-white px-5 py-2 rounded font-bold text-sm shadow-sm transition-all border-b-4 border-black/20 active:border-b-0">+ Buat Order Baru</button>
+          <button className="bg-[#2e8540] hover:bg-[#246632] text-white px-5 py-2 rounded font-bold text-sm shadow-sm transition-all">+ Buat Order Baru</button>
         </header>
 
         {loading ? (
-          <div className="p-20 text-center font-black text-slate-300 animate-pulse uppercase tracking-[0.3em]">
-            MENYINKRONKAN DATA...
-          </div>
+          <div className="p-20 text-center font-black text-slate-300 animate-pulse uppercase tracking-widest">Sinkronisasi Data...</div>
         ) : (
           <>
             <OrderStats orders={orders} />
@@ -85,12 +78,11 @@ export default function OrderPage() {
               <OrderTable orders={orders} />
             ) : (
               <div className="p-20 text-center border-4 border-dashed border-slate-200 rounded-xl text-slate-400 font-bold uppercase text-[10px] tracking-widest bg-white">
-                Belum ada data order untuk unit bisnis ini.
+                Belum ada pesanan.
               </div>
             )}
           </>
         )}
-
       </div>
     </div>
   )

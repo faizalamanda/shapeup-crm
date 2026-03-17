@@ -1,24 +1,27 @@
-export function OrderStats({ orders }: { orders: any[] }) {
-  const totalOmzet = orders.reduce((acc, curr) => acc + curr.total_order, 0)
-  const pending = orders.filter(o => o.status === 'Pending').length
-  const completed = orders.filter(o => o.status === 'Selesai').length
+"use client"
 
+export function OrderStats({ orders }: { orders: any[] }) {
   const formatIDR = (val: number) => 
-    new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val)
+    new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val || 0)
+
+  // Perhitungan Omzet yang aman dari NaN
+  const totalOmzet = orders.reduce((acc, curr) => acc + (Number(curr.grand_total || curr.total_amount) || 0), 0)
+  const totalOrders = orders.length
+  const pendingOrders = orders.filter(o => o.status === 'pending' || o.status === 'processing').length
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-0 border border-slate-300 rounded shadow-sm bg-white overflow-hidden mb-8">
-      <div className="p-6 border-r border-slate-200">
-        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] block mb-1">Total Omzet</label>
-        <div className="text-3xl font-bold tracking-tight">{formatIDR(totalOmzet)}</div>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="bg-white border border-slate-300 p-6 rounded shadow-sm">
+        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Total Omzet</p>
+        <p className="text-2xl font-black text-slate-800">{formatIDR(totalOmzet)}</p>
       </div>
-      <div className="p-6 border-r border-slate-200 bg-[#fdfdfd]">
-        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] block mb-1">Perlu Diproses</label>
-        <div className="text-3xl font-bold text-orange-600 tracking-tight">{pending} <span className="text-sm font-normal text-slate-400">Order</span></div>
+      <div className="bg-white border border-slate-300 p-6 rounded shadow-sm">
+        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Total Pesanan</p>
+        <p className="text-2xl font-black text-slate-800">{totalOrders} <span className="text-sm font-bold text-slate-400 italic">Transaksi</span></p>
       </div>
-      <div className="p-6">
-        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] block mb-1">Selesai</label>
-        <div className="text-3xl font-bold text-green-700 tracking-tight">{completed}</div>
+      <div className="bg-white border border-slate-300 p-6 rounded shadow-sm">
+        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Perlu Diproses</p>
+        <p className="text-2xl font-black text-orange-600">{pendingOrders} <span className="text-sm font-bold text-orange-300 italic">Pesanan</span></p>
       </div>
     </div>
   )
