@@ -7,9 +7,11 @@ export function CustomerTable({ customers, onSelect }: { customers: any[], onSel
         <thead>
           <tr className="bg-[#F8FAFC] border-b border-slate-100 text-[10px] font-bold uppercase tracking-widest text-slate-400">
             <th className="p-5">Nama Pelanggan</th>
-            <th className="p-5">Order</th>
+            <th className="p-5 text-center">Order</th>
             <th className="p-5 text-right">LTV</th>
             <th className="p-5 text-right">AOV</th>
+            {/* HEADER BARU */}
+            <th className="p-5 text-center">Last Order</th>
             <th className="p-5 text-center">Aksi</th>
           </tr>
         </thead>
@@ -18,12 +20,31 @@ export function CustomerTable({ customers, onSelect }: { customers: any[], onSel
             <tr 
               key={idx} 
               className="hover:bg-slate-50/50 transition-colors cursor-pointer group"
-              onClick={() => onSelect(c)} // <--- INI PEMICUNYA
+              onClick={() => onSelect(c)}
             >
-              <td className="p-5 font-bold text-blue-700">{c.name}</td>
-              <td className="p-5 text-center font-bold text-slate-700">{c.total_order_count || 0}</td>
-              <td className="p-5 text-right font-bold text-slate-800 text-sm">Rp {formatIDR(c.ltv)}</td>
-              <td className="p-5 text-right font-bold text-slate-800 text-sm">Rp {formatIDR(c.aov)}</td>
+              <td className="p-5">
+                <p className="font-bold text-blue-700">{c.name}</p>
+                <p className="text-[10px] text-slate-400 font-medium">+{c.phone}</p>
+              </td>
+              <td className="p-5 text-center font-bold text-slate-700">
+                {c.total_order_count || 0}
+              </td>
+              <td className="p-5 text-right font-bold text-slate-800 text-sm">
+                Rp {formatIDR(c.ltv)}
+              </td>
+              <td className="p-5 text-right font-bold text-slate-800 text-sm">
+                Rp {formatIDR(c.aov)}
+              </td>
+              {/* DATA LAST ORDER */}
+              <td className="p-5 text-center text-[11px] font-bold text-slate-500 uppercase">
+                {c.last_order_date 
+                  ? new Date(c.last_order_date).toLocaleDateString('id-ID', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric'
+                    })
+                  : '-'}
+              </td>
               <td className="p-5 text-center">
                 <button className="bg-[#22C55E] text-white px-3 py-1 rounded text-[10px] font-bold uppercase">WA</button>
               </td>
