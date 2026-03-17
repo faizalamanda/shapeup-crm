@@ -1,7 +1,6 @@
 "use client"
 import { useState, useEffect, useMemo } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
-// Import komponen UI Mas
 import { StatsPanel } from './components/StatsPanel'
 import { FilterBar } from './components/FilterBar'
 import { CustomerTable } from './components/CustomerTable'
@@ -39,13 +38,14 @@ export default function CustomerPage() {
       if (profile?.active_business_id) {
         setActiveBiz(profile.businesses)
 
-        // 2. Ambil data customer HANYA untuk bisnis tersebut
-        const { data: custData } = await supabase
+        // 2. Ambil data dari view customer_metrics
+        const { data: custData, error } = await supabase
           .from('customer_metrics')
           .select('*')
           .eq('business_id', profile.active_business_id)
+          .order('ltv', { ascending: false })
 
-        setCustomers(custData || [])
+        if (!error) setCustomers(custData || [])
       }
     }
     setLoading(false)
@@ -60,7 +60,7 @@ export default function CustomerPage() {
     })
   }, [customers, searchQuery])
 
-  if (loading) return <div className="p-20 text-center font-black text-slate-300 animate-pulse">MENYINKRONKAN DATA...</div>
+  if (loading) return <div className="p-20 text-center font-black text-slate-300 animate-pulse uppercase tracking-widest">Menyinkronkan Data...</div>
 
   return (
     <div className="min-h-screen bg-[#fcfaf7] p-8 md:p-12 text-[#2e2e2e]">
@@ -69,29 +69,26 @@ export default function CustomerPage() {
         <header className="border-b-2 border-slate-200 pb-8 mb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
           <div>
             <div className="flex items-center gap-3">
-               <h1 className="text-3xl font-bold tracking-tight">Pelanggan</h1>
+               <h1 className="text-3xl font-bold tracking-tight uppercase italic">Pelanggan</h1>
                <span className="bg-blue-600 text-white text-[10px] px-3 py-1 rounded-full font-black uppercase tracking-widest shadow-lg shadow-blue-100">
                  📍 {activeBiz?.name}
                </span>
             </div>
             <p className="text-slate-500 text-sm mt-1 font-medium italic">
-              Menampilkan data eksklusif untuk unit bisnis terpilih.
+              Database pelanggan unit bisnis aktif.
             </p>
           </div>
         </header>
 
         {customers.length === 0 ? (
-          /* INSTRUKSI JIKA KOSONG */
-          <div className="bg-white border-2 border-dashed border-slate-200 rounded-[2.5rem] p-16 text-center">
-            <h2 className="text-xl font-black text-slate-800 mb-4">Belum Ada Pelanggan di {activeBiz?.name}</h2>
-            <div className="bg-slate-50 p-6 rounded-2xl max-w-md mx-auto text-left inline-block">
-               <p className="text-xs font-bold text-slate-400 uppercase mb-3 tracking-widest">Langkah Integrasi:</p>
-               <code className="text-[10px] block bg-white p-3 rounded border border-slate-200 mb-4 break-all">
-                 https://crm.com/api/webhook/woo?bid={activeBiz?.id}
+          <div className="bg-white border-4 border-black p-16 text-center shadow-[12px_12px_0px_0px_rgba(0,0,0,1)]">
+            <h2 className="text-xl font-black text-slate-800 mb-4 uppercase italic">Belum Ada Pelanggan</h2>
+            <p className="text-slate-500 mb-8 font-medium">Data akan muncul otomatis setelah pesanan WooCommerce masuk.</p>
+            <div className="bg-slate-50 p-6 border-2 border-black inline-block text-left">
+               <p className="text-[10px] font-black uppercase tracking-widest mb-2">Webhook URL:</p>
+               <code className="text-xs bg-white p-2 border border-slate-200 block break-all">
+                 https://shapeup-crm.vercel.app/api/webhook/woo?bid={activeBiz?.id}
                </code>
-               <p className="text-xs text-slate-500 leading-relaxed">
-                 Salin URL di atas ke Webhook WooCommerce Anda untuk mulai menarik data secara otomatis.
-               </p>
             </div>
           </div>
         ) : (

@@ -1,90 +1,38 @@
-"use client"
-
 export function CustomerTable({ customers, onSelect }: { customers: any[], onSelect: (c: any) => void }) {
-  const formatIDR = (val: number) => 
-    new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val)
-
-  const copyToClipboard = (e: React.MouseEvent, text: string) => {
-    e.stopPropagation(); 
-    navigator.clipboard.writeText(text);
-    alert("Nomor WA disalin!");
-  };
+  const formatIDR = (val: number) => new Intl.NumberFormat('id-ID').format(val || 0)
 
   return (
-    <div className="bg-white border border-slate-300 shadow-sm rounded overflow-x-auto">
-      <table className="w-full text-left border-collapse font-sans">
-        <thead className="bg-[#f8f9fa] border-b border-slate-300 text-[10px] uppercase text-slate-500 font-bold tracking-widest">
-          <tr>
-            <th className="px-6 py-3 min-w-[200px]">Nama Pelanggan</th>
-            <th className="px-4 py-3 text-center">Tipe</th>
-            <th className="px-6 py-3">WhatsApp</th>
-            <th className="px-4 py-3 text-center">Order</th>
-            <th className="px-6 py-3 text-right">LTV</th>
-            <th className="px-6 py-3 text-right">AOV</th>
-            <th className="px-6 py-3 text-right">Aksi</th>
+    <div className="bg-white border-4 border-black shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] overflow-hidden">
+      <table className="w-full text-left border-collapse">
+        <thead>
+          <tr className="bg-black text-white text-[10px] font-black uppercase tracking-widest">
+            <th className="p-5 border-r border-white/10">Pelanggan</th>
+            <th className="p-5 border-r border-white/10 text-center">Order</th>
+            <th className="p-5 border-r border-white/10 text-right">LTV (Total)</th>
+            <th className="p-5 border-r border-white/10 text-right">AOV (Avg)</th>
+            <th className="p-5 text-right uppercase">Terakhir Order</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 text-sm">
+        <tbody className="divide-y-2 divide-slate-100">
           {customers.map((c) => (
-            <tr 
-              key={c.id} 
-              className="hover:bg-[#fffdf0] cursor-pointer group transition-colors" 
-              onClick={() => onSelect(c)}
-            >
-              {/* NAMA */}
-              <td className="px-6 py-3 font-bold text-blue-700 truncate max-w-[200px]">
-                {c.name}
+            <tr key={c.customer_id} className="hover:bg-yellow-50 transition-colors group cursor-pointer" onClick={() => onSelect(c)}>
+              <td className="p-5">
+                <p className="font-black text-slate-800 uppercase leading-none mb-1">{c.customer_name}</p>
+                <p className="text-xs font-bold text-slate-400">+{c.phone}</p>
               </td>
-
-              {/* TIPE / KATEGORI */}
-              <td className="px-4 py-3 text-center">
-                <span className={`text-[9px] px-1.5 py-0.5 rounded border font-black uppercase tracking-tighter ${
-                  c.category === 'VIP' 
-                  ? 'bg-yellow-50 text-yellow-700 border-yellow-200' 
-                  : 'bg-slate-50 text-slate-500 border-slate-200'
-                }`}>
-                  {c.category}
+              <td className="p-5 text-center">
+                <span className="bg-slate-900 text-white px-3 py-1 text-[10px] font-black italic">
+                  {(c.total_order_count || 0)}x
                 </span>
               </td>
-
-              {/* WHATSAPP + COPY */}
-              <td className="px-6 py-3 text-slate-500 font-medium whitespace-nowrap">
-                <div className="flex items-center gap-2 group/wa">
-                  <span>{c.phone}</span>
-                  <button 
-                    onClick={(e) => copyToClipboard(e, c.phone)}
-                    className="opacity-0 group-hover/wa:opacity-100 p-0.5 hover:bg-slate-200 rounded transition-all"
-                  >
-                    📋
-                  </button>
-                </div>
+              <td className="p-5 text-right font-black text-slate-800">
+                Rp {formatIDR(c.ltv)}
               </td>
-
-              {/* JUMLAH ORDER */}
-              <td className="px-4 py-3 text-center font-bold text-slate-600">
-                {c.order_count}x
+              <td className="p-5 text-right font-black text-blue-600">
+                Rp {formatIDR(c.aov)}
               </td>
-
-              {/* LTV */}
-              <td className="px-6 py-3 text-right font-bold text-slate-800 whitespace-nowrap">
-                {formatIDR(c.ltv)}
-              </td>
-
-              {/* AOV (Satu Baris, Kontras) */}
-              <td className="px-6 py-3 text-right font-bold text-slate-600 whitespace-nowrap">
-                {formatIDR(c.ltv / c.order_count)}
-              </td>
-
-              {/* AKSI */}
-              <td className="px-6 py-3 text-right">
-                <a 
-                  href={`https://wa.me/${c.phone}`} 
-                  target="_blank" 
-                  onClick={(e) => e.stopPropagation()} 
-                  className="inline-flex items-center gap-1.5 bg-[#25D366] hover:bg-[#128C7E] text-white px-3 py-1 rounded text-[10px] font-bold uppercase tracking-widest transition-transform active:scale-95 shadow-sm"
-                >
-                  WA
-                </a>
+              <td className="p-5 text-right text-xs font-bold text-slate-400">
+                {c.last_order_date ? new Date(c.last_order_date).toLocaleDateString('id-ID') : '-'}
               </td>
             </tr>
           ))}
