@@ -1,7 +1,6 @@
 "use client"
 import { useState, useEffect } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
-import Link from 'next/link'
 
 export default function BusinessSettings() {
   const supabase = createBrowserClient(
@@ -10,164 +9,92 @@ export default function BusinessSettings() {
   )
   
   const [loading, setLoading] = useState(true)
-  const [isCreating, setIsCreating] = useState(false)
-  const [business, setBusiness] = useState<any>(null)
-  const [userRole, setUserRole] = useState<string | null>(null) // State untuk simpan role
-  const [formData, setFormData] = useState({ name: '', address: '', phone: '' })
+  const [businesses, setBusinesses] = useState<any[]>([])
+  const [activeBid, setActiveBid] = useState<string | null>(null)
 
   useEffect(() => {
-    fetchBusiness()
+    fetchData()
   }, [])
 
-  async function fetchBusiness() {
+  async function fetchData() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (user) {
+      // Ambil data profil untuk tahu mana yang aktif
       const { data: profile } = await supabase
         .from('profiles')
-        .select('*, businesses(*)')
+        .select('active_business_id')
         .eq('id', user.id)
         .single()
       
-      if (profile) {
-        setUserRole(profile.role) // Simpan role admin/staff
-        if (profile.businesses) {
-          setBusiness(profile.businesses)
-        }
-      }
+      setActiveBid(profile?.active_business_id)
+
+      // Ambil semua bisnis yang terhubung dengan user ini
+      // (Asumsi ada tabel relasi atau kolom owner_id di businesses)
+      const { data: bizData } = await supabase
+        .from('businesses')
+        .select('*')
+      
+      setBusinesses(bizData || [])
     }
     setLoading(false)
   }
 
-  async function handleCreateBusiness() {
-    setIsCreating(true)
-    const res = await fetch('/api/business', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formData)
-    })
-    
-    if (res.ok) {
-      await fetchBusiness()
-      setIsCreating(false)
-    } else {
-      alert("Gagal membuat bisnis")
-      setIsCreating(false)
+  async function handleSwitchBusiness(bid: string) {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ active_business_id: bid })
+      .eq('id', user.id)
+
+    if (!error) {
+      setActiveBid(bid)
+      alert("Berhasil pindah bisnis!")
+      window.location.reload() // Refresh agar semua komponen membaca BID baru
     }
   }
 
-  if (loading) return <div className="p-10 text-slate-400 animate-pulse font-bold">Menyinkronkan...</div>
+  if (loading) return <div className="p-10 font-bold text-slate-400">Loading...</div>
 
   return (
-    <div className="max-w-4xl mx-auto pb-20">
+    <div className="max-w-4xl mx-auto p-8">
       <header className="mb-10">
-        <h1 className="text-4xl font-black text-slate-900 tracking-tight">Bisnis</h1>
-        <p className="text-slate-500 font-medium">Pusat kendali operasional dan tim Anda.</p>
+        <h1 className="text-3xl font-black text-slate-900">Pilih Unit Bisnis</h1>
+        <p className="text-slate-500">Pilih bisnis yang ingin Anda kelola saat ini.</p>
       </header>
 
-      {!business && !isCreating ? (
-        <div className="bg-white border-2 border-dashed border-slate-200 rounded-[2.5rem] p-16 text-center">
-          <h2 className="text-2xl font-black text-slate-800 tracking-tight">Belum Ada Bisnis</h2>
-          <button 
-            onClick={() => setIsCreating(true)}
-            className="mt-8 px-10 py-4 bg-blue-600 text-white rounded-2xl font-black shadow-xl hover:bg-blue-700 transition-all"
-          >
-            + Buat Bisnis Baru
-          </button>
-        </div>
-      ) : isCreating ? (
-        <div className="bg-white border border-slate-100 rounded-[2.5rem] p-10 shadow-sm">
-          <h2 className="text-2xl font-black mb-8">Detail Bisnis</h2>
-          <div className="space-y-4 mb-8">
-            <input 
-              type="text" placeholder="Nama Bisnis"
-              className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:border-blue-600 font-bold"
-              value={formData.name}
-              onChange={e => setFormData({...formData, name: e.target.value})}
-            />
-            <input 
-              type="text" placeholder="WhatsApp"
-              className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:border-blue-600 font-bold"
-              value={formData.phone}
-              onChange={e => setFormData({...formData, phone: e.target.value})}
-            />
-          </div>
-          <div className="flex gap-4">
-            <button onClick={() => setIsCreating(false)} className="flex-1 py-4 font-bold text-slate-400">Batal</button>
-            <button onClick={handleCreateBusiness} className="flex-2 py-4 bg-blue-600 text-white rounded-2xl font-bold">Simpan</button>
-          </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* KARTU BISNIS AKTIF */}
-          <div className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm relative flex flex-col justify-between">
-            <div>
-                <div className="flex justify-between items-start mb-6">
-                  <div className="w-14 h-14 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-2xl shadow-lg shadow-blue-100">
-                    {business.name.charAt(0)}
-                  </div>
-                  <span className="bg-green-100 text-green-600 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest">Active</span>
-                </div>
-                <h3 className="text-2xl font-black text-slate-800 tracking-tight">{business.name}</h3>
-                <p className="text-slate-500 font-medium mb-4">{business.phone || 'No Phone'}</p>
-
-                {/* TAMPILAN BUSINESS ID UNTUK INTEGRASI */}
-                <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 mb-8">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Business ID (Integrasi)</p>
-                  <div className="flex items-center gap-2">
-                    <code className="text-xs font-mono font-bold text-blue-600 break-all bg-white px-2 py-1 rounded border border-slate-200 flex-1">
-                      {business.id}
-                    </code>
-                    <button 
-                      onClick={() => {
-                        navigator.clipboard.writeText(business.id);
-                        alert("ID berhasil disalin!");
-                      }}
-                      className="p-2 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition-all"
-                      title="Salin ID"
-                    >
-                      📋
-                    </button>
-                  </div>
-                  <p className="text-[9px] text-slate-400 mt-2 leading-relaxed">
-                    Gunakan ID ini sebagai parameter <code className="text-blue-500">?bid={business.id.substring(0,4)}...</code> pada URL Webhook WooCommerce Anda.
-                  </p>
-                </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {businesses.map((biz) => (
+          <div key={biz.id} className={`p-8 rounded-[2rem] border-2 transition-all ${activeBid === biz.id ? 'border-blue-600 bg-blue-50/30' : 'border-slate-100 bg-white'}`}>
+            <div className="flex justify-between items-start mb-4">
+               <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-white shadow-lg ${activeBid === biz.id ? 'bg-blue-600' : 'bg-slate-400'}`}>
+                 {biz.name.charAt(0)}
+               </div>
+               {activeBid === biz.id && (
+                 <span className="bg-blue-600 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest">Active Now</span>
+               )}
             </div>
             
-            {/* MENU MANAJEMEN TIM DI DALAM CARD */}
-            <div className="pt-6 border-t border-slate-50 flex items-center justify-between">
-                <div className="flex gap-4">
-                  <button className="text-xs font-black text-slate-400 uppercase tracking-widest hover:text-blue-600 transition-colors">Edit</button>
-                  {userRole === 'admin' && (
-                    <Link 
-                      href="/settings/staff" 
-                      className="text-xs font-black text-blue-600 uppercase tracking-widest flex items-center gap-1 hover:gap-2 transition-all"
-                    >
-                      Kelola Tim <span>→</span>
-                    </Link>
-                  )}
-                </div>
-            </div>
-          </div>
+            <h3 className="text-xl font-black text-slate-800">{biz.name}</h3>
+            <p className="text-slate-500 text-sm mb-6">{biz.phone}</p>
 
-          {/* TOMBOL TAMBAH BISNIS (Hanya untuk Admin) */}
-          {userRole === 'admin' && (
-            <button 
-              onClick={() => {
-                  setFormData({ name: '', address: '', phone: '' });
-                  setIsCreating(true);
-              }}
-              className="border-2 border-dashed border-slate-200 rounded-[2rem] flex flex-col items-center justify-center p-8 hover:bg-slate-50 transition-all group"
-            >
-              <div className="w-12 h-12 bg-slate-100 text-slate-400 rounded-full flex items-center justify-center mb-3 group-hover:bg-blue-600 group-hover:text-white transition-all shadow-sm">
-                  <span className="text-2xl font-bold">+</span>
+            {activeBid !== biz.id ? (
+              <button 
+                onClick={() => handleSwitchBusiness(biz.id)}
+                className="w-full py-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-700 hover:bg-slate-50 transition-all"
+              >
+                Gunakan Bisnis Ini
+              </button>
+            ) : (
+              <div className="w-full py-3 text-center font-bold text-blue-600 bg-blue-100/50 rounded-xl">
+                Sedang Digunakan ✅
               </div>
-              <span className="text-sm font-black text-slate-500 uppercase tracking-widest group-hover:text-blue-600">Tambah Bisnis</span>
-            </button>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
