@@ -1,103 +1,113 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
-// Inisialisasi Supabase Admin (Gunakan Service Role Key agar bebas akses)
-const supabase = createClient(
+const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
 export async function POST(req: Request) {
   try {
-    const data = await req.json()
-    const orderId = data.id.toString()
+    const { searchParams } = new URL(req.url)
+    const businessId = searchParams.get('bid')
 
-    console.log(`Processing Webhook for Order #${orderId}`)
+    if (!businessId) return NextResponse.json({ error: 'Missing Business ID' }, { status: 400 })
 
-    // 1. EKSTRAKSI BIAYA & DISKON (KRUSIAL)
-    // Hitung Biaya Lain-lain (COD / Admin Fee) dari fee_lines
-    const other_fees = data.fee_lines 
-      ? data.fee_lines.reduce((acc: number, fee: any) => acc + parseFloat(fee.total || 0), 0) 
-      : 0
-
-    // Hitung Subtotal (Harga barang sebelum diskon/ongkir)
-    const subtotal = data.line_items 
-      ? data.line_items.reduce((acc: number, item: any) => acc + parseFloat(item.subtotal || 0), 0) 
-      : 0
-
-    const discount_amount = parseFloat(data.discount_total || 0)
-    const shipping_cost = parseFloat(data.shipping_total || 0)
-    const grand_total = parseFloat(data.total || 0)
-    const total_qty = data.line_items 
-      ? data.line_items.reduce((acc: number, item: any) => acc + (item.quantity || 0), 0) 
-      : 0
-
-    // 2. MAPPING DATA UNTUK TABEL ORDERS
-    const orderPayload = {
-      order_number: data.number,
-      business_id: data.meta_data?.find((m: any) => m.key === '_business_id')?.value || '1284a75a-096d-4766-9e6b-0720be670be2', // Ganti dengan ID bisnis Toko Alamanda Mas
-      status: data.status,
-      order_date: data.date_created,
-      subtotal: subtotal,
-      discount_amount: discount_amount,
-      shipping_cost: shipping_cost,
-      other_fees: other_fees, // Biaya COD/Admin masuk sini
-      grand_total: grand_total,
-      total_qty: total_qty,
-      payment_method: data.payment_method_title || data.payment_method,
-      items_json: data.line_items,
-      raw_source_data: data, // Untuk backup alamat detail
-      customer_phone: data.billing?.phone?.replace(/\D/g, '') || ''
+    let woo;
+    const contentType = req.headers.get('content-type') || ''
+    
+    if (contentType.includes('application/json')) {
+      woo = await req.json()
+    } else {
+      const text = await req.text()
+      if (text.includes('webhook_id')) return NextResponse.json({ message: 'Ping received' }, { status: 200 })
+      return NextResponse.json({ error: 'Format harus JSON' }, { status: 400 })
     }
 
-    // 3. UPSERT KE TABEL ORDERS
-    const { data: upsertedOrder, error: orderError } = await supabase
-      .from('orders')
-      .upsert(orderPayload, { onConflict: 'order_number' })
-      .select()
+    if (!woo.id) return NextResponse.json({ message: 'Not an order data' }, { status: 200 })
+
+    const toNum = (val: any) => {
+      const parsed = parseFloat(val);
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
+    // --- LOGIKA PEMBERSIHAN NOMOR TELEPON ---
+    let rawPhone = woo.billing?.phone || '0';
+    let cleanPhone = rawPhone.replace(/\D/g, ''); 
+    if (cleanPhone.startsWith('0')) {
+      cleanPhone = '62' + cleanPhone.substring(1);
+    } else if (cleanPhone.startsWith('8')) {
+      cleanPhone = '62' + cleanPhone;
+    }
+    const billingPhone = cleanPhone;
+
+    const fullName = `${woo.billing?.first_name || ''} ${woo.billing?.last_name || ''}`.trim() || 'No Name';
+
+    // 1. UPSERT CUSTOMER
+    const { data: customer, error: custError } = await supabaseAdmin
+      .from('customers')
+      .upsert({ 
+        business_id: businessId,
+        phone: billingPhone,
+        name: fullName,
+        email: woo.billing?.email || '',
+        metadata: { 
+          address: woo.billing?.address_1, 
+          city: woo.billing?.city,
+          country: woo.billing?.country,
+          raw_phone_origin: rawPhone 
+        }
+      }, { onConflict: 'business_id, phone' })
+      .select('id')
       .single()
 
-    if (orderError) throw orderError
+    if (custError) throw new Error(`Customer Error: ${custError.message}`);
 
-    // 4. UPDATE / INSERT KE CUSTOMER_METRICS (LTV & Data Pelanggan)
-    if (orderPayload.customer_phone) {
-      const { data: existingCust } = await supabase
-        .from('customer_metrics')
-        .select('id, total_spend, total_orders')
-        .eq('phone', orderPayload.customer_phone)
-        .single()
+    // --- START: UPDATE LOGIKA BIAYA-BIAYA (FIXED) ---
+    
+    // Hitung Other Fees dari fee_lines (Tempat Biaya COD / Admin Fee)
+    const other_fees = woo.fee_lines 
+      ? woo.fee_lines.reduce((acc: number, fee: any) => acc + toNum(fee.total), 0) 
+      : 0;
 
-      if (existingCust) {
-        // Update LTV jika order statusnya 'completed'
-        const isCompleted = data.status === 'completed'
-        await supabase
-          .from('customer_metrics')
-          .update({
-            name: `${data.billing?.first_name} ${data.billing?.last_name}`.trim(),
-            total_spend: isCompleted ? (existingCust.total_spend + grand_total) : existingCust.total_spend,
-            total_orders: existingCust.total_orders + 1,
-            last_order_date: new Date()
-          })
-          .eq('phone', orderPayload.customer_phone)
-      } else {
-        // Insert pelanggan baru
-        await supabase
-          .from('customer_metrics')
-          .insert({
-            phone: orderPayload.customer_phone,
-            name: `${data.billing?.first_name} ${data.billing?.last_name}`.trim(),
-            total_spend: data.status === 'completed' ? grand_total : 0,
-            total_orders: 1,
-            last_order_date: new Date(),
-            business_id: orderPayload.business_id
-          })
-      }
-    }
+    // Hitung Subtotal asli dari akumulasi harga produk (sebelum diskon & ongkir)
+    const calculatedSubtotal = woo.line_items
+      ? woo.line_items.reduce((acc: number, item: any) => acc + toNum(item.subtotal), 0)
+      : 0;
 
-    return NextResponse.json({ message: 'Webhook Processed Successfully', id: orderId }, { status: 200 })
+    // --- END: UPDATE LOGIKA BIAYA-BIAYA ---
+
+    const { error: orderError } = await supabaseAdmin
+      .from('orders')
+      .upsert({
+        business_id: businessId,
+        customer_id: customer.id,
+        external_id: woo.id.toString(),
+        source_platform: 'WooCommerce',
+        order_number: woo.number,
+        order_date: woo.date_created,
+        status: woo.status,
+        total_qty: woo.line_items?.reduce((acc: number, item: any) => acc + (toNum(item.quantity)), 0) || 0,
+        
+        // Mapping Biaya yang sudah diperbaiki
+        subtotal: calculatedSubtotal,
+        discount_amount: toNum(woo.discount_total),
+        shipping_cost: toNum(woo.shipping_total),
+        other_fees: other_fees, // Sekarang mengambil data COD/Admin dari fee_lines
+        grand_total: toNum(woo.total), // Nilai akhir dari WooCommerce (sudah termasuk semua)
+        
+        payment_method: woo.payment_method_title || 'Manual',
+        items_json: woo.line_items || [],
+        raw_source_data: woo,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'source_platform, external_id' })
+
+    if (orderError) throw new Error(`Order Error: ${orderError.message}`);
+
+    return NextResponse.json({ success: true, phone: billingPhone }, { status: 200 })
 
   } catch (err: any) {
-    console.error('Webhook Error:', err.message)
+    if (err.message.includes("webhook_id")) return NextResponse.json({ ok: true });
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
