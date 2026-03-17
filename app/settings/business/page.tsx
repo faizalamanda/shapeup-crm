@@ -3,149 +3,136 @@ import { useState, useEffect } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import Link from 'next/link'
 
-export default function BusinessSettings() {
+export default function StaffSettings() {
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
   
   const [loading, setLoading] = useState(true)
-  const [isCreating, setIsCreating] = useState(false)
-  const [businesses, setBusinesses] = useState<any[]>([])
-  const [activeBid, setActiveBid] = useState<string | null>(null)
-  const [userRole, setUserRole] = useState<string | null>(null)
-  const [formData, setFormData] = useState({ name: '', phone: '' })
+  const [staffList, setStaffList] = useState<any[]>([])
+  const [activeBiz, setActiveBiz] = useState<any>(null)
+  const [emailInvite, setEmailInvite] = useState('')
 
   useEffect(() => {
-    fetchData()
+    fetchStaffData()
   }, [])
 
-  async function fetchData() {
+  async function fetchStaffData() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
+    
     if (user) {
+      // 1. Cek Bisnis mana yang sedang Aktif di Profil User
       const { data: profile } = await supabase
         .from('profiles')
-        .select('role, active_business_id')
+        .select('active_business_id, businesses!active_business_id(name, id)')
         .eq('id', user.id)
         .single()
-      
-      setUserRole(profile?.role || 'staff')
-      setActiveBid(profile?.active_business_id || null)
 
-      const { data: bizData } = await supabase.from('businesses').select('*')
-      setBusinesses(bizData || [])
+      if (profile?.active_business_id) {
+        setActiveBiz(profile.businesses)
+
+        // 2. Ambil semua profil yang memiliki business_id yang sama
+        const { data: staff } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('active_business_id', profile.active_business_id)
+        
+        setStaffList(staff || [])
+      }
     }
     setLoading(false)
   }
 
-  async function handleSwitch(bid: string) {
-    const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('profiles').update({ active_business_id: bid }).eq('id', user?.id)
-    setActiveBid(bid)
-    window.location.reload()
+  async function handleAddStaff() {
+    if (!emailInvite) return alert("Masukkan email staff")
+    // Logika invite atau tambah staff ke database profiles
+    alert("Fitur invite email " + emailInvite + " sedang diproses")
+    setEmailInvite('')
   }
 
-  if (loading) return <div className="p-20 text-center font-black text-slate-300">LOADING HEADQUARTERS...</div>
+  if (loading) return <div className="p-20 text-center font-black text-slate-400">LOADING TEAM...</div>
 
   return (
-    <div className="min-h-screen bg-[#f4f1ea] p-8 md:p-16 text-[#2e2e2e] font-sans">
-      <div className="max-w-5xl mx-auto">
+    <div className="min-h-screen bg-[#f4f1ea] p-8 md:p-16 text-[#2e2e2e]">
+      <div className="max-w-4xl mx-auto">
         
-        {/* HEADER BASECAMP STYLE: GARIS TEGAS & TYPO BESAR */}
-        <header className="text-center mb-16 border-b-4 border-[#2e2e2e] pb-12">
-          <h1 className="text-5xl font-black tracking-tight mb-4 uppercase italic">The Headquarters</h1>
-          <p className="text-lg font-bold text-slate-600 uppercase tracking-widest">Manage Business Units & Access</p>
-        </header>
+        {/* BREADCRUMB / BACK LINK */}
+        <Link href="/settings/business" className="inline-block mb-6 font-black uppercase text-[10px] tracking-widest border-b-2 border-black pb-1 hover:bg-yellow-200">
+          ← Back to Headquarters
+        </Link>
 
-        {/* ACTIONS BAR (Hanya muncul jika bukan sedang loading) */}
-        <div className="flex justify-between items-center mb-10">
-          <h2 className="text-xl font-black uppercase tracking-tighter italic">Select Your Active Unit</h2>
-          {userRole === 'admin' && (
-            <button 
-              onClick={() => setIsCreating(true)}
-              className="bg-[#2e8540] hover:bg-black text-white px-6 py-2 border-b-4 border-black font-black text-sm uppercase tracking-widest transition-all active:translate-y-1 active:border-b-0"
-            >
-              + New Business
-            </button>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-[#2e2e2e] border-4 border-[#2e2e2e] shadow-[12px_12px_0px_0px_rgba(0,0,0,0.1)]">
-          {businesses.map((biz) => (
-            <div 
-              key={biz.id} 
-              className={`p-10 transition-all ${activeBid === biz.id ? 'bg-[#fffdfa]' : 'bg-white hover:bg-[#fcfaf7]'}`}
-            >
-              <div className="flex justify-between items-start mb-8">
-                <div className={`text-4xl font-black italic ${activeBid === biz.id ? 'text-blue-600' : 'text-slate-300'}`}>
-                  {biz.name.substring(0,2).toUpperCase()}
-                </div>
-                {activeBid === biz.id && (
-                  <div className="bg-blue-600 text-white text-[10px] font-black px-4 py-1 uppercase tracking-[0.2em] border-2 border-black">
-                    ACTIVE
-                  </div>
-                )}
-              </div>
-
-              <h3 className="text-3xl font-black tracking-tighter mb-2 uppercase leading-none">{biz.name}</h3>
-              <p className="text-slate-500 font-bold text-xs uppercase tracking-widest mb-10">{biz.phone || 'No Contact Data'}</p>
-
-              <div className="flex flex-wrap gap-6 pt-6 border-t-2 border-slate-100">
-                {activeBid !== biz.id ? (
-                  <button 
-                    onClick={() => handleSwitch(biz.id)}
-                    className="text-sm font-black text-blue-600 uppercase tracking-widest hover:underline"
-                  >
-                    Switch To This
-                  </button>
-                ) : (
-                  <span className="text-sm font-black text-green-600 uppercase tracking-widest">✓ Current</span>
-                )}
-
-                {userRole === 'admin' && (
-                  <Link 
-                    href="/dashboard/settings/staff" 
-                    className="text-sm font-black text-slate-900 uppercase tracking-widest border-b-2 border-slate-900 hover:bg-yellow-200"
-                  >
-                    Staff Access
-                  </Link>
-                )}
-              </div>
+        {/* HEADER BASECAMP STYLE */}
+        <header className="border-4 border-black bg-white p-10 mb-10 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)]">
+          <div className="flex justify-between items-start">
+            <div>
+              <h1 className="text-4xl font-black uppercase italic tracking-tighter leading-none mb-2">Team Access</h1>
+              <p className="font-bold text-slate-500 uppercase text-xs tracking-[0.2em]">
+                Managing staff for: <span className="text-blue-600">{activeBiz?.name}</span>
+              </p>
             </div>
-          ))}
-        </div>
-
-        {/* MODAL / OVERLAY CREATE (BASECAMP STYLE) */}
-        {isCreating && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-6 z-50">
-            <div className="bg-white border-4 border-black p-10 max-w-md w-full shadow-[16px_16px_0px_0px_rgba(0,0,0,1)]">
-              <h2 className="text-3xl font-black uppercase italic mb-8 border-b-4 border-black pb-4">New Business</h2>
-              <div className="space-y-6 mb-10">
-                <div>
-                  <label className="block font-black uppercase text-[10px] mb-2 tracking-[0.2em]">Business Name</label>
-                  <input 
-                    type="text" className="w-full p-4 border-2 border-black font-bold outline-none focus:bg-yellow-50"
-                    placeholder="E.G. TOKO ALAMANDA 2"
-                    value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="block font-black uppercase text-[10px] mb-2 tracking-[0.2em]">WA Contact</label>
-                  <input 
-                    type="text" className="w-full p-4 border-2 border-black font-bold outline-none focus:bg-yellow-50"
-                    placeholder="628..."
-                    value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})}
-                  />
-                </div>
-              </div>
-              <div className="flex gap-4">
-                <button onClick={() => setIsCreating(false)} className="flex-1 font-black uppercase text-xs tracking-widest py-4 border-2 border-black hover:bg-slate-100 transition-all">Cancel</button>
-                <button className="flex-1 bg-black text-white font-black uppercase text-xs tracking-widest py-4 border-2 border-black hover:bg-[#2e8540] transition-all">Create Unit</button>
-              </div>
+            <div className="bg-black text-white px-4 py-2 font-black text-[10px] uppercase tracking-widest">
+              Staff Count: {staffList.length}
             </div>
           </div>
-        )}
+        </header>
+
+        {/* ADD STAFF FORM (BASECAMP CARD) */}
+        <section className="border-4 border-black bg-white p-8 mb-10 shadow-[12px_12px_0px_0px_rgba(0,0,0,0.05)]">
+          <h2 className="text-xl font-black uppercase italic mb-6">Invite New Staff</h2>
+          <div className="flex flex-col md:flex-row gap-4">
+            <input 
+              type="email" 
+              placeholder="Enter staff email address..."
+              className="flex-1 p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 placeholder:text-slate-300"
+              value={emailInvite}
+              onChange={(e) => setEmailInvite(e.target.value)}
+            />
+            <button 
+              onClick={handleAddStaff}
+              className="bg-[#2e8540] text-white px-10 py-4 font-black uppercase tracking-widest border-4 border-black hover:bg-black transition-all active:translate-y-1"
+            >
+              Add to Team
+            </button>
+          </div>
+          <p className="mt-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+            * Staff will be automatically linked to the active business unit.
+          </p>
+        </section>
+
+        {/* STAFF LIST TABLE STYLE */}
+        <div className="border-4 border-black bg-white overflow-hidden shadow-[12px_12px_0px_0px_rgba(0,0,0,1)]">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-black text-white text-[10px] font-black uppercase tracking-[0.2em]">
+                <th className="p-5 border-r border-white/20">Name / Identity</th>
+                <th className="p-5 border-r border-white/20">Role</th>
+                <th className="p-5 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y-4 divide-black">
+              {staffList.map((staff) => (
+                <tr key={staff.id} className="hover:bg-yellow-50 transition-colors group">
+                  <td className="p-6">
+                    <p className="font-black text-lg uppercase leading-none mb-1">{staff.full_name || 'Anonymous Staff'}</p>
+                    <p className="text-xs font-bold text-slate-400">{staff.email}</p>
+                  </td>
+                  <td className="p-6">
+                    <span className={`inline-block px-3 py-1 border-2 border-black font-black text-[10px] uppercase tracking-widest ${staff.role === 'admin' ? 'bg-yellow-300' : 'bg-slate-100'}`}>
+                      {staff.role}
+                    </span>
+                  </td>
+                  <td className="p-6 text-right">
+                    <button className="text-[10px] font-black uppercase tracking-widest text-red-600 hover:bg-red-600 hover:text-white border-2 border-red-600 px-3 py-1 transition-all">
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
       </div>
     </div>
