@@ -15,6 +15,7 @@ export default function BusinessSettings() {
   const [activeBid, setActiveBid] = useState<string | null>(null)
   const [userRole, setUserRole] = useState<string | null>(null)
   const [formData, setFormData] = useState({ name: '', phone: '' })
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     fetchData()
@@ -46,14 +47,48 @@ export default function BusinessSettings() {
     window.location.reload()
   }
 
+  // --- PERBAIKAN FITUR CREATE ---
   async function handleCreate() {
-    if (!formData.name) return alert("Nama bisnis wajib diisi")
-    // Logika simpan bisnis baru ke database
-    const { data, error } = await supabase.from('businesses').insert([formData]).select()
-    if (!error) {
+    if (!formData.name) return alert("Nama bisnis wajib diisi!")
+    setSubmitting(true)
+    
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error("Sesi habis, silakan login ulang.")
+
+      // 1. Insert Bisnis Baru
+      // Pastikan kolom di tabel 'businesses' sesuai (name, phone)
+      const { data: newBiz, error: bizError } = await supabase
+        .from('businesses')
+        .insert([{ 
+          name: formData.name, 
+          phone: formData.phone 
+        }])
+        .select()
+        .single()
+
+      if (bizError) throw bizError
+
+      // 2. Jika ini bisnis pertama, atau user ingin langsung aktifkan
+      // Kita bisa otomatis set ini jadi active_business_id di profile
+      if (!activeBid) {
+        await supabase
+          .from('profiles')
+          .update({ active_business_id: newBiz.id })
+          .eq('id', user.id)
+      }
+
+      // 3. Reset & Refresh
       setIsCreating(false)
       setFormData({ name: '', phone: '' })
-      fetchData()
+      fetchData() // Ambil data terbaru
+      alert("Bisnis baru berhasil dibuat!")
+
+    } catch (err: any) {
+      console.error("Create Error:", err.message)
+      alert("Gagal membuat bisnis: " + err.message)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -63,13 +98,11 @@ export default function BusinessSettings() {
     <div className="min-h-screen bg-[#f4f1ea] p-8 md:p-16 text-[#2e2e2e]">
       <div className="max-w-5xl mx-auto">
         
-        {/* HEADER */}
         <header className="text-center mb-16 border-b-4 border-black pb-12">
-          <h1 className="text-5xl font-black tracking-tight mb-4 uppercase italic">The Headquarters</h1>
+          <h1 className="text-5xl font-black tracking-tight mb-4 uppercase italic leading-none">The Headquarters</h1>
           <p className="text-lg font-bold text-slate-600 uppercase tracking-widest">Manage Business Units & Access</p>
         </header>
 
-        {/* GRID UNIT BISNIS */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-black border-4 border-black shadow-[12px_12px_0px_0px_rgba(0,0,0,0.1)]">
           {businesses.map((biz) => (
             <div 
@@ -92,33 +125,21 @@ export default function BusinessSettings() {
 
               <div className="flex flex-wrap gap-6 pt-6 border-t-2 border-slate-100 items-center">
                 {activeBid !== biz.id ? (
-                  <button 
-                    onClick={() => handleSwitch(biz.id)}
-                    className="text-sm font-black text-blue-600 uppercase tracking-widest hover:underline"
-                  >
-                    Switch To This
-                  </button>
+                  <button onClick={() => handleSwitch(biz.id)} className="text-sm font-black text-blue-600 uppercase tracking-widest hover:underline">Switch To This</button>
                 ) : (
                   <span className="text-sm font-black text-green-600 uppercase tracking-widest">✓ Current</span>
                 )}
-
                 {userRole === 'admin' && (
-                  <Link 
-                    href="/settings/staff" 
-                    className="text-sm font-black text-slate-900 uppercase tracking-widest border-b-2 border-slate-900 hover:bg-yellow-200 transition-colors"
-                  >
-                    Manage Staff
-                  </Link>
+                  <Link href="/settings/staff" className="text-sm font-black text-slate-900 uppercase tracking-widest border-b-2 border-slate-900 hover:bg-yellow-200">Manage Staff</Link>
                 )}
               </div>
             </div>
           ))}
 
-          {/* KARTU TAMBAH BISNIS (KHUSUS ADMIN) */}
           {userRole === 'admin' && (
             <button 
               onClick={() => setIsCreating(true)}
-              className="bg-white p-10 flex flex-col items-center justify-center hover:bg-yellow-50 transition-all group"
+              className="bg-white p-10 flex flex-col items-center justify-center hover:bg-yellow-50 transition-all group min-h-[300px]"
             >
               <div className="w-16 h-16 border-4 border-dashed border-slate-300 flex items-center justify-center mb-4 group-hover:border-black group-hover:bg-black group-hover:text-white transition-all">
                 <span className="text-3xl font-black">+</span>
@@ -128,7 +149,7 @@ export default function BusinessSettings() {
           )}
         </div>
 
-        {/* MODAL CREATE BUSINESS */}
+        {/* MODAL CREATE (BASECAMP STYLE) */}
         {isCreating && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-6 z-50">
             <div className="bg-white border-4 border-black p-10 max-w-md w-full shadow-[16px_16px_0px_0px_rgba(0,0,0,1)]">
@@ -152,8 +173,20 @@ export default function BusinessSettings() {
                 </div>
               </div>
               <div className="flex gap-4">
-                <button onClick={() => setIsCreating(false)} className="flex-1 font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-slate-100">Cancel</button>
-                <button onClick={handleCreate} className="flex-1 bg-black text-white font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-[#2e8540]">Create</button>
+                <button 
+                  disabled={submitting}
+                  onClick={() => setIsCreating(false)} 
+                  className="flex-1 font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-slate-100 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button 
+                  disabled={submitting}
+                  onClick={handleCreate} 
+                  className="flex-1 bg-black text-white font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-[#2e8540] disabled:bg-slate-400"
+                >
+                  {submitting ? 'CREATING...' : 'CREATE'}
+                </button>
               </div>
             </div>
           </div>
