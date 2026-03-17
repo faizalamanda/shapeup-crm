@@ -15,48 +15,54 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing Business ID' }, { status: 400 })
     }
 
-    // --- PROTEKSI JSON ---
+    // 1. PROTEKSI FORMAT DATA (JSON vs FORM-URLENCODED)
     let woo;
     const contentType = req.headers.get('content-type') || ''
     
     if (contentType.includes('application/json')) {
       woo = await req.json()
     } else {
-      // Jika WooCommerce mengirim format teks/form, kita ambil teksnya saja
       const text = await req.text()
-      console.log('Terima kiriman non-JSON:', text)
-      
-      // Jika isinya cuma webhook_id (Ping test), kita kasih respon OK biar Woo senang
+      // Jika isinya cuma ping test webhook_id, balas 200 OK biar Woo senang
       if (text.includes('webhook_id')) {
         return NextResponse.json({ message: 'Ping received' }, { status: 200 })
       }
       return NextResponse.json({ error: 'Format harus JSON' }, { status: 400 })
     }
 
-    // --- LANJUT LOGIKA UPSERT SEPERTI BIASA ---
-    // Pastikan ini adalah data order (punya id)
+    // 2. VALIDASI DATA ORDER
     if (!woo.id) {
       return NextResponse.json({ message: 'Not an order data' }, { status: 200 })
     }
 
+    // Helper: Mengubah string ke number secara aman
+    const toNum = (val: any) => {
+      const parsed = parseFloat(val);
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
     const billingPhone = woo.billing?.phone || '0';
     const fullName = `${woo.billing?.first_name || ''} ${woo.billing?.last_name || ''}`.trim() || 'No Name';
 
-    // 1. UPSERT CUSTOMER
+    // 3. UPSERT CUSTOMER (Update data terbaru jika nomor WA sama)
     const { data: customer, error: custError } = await supabaseAdmin
       .from('customers')
       .upsert({ 
         business_id: businessId,
         phone: billingPhone,
         name: fullName,
-        email: woo.billing?.email || ''
+        email: woo.billing?.email || '',
+        metadata: { 
+          address: woo.billing?.address_1, 
+          city: woo.billing?.city 
+        }
       }, { onConflict: 'business_id, phone' })
       .select('id')
       .single()
 
-    if (custError) throw custError
+    if (custError) throw new Error(`Customer Error: ${custError.message}`);
 
-    // 2. UPSERT ORDER
+    // 4. UPSERT ORDER (Mirroring data lengkap agar tidak nol)
     const { error: orderError } = await supabaseAdmin
       .from('orders')
       .upsert({
@@ -67,19 +73,41 @@ export async function POST(req: Request) {
         order_number: woo.number,
         order_date: woo.date_created,
         status: woo.status,
-        grand_total: parseFloat(woo.total || 0),
-        items_json: woo.line_items || [],
-        raw_source_data: woo,
+
+        // Data Finansial dengan Safe Parsing
+        total_qty: woo.line_items?.reduce((acc: number, item: any) => acc + (toNum(item.quantity)), 0) || 0,
+        grand_total: toNum(woo.total),
+        shipping_cost: toNum(woo.shipping_total),
+        discount_amount: toNum(woo.discount_total),
+        other_fees: toNum(woo.total_tax),
+        
+        // Kalkulasi Subtotal: Total - Ongkir + Diskon (sebelum dipotong diskon biasanya)
+        // Atau sesuai logika Mas, yang penting data tidak 0
+        subtotal: toNum(woo.total) - toNum(woo.shipping_total) + toNum(woo.discount_total),
+
+        payment_method: woo.payment_method_title || 'Manual',
+        
+        // Simpan Detail Produk
+        items_json: woo.line_items?.map((item: any) => ({
+          sku: item.sku || '',
+          name: item.name || '',
+          qty: toNum(item.quantity),
+          price: toNum(item.price),
+          total: toNum(item.total)
+        })) || [],
+
+        raw_source_data: woo, // Cadangan data asli jika butuh debug
         updated_at: new Date().toISOString()
       }, { onConflict: 'source_platform, external_id' })
 
-    if (orderError) throw orderError
+    if (orderError) throw new Error(`Order Error: ${orderError.message}`);
 
-    return NextResponse.json({ success: true }, { status: 200 })
+    return NextResponse.json({ success: true, order_id: woo.id }, { status: 200 })
 
   } catch (err: any) {
     console.error('Webhook Error Trace:', err.message)
-    // Tetap return 200 untuk 'webhook_id' agar WooCommerce tidak menonaktifkan webhook secara otomatis
+    
+    // Fallback: Jika error karena format webhook_id di tengah jalan, tetap kirim 200
     if (err.message.includes("webhook_id")) return NextResponse.json({ ok: true });
     
     return NextResponse.json({ error: err.message }, { status: 500 })
