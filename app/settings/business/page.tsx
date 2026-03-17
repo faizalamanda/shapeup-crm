@@ -3,135 +3,129 @@ import { useState, useEffect } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import Link from 'next/link'
 
-export default function StaffSettings() {
+export default function BusinessSettings() {
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
   
   const [loading, setLoading] = useState(true)
-  const [staffList, setStaffList] = useState<any[]>([])
-  const [activeBiz, setActiveBiz] = useState<any>(null)
-  const [emailInvite, setEmailInvite] = useState('')
+  const [isCreating, setIsCreating] = useState(false)
+  const [businesses, setBusinesses] = useState<any[]>([])
+  const [activeBid, setActiveBid] = useState<string | null>(null)
+  const [userRole, setUserRole] = useState<string | null>(null)
+  const [formData, setFormData] = useState({ name: '', phone: '' })
 
   useEffect(() => {
-    fetchStaffData()
+    fetchData()
   }, [])
 
-  async function fetchStaffData() {
+  async function fetchData() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
-    
     if (user) {
-      // 1. Cek Bisnis mana yang sedang Aktif di Profil User
+      // 1. Ambil Profil (Role & Active ID)
       const { data: profile } = await supabase
         .from('profiles')
-        .select('active_business_id, businesses!active_business_id(name, id)')
+        .select('role, active_business_id')
         .eq('id', user.id)
         .single()
+      
+      setUserRole(profile?.role || 'staff')
+      setActiveBid(profile?.active_business_id || null)
 
-      if (profile?.active_business_id) {
-        setActiveBiz(profile.businesses)
-
-        // 2. Ambil semua profil yang memiliki business_id yang sama
-        const { data: staff } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('active_business_id', profile.active_business_id)
-        
-        setStaffList(staff || [])
-      }
+      // 2. Ambil Semua Bisnis
+      const { data: bizData } = await supabase.from('businesses').select('*')
+      setBusinesses(bizData || [])
     }
     setLoading(false)
   }
 
-  async function handleAddStaff() {
-    if (!emailInvite) return alert("Masukkan email staff")
-    // Logika invite atau tambah staff ke database profiles
-    alert("Fitur invite email " + emailInvite + " sedang diproses")
-    setEmailInvite('')
+  async function handleSwitch(bid: string) {
+    const { data: { user } } = await supabase.auth.getUser()
+    await supabase.from('profiles').update({ active_business_id: bid }).eq('id', user?.id)
+    setActiveBid(bid)
+    // Supaya session/state di seluruh aplikasi terupdate dengan bisnis baru
+    window.location.reload()
   }
 
-  if (loading) return <div className="p-20 text-center font-black text-slate-400">LOADING TEAM...</div>
+  if (loading) return <div className="p-20 text-center font-black text-[#2e2e2e] uppercase italic">Loading Headquarters...</div>
 
   return (
     <div className="min-h-screen bg-[#f4f1ea] p-8 md:p-16 text-[#2e2e2e]">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         
-        {/* BREADCRUMB / BACK LINK */}
-        <Link href="/settings/business" className="inline-block mb-6 font-black uppercase text-[10px] tracking-widest border-b-2 border-black pb-1 hover:bg-yellow-200">
-          ← Back to Headquarters
-        </Link>
-
         {/* HEADER BASECAMP STYLE */}
-        <header className="border-4 border-black bg-white p-10 mb-10 shadow-[12px_12px_0px_0px_rgba(0,0,0,1)]">
-          <div className="flex justify-between items-start">
-            <div>
-              <h1 className="text-4xl font-black uppercase italic tracking-tighter leading-none mb-2">Team Access</h1>
-              <p className="font-bold text-slate-500 uppercase text-xs tracking-[0.2em]">
-                Managing staff for: <span className="text-blue-600">{activeBiz?.name}</span>
-              </p>
-            </div>
-            <div className="bg-black text-white px-4 py-2 font-black text-[10px] uppercase tracking-widest">
-              Staff Count: {staffList.length}
-            </div>
-          </div>
+        <header className="text-center mb-16 border-b-4 border-[#2e2e2e] pb-12">
+          <h1 className="text-5xl font-black tracking-tight mb-4 uppercase italic">The Headquarters</h1>
+          <p className="text-lg font-bold text-slate-600 uppercase tracking-widest">Manage Business Units & Access</p>
         </header>
 
-        {/* ADD STAFF FORM (BASECAMP CARD) */}
-        <section className="border-4 border-black bg-white p-8 mb-10 shadow-[12px_12px_0px_0px_rgba(0,0,0,0.05)]">
-          <h2 className="text-xl font-black uppercase italic mb-6">Invite New Staff</h2>
-          <div className="flex flex-col md:flex-row gap-4">
-            <input 
-              type="email" 
-              placeholder="Enter staff email address..."
-              className="flex-1 p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 placeholder:text-slate-300"
-              value={emailInvite}
-              onChange={(e) => setEmailInvite(e.target.value)}
-            />
-            <button 
-              onClick={handleAddStaff}
-              className="bg-[#2e8540] text-white px-10 py-4 font-black uppercase tracking-widest border-4 border-black hover:bg-black transition-all active:translate-y-1"
+        {/* GRID KOTAK-KOTAK TEGAS */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-[#2e2e2e] border-4 border-[#2e2e2e] shadow-[12px_12px_0px_0px_rgba(0,0,0,0.1)]">
+          {businesses.map((biz) => (
+            <div 
+              key={biz.id} 
+              className={`p-10 transition-all ${activeBid === biz.id ? 'bg-[#fffdfa]' : 'bg-white hover:bg-[#fcfaf7]'}`}
             >
-              Add to Team
-            </button>
-          </div>
-          <p className="mt-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-            * Staff will be automatically linked to the active business unit.
-          </p>
-        </section>
+              <div className="flex justify-between items-start mb-8">
+                <div className={`text-4xl font-black italic ${activeBid === biz.id ? 'text-blue-600' : 'text-slate-300'}`}>
+                  {biz.name.substring(0,2).toUpperCase()}
+                </div>
+                {activeBid === biz.id && (
+                  <div className="bg-blue-600 text-white text-[10px] font-black px-4 py-1 uppercase tracking-[0.2em] border-2 border-black">
+                    ACTIVE NOW
+                  </div>
+                )}
+              </div>
 
-        {/* STAFF LIST TABLE STYLE */}
-        <div className="border-4 border-black bg-white overflow-hidden shadow-[12px_12px_0px_0px_rgba(0,0,0,1)]">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-black text-white text-[10px] font-black uppercase tracking-[0.2em]">
-                <th className="p-5 border-r border-white/20">Name / Identity</th>
-                <th className="p-5 border-r border-white/20">Role</th>
-                <th className="p-5 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y-4 divide-black">
-              {staffList.map((staff) => (
-                <tr key={staff.id} className="hover:bg-yellow-50 transition-colors group">
-                  <td className="p-6">
-                    <p className="font-black text-lg uppercase leading-none mb-1">{staff.full_name || 'Anonymous Staff'}</p>
-                    <p className="text-xs font-bold text-slate-400">{staff.email}</p>
-                  </td>
-                  <td className="p-6">
-                    <span className={`inline-block px-3 py-1 border-2 border-black font-black text-[10px] uppercase tracking-widest ${staff.role === 'admin' ? 'bg-yellow-300' : 'bg-slate-100'}`}>
-                      {staff.role}
-                    </span>
-                  </td>
-                  <td className="p-6 text-right">
-                    <button className="text-[10px] font-black uppercase tracking-widest text-red-600 hover:bg-red-600 hover:text-white border-2 border-red-600 px-3 py-1 transition-all">
-                      Remove
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              <h3 className="text-3xl font-black tracking-tighter mb-2 uppercase leading-none">{biz.name}</h3>
+              <p className="text-slate-500 font-bold text-xs uppercase tracking-widest mb-10">{biz.phone || 'No Contact Data'}</p>
+
+              <div className="flex flex-wrap gap-6 pt-6 border-t-2 border-slate-100 items-center">
+                {activeBid !== biz.id ? (
+                  <button 
+                    onClick={() => handleSwitch(biz.id)}
+                    className="text-sm font-black text-blue-600 uppercase tracking-widest hover:underline"
+                  >
+                    Switch To This
+                  </button>
+                ) : (
+                  <span className="text-sm font-black text-green-600 uppercase tracking-widest">✓ Current Business</span>
+                )}
+
+                {/* DOUBLE CHECK LINK: SESUAI TARGET shapeup-crm.vercel.app/settings/staff */}
+                {userRole === 'admin' && (
+                  <Link 
+                    href="/settings/staff" 
+                    className="text-sm font-black text-slate-900 uppercase tracking-widest border-b-2 border-slate-900 hover:bg-yellow-200 transition-colors"
+                  >
+                    Manage Staff
+                  </Link>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* ADD BUSINESS SLOT (ADMIN ONLY) */}
+          {userRole === 'admin' && (
+            <button 
+              onClick={() => setIsCreating(true)}
+              className="bg-white p-10 flex flex-col items-center justify-center hover:bg-[#fcfaf7] transition-all group border-t-4 border-[#2e2e2e] md:border-t-0"
+            >
+              <div className="w-16 h-16 border-4 border-dashed border-slate-300 rounded-full flex items-center justify-center mb-4 group-hover:border-black group-hover:bg-black group-hover:text-white transition-all">
+                <span className="text-3xl font-black">+</span>
+              </div>
+              <span className="text-xs font-black text-slate-400 uppercase tracking-widest group-hover:text-black">New Business Unit</span>
+            </button>
+          )}
+        </div>
+
+        {/* FOOTER INFO ROLE */}
+        <div className="mt-12 text-center">
+          <span className="inline-block border-2 border-black px-4 py-1 text-[10px] font-black uppercase tracking-widest bg-white">
+            Access Level: {userRole}
+          </span>
         </div>
 
       </div>
