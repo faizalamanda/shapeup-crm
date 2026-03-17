@@ -101,7 +101,7 @@ export default function BusinessSettings() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* KARTU BISNIS AKTIF */}
           <div className="bg-white border border-slate-200 rounded-[2rem] p-8 shadow-sm relative flex flex-col justify-between">
-             <div>
+            <div>
                 <div className="flex justify-between items-start mb-6">
                   <div className="w-14 h-14 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-2xl shadow-lg shadow-blue-100">
                     {business.name.charAt(0)}
@@ -109,11 +109,34 @@ export default function BusinessSettings() {
                   <span className="bg-green-100 text-green-600 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest">Active</span>
                 </div>
                 <h3 className="text-2xl font-black text-slate-800 tracking-tight">{business.name}</h3>
-                <p className="text-slate-500 font-medium mb-8">{business.phone || 'No Phone'}</p>
-             </div>
-             
-             {/* MENU MANAJEMEN TIM DI DALAM CARD */}
-             <div className="pt-6 border-t border-slate-50 flex items-center justify-between">
+                <p className="text-slate-500 font-medium mb-4">{business.phone || 'No Phone'}</p>
+
+                {/* TAMPILAN BUSINESS ID UNTUK INTEGRASI */}
+                <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 mb-8">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Business ID (Integrasi)</p>
+                  <div className="flex items-center gap-2">
+                    <code className="text-xs font-mono font-bold text-blue-600 break-all bg-white px-2 py-1 rounded border border-slate-200 flex-1">
+                      {business.id}
+                    </code>
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(business.id);
+                        alert("ID berhasil disalin!");
+                      }}
+                      className="p-2 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition-all"
+                      title="Salin ID"
+                    >
+                      📋
+                    </button>
+                  </div>
+                  <p className="text-[9px] text-slate-400 mt-2 leading-relaxed">
+                    Gunakan ID ini sebagai parameter <code className="text-blue-500">?bid={business.id.substring(0,4)}...</code> pada URL Webhook WooCommerce Anda.
+                  </p>
+                </div>
+            </div>
+            
+            {/* MENU MANAJEMEN TIM DI DALAM CARD */}
+            <div className="pt-6 border-t border-slate-50 flex items-center justify-between">
                 <div className="flex gap-4">
                   <button className="text-xs font-black text-slate-400 uppercase tracking-widest hover:text-blue-600 transition-colors">Edit</button>
                   {userRole === 'admin' && (
@@ -125,7 +148,7 @@ export default function BusinessSettings() {
                     </Link>
                   )}
                 </div>
-             </div>
+            </div>
           </div>
 
           {/* TOMBOL TAMBAH BISNIS (Hanya untuk Admin) */}
