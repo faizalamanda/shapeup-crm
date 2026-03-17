@@ -20,9 +20,10 @@ export default function OrderPage() {
 
   async function fetchOrders() {
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    
-    if (user) {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
       // 1. Ambil Bisnis Aktif
       const { data: profile } = await supabase
         .from('profiles')
@@ -38,12 +39,18 @@ export default function OrderPage() {
           .from('orders')
           .select('*')
           .eq('business_id', profile.active_business_id)
-          .order('order_date', { ascending: false })
+          .order('created_at', { ascending: false }) // Coba urutkan berdasarkan created_at
 
-        if (!error) setOrders(orderData || [])
+        if (error) throw error
+        
+        console.log("Data Order Masuk:", orderData) // Cek di console browser
+        setOrders(orderData || [])
       }
+    } catch (err) {
+      console.error("Gagal fetch orders:", err)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (
@@ -54,27 +61,31 @@ export default function OrderPage() {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight">Pesanan (Orders)</h1>
-              <span className="bg-blue-600 text-white text-[10px] px-3 py-1 rounded-full font-black uppercase">
-                📍 {activeBiz?.name || 'Loading...'}
-              </span>
+              {activeBiz && (
+                <span className="bg-blue-600 text-white text-[10px] px-3 py-1 rounded-full font-black uppercase shadow-lg shadow-blue-100">
+                  📍 {activeBiz.name}
+                </span>
+              )}
             </div>
-            <p className="text-slate-500 text-sm mt-1 font-medium">
-              Data transaksi real-time dari unit bisnis aktif.
+            <p className="text-slate-500 text-sm mt-1 font-medium italic">
+              Menampilkan transaksi real-time dari unit bisnis terpilih.
             </p>
           </div>
-          <button className="bg-[#2e8540] hover:bg-[#246632] text-white px-5 py-2 rounded font-bold text-sm shadow-sm transition-all">+ Buat Order Baru</button>
+          <button className="bg-[#2e8540] hover:bg-[#246632] text-white px-5 py-2 rounded font-bold text-sm shadow-sm transition-all border-b-4 border-black/20 active:border-b-0">+ Buat Order Baru</button>
         </header>
 
         {loading ? (
-          <div className="p-20 text-center font-bold text-slate-400 animate-pulse">MENYINKRONKAN PESANAN...</div>
+          <div className="p-20 text-center font-black text-slate-300 animate-pulse uppercase tracking-[0.3em]">
+            MENYINKRONKAN DATA...
+          </div>
         ) : (
           <>
             <OrderStats orders={orders} />
             {orders.length > 0 ? (
               <OrderTable orders={orders} />
             ) : (
-              <div className="p-20 text-center border-2 border-dashed border-slate-300 rounded text-slate-400 font-bold uppercase text-[10px] tracking-widest bg-white">
-                Belum ada pesanan masuk untuk unit ini.
+              <div className="p-20 text-center border-4 border-dashed border-slate-200 rounded-xl text-slate-400 font-bold uppercase text-[10px] tracking-widest bg-white">
+                Belum ada data order untuk unit bisnis ini.
               </div>
             )}
           </>
