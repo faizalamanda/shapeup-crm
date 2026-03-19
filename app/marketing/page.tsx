@@ -1,160 +1,126 @@
 "use client"
-import { useState } from 'react'
+import Link from 'next/link'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
-import { Input, TextArea } from '@/components/ui/Input'
 import { PageHeader } from '@/components/ui/PageHeader'
 
-export default function AdvancedScenarioPage() {
+// Data Dummy untuk Skenario
+const SCENARIOS = [
+  { 
+    id: 1, 
+    name: 'FOLLOW UP COD BELUM KONFIRMASI', 
+    trigger: 'PENDING_PAYMENT', 
+    timing: 'DELAY 15 MENIT',
+    status: 'ACTIVE',
+    sent: 124
+  },
+  { 
+    id: 2, 
+    name: 'NOTIFIKASI RESI PENGIRIMAN', 
+    trigger: 'SHIPPED', 
+    timing: 'IMMEDIATE',
+    status: 'ACTIVE',
+    sent: 890
+  },
+  { 
+    id: 3, 
+    name: 'RE-ORDER REMINDER (30 HARI)', 
+    trigger: 'COMPLETED', 
+    timing: 'DELAY 30 HARI',
+    status: 'PAUSED',
+    sent: 45
+  }
+]
+
+export default function MarketingPage() {
   return (
-    <div className="space-y-10">
+    <div className="space-y-8">
+      {/* HEADER DENGAN TOMBOL KE HALAMAN CREATE */}
       <PageHeader 
-        title="Create Advanced Scenario" 
-        description="Bangun alur otomatisasi marketing yang lebih presisi."
+        title="MARKETING AUTOMATION" 
+        description="Kelola semua skenario pesan otomatis Toko Alamanda di sini."
         action={
-          <div className="flex gap-3">
-            <Button variant="outline">Discard</Button>
-            <Button variant="primary">Save & Run Scenario</Button>
-          </div>
+          <Link href="/marketing/new">
+            <Button variant="primary" className="px-6 shadow-md shadow-blue-100">
+              + BUAT SKENARIO BARU
+            </Button>
+          </Link>
         }
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-        
-        {/* KOLOM KIRI: TRIGGER & SCHEDULING */}
-        <div className="space-y-8">
-          <section>
-            <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4">1. Trigger & Timing</h3>
-            <Card>
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-2">Main Event</label>
-                  <select className="w-full p-3 border border-gray-300 rounded shadow-sm font-bold text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500">
-                    <option>ORDER_CREATED</option>
-                    <option>ORDER_COMPLETED</option>
-                    <option>CUSTOMER_REORDER</option>
-                    <option>ABANDONED_CHECKOUT</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-2">Check Frequency</label>
-                  <select className="w-full p-3 border border-gray-300 rounded shadow-sm font-bold text-sm bg-white outline-none">
-                    <option>EVERY 15 MINUTES</option>
-                    <option>HOURLY</option>
-                    <option>DAILY AT SPECIFIC TIME</option>
-                    <option>WEEKLY / MONTHLY</option>
-                  </select>
-                </div>
-
-                <div className="p-4 bg-blue-50 rounded border border-blue-100">
-                  <label className="block text-xs font-bold text-blue-700 uppercase mb-3">Time Window Logic</label>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-bold">IF AGE</span>
-                    <select className="p-2 border border-gray-300 rounded font-bold text-xs bg-white">
-                      <option>{">"}</option>
-                      <option>{"<"}</option>
-                    </select>
-                    <input type="number" className="w-16 p-2 border border-gray-300 rounded font-bold text-xs" placeholder="3" />
-                    <span className="text-xs font-bold">HOURS</span>
-                  </div>
-                  <p className="text-[10px] text-blue-500 mt-3 font-medium tracking-tight">
-                    *Contoh: Kirim jika order sudah dibuat lebih dari 3 jam tapi belum bayar.
-                  </p>
-                </div>
-              </div>
-            </Card>
-          </section>
-        </div>
-
-        {/* KOLOM TENGAH: ADVANCED SEGMENTATION */}
-        <div className="space-y-8">
-          <section>
-            <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4">2. Filter Variables</h3>
-            <Card>
-              <div className="space-y-6">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b border-gray-100 pb-2">
-                    <span className="text-xs font-bold text-slate-600 uppercase">Variable Filters</span>
-                    <button className="text-[10px] font-black text-blue-600">+ ADD FILTER</button>
-                  </div>
-                  
-                  {/* Filter Item 1 */}
-                  <div className="flex gap-2">
-                    <select className="flex-1 p-2 border border-gray-200 rounded text-xs font-bold bg-slate-50">
-                      <option>TOTAL_SPEND</option>
-                      <option>CITY_LOCATION</option>
-                      <option>PAYMENT_METHOD</option>
-                      <option>PRODUCT_CATEGORY</option>
-                    </select>
-                    <select className="w-16 p-2 border border-gray-200 rounded text-xs font-bold">
-                      <option>{">"}</option>
-                      <option>{"="}</option>
-                    </select>
-                    <input type="text" className="w-24 p-2 border border-gray-200 rounded text-xs font-bold" placeholder="50000" />
-                  </div>
-
-                  {/* Filter Item 2 */}
-                  <div className="flex gap-2">
-                    <select className="flex-1 p-2 border border-gray-200 rounded text-xs font-bold bg-slate-50">
-                      <option>PAYMENT_METHOD</option>
-                      <option>TOTAL_SPEND</option>
-                    </select>
-                    <select className="w-16 p-2 border border-gray-200 rounded text-xs font-bold">
-                      <option>IS</option>
-                      <option>NOT</option>
-                    </select>
-                    <select className="w-24 p-2 border border-gray-200 rounded text-xs font-bold bg-white text-[10px]">
-                      <option>COD</option>
-                      <option>TRANSFER</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="mt-6 pt-6 border-t border-gray-100">
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-2">Specific Date/Time</label>
-                  <input type="datetime-local" className="w-full p-2.5 border border-gray-300 rounded text-sm font-bold shadow-sm" />
-                </div>
-              </div>
-            </Card>
-          </section>
-        </div>
-
-        {/* KOLOM KANAN: ACTION & CONTENT */}
-        <div className="space-y-8">
-          <section>
-            <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4">3. Action & Message</h3>
-            <Card>
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-2">Send Via</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button className="p-3 border-2 border-blue-600 bg-blue-50 text-blue-700 rounded-md font-bold text-[11px] uppercase">WhatsApp</button>
-                    <button className="p-3 border border-gray-200 text-slate-400 rounded-md font-bold text-[11px] uppercase">Email</button>
-                  </div>
-                </div>
-
-                <TextArea 
-                  label="Message Content" 
-                  placeholder="Halo {{nama}}, order anda {{no_order}} belum kami terima pembayarannya..." 
-                />
-
-                <div className="bg-slate-50 p-4 rounded-md">
-                   <p className="text-[10px] font-black text-slate-400 uppercase mb-3">Available Tags</p>
-                   <div className="flex flex-wrap gap-2">
-                     {['nama', 'total', 'no_order', 'kurir', 'link_bayar'].map(t => (
-                       <span key={t} className="px-2 py-1 bg-white border border-gray-200 rounded text-[9px] font-bold text-slate-600 hover:border-blue-500 cursor-pointer transition-all">
-                         {"{{" + t + "}}"}
-                       </span>
-                     ))}
-                   </div>
-                </div>
-              </div>
-            </Card>
-          </section>
-        </div>
-
+      {/* STATS RINGKAS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Card className="bg-white border-l-4 border-l-blue-600">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Pesan Terkirim</p>
+          <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">1,059</p>
+        </Card>
+        <Card className="bg-white border-l-4 border-l-green-500">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Skenario Aktif</p>
+          <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">2</p>
+        </Card>
+        <Card className="bg-white border-l-4 border-l-slate-400">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Success Rate</p>
+          <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">98.2%</p>
+        </Card>
       </div>
+
+      {/* TABEL LIST SKENARIO */}
+      <section className="space-y-4">
+        <div className="px-2">
+          <h3 className="font-bold text-slate-800 uppercase tracking-tight">DAFTAR SKENARIO AKTIF</h3>
+        </div>
+        
+        <Card>
+          <div className="overflow-x-auto -m-4">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-[#f6f8fa] border-b border-gray-200">
+                  <th className="p-4 text-[11px] font-bold text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="p-4 text-[11px] font-bold text-gray-500 uppercase tracking-wider">Nama Skenario</th>
+                  <th className="p-4 text-[11px] font-bold text-gray-500 uppercase tracking-wider text-nowrap">Trigger & Timing</th>
+                  <th className="p-4 text-[11px] font-bold text-gray-500 uppercase tracking-wider text-right">Aktivitas</th>
+                  <th className="p-4 text-[11px] font-bold text-gray-500 uppercase tracking-wider"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {SCENARIOS.map((item) => (
+                  <tr key={item.id} className="hover:bg-slate-50 transition-colors group">
+                    <td className="p-4">
+                      <span className={`inline-block w-2.5 h-2.5 rounded-full ${item.status === 'ACTIVE' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}`}></span>
+                    </td>
+                    <td className="p-4">
+                      <p className="font-bold text-blue-600 text-[14px] uppercase tracking-tight group-hover:underline cursor-pointer">
+                        {item.name}
+                      </p>
+                    </td>
+                    <td className="p-4">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[11px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded inline-block w-fit uppercase">
+                          {item.trigger}
+                        </span>
+                        <span className="text-[10px] font-medium text-slate-400 uppercase">
+                          {item.timing}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="p-4 text-right">
+                      <p className="text-[13px] font-bold text-slate-700 tabular-nums">{item.sent}</p>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">Pesan Terkirim</p>
+                    </td>
+                    <td className="p-4 text-right">
+                      <button className="text-slate-400 hover:text-slate-900 transition-colors">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </section>
     </div>
   )
 }
