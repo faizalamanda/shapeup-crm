@@ -3,9 +3,9 @@ import { useState } from 'react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import MarketingTrigger from '@/components/marketing/MarketingTrigger'
-import AudienceSegmentBuilder from '@/components/marketing/AudienceSegmentBuilder'
-import YCloudMessageEditor from '@/components/marketing/YCloudMessageEditor'
+import MarketingTrigger from './MarketingTrigger'
+import AudienceSegmentBuilder from './AudienceSegmentBuilder'
+import YCloudMessageEditor from './YCloudMessageEditor'
 import Link from 'next/link'
 
 export default function NewScenarioPage() {
