@@ -4,7 +4,6 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import MarketingTrigger from './MarketingTrigger'
-import AudienceSegmentBuilder from './AudienceSegmentBuilder'
 import YCloudMessageEditor from './YCloudMessageEditor'
 import Link from 'next/link'
 
@@ -16,7 +15,7 @@ export default function NewScenarioPage() {
     <div className="max-w-4xl mx-auto space-y-12 pb-32 animate-in fade-in duration-500">
       <PageHeader 
         title="BUAT AUTOMATION BARU" 
-        description="Gabungkan data order dan customer untuk marketing yang presisi."
+        description="Otomatisasi pengiriman pesan berdasarkan status order atau segmentasi waktu."
         action={
           <div className="flex gap-3">
             <Link href="/marketing"><Button variant="outline" className="font-black text-xs uppercase">BATAL</Button></Link>
@@ -25,32 +24,29 @@ export default function NewScenarioPage() {
         }
       />
 
-      {/* STEP 1: NAMA */}
+      {/* STEP 1: IDENTITAS */}
       <section className="space-y-4">
         <div className="flex items-center gap-4 px-2">
           <span className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-sm">1</span>
-          <h3 className="font-bold text-slate-800 uppercase tracking-tight text-lg">IDENTITAS</h3>
+          <h3 className="font-bold text-slate-800 uppercase tracking-tight text-lg">IDENTITAS SKENARIO</h3>
         </div>
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <Input label="NAMA SKENARIO" placeholder="MISAL: FOLLOW UP COD" className="font-bold uppercase text-sm" />
         </div>
       </section>
 
-      {/* STEP 2: TRIGGER */}
+      {/* STEP 2: TRIGGER & TARGETING (TARGETING MENYATU DI SINI) */}
       <MarketingTrigger 
         triggerType={triggerType} setTriggerType={setTriggerType}
         timeType={timeType} setTimeType={setTimeType} 
       />
 
-      {/* STEP 3: SEGMENTASI (Hanya jika trigger Waktu) */}
-      {triggerType === 'TIME' && <AudienceSegmentBuilder />}
-
-      {/* STEP 4: MESSAGE */}
-      <YCloudMessageEditor />
+      {/* STEP 3: MESSAGE CONFIGURATION */}
+      <YCloudMessageEditor stepNumber={3} />
 
       <div className="flex justify-end pt-10 border-t border-slate-200">
          <Button variant="primary" className="w-full md:w-auto px-16 py-6 font-black text-xs tracking-[0.2em] uppercase">
-            AKTIFKAN SEKARANG
+            AKTIFKAN AUTOMATION
          </Button>
       </div>
     </div>
