@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/Input'
 import MarketingTrigger from './MarketingTrigger'
 import YCloudMessageEditor from './YCloudMessageEditor'
 import Link from 'next/link'
-import { supabase } from '@/lib/supabase' // Sudah diperbaiki sesuai file supabase.ts Mas
+import { supabase } from '@/lib/supabase' 
 import { useRouter } from 'next/navigation'
 
 export default function NewScenarioPage() {
@@ -17,9 +17,9 @@ export default function NewScenarioPage() {
   const [name, setName] = useState('')
   const [triggerType, setTriggerType] = useState('STATUS')
   const [timeType, setTimeType] = useState('LOOPING')
-  const [filters, setFilters] = useState([]) // Data filter dari AudienceSegmentBuilder
-  const [templateName, setTemplateName] = useState('') // Nama Template YCloud
-  const [templateVars, setTemplateVars] = useState([]) // Variabel {{1}}, {{2}}, dst
+  const [filters, setFilters] = useState([]) 
+  const [templateName, setTemplateName] = useState('') 
+  const [templateVars, setTemplateVars] = useState([]) 
 
   // -- LOGIC SIMPAN KE DATABASE --
   const handleSave = async () => {
@@ -40,18 +40,17 @@ export default function NewScenarioPage() {
       is_active: true
     }
 
-    // Eksekusi Insert ke Tabel marketing_scenarios
     const { error } = await supabase
       .from('marketing_scenarios')
       .insert([payload])
 
     if (error) {
       alert("GAGAL MENYIMPAN: " + error.message)
+      setLoading(false)
     } else {
       alert("SKENARIO BERHASIL DIAKTIFKAN!")
-      router.push('/marketing') // Balik ke halaman daftar
+      router.push('/marketing')
     }
-    setLoading(false)
   }
 
   return (
@@ -64,14 +63,21 @@ export default function NewScenarioPage() {
             <Link href="/marketing">
               <Button variant="outline" className="font-black text-xs uppercase">BATAL</Button>
             </Link>
-            <Button 
-              onClick={handleSave} 
-              disabled={loading} 
-              variant="primary" 
-              className="px-8 font-black text-xs uppercase shadow-lg shadow-blue-100"
-            >
-              {loading ? 'SAVING...' : 'SIMPAN & RUN'}
-            </Button>
+            
+            {/* FIX VERCEL BUILD: Menghilangkan prop disabled */}
+            {loading ? (
+              <div className="px-8 py-2.5 bg-slate-100 text-slate-400 font-black text-xs uppercase rounded-md border border-slate-200 cursor-not-allowed flex items-center">
+                SAVING...
+              </div>
+            ) : (
+              <Button 
+                onClick={handleSave} 
+                variant="primary" 
+                className="px-8 font-black text-xs uppercase shadow-lg shadow-blue-100"
+              >
+                SIMPAN & RUN
+              </Button>
+            )}
           </div>
         }
       />
@@ -87,14 +93,12 @@ export default function NewScenarioPage() {
             label="NAMA SKENARIO" 
             value={name}
             onChange={(e: any) => setName(e.target.value)}
-            placeholder="MISAL: FOLLOW UP COD BELUM BAYAR" 
-            className="font-bold uppercase text-sm" 
+            placeholder="Misal: Follow up COD Belum Bayar" 
+            className="font-bold text-sm" 
           />
         </div>
       </section>
 
-      {/* STEP 2: TRIGGER & TARGETING */}
-      {/* Mengirim state & setter ke komponen anak agar data sinkron */}
       <MarketingTrigger 
         triggerType={triggerType} 
         setTriggerType={setTriggerType}
@@ -104,8 +108,6 @@ export default function NewScenarioPage() {
         setFilters={setFilters}
       />
 
-      {/* STEP 3: MESSAGE CONFIGURATION */}
-      {/* Mengirim state template ke YCloudMessageEditor */}
       <YCloudMessageEditor 
         templateName={templateName} 
         setTemplateName={setTemplateName}
@@ -115,14 +117,20 @@ export default function NewScenarioPage() {
 
       {/* FOOTER ACTION */}
       <div className="flex justify-end pt-10 border-t border-slate-200">
-         <Button 
-            onClick={handleSave} 
-            disabled={loading} 
-            variant="primary" 
-            className="w-full md:w-auto px-16 py-6 font-black text-xs tracking-[0.2em] uppercase shadow-xl shadow-blue-100"
-          >
-            {loading ? 'SEDANG MEMPROSES...' : 'AKTIFKAN AUTOMATION'}
-         </Button>
+         {/* FIX VERCEL BUILD: Menghilangkan prop disabled di footer juga */}
+         {loading ? (
+            <div className="w-full md:w-auto px-16 py-6 bg-slate-100 text-slate-400 font-black text-xs tracking-[0.2em] uppercase rounded-xl border border-slate-200 text-center cursor-not-allowed">
+              SEDANG MEMPROSES...
+            </div>
+         ) : (
+            <Button 
+              onClick={handleSave} 
+              variant="primary" 
+              className="w-full md:w-auto px-16 py-6 font-black text-xs tracking-[0.2em] uppercase shadow-xl shadow-blue-100"
+            >
+              AKTIFKAN AUTOMATION
+            </Button>
+         )}
       </div>
     </div>
   )
