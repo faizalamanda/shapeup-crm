@@ -113,15 +113,20 @@ export default function EditScenarioPage() {
       />
 
       <div className="pt-10 border-t border-slate-200">
-        {/* @ts-ignore - Bypass error disabled property for Vercel Build */}
-        <Button 
-          onClick={handleUpdate} 
-          disabled={saving} 
-          variant="primary" 
-          className="w-full py-6 font-black text-xs uppercase tracking-[0.2em] shadow-xl shadow-blue-100"
-        >
-          {saving ? 'SEDANG MENYIMPAN...' : 'SIMPAN PERUBAHAN'}
-        </Button>
+        {/* Kita pakai pengecekan manual agar tidak mengirim prop 'disabled' ke Button */}
+        {saving ? (
+          <div className="w-full py-6 font-black text-xs uppercase tracking-[0.2em] bg-slate-100 text-slate-400 rounded-xl text-center border border-slate-200 cursor-not-allowed">
+            SEDANG MENYIMPAN...
+          </div>
+        ) : (
+          <Button 
+            onClick={handleUpdate} 
+            variant="primary" 
+            className="w-full py-6 font-black text-xs uppercase tracking-[0.2em] shadow-xl shadow-blue-100"
+          >
+            SIMPAN PERUBAHAN
+          </Button>
+        )}
       </div>
     </div>
   )
