@@ -6,6 +6,35 @@ import { Button } from '@/components/ui/Button'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { supabase } from '@/lib/supabase'
 
+// --- HELPER LOGIC: MODULER & MANUSIAWI ---
+const isDateMatch = (orderDateStr: string, filterValue: string, operator: string) => {
+  if (!orderDateStr || !filterValue) return false;
+  
+  const orderDate = new Date(orderDateStr);
+  orderDate.setHours(0, 0, 0, 0);
+  
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Jika operatornya adalah "Setelah X Hari" (berbasis angka)
+  if (operator === 'after_x_days') {
+    const diffTime = today.getTime() - orderDate.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays === parseInt(filterValue);
+  }
+
+  // Jika operator berbasis kalender (Sama Dengan, Sebelum, Sesudah)
+  const filterDate = new Date(filterValue);
+  filterDate.setHours(0, 0, 0, 0);
+
+  switch (operator) {
+    case 'equal': return orderDate.getTime() === filterDate.getTime();
+    case 'before': return orderDate.getTime() < filterDate.getTime();
+    case 'after': return orderDate.getTime() > filterDate.getTime();
+    default: return true;
+  }
+};
+
 export default function MarketingPage() {
   const [scenarios, setScenarios] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -25,7 +54,7 @@ export default function MarketingPage() {
 
   useEffect(() => { fetchScenarios() }, [])
 
-  // --- LOGIC PREVIEW: DENGAN SORTING TIMESTAMP TERAKURAT ---
+  // --- LOGIC PREVIEW: DENGAN SORTING TIMESTAMP & FILTER MANUSIAWI ---
   useEffect(() => {
     const getValidAudience = async () => {
       if (!selectedPreview) return;
@@ -48,7 +77,6 @@ export default function MarketingPage() {
           if (statusFilter.op === 'is not') query = query.neq('status', statusFilter.value);
         }
 
-        // Ambil data (limit cukup besar agar filter kota di client tetap dapat data)
         const { data: rawOrders, error: orderError } = await query
           .order('created_at', { ascending: false })
           .limit(500);
@@ -59,20 +87,32 @@ export default function MarketingPage() {
           const filtered = rawOrders.filter((order) => {
             let isMatch = true;
             activeFilters.forEach((f: any) => {
+              // 1. Filter Kota
               if (f.key === 'customer_city') {
                 const city = (order.raw_source_data?.billing?.city || '').toLowerCase();
                 const search = (f.value || '').toLowerCase();
                 if (!city.includes(search)) isMatch = false;
               }
+
+              // 2. Filter Order Date
+              if (f.key === 'date_order') {
+                if (!isDateMatch(order.created_at, f.value, f.op)) isMatch = false;
+              }
+
+              // 3. Filter Completed Date
+              if (f.key === 'date_completed') {
+                const completedAt = order.raw_source_data?.date_completed || order.updated_at;
+                if (!isDateMatch(completedAt, f.value, f.op)) isMatch = false;
+              }
             });
             return isMatch;
           });
 
-          // --- FORCE SORTING: Mengurutkan berdasarkan waktu terbaru ---
+          // Urutan tetap: yang paling baru di atas
           const sorted = filtered.sort((a, b) => {
             const timeA = new Date(a.created_at).getTime();
             const timeB = new Date(b.created_at).getTime();
-            return timeB - timeA; // Descending (terbaru di atas)
+            return timeB - timeA;
           });
 
           setPreviewList(sorted.map(d => {

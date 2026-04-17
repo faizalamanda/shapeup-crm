@@ -8,6 +8,8 @@ import YCloudMessageEditor from './YCloudMessageEditor'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase' 
 import { useRouter } from 'next/navigation'
+// IMPORT GENERATOR DARI KOMPONEN BUILDER
+import { generateSQLFilter, generateScheduling } from '../components/AudienceSegmentBuilder'
 
 export default function NewScenarioPage() {
   const router = useRouter()
@@ -26,14 +28,30 @@ export default function NewScenarioPage() {
     if (!name || !templateName) {
       return alert("NAMA SKENARIO & NAMA TEMPLATE YCLOUD WAJIB DIISI!");
     }
+
+    // DEBUG: Cek di console browser apakah filters ada isinya
+    console.log("DEBUG: State Filters sebelum Save:", filters);
     
     setLoading(true)
+
+    // PROSES GENERATE: Mengubah array filter menjadi kalimat SQL
+    const sqlFilter = generateSQLFilter(filters);
+    const schedulingLogic = generateScheduling(filters);
+
+    console.log("DEBUG: SQL Filter dihasilkan:", sqlFilter);
+    console.log("DEBUG: Scheduling Logic dihasilkan:", schedulingLogic);
 
     const payload = {
       name: name,
       trigger_type: triggerType,
       trigger_config: { timeType },
-      filters: filters,
+      
+      // KOLOM UNTUK SI PENJALA DI SUPABASE
+      sql_filter: sqlFilter,
+      scheduling_logic: schedulingLogic,
+      channel_type: 'whatsapp', // Default Toko Alamanda saat ini
+      
+      filters: filters, // Array asli tetap disimpan untuk keperluan edit UI
       template_name: templateName,
       template_vars: templateVars,
       platform: 'YCLOUD',
@@ -64,7 +82,6 @@ export default function NewScenarioPage() {
               <Button variant="outline" className="font-black text-xs uppercase">BATAL</Button>
             </Link>
             
-            {/* FIX VERCEL BUILD: Menghilangkan prop disabled */}
             {loading ? (
               <div className="px-8 py-2.5 bg-slate-100 text-slate-400 font-black text-xs uppercase rounded-md border border-slate-200 cursor-not-allowed flex items-center">
                 SAVING...
@@ -99,6 +116,7 @@ export default function NewScenarioPage() {
         </div>
       </section>
 
+      {/* STEP 2: TRIGGER & FILTERS */}
       <MarketingTrigger 
         triggerType={triggerType} 
         setTriggerType={setTriggerType}
@@ -108,6 +126,7 @@ export default function NewScenarioPage() {
         setFilters={setFilters}
       />
 
+      {/* STEP 3: MESSAGE CONTENT */}
       <YCloudMessageEditor 
         templateName={templateName} 
         setTemplateName={setTemplateName}
@@ -117,7 +136,6 @@ export default function NewScenarioPage() {
 
       {/* FOOTER ACTION */}
       <div className="flex justify-end pt-10 border-t border-slate-200">
-         {/* FIX VERCEL BUILD: Menghilangkan prop disabled di footer juga */}
          {loading ? (
             <div className="w-full md:w-auto px-16 py-6 bg-slate-100 text-slate-400 font-black text-xs tracking-[0.2em] uppercase rounded-xl border border-slate-200 text-center cursor-not-allowed">
               SEDANG MEMPROSES...
