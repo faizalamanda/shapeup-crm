@@ -7,10 +7,12 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import MarketingTrigger from '../../new/MarketingTrigger'
 import YCloudMessageEditor from '../../new/YCloudMessageEditor'
+// IMPORT GENERATOR (Pastikan path-nya benar sesuai struktur folder Mas)
+import { generateSQLFilter, generateScheduling } from '../../components/AudienceSegmentBuilder'
 
 export default function EditScenarioPage() {
   const params = useParams()
-  const id = params?.id // Ambil ID dengan aman
+  const id = params?.id 
   const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -51,13 +53,21 @@ export default function EditScenarioPage() {
     if (!name || !templateName) return alert("NAMA & TEMPLATE TIDAK BOLEH KOSONG");
     
     setSaving(true)
+
+    // RE-GENERATE LOGIC SQL (Ini bagian yang tadi ketinggalan)
+    const sqlFilter = generateSQLFilter(filters);
+    const schedulingLogic = generateScheduling(filters);
+
     const { error } = await supabase
       .from('marketing_scenarios')
       .update({
         name,
         trigger_type: triggerType,
         trigger_config: { timeType },
-        filters,
+        // UPDATE KOLOM LOGIKANYA JUGA
+        sql_filter: sqlFilter,
+        scheduling_logic: schedulingLogic,
+        filters, // Tetap simpan array filter untuk UI
         template_name: templateName,
         template_vars: templateVars
       })
@@ -113,7 +123,6 @@ export default function EditScenarioPage() {
       />
 
       <div className="pt-10 border-t border-slate-200">
-        {/* Kita pakai pengecekan manual agar tidak mengirim prop 'disabled' ke Button */}
         {saving ? (
           <div className="w-full py-6 font-black text-xs uppercase tracking-[0.2em] bg-slate-100 text-slate-400 rounded-xl text-center border border-slate-200 cursor-not-allowed">
             SEDANG MENYIMPAN...
