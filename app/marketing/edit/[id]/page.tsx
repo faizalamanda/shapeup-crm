@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/Input'
 import MarketingTrigger from '../../new/MarketingTrigger'
 import YCloudMessageEditor from '../../new/YCloudMessageEditor'
 // IMPORT GENERATOR (Pastikan path-nya benar sesuai struktur folder Mas)
-import { generateSQLFilter, generateScheduling } from '../../components/AudienceSegmentBuilder'
+import { generateSQLFilter, generateScheduling } from '../../new/AudienceSegmentBuilder'
 
 export default function EditScenarioPage() {
   const params = useParams()

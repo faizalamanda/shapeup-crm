@@ -6,6 +6,19 @@ import { Button } from '@/components/ui/Button'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { supabase } from '@/lib/supabase'
 
+const getActiveBusinessId = async () => {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+
+  const { data } = await supabase
+    .from('profiles')
+    .select('active_business_id')
+    .eq('id', user.id)
+    .single()
+
+  return data?.active_business_id || null
+}
+
 // --- HELPER LOGIC: MODULER & MANUSIAWI ---
 const isDateMatch = (orderDateStr: string, filterValue: string, operator: string) => {
   if (!orderDateStr || !filterValue) return false;
@@ -44,12 +57,30 @@ export default function MarketingPage() {
 
   const fetchScenarios = async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('marketing_scenarios')
-      .select('*')
-      .order('created_at', { ascending: false })
-    if (!error && data) setScenarios(data)
-    setLoading(false)
+
+    try {
+      const activeBusinessId = await getActiveBusinessId()
+
+      if (!activeBusinessId) {
+        setScenarios([])
+        return
+      }
+
+      const { data, error } = await supabase
+        .from('marketing_scenarios')
+        .select('*')
+        .eq('business_id', activeBusinessId)
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+
+      setScenarios(data || [])
+
+    } catch (err: any) {
+      console.error(err.message)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { fetchScenarios() }, [])

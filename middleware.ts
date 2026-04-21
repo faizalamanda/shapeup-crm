@@ -32,6 +32,7 @@ export async function middleware(request: NextRequest) {
   // Proteksi rute
   const isProtectedRoute = 
     request.nextUrl.pathname.startsWith('/dashboard') ||
+    request.nextUrl.pathname.startsWith('/marketing') ||
     request.nextUrl.pathname.startsWith('/settings') ||
     request.nextUrl.pathname.startsWith('/orders') ||
     request.nextUrl.pathname.startsWith('/customers')

@@ -9,7 +9,7 @@ import Link from 'next/link'
 import { supabase } from '@/lib/supabase' 
 import { useRouter } from 'next/navigation'
 // IMPORT GENERATOR DARI KOMPONEN BUILDER
-import { generateSQLFilter, generateScheduling } from '../components/AudienceSegmentBuilder'
+import { generateSQLFilter, generateScheduling } from './AudienceSegmentBuilder'
 
 export default function NewScenarioPage() {
   const router = useRouter()
