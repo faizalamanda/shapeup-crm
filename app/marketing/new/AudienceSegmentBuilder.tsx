@@ -27,7 +27,7 @@ export const generateSQLFilter = (filters: any[]) => {
       order_status: "o.status",
       customer_city: "o.raw_source_data->'billing'->>'city'",
       total_spent: "(o.raw_source_data->>'total')::numeric",
-      date_order: "o.created_at",
+      date_order: "o.order_date", // 🔥 FIX
       date_completed: "o.date_completed"
     };
 
@@ -39,7 +39,12 @@ export const generateSQLFilter = (filters: any[]) => {
       case 'is': 
       case 'equal':
       case 'equal to':
-        sqlPart = `${col} = '${val}'`; break;
+        if (f.key.includes('date')) {
+          sqlPart = `${col}::date = '${val}'`;
+        } else {
+          sqlPart = `${col} = '${val}'`;
+        }
+        break;
       case 'is not': 
         sqlPart = `${col} != '${val}'`; break;
       case 'contains': 
@@ -49,16 +54,18 @@ export const generateSQLFilter = (filters: any[]) => {
       case 'less than': 
         sqlPart = `${col} < ${val}`; break;
       case 'after': 
-        sqlPart = `${col} > '${val}'`; break;
+        sqlPart = `${col} > '${val}'::timestamptz`; 
+        break;
       case 'before': 
-        sqlPart = `${col} < '${val}'`; break;
+        sqlPart = `${col} < '${val}'::timestamptz`; 
+        break;
       case 'after_x_days': 
         // Sapu semua yang umurnya SUDAH LEBIH dari X hari
-        sqlPart = `${col} <= (NOW() - interval '${val} days')`; 
+        sqlPart = `${col} <= (NOW() - INTERVAL '${val} days')`; 
         break;
       case 'after_x_hours': 
         // Sapu semua yang umurnya SUDAH LEBIH dari X jam
-        sqlPart = `${col} <= (NOW() - interval '${val} hours')`;
+        sqlPart = `${col} <= (NOW() - INTERVAL '${val} hours')`;
         break;
       default: sqlPart = "TRUE";
     }
@@ -74,7 +81,7 @@ export const generateScheduling = (filters: any[]) => {
   const timeFilter = filters.find(f => f.op === 'after_x_days' || f.op === 'after_x_hours');
   
   if (timeFilter) {
-    const col = timeFilter.key === 'date_completed' ? 'o.date_completed' : 'o.created_at';
+    const col = timeFilter.key === 'date_completed' ? 'o.date_completed' : 'o.order_date'; // 🔥 FIX
     const unit = timeFilter.op === 'after_x_days' ? 'days' : 'hours';
     return `${col} + interval '${timeFilter.value} ${unit}'`;
   }
