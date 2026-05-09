@@ -18,7 +18,7 @@ export async function POST(req: Request) {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options)
             )
-          } catch (e) { /* Ignore */ }
+          } catch { /* Ignore */ }
         },
       },
     }
@@ -26,7 +26,7 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json()
-    const { name, address, phone } = body
+    const { name, address, phone, timezone } = body
     
     // 1. Cek User
     const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -42,6 +42,7 @@ export async function POST(req: Request) {
         name, 
         address: address || '', 
         phone: phone || '', 
+        timezone: timezone || 'Asia/Jakarta',
         owner_id: user.id 
       })
       .select()
@@ -67,7 +68,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ success: true, business: biz })
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Server Error:", err)
     return NextResponse.json({ error: "Terjadi kesalahan server internal" }, { status: 500 })
   }

@@ -1,27 +1,54 @@
 "use client"
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import Link from 'next/link'
 
+const TIMEZONE_OPTIONS = [
+  { value: 'Asia/Jakarta', label: 'Indonesia Barat (WIB)' },
+  { value: 'Asia/Makassar', label: 'Indonesia Tengah (WITA)' },
+  { value: 'Asia/Jayapura', label: 'Indonesia Timur (WIT)' },
+  { value: 'Asia/Kuala_Lumpur', label: 'Malaysia' },
+  { value: 'Asia/Singapore', label: 'Singapore' },
+  { value: 'Asia/Bangkok', label: 'Thailand' },
+  { value: 'Asia/Manila', label: 'Philippines' },
+  { value: 'Asia/Tokyo', label: 'Japan' },
+  { value: 'Australia/Sydney', label: 'Australia Sydney' },
+  { value: 'Europe/London', label: 'United Kingdom' },
+  { value: 'Europe/Amsterdam', label: 'Netherlands' },
+  { value: 'America/New_York', label: 'US Eastern' },
+  { value: 'America/Chicago', label: 'US Central' },
+  { value: 'America/Denver', label: 'US Mountain' },
+  { value: 'America/Los_Angeles', label: 'US Pacific' },
+]
+
+const getTimezoneLabel = (timezone?: string | null) => {
+  return TIMEZONE_OPTIONS.find((item) => item.value === timezone)?.label || timezone || 'Asia/Jakarta'
+}
+
+type Business = {
+  id: string
+  name: string
+  phone?: string | null
+  timezone?: string | null
+}
+
 export default function BusinessSettings() {
-  const supabase = createBrowserClient(
+  const supabase = useMemo(() => createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  ), [])
   
   const [loading, setLoading] = useState(true)
   const [isCreating, setIsCreating] = useState(false)
-  const [businesses, setBusinesses] = useState<any[]>([])
+  const [businesses, setBusinesses] = useState<Business[]>([])
   const [activeBid, setActiveBid] = useState<string | null>(null)
   const [userRole, setUserRole] = useState<string | null>(null)
-  const [formData, setFormData] = useState({ name: '', phone: '' })
+  const [formData, setFormData] = useState({ name: '', phone: '', timezone: 'Asia/Jakarta' })
+  const [editingBusiness, setEditingBusiness] = useState<Business | null>(null)
+  const [editFormData, setEditFormData] = useState({ name: '', phone: '', timezone: 'Asia/Jakarta' })
   const [submitting, setSubmitting] = useState(false)
 
-  useEffect(() => {
-    fetchData()
-  }, [])
-
-  async function fetchData() {
+  const fetchData = useCallback(async () => {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (user) {
@@ -38,7 +65,11 @@ export default function BusinessSettings() {
       setBusinesses(bizData || [])
     }
     setLoading(false)
-  }
+  }, [supabase])
+
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
 
   async function handleSwitch(bid: string) {
     const { data: { user } } = await supabase.auth.getUser()
@@ -62,7 +93,8 @@ export default function BusinessSettings() {
         .from('businesses')
         .insert([{ 
           name: formData.name, 
-          phone: formData.phone 
+          phone: formData.phone,
+          timezone: formData.timezone,
         }])
         .select()
         .single()
@@ -80,13 +112,53 @@ export default function BusinessSettings() {
 
       // 3. Reset & Refresh
       setIsCreating(false)
-      setFormData({ name: '', phone: '' })
+      setFormData({ name: '', phone: '', timezone: 'Asia/Jakarta' })
       fetchData() // Ambil data terbaru
       alert("Bisnis baru berhasil dibuat!")
 
-    } catch (err: any) {
-      console.error("Create Error:", err.message)
-      alert("Gagal membuat bisnis: " + err.message)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Terjadi kesalahan'
+      console.error("Create Error:", message)
+      alert("Gagal membuat bisnis: " + message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  function openEditBusiness(biz: Business) {
+    setEditingBusiness(biz)
+    setEditFormData({
+      name: biz.name || '',
+      phone: biz.phone || '',
+      timezone: biz.timezone || 'Asia/Jakarta',
+    })
+  }
+
+  async function handleUpdateBusiness() {
+    if (!editingBusiness) return
+    if (!editFormData.name) return alert("Nama bisnis wajib diisi!")
+
+    setSubmitting(true)
+
+    try {
+      const { error } = await supabase
+        .from('businesses')
+        .update({
+          name: editFormData.name,
+          phone: editFormData.phone,
+          timezone: editFormData.timezone,
+        })
+        .eq('id', editingBusiness.id)
+
+      if (error) throw error
+
+      setEditingBusiness(null)
+      await fetchData()
+      alert("Pengaturan bisnis berhasil disimpan!")
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Terjadi kesalahan'
+      console.error("Update Error:", message)
+      alert("Gagal update bisnis: " + message)
     } finally {
       setSubmitting(false)
     }
@@ -121,7 +193,12 @@ export default function BusinessSettings() {
               </div>
 
               <h3 className="text-3xl font-black tracking-tighter mb-2 uppercase leading-none">{biz.name}</h3>
-              <p className="text-slate-500 font-bold text-xs uppercase tracking-widest mb-10">{biz.phone || 'No Contact Data'}</p>
+              <div className="space-y-2 mb-10">
+                <p className="text-slate-500 font-bold text-xs uppercase tracking-widest">{biz.phone || 'No Contact Data'}</p>
+                <p className="text-blue-600 font-black text-[10px] uppercase tracking-widest">
+                  TIMEZONE: {getTimezoneLabel(biz.timezone)}
+                </p>
+              </div>
 
               <div className="flex flex-wrap gap-6 pt-6 border-t-2 border-slate-100 items-center">
                 {activeBid !== biz.id ? (
@@ -130,7 +207,10 @@ export default function BusinessSettings() {
                   <span className="text-sm font-black text-green-600 uppercase tracking-widest">✓ Current</span>
                 )}
                 {userRole === 'admin' && (
-                  <Link href="/settings/staff" className="text-sm font-black text-slate-900 uppercase tracking-widest border-b-2 border-slate-900 hover:bg-yellow-200">Manage Staff</Link>
+                  <>
+                    <button onClick={() => openEditBusiness(biz)} className="text-sm font-black text-slate-900 uppercase tracking-widest border-b-2 border-slate-900 hover:bg-yellow-200">Edit Unit</button>
+                    <Link href="/settings/staff" className="text-sm font-black text-slate-900 uppercase tracking-widest border-b-2 border-slate-900 hover:bg-yellow-200">Manage Staff</Link>
+                  </>
                 )}
               </div>
             </div>
@@ -171,6 +251,18 @@ export default function BusinessSettings() {
                     value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})}
                   />
                 </div>
+                <div>
+                  <label className="block font-black uppercase text-[10px] mb-2 tracking-widest">Timezone</label>
+                  <select
+                    className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 bg-white"
+                    value={formData.timezone}
+                    onChange={e => setFormData({...formData, timezone: e.target.value})}
+                  >
+                    {TIMEZONE_OPTIONS.map((timezone) => (
+                      <option key={timezone.value} value={timezone.value}>{timezone.label}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div className="flex gap-4">
                 <button 
@@ -186,6 +278,59 @@ export default function BusinessSettings() {
                   className="flex-1 bg-black text-white font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-[#2e8540] disabled:bg-slate-400"
                 >
                   {submitting ? 'CREATING...' : 'CREATE'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL EDIT */}
+        {editingBusiness && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-6 z-50">
+            <div className="bg-white border-4 border-black p-10 max-w-md w-full shadow-[16px_16px_0px_0px_rgba(0,0,0,1)]">
+              <h2 className="text-3xl font-black uppercase italic mb-8 border-b-4 border-black pb-4 text-center">Edit Unit</h2>
+              <div className="space-y-6 mb-10">
+                <div>
+                  <label className="block font-black uppercase text-[10px] mb-2 tracking-widest">Business Name</label>
+                  <input 
+                    type="text" className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50"
+                    value={editFormData.name} onChange={e => setEditFormData({...editFormData, name: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="block font-black uppercase text-[10px] mb-2 tracking-widest">WA Contact</label>
+                  <input 
+                    type="text" className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50"
+                    value={editFormData.phone} onChange={e => setEditFormData({...editFormData, phone: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="block font-black uppercase text-[10px] mb-2 tracking-widest">Timezone</label>
+                  <select
+                    className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 bg-white"
+                    value={editFormData.timezone}
+                    onChange={e => setEditFormData({...editFormData, timezone: e.target.value})}
+                  >
+                    {TIMEZONE_OPTIONS.map((timezone) => (
+                      <option key={timezone.value} value={timezone.value}>{timezone.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-4">
+                <button 
+                  disabled={submitting}
+                  onClick={() => setEditingBusiness(null)} 
+                  className="flex-1 font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-slate-100 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button 
+                  disabled={submitting}
+                  onClick={handleUpdateBusiness} 
+                  className="flex-1 bg-black text-white font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-[#2e8540] disabled:bg-slate-400"
+                >
+                  {submitting ? 'SAVING...' : 'SAVE'}
                 </button>
               </div>
             </div>

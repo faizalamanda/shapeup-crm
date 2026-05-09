@@ -1,10 +1,31 @@
 "use client"
+import type { Dispatch, SetStateAction } from 'react'
 import { Card } from '@/components/ui/Card'
+import { TEMPLATE_TAGS, createTemplateVar, type TemplateVarDraft, type TemplateVarSource } from './variables'
 
-export default function YCloudMessageEditor({ templateName, setTemplateName, templateVars, setTemplateVars }: any) {
-  const addVar = () => setTemplateVars([...templateVars, { id: Date.now(), value: '', source: 'TAG' }])
-  const updateVar = (id: number, field: string, val: string) => {
-    setTemplateVars(templateVars.map((v: any) => v.id === id ? { ...v, [field]: val } : v))
+type YCloudMessageEditorProps = {
+  templateName: string
+  setTemplateName: Dispatch<SetStateAction<string>>
+  templateVars: TemplateVarDraft[]
+  setTemplateVars: Dispatch<SetStateAction<TemplateVarDraft[]>>
+}
+
+export default function YCloudMessageEditor({ templateName, setTemplateName, templateVars, setTemplateVars }: YCloudMessageEditorProps) {
+  const addVar = () => setTemplateVars([...templateVars, createTemplateVar()])
+  const updateVar = (id: number, field: keyof Pick<TemplateVarDraft, 'source' | 'value'>, val: string) => {
+    setTemplateVars(templateVars.map((v) => {
+      if (v.id !== id) return v
+      if (field === 'source') {
+        const nextSource = val as TemplateVarSource
+        return {
+          ...v,
+          source: nextSource,
+          value: nextSource === 'TAG' ? TEMPLATE_TAGS[0]?.key || '' : '',
+        }
+      }
+
+      return { ...v, value: val }
+    }))
   }
 
   return (
@@ -25,17 +46,25 @@ export default function YCloudMessageEditor({ templateName, setTemplateName, tem
               <button onClick={addVar} className="px-3 py-1 bg-slate-900 text-white text-[10px] font-black rounded uppercase hover:bg-blue-600 transition-all">+ TAMBAH</button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {templateVars.map((v: any, index: number) => (
+              {templateVars.map((v, index) => (
                 <div key={v.id} className="space-y-1.5">
                   <div className="flex justify-between items-center text-[10px] font-black text-blue-600 uppercase">
                     <span>VARIABEL {"{{" + (index + 1) + "}}"}</span>
-                    <button onClick={() => setTemplateVars(templateVars.filter((item: any) => item.id !== v.id))} className="text-red-400 hover:text-red-600">HAPUS</button>
+                    <button onClick={() => setTemplateVars(templateVars.filter((item) => item.id !== v.id))} className="text-red-400 hover:text-red-600">HAPUS</button>
                   </div>
                   <div className="flex bg-white border border-slate-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 shadow-sm">
-                    <select value={v.source} onChange={(e) => updateVar(v.id, 'source', e.target.value)} className="bg-slate-50 px-2 text-[9px] font-black border-r outline-none uppercase">
+                    <select value={v.source} onChange={(e) => updateVar(v.id, 'source', e.target.value as TemplateVarSource)} className="bg-slate-50 px-2 text-[9px] font-black border-r outline-none uppercase">
                       <option value="TAG">TAG</option><option value="MANUAL">MANUAL</option>
                     </select>
-                    <input type="text" value={v.value} onChange={(e) => updateVar(v.id, 'value', e.target.value)} className="px-3 py-2 text-[11px] font-bold outline-none flex-1" placeholder="PILIH TAG / TEXT..." />
+                    {v.source === 'TAG' ? (
+                      <select value={v.value} onChange={(e) => updateVar(v.id, 'value', e.target.value)} className="px-3 py-2 text-[11px] font-bold outline-none flex-1 bg-white uppercase">
+                        {TEMPLATE_TAGS.map((tag) => (
+                          <option key={tag.key} value={tag.key}>{tag.label}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input type="text" value={v.value} onChange={(e) => updateVar(v.id, 'value', e.target.value)} className="px-3 py-2 text-[11px] font-bold outline-none flex-1" placeholder="TULIS TEXT MANUAL..." />
+                    )}
                   </div>
                 </div>
               ))}

@@ -1,5 +1,5 @@
 "use client"
-import { useState } from 'react'
+import { useState, type ChangeEvent } from 'react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -10,6 +10,7 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 // IMPORT GENERATOR DARI KOMPONEN BUILDER
 import { generateSQLFilter, generateScheduling } from './AudienceSegmentBuilder'
+import { formatTemplateVarsForSupabase, type TemplateVarDraft } from './variables'
 
 export default function NewScenarioPage() {
   const router = useRouter()
@@ -21,7 +22,7 @@ export default function NewScenarioPage() {
   const [timeType, setTimeType] = useState('LOOPING')
   const [filters, setFilters] = useState([]) 
   const [templateName, setTemplateName] = useState('') 
-  const [templateVars, setTemplateVars] = useState([]) 
+  const [templateVars, setTemplateVars] = useState<TemplateVarDraft[]>([]) 
 
   // -- LOGIC SIMPAN KE DATABASE --
   const handleSave = async () => {
@@ -41,6 +42,8 @@ export default function NewScenarioPage() {
     console.log("DEBUG: SQL Filter dihasilkan:", sqlFilter);
     console.log("DEBUG: Scheduling Logic dihasilkan:", schedulingLogic);
 
+    const mappedTemplateVars = formatTemplateVarsForSupabase(templateVars)
+
     const payload = {
       name: name,
       trigger_type: triggerType,
@@ -53,7 +56,7 @@ export default function NewScenarioPage() {
       
       filters: filters, // Array asli tetap disimpan untuk keperluan edit UI
       template_name: templateName,
-      template_vars: templateVars,
+      template_vars: mappedTemplateVars,
       platform: 'YCLOUD',
       is_active: true
     }
@@ -109,7 +112,7 @@ export default function NewScenarioPage() {
           <Input 
             label="NAMA SKENARIO" 
             value={name}
-            onChange={(e: any) => setName(e.target.value)}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
             placeholder="Misal: Follow up COD Belum Bayar" 
             className="font-bold text-sm" 
           />

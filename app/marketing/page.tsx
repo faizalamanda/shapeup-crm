@@ -6,25 +6,70 @@ import { Button } from '@/components/ui/Button'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { supabase } from '@/lib/supabase'
 
-const getActiveBusinessId = async () => {
+const getActiveBusiness = async () => {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
 
   const { data } = await supabase
     .from('profiles')
-    .select('active_business_id')
+    .select('active_business_id, businesses!active_business_id(timezone)')
     .eq('id', user.id)
     .single()
 
-  return data?.active_business_id || null
+  const business = Array.isArray(data?.businesses) ? data?.businesses[0] : data?.businesses
+
+  return {
+    id: data?.active_business_id || null,
+    timezone: business?.timezone || 'Asia/Jakarta',
+  }
 }
 
 // --- HELPER LOGIC: MODULER & MANUSIAWI ---
-const isDateMatch = (orderDateStr: string, filterValue: string, operator: string) => {
-  if (!orderDateStr || !filterValue) return false;
+const getDateKeyInTimezone = (dateStr: string, timezone: string) => {
+  if (!dateStr) return ''
+
+  const date = new Date(dateStr)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+
+  const year = parts.find((part) => part.type === 'year')?.value
+  const month = parts.find((part) => part.type === 'month')?.value
+  const day = parts.find((part) => part.type === 'day')?.value
+
+  return year && month && day ? `${year}-${month}-${day}` : ''
+}
+
+const getLocalDateKey = (dateStr: string) => {
+  return dateStr?.slice(0, 10) || ''
+}
+
+const getOrderDateKey = (order: any, timezone: string) => {
+  if (order.order_date_utc) return getDateKeyInTimezone(order.order_date_utc, timezone)
+  return getLocalDateKey(order.order_date)
+}
+
+const dateKeyToLocalDate = (dateKey: string) => {
+  const [year, month, day] = dateKey.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
+const formatDateKeyID = (dateStr: string, timezone: string, useTimezone = false) => {
+  const dateKey = useTimezone ? getDateKeyInTimezone(dateStr, timezone) : getLocalDateKey(dateStr)
+  if (!dateKey) return '-'
+
+  return dateKeyToLocalDate(dateKey).toLocaleDateString('id-ID')
+}
+
+const isDateKeyMatch = (orderDateKey: string, filterValue: string, operator: string) => {
+  if (!orderDateKey || !filterValue) return false;
   
-  const orderDate = new Date(orderDateStr);
-  orderDate.setHours(0, 0, 0, 0);
+  const orderDate = dateKeyToLocalDate(orderDateKey)
   
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -37,13 +82,10 @@ const isDateMatch = (orderDateStr: string, filterValue: string, operator: string
   }
 
   // Jika operator berbasis kalender (Sama Dengan, Sebelum, Sesudah)
-  const filterDate = new Date(filterValue);
-  filterDate.setHours(0, 0, 0, 0);
-
   switch (operator) {
-    case 'equal': return orderDate.getTime() === filterDate.getTime();
-    case 'before': return orderDate.getTime() < filterDate.getTime();
-    case 'after': return orderDate.getTime() > filterDate.getTime();
+    case 'equal': return orderDateKey === filterValue;
+    case 'before': return orderDateKey < filterValue;
+    case 'after': return orderDateKey > filterValue;
     default: return true;
   }
 };
@@ -54,22 +96,25 @@ export default function MarketingPage() {
   const [selectedPreview, setSelectedPreview] = useState<any>(null)
   const [previewList, setPreviewList] = useState<any[]>([])
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [activeBusinessTimezone, setActiveBusinessTimezone] = useState('Asia/Jakarta')
 
   const fetchScenarios = async () => {
     setLoading(true)
 
     try {
-      const activeBusinessId = await getActiveBusinessId()
+      const activeBusiness = await getActiveBusiness()
 
-      if (!activeBusinessId) {
+      if (!activeBusiness?.id) {
         setScenarios([])
         return
       }
 
+      setActiveBusinessTimezone(activeBusiness.timezone)
+
       const { data, error } = await supabase
         .from('marketing_scenarios')
         .select('*')
-        .eq('business_id', activeBusinessId)
+        .eq('business_id', activeBusiness.id)
         .order('created_at', { ascending: false })
 
       if (error) throw error
@@ -127,13 +172,13 @@ export default function MarketingPage() {
 
               // 2. Filter Order Date
               if (f.key === 'date_order') {
-                if (!isDateMatch(order.created_at, f.value, f.op)) isMatch = false;
+                if (!isDateKeyMatch(getOrderDateKey(order, activeBusinessTimezone), f.value, f.op)) isMatch = false;
               }
 
               // 3. Filter Completed Date
               if (f.key === 'date_completed') {
                 const completedAt = order.raw_source_data?.date_completed || order.updated_at;
-                if (!isDateMatch(completedAt, f.value, f.op)) isMatch = false;
+                if (!isDateKeyMatch(getLocalDateKey(completedAt), f.value, f.op)) isMatch = false;
               }
             });
             return isMatch;
@@ -141,9 +186,9 @@ export default function MarketingPage() {
 
           // Urutan tetap: yang paling baru di atas
           const sorted = filtered.sort((a, b) => {
-            const timeA = new Date(a.created_at).getTime();
-            const timeB = new Date(b.created_at).getTime();
-            return timeB - timeA;
+            const timeA = `${getOrderDateKey(a, activeBusinessTimezone) || getLocalDateKey(a.created_at)} ${a.order_date_utc || a.order_date || a.created_at}`;
+            const timeB = `${getOrderDateKey(b, activeBusinessTimezone) || getLocalDateKey(b.created_at)} ${b.order_date_utc || b.order_date || b.created_at}`;
+            return timeB.localeCompare(timeA);
           });
 
           setPreviewList(sorted.map(d => {
@@ -154,8 +199,12 @@ export default function MarketingPage() {
                     : 'Customer',
               orderId: `#${raw.number || d.id}`,
               status: (d.status || 'unknown').toUpperCase(),
-              time: raw.date_completed || d.created_at
-                    ? new Date(raw.date_completed || d.created_at).toLocaleDateString('id-ID') 
+              time: raw.date_completed || d.order_date_utc || d.order_date || d.created_at
+                    ? raw.date_completed
+                      ? formatDateKeyID(raw.date_completed, activeBusinessTimezone)
+                      : d.order_date_utc
+                        ? formatDateKeyID(d.order_date_utc, activeBusinessTimezone, true)
+                        : formatDateKeyID(d.order_date || d.created_at, activeBusinessTimezone)
                     : '-'
             };
           }));
@@ -168,7 +217,7 @@ export default function MarketingPage() {
     };
 
     getValidAudience();
-  }, [selectedPreview]);
+  }, [selectedPreview, activeBusinessTimezone]);
 
   const handleDelete = async (id: string, name: string) => {
     if (confirm(`YAKIN INGIN MENGHAPUS SKENARIO: ${name}?`)) {

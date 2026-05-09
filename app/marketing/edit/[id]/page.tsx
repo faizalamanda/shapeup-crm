@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ChangeEvent } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -9,6 +9,7 @@ import MarketingTrigger from '../../new/MarketingTrigger'
 import YCloudMessageEditor from '../../new/YCloudMessageEditor'
 // IMPORT GENERATOR (Pastikan path-nya benar sesuai struktur folder Mas)
 import { generateSQLFilter, generateScheduling } from '../../new/AudienceSegmentBuilder'
+import { formatTemplateVarsForSupabase, hydrateTemplateVarsForEditor, type TemplateVarDraft } from '../../new/variables'
 
 export default function EditScenarioPage() {
   const params = useParams()
@@ -23,7 +24,7 @@ export default function EditScenarioPage() {
   const [timeType, setTimeType] = useState('LOOPING')
   const [filters, setFilters] = useState([])
   const [templateName, setTemplateName] = useState('')
-  const [templateVars, setTemplateVars] = useState([])
+  const [templateVars, setTemplateVars] = useState<TemplateVarDraft[]>([])
 
   // LOAD DATA LAMA
   useEffect(() => {
@@ -42,7 +43,7 @@ export default function EditScenarioPage() {
         setTimeType(data.trigger_config?.timeType || 'LOOPING')
         setFilters(data.filters || [])
         setTemplateName(data.template_name || '')
-        setTemplateVars(data.template_vars || [])
+        setTemplateVars(hydrateTemplateVarsForEditor(data.template_vars))
       }
       setLoading(false)
     }
@@ -57,6 +58,7 @@ export default function EditScenarioPage() {
     // RE-GENERATE LOGIC SQL (Ini bagian yang tadi ketinggalan)
     const sqlFilter = generateSQLFilter(filters);
     const schedulingLogic = generateScheduling(filters);
+    const mappedTemplateVars = formatTemplateVarsForSupabase(templateVars);
 
     const { error } = await supabase
       .from('marketing_scenarios')
@@ -69,7 +71,7 @@ export default function EditScenarioPage() {
         scheduling_logic: schedulingLogic,
         filters, // Tetap simpan array filter untuk UI
         template_name: templateName,
-        template_vars: templateVars
+        template_vars: mappedTemplateVars
       })
       .eq('id', id)
 
@@ -104,7 +106,7 @@ export default function EditScenarioPage() {
         <Input 
           label="NAMA SKENARIO" 
           value={name} 
-          onChange={(e: any) => setName(e.target.value)} 
+          onChange={(e: ChangeEvent<HTMLInputElement>) => setName(e.target.value)} 
           className="font-bold text-sm" 
         />
       </section>

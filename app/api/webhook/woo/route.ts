@@ -41,6 +41,7 @@ export async function POST(req: Request) {
     const billingPhone = cleanPhone;
 
     const fullName = `${woo.billing?.first_name || ''} ${woo.billing?.last_name || ''}`.trim() || 'No Name';
+    const orderDateUtc = woo.date_created_gmt ? `${woo.date_created_gmt}Z` : null;
 
     // 3. KALKULASI BIAYA & ITEM (FIXED)
     // Mengambil biaya COD/Admin dari fee_lines
@@ -82,6 +83,7 @@ export async function POST(req: Request) {
         source_platform: 'WooCommerce',
         order_number: woo.number,
         order_date: woo.date_created,
+        order_date_utc: orderDateUtc,
         status: woo.status,
         total_qty: woo.line_items?.reduce((acc: number, item: any) => acc + toNum(item.quantity), 0) || 0,
         

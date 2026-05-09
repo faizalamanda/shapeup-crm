@@ -27,7 +27,7 @@ export const generateSQLFilter = (filters: any[]) => {
       order_status: "o.status",
       customer_city: "o.raw_source_data->'billing'->>'city'",
       total_spent: "(o.raw_source_data->>'total')::numeric",
-      date_order: "o.order_date", // 🔥 FIX
+      date_order: "COALESCE(o.order_date_utc AT TIME ZONE COALESCE(b.timezone, 'Asia/Jakarta'), o.order_date::timestamp)",
       date_completed: "o.date_completed"
     };
 
@@ -54,10 +54,14 @@ export const generateSQLFilter = (filters: any[]) => {
       case 'less than': 
         sqlPart = `${col} < ${val}`; break;
       case 'after': 
-        sqlPart = `${col} > '${val}'::timestamptz`; 
+        sqlPart = f.key.includes('date')
+          ? `${col}::date > '${val}'::date`
+          : `${col} > '${val}'::timestamptz`;
         break;
       case 'before': 
-        sqlPart = `${col} < '${val}'::timestamptz`; 
+        sqlPart = f.key.includes('date')
+          ? `${col}::date < '${val}'::date`
+          : `${col} < '${val}'::timestamptz`;
         break;
       case 'after_x_days': 
         // Sapu semua yang umurnya SUDAH LEBIH dari X hari
@@ -81,7 +85,9 @@ export const generateScheduling = (filters: any[]) => {
   const timeFilter = filters.find(f => f.op === 'after_x_days' || f.op === 'after_x_hours');
   
   if (timeFilter) {
-    const col = timeFilter.key === 'date_completed' ? 'o.date_completed' : 'o.order_date'; // 🔥 FIX
+    const col = timeFilter.key === 'date_completed'
+      ? 'o.date_completed'
+      : "COALESCE(o.order_date_utc AT TIME ZONE COALESCE(b.timezone, 'Asia/Jakarta'), o.order_date::timestamp)";
     const unit = timeFilter.op === 'after_x_days' ? 'days' : 'hours';
     return `${col} + interval '${timeFilter.value} ${unit}'`;
   }
