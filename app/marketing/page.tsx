@@ -49,9 +49,31 @@ const getLocalDateKey = (dateStr: string) => {
   return dateStr?.slice(0, 10) || ''
 }
 
-const getOrderDateKey = (order: any, timezone: string) => {
+const ensureUTCDateString = (dateStr: string) => {
+  if (!dateStr) return ''
+  return /(?:z|[+-]\d{2}:?\d{2})$/i.test(dateStr) ? dateStr : `${dateStr}Z`
+}
+
+type MarketingOrderPreview = {
+  order_date_utc?: string | null
+  order_date?: string | null
+  updated_at?: string | null
+  raw_source_data?: {
+    date_completed_gmt?: string | null
+    date_completed?: string | null
+  } | null
+}
+
+const getOrderDateKey = (order: MarketingOrderPreview, timezone: string) => {
   if (order.order_date_utc) return getDateKeyInTimezone(order.order_date_utc, timezone)
-  return getLocalDateKey(order.order_date)
+  return getLocalDateKey(order.order_date || '')
+}
+
+const getCompletedDateKey = (order: MarketingOrderPreview, timezone: string) => {
+  const raw = order.raw_source_data || {}
+  if (raw.date_completed_gmt) return getDateKeyInTimezone(ensureUTCDateString(raw.date_completed_gmt), timezone)
+  if (raw.date_completed) return getLocalDateKey(raw.date_completed)
+  return getDateKeyInTimezone(order.updated_at || '', timezone)
 }
 
 const dateKeyToLocalDate = (dateKey: string) => {
@@ -201,8 +223,7 @@ export default function MarketingPage() {
 
               // 3. Filter Completed Date
               if (f.key === 'date_completed') {
-                const completedAt = order.raw_source_data?.date_completed || order.updated_at;
-                if (!isDateKeyMatch(getLocalDateKey(completedAt), f.value, f.op)) isMatch = false;
+                if (!isDateKeyMatch(getCompletedDateKey(order, activeBusinessTimezone), f.value, f.op)) isMatch = false;
               }
             });
             return isMatch;
@@ -223,10 +244,12 @@ export default function MarketingPage() {
                     : 'Customer',
               orderId: `#${raw.number || d.id}`,
               status: (d.status || 'unknown').toUpperCase(),
-              time: raw.date_completed || d.order_date_utc || d.order_date || d.created_at
-                    ? raw.date_completed
-                      ? formatDateKeyID(raw.date_completed, activeBusinessTimezone)
-                      : d.order_date_utc
+              time: raw.date_completed_gmt || raw.date_completed || d.order_date_utc || d.order_date || d.created_at
+                    ? raw.date_completed_gmt
+                      ? formatDateKeyID(ensureUTCDateString(raw.date_completed_gmt), activeBusinessTimezone, true)
+                      : raw.date_completed
+                        ? formatDateKeyID(raw.date_completed, activeBusinessTimezone)
+                        : d.order_date_utc
                         ? formatDateKeyID(d.order_date_utc, activeBusinessTimezone, true)
                         : formatDateKeyID(d.order_date || d.created_at, activeBusinessTimezone)
                     : '-'

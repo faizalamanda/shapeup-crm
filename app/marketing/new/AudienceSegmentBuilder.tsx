@@ -1,46 +1,151 @@
 "use client"
 
-// Kategori variabel yang mendukung Order & Customer sesuai request Toko Alamanda
-const VARIABLES = [
-  // GROUP: ORDER / COMPLETE
-  { key: 'date_order', label: 'ORDER: TANGGAL PESANAN', type: 'date' },
-  { key: 'date_completed', label: 'COMPLETE: TANGGAL SELESAI', type: 'date' },
-  { key: 'order_status', label: 'ORDER: STATUS', type: 'select', options: ['completed', 'processing', 'pending', 'cancelled', 'on-hold'] },
-  
-  // GROUP: CUSTOMER & LIFESTYLE
-  { key: 'customer_city', label: 'CUSTOMER: KOTA', type: 'text', placeholder: 'KOTA' },
-  { key: 'total_spent', label: 'ORDER: TOTAL BELANJA', type: 'number', placeholder: 'RP' },
-];
+type AudienceFieldType = 'date' | 'number' | 'select' | 'text'
+
+type AudienceFieldConfig = {
+  key: string
+  label: string
+  type: AudienceFieldType
+  column: string
+  placeholder?: string
+  options?: string[]
+  defaultValue?: string
+  schedulingColumn?: string
+}
+
+type AudienceFilter = {
+  id: number
+  key: string
+  op: string
+  value: string
+  logic?: 'AND' | 'OR'
+}
+
+type AudienceSegmentBuilderProps = {
+  filters: AudienceFilter[]
+  setFilters: (filters: AudienceFilter[]) => void
+}
+
+type AudienceFilterField = 'key' | 'op' | 'value' | 'logic'
+
+const ORDER_DATE_COLUMN = "COALESCE(o.order_date_utc AT TIME ZONE COALESCE(b.timezone, 'Asia/Jakarta'), o.order_date::timestamp)"
+const BUSINESS_TIMEZONE = "COALESCE(b.timezone, 'Asia/Jakarta')"
+const COMPLETED_DATE_COLUMN = `COALESCE(
+  (NULLIF(o.raw_source_data->>'date_completed_gmt', '')::timestamp AT TIME ZONE 'UTC') AT TIME ZONE ${BUSINESS_TIMEZONE},
+  NULLIF(o.raw_source_data->>'date_completed', '')::timestamp,
+  o.updated_at AT TIME ZONE ${BUSINESS_TIMEZONE}
+)`
+
+// Tambah mapping baru cukup dari sini: key UI, label, tipe input, dan kolom SQL.
+const AUDIENCE_FIELDS: AudienceFieldConfig[] = [
+  {
+    key: 'date_order',
+    label: 'ORDER: TANGGAL PESANAN',
+    type: 'date',
+    column: ORDER_DATE_COLUMN,
+    schedulingColumn: ORDER_DATE_COLUMN,
+  },
+  {
+    key: 'date_completed',
+    label: 'COMPLETE: TANGGAL SELESAI',
+    type: 'date',
+    column: COMPLETED_DATE_COLUMN,
+    schedulingColumn: COMPLETED_DATE_COLUMN,
+  },
+  {
+    key: 'order_status',
+    label: 'ORDER: STATUS',
+    type: 'select',
+    column: 'o.status',
+    options: ['completed', 'processing', 'pending', 'cancelled', 'on-hold'],
+    defaultValue: 'on-hold',
+  },
+  {
+    key: 'customer_city',
+    label: 'CUSTOMER: KOTA',
+    type: 'text',
+    column: "o.raw_source_data->'billing'->>'city'",
+    placeholder: 'KOTA',
+  },
+  {
+    key: 'total_spent',
+    label: 'ORDER: TOTAL BELANJA',
+    type: 'number',
+    column: "(o.raw_source_data->>'total')::numeric",
+    placeholder: 'RP',
+  },
+]
+
+const OPERATOR_GROUPS = {
+  date: [
+    { id: 'equal', label: 'SAMA DENGAN' },
+    { id: 'before', label: 'SEBELUM' },
+    { id: 'after', label: 'SESUDAH' },
+    { id: 'after_x_days', label: 'SETELAH X HARI' },
+    { id: 'after_x_hours', label: 'SETELAH X JAM' },
+  ],
+  number: [
+    { id: 'equal to', label: 'EQUAL TO' },
+    { id: 'more than', label: 'MORE THAN' },
+    { id: 'less than', label: 'LESS THAN' },
+  ],
+  select: [
+    { id: 'is', label: 'IS' },
+    { id: 'is not', label: 'IS NOT' },
+  ],
+  text: [
+    { id: 'is', label: 'IS' },
+    { id: 'contains', label: 'CONTAINS' },
+    { id: 'is not', label: 'IS NOT' },
+  ],
+} satisfies Record<AudienceFieldType, { id: string; label: string }[]>
+
+const getAudienceField = (key: string) => AUDIENCE_FIELDS.find(field => field.key === key) || AUDIENCE_FIELDS[0]
+
+const getOps = (key: string) => OPERATOR_GROUPS[getAudienceField(key).type]
+
+const escapeSQLValue = (value: string) => String(value ?? '').replace(/'/g, "''")
+
+const toNumericValue = (value: string) => {
+  const numericValue = Number(value)
+  return Number.isFinite(numericValue) ? String(numericValue) : '0'
+}
+
+const buildDefaultFilter = (): AudienceFilter => {
+  const field = AUDIENCE_FIELDS.find(item => item.key === 'order_status') || AUDIENCE_FIELDS[0]
+
+  return {
+    id: Date.now(),
+    key: field.key,
+    op: getOps(field.key)[0].id,
+    value: field.defaultValue || field.options?.[0] || '',
+    logic: 'AND',
+  }
+}
 
 /**
  * FUNGSI GENERATOR SQL: Menghasilkan string untuk kolom sql_filter
  * Menggunakan prinsip "Sapu Bersih" (<=) agar data lama tetap terjaring
  */
-export const generateSQLFilter = (filters: any[]) => {
+export const generateSQLFilter = (filters: AudienceFilter[]) => {
   if (!filters || filters.length === 0) return "TRUE";
 
   return filters.map((f, idx) => {
     let sqlPart = "TRUE";
-    
-    // Mapping Key UI ke Kolom Database
-    const columnMap: any = {
-      order_status: "o.status",
-      customer_city: "o.raw_source_data->'billing'->>'city'",
-      total_spent: "(o.raw_source_data->>'total')::numeric",
-      date_order: "COALESCE(o.order_date_utc AT TIME ZONE COALESCE(b.timezone, 'Asia/Jakarta'), o.order_date::timestamp)",
-      date_completed: "o.date_completed"
-    };
-
-    const col = columnMap[f.key] || f.key;
-    const val = f.value;
+    const field = getAudienceField(f.key)
+    const col = field.column;
+    const val = escapeSQLValue(f.value);
+    const numericVal = toNumericValue(f.value);
 
     // Logika Operator
     switch (f.op) {
       case 'is': 
       case 'equal':
       case 'equal to':
-        if (f.key.includes('date')) {
+        if (field.type === 'date') {
           sqlPart = `${col}::date = '${val}'`;
+        } else if (field.type === 'number') {
+          sqlPart = `${col} = ${numericVal}`;
         } else {
           sqlPart = `${col} = '${val}'`;
         }
@@ -50,26 +155,26 @@ export const generateSQLFilter = (filters: any[]) => {
       case 'contains': 
         sqlPart = `${col} ILIKE '%${val}%'`; break;
       case 'more than': 
-        sqlPart = `${col} > ${val}`; break;
+        sqlPart = `${col} > ${numericVal}`; break;
       case 'less than': 
-        sqlPart = `${col} < ${val}`; break;
+        sqlPart = `${col} < ${numericVal}`; break;
       case 'after': 
-        sqlPart = f.key.includes('date')
+        sqlPart = field.type === 'date'
           ? `${col}::date > '${val}'::date`
           : `${col} > '${val}'::timestamptz`;
         break;
       case 'before': 
-        sqlPart = f.key.includes('date')
+        sqlPart = field.type === 'date'
           ? `${col}::date < '${val}'::date`
           : `${col} < '${val}'::timestamptz`;
         break;
       case 'after_x_days': 
         // Sapu semua yang umurnya SUDAH LEBIH dari X hari
-        sqlPart = `${col} <= (NOW() - INTERVAL '${val} days')`; 
+        sqlPart = `${col} <= (NOW() - INTERVAL '${numericVal} days')`;
         break;
       case 'after_x_hours': 
         // Sapu semua yang umurnya SUDAH LEBIH dari X jam
-        sqlPart = `${col} <= (NOW() - INTERVAL '${val} hours')`;
+        sqlPart = `${col} <= (NOW() - INTERVAL '${numericVal} hours')`;
         break;
       default: sqlPart = "TRUE";
     }
@@ -81,70 +186,32 @@ export const generateSQLFilter = (filters: any[]) => {
 /**
  * FUNGSI GENERATOR JADWAL: Menghasilkan string untuk kolom scheduling_logic
  */
-export const generateScheduling = (filters: any[]) => {
+export const generateScheduling = (filters: AudienceFilter[]) => {
   const timeFilter = filters.find(f => f.op === 'after_x_days' || f.op === 'after_x_hours');
   
   if (timeFilter) {
-    const col = timeFilter.key === 'date_completed'
-      ? 'o.date_completed'
-      : "COALESCE(o.order_date_utc AT TIME ZONE COALESCE(b.timezone, 'Asia/Jakarta'), o.order_date::timestamp)";
+    const field = getAudienceField(timeFilter.key)
+    const col = field.schedulingColumn || field.column;
     const unit = timeFilter.op === 'after_x_days' ? 'days' : 'hours';
-    return `${col} + interval '${timeFilter.value} ${unit}'`;
+    return `${col} + interval '${toNumericValue(timeFilter.value)} ${unit}'`;
   }
 
   return "NOW()";
 };
 
-export default function AudienceSegmentBuilder({ filters, setFilters }: any) {
-  
-  const getOps = (key: string) => {
-    const field = VARIABLES.find(v => v.key === key)
-    
-    if (field?.type === 'date') {
-      return [
-        { id: 'equal', label: 'SAMA DENGAN' },
-        { id: 'before', label: 'SEBELUM' },
-        { id: 'after', label: 'SESUDAH' },
-        { id: 'after_x_days', label: 'SETELAH X HARI' },
-        { id: 'after_x_hours', label: 'SETELAH X JAM' }
-      ]
-    }
-    
-    if (field?.type === 'number') return [
-      { id: 'equal to', label: 'EQUAL TO' },
-      { id: 'more than', label: 'MORE THAN' },
-      { id: 'less than', label: 'LESS THAN' }
-    ]
-    
-    if (field?.type === 'select') return [
-      { id: 'is', label: 'IS' },
-      { id: 'is not', label: 'IS NOT' }
-    ]
-
-    return [
-      { id: 'is', label: 'IS' },
-      { id: 'contains', label: 'CONTAINS' },
-      { id: 'is not', label: 'IS NOT' }
-    ]
-  }
-
+export default function AudienceSegmentBuilder({ filters, setFilters }: AudienceSegmentBuilderProps) {
   const addFilter = () => {
-    setFilters([...filters, { 
-      id: Date.now(), 
-      key: 'order_status', 
-      op: 'is', 
-      value: 'on-hold', 
-      logic: 'AND' 
-    }])
+    setFilters([...filters, buildDefaultFilter()])
   }
 
-  const updateFilter = (id: number, field: string, val: string) => {
-    setFilters(filters.map((f: any) => {
+  const updateFilter = (id: number, field: AudienceFilterField, val: string) => {
+    setFilters(filters.map((f: AudienceFilter) => {
       if (f.id === id) {
-        const updated = { ...f, [field]: val };
+        const updated = { ...f, [field]: val } as AudienceFilter;
         if (field === 'key') {
+          const nextField = getAudienceField(val)
           updated.op = getOps(val)[0].id;
-          updated.value = '';
+          updated.value = nextField.defaultValue || nextField.options?.[0] || '';
         }
         return updated;
       }
@@ -159,8 +226,8 @@ export default function AudienceSegmentBuilder({ filters, setFilters }: any) {
         <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-widest">Kriteria Segmentasi</h4>
       </div>
 
-      {filters.map((f: any, idx: number) => {
-        const currentVar = VARIABLES.find(v => v.key === f.key);
+      {filters.map((f: AudienceFilter, idx: number) => {
+        const currentVar = getAudienceField(f.key);
         const availableOps = getOps(f.key);
 
         return (
@@ -182,7 +249,7 @@ export default function AudienceSegmentBuilder({ filters, setFilters }: any) {
                 onChange={(e) => updateFilter(f.id, 'key', e.target.value)} 
                 className="bg-slate-50 px-3 py-2.5 text-[11px] font-bold border-r border-slate-200 uppercase outline-none focus:bg-white"
               >
-                {VARIABLES.map(v => <option key={v.key} value={v.key}>{v.label}</option>)}
+                {AUDIENCE_FIELDS.map(v => <option key={v.key} value={v.key}>{v.label}</option>)}
               </select>
 
               <select 
@@ -213,7 +280,7 @@ export default function AudienceSegmentBuilder({ filters, setFilters }: any) {
               )}
 
               <button 
-                onClick={() => setFilters(filters.filter((item: any) => item.id !== f.id))} 
+                onClick={() => setFilters(filters.filter((item: AudienceFilter) => item.id !== f.id))}
                 className="px-4 py-2.5 bg-slate-50 text-slate-400 hover:text-red-600 border-l border-slate-200 transition-colors"
               >
                 ✕
