@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -90,6 +90,11 @@ const isDateKeyMatch = (orderDateKey: string, filterValue: string, operator: str
   }
 };
 
+type NotificationState = {
+  type: 'success' | 'error'
+  message: string
+} | null
+
 export default function MarketingPage() {
   const [scenarios, setScenarios] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -97,6 +102,19 @@ export default function MarketingPage() {
   const [previewList, setPreviewList] = useState<any[]>([])
   const [previewLoading, setPreviewLoading] = useState(false)
   const [activeBusinessTimezone, setActiveBusinessTimezone] = useState('Asia/Jakarta')
+  const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set())
+  const [notification, setNotification] = useState<NotificationState>(null)
+  const notificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showNotification = (type: 'success' | 'error', message: string) => {
+    if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current)
+
+    setNotification({ type, message })
+    notificationTimerRef.current = setTimeout(() => {
+      setNotification(null)
+      notificationTimerRef.current = null
+    }, 3000)
+  }
 
   const fetchScenarios = async () => {
     setLoading(true)
@@ -129,6 +147,12 @@ export default function MarketingPage() {
   }
 
   useEffect(() => { fetchScenarios() }, [])
+
+  useEffect(() => {
+    return () => {
+      if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current)
+    }
+  }, [])
 
   // --- LOGIC PREVIEW: DENGAN SORTING TIMESTAMP & FILTER MANUSIAWI ---
   useEffect(() => {
@@ -227,8 +251,65 @@ export default function MarketingPage() {
     }
   }
 
+  const handleToggleActive = async (id: string, currentStatus: boolean) => {
+    const nextStatus = !currentStatus
+
+    setTogglingIds((prev) => new Set(prev).add(id))
+    setScenarios((prev) =>
+      prev.map((item) => item.id === id ? { ...item, is_active: nextStatus } : item)
+    )
+
+    const { error } = await supabase
+      .from('marketing_scenarios')
+      .update({ is_active: nextStatus })
+      .eq('id', id)
+
+    if (error) {
+      setScenarios((prev) =>
+        prev.map((item) => item.id === id ? { ...item, is_active: currentStatus } : item)
+      )
+      showNotification('error', `Gagal update status: ${error.message}`)
+    } else {
+      showNotification('success', `Skenario berhasil ${nextStatus ? 'diaktifkan' : 'dimatikan'}.`)
+    }
+
+    setTogglingIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
+      {notification && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`fixed bottom-6 left-1/2 z-[60] flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 items-start gap-3 rounded-2xl border px-5 py-4 shadow-2xl animate-in slide-in-from-bottom-3 fade-in duration-200 ${
+            notification.type === 'success'
+              ? 'border-green-200 bg-green-50 text-green-800 shadow-green-100'
+              : 'border-red-200 bg-red-50 text-red-800 shadow-red-100'
+          }`}
+        >
+          <span
+            className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-sm font-black text-white ${
+              notification.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+            }`}
+          >
+            {notification.type === 'success' ? 'OK' : '!'}
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[10px] font-black uppercase tracking-[0.2em] opacity-70">
+              {notification.type === 'success' ? 'Berhasil' : 'Gagal'}
+            </span>
+            <span className="mt-1 block text-sm font-extrabold leading-snug">
+              {notification.message}
+            </span>
+          </span>
+        </div>
+      )}
+
       <PageHeader 
         title="MARKETING AUTOMATION" 
         description="Kelola skenario pesan otomatis Toko Alamanda."
@@ -256,10 +337,51 @@ export default function MarketingPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {scenarios.map((item) => (
+                {loading && Array.from({ length: 5 }).map((_, index) => (
+                  <tr key={`loading-${index}`} className="animate-pulse">
+                    <td className="p-4">
+                      <div className="h-6 w-11 rounded-full bg-slate-200" />
+                    </td>
+                    <td className="p-4">
+                      <div className="h-4 w-44 rounded bg-slate-200" />
+                    </td>
+                    <td className="p-4">
+                      <div className="mx-auto h-8 w-8 rounded-md bg-slate-200" />
+                    </td>
+                    <td className="p-4">
+                      <div className="h-5 w-16 rounded bg-slate-200" />
+                    </td>
+                    <td className="p-4">
+                      <div className="ml-auto h-4 w-8 rounded bg-slate-200" />
+                    </td>
+                    <td className="p-4">
+                      <div className="flex gap-2">
+                        <div className="h-8 w-8 rounded bg-slate-200" />
+                        <div className="h-8 w-8 rounded bg-slate-200" />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+
+                {!loading && scenarios.map((item) => (
                   <tr key={item.id} className="hover:bg-slate-50 group transition-colors">
                     <td className="p-4">
-                      <span className={`inline-block w-2 h-2 rounded-full ${item.is_active ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-slate-300'}`}></span>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleActive(item.id, Boolean(item.is_active))}
+                        disabled={togglingIds.has(item.id)}
+                        aria-pressed={Boolean(item.is_active)}
+                        aria-label={`${item.is_active ? 'Matikan' : 'Aktifkan'} skenario ${item.name}`}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-wait disabled:opacity-60 ${
+                          item.is_active ? 'bg-green-500 shadow-[0_0_12px_rgba(34,197,94,0.25)]' : 'bg-slate-300'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                            item.is_active ? 'translate-x-5' : 'translate-x-0.5'
+                          }`}
+                        />
+                      </button>
                     </td>
                     <td className="p-4">
                       <Link href={`/marketing/edit/${item.id}`} className="font-bold text-blue-600 text-sm uppercase hover:underline">
@@ -286,10 +408,18 @@ export default function MarketingPage() {
                        </Link>
                        <button onClick={() => handleDelete(item.id, item.name)} className="p-2 text-slate-400 hover:text-red-600 transition-colors">
                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                       </button>
+                      </button>
                     </td>
                   </tr>
                 ))}
+
+                {!loading && scenarios.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="p-16 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      Belum ada skenario marketing.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
