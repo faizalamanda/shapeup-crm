@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/Input'
 import MarketingTrigger from '../../new/MarketingTrigger'
 import YCloudMessageEditor from '../../new/YCloudMessageEditor'
 // IMPORT GENERATOR (Pastikan path-nya benar sesuai struktur folder Mas)
-import { generateSQLFilter, generateScheduling } from '../../new/AudienceSegmentBuilder'
+import { DEFAULT_ONE_TIME, DEFAULT_SCHEDULE, generateSQLFilter, generateScheduling, type AudienceFilter, type OneTimeConfig, type ScheduleConfig } from '../../new/AudienceSegmentBuilder'
 import { formatTemplateVarsForSupabase, hydrateTemplateVarsForEditor, type TemplateVarDraft } from '../../new/variables'
 
 export default function EditScenarioPage() {
@@ -22,7 +22,9 @@ export default function EditScenarioPage() {
   const [name, setName] = useState('')
   const [triggerType, setTriggerType] = useState('STATUS')
   const [timeType, setTimeType] = useState('LOOPING')
-  const [filters, setFilters] = useState([])
+  const [filters, setFilters] = useState<AudienceFilter[]>([])
+  const [schedule, setSchedule] = useState<ScheduleConfig>(DEFAULT_SCHEDULE)
+  const [oneTime, setOneTime] = useState<OneTimeConfig>(DEFAULT_ONE_TIME)
   const [templateName, setTemplateName] = useState('')
   const [templateVars, setTemplateVars] = useState<TemplateVarDraft[]>([])
 
@@ -41,6 +43,8 @@ export default function EditScenarioPage() {
         setName(data.name || '')
         setTriggerType(data.trigger_type || 'STATUS')
         setTimeType(data.trigger_config?.timeType || 'LOOPING')
+        setSchedule({ ...DEFAULT_SCHEDULE, ...(data.trigger_config?.schedule || {}) })
+        setOneTime({ ...DEFAULT_ONE_TIME, ...(data.trigger_config?.oneTime || {}) })
         setFilters(data.filters || [])
         setTemplateName(data.template_name || '')
         setTemplateVars(hydrateTemplateVarsForEditor(data.template_vars))
@@ -57,7 +61,11 @@ export default function EditScenarioPage() {
 
     // RE-GENERATE LOGIC SQL (Ini bagian yang tadi ketinggalan)
     const sqlFilter = generateSQLFilter(filters);
-    const schedulingLogic = generateScheduling(filters);
+    const schedulingLogic = generateScheduling(
+      filters,
+      triggerType === 'TIME' && timeType === 'SCHEDULED' ? schedule : undefined,
+      triggerType === 'TIME' && timeType === 'SPECIFIC' ? oneTime : undefined
+    );
     const mappedTemplateVars = formatTemplateVarsForSupabase(templateVars);
 
     const { error } = await supabase
@@ -65,7 +73,7 @@ export default function EditScenarioPage() {
       .update({
         name,
         trigger_type: triggerType,
-        trigger_config: { timeType },
+        trigger_config: { timeType, schedule, oneTime },
         // UPDATE KOLOM LOGIKANYA JUGA
         sql_filter: sqlFilter,
         scheduling_logic: schedulingLogic,
@@ -116,6 +124,8 @@ export default function EditScenarioPage() {
         triggerType={triggerType} setTriggerType={setTriggerType}
         timeType={timeType} setTimeType={setTimeType} 
         filters={filters} setFilters={setFilters}
+        schedule={schedule} setSchedule={setSchedule}
+        oneTime={oneTime} setOneTime={setOneTime}
       />
 
       {/* STEP 3: MESSAGE CONFIGURATION */}

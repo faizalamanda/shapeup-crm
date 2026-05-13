@@ -13,7 +13,7 @@ type AudienceFieldConfig = {
   schedulingColumn?: string
 }
 
-type AudienceFilter = {
+export type AudienceFilter = {
   id: number
   key: string
   op: string
@@ -27,6 +27,39 @@ type AudienceSegmentBuilderProps = {
 }
 
 type AudienceFilterField = 'key' | 'op' | 'value' | 'logic'
+export type ScheduleFrequency = 'DAILY' | 'WEEKLY' | 'MONTHLY'
+
+export type ScheduleConfig = {
+  frequency: ScheduleFrequency
+  hour: string
+  minute: string
+  weekday: string
+  monthDay: string
+}
+
+export type OneTimeMode = 'IMMEDIATE' | 'SPECIFIC_DATETIME'
+
+export type OneTimeConfig = {
+  mode: OneTimeMode
+  date: string
+  hour: string
+  minute: string
+}
+
+export const DEFAULT_SCHEDULE: ScheduleConfig = {
+  frequency: 'DAILY',
+  hour: '09',
+  minute: '00',
+  weekday: '1',
+  monthDay: '1',
+}
+
+export const DEFAULT_ONE_TIME: OneTimeConfig = {
+  mode: 'IMMEDIATE',
+  date: '',
+  hour: '09',
+  minute: '00',
+}
 
 const ORDER_DATE_COLUMN = "COALESCE(o.order_date_utc AT TIME ZONE COALESCE(b.timezone, 'Asia/Jakarta'), o.order_date::timestamp)"
 const BUSINESS_TIMEZONE = "COALESCE(b.timezone, 'Asia/Jakarta')"
@@ -111,6 +144,16 @@ const toNumericValue = (value: string) => {
   return Number.isFinite(numericValue) ? String(numericValue) : '0'
 }
 
+const clampNumber = (value: string, min: number, max: number, fallback: number) => {
+  const numericValue = Number(value)
+  if (!Number.isFinite(numericValue)) return fallback
+  return Math.min(Math.max(Math.trunc(numericValue), min), max)
+}
+
+const toPaddedTimePart = (value: string, min: number, max: number) => {
+  return String(clampNumber(value, min, max, min)).padStart(2, '0')
+}
+
 const buildDefaultFilter = (): AudienceFilter => {
   const field = AUDIENCE_FIELDS.find(item => item.key === 'order_status') || AUDIENCE_FIELDS[0]
 
@@ -186,7 +229,39 @@ export const generateSQLFilter = (filters: AudienceFilter[]) => {
 /**
  * FUNGSI GENERATOR JADWAL: Menghasilkan string untuk kolom scheduling_logic
  */
-export const generateScheduling = (filters: AudienceFilter[]) => {
+export const generateScheduling = (filters: AudienceFilter[], schedule?: ScheduleConfig, oneTime?: OneTimeConfig) => {
+  if (oneTime) {
+    if (oneTime.mode === 'IMMEDIATE' || !oneTime.date) return "NOW()"
+
+    const hour = toPaddedTimePart(oneTime.hour, 0, 23)
+    const minute = toPaddedTimePart(oneTime.minute, 0, 59)
+
+    return `TIMESTAMP '${oneTime.date} ${hour}:${minute}:00'`
+  }
+
+  if (schedule) {
+    const hour = toPaddedTimePart(schedule.hour, 0, 23)
+    const minute = toPaddedTimePart(schedule.minute, 0, 59)
+    const time = `${hour}:${minute}:00`
+
+    if (schedule.frequency === 'DAILY') {
+      return `date_trunc('day', NOW() AT TIME ZONE ${BUSINESS_TIMEZONE}) + TIME '${time}'`
+    }
+
+    if (schedule.frequency === 'WEEKLY') {
+      const weekday = clampNumber(schedule.weekday, 0, 6, 1)
+
+      return `date_trunc('day', NOW() AT TIME ZONE ${BUSINESS_TIMEZONE}) + ((((${weekday} - EXTRACT(DOW FROM NOW() AT TIME ZONE ${BUSINESS_TIMEZONE})::int) + 7) % 7) * INTERVAL '1 day') + TIME '${time}'`
+    }
+
+    const monthDay = clampNumber(schedule.monthDay, 1, 31, 1)
+
+    return `LEAST(
+      date_trunc('month', NOW() AT TIME ZONE ${BUSINESS_TIMEZONE}) + INTERVAL '${monthDay - 1} days',
+      date_trunc('month', NOW() AT TIME ZONE ${BUSINESS_TIMEZONE}) + INTERVAL '1 month - 1 day'
+    ) + TIME '${time}'`
+  }
+
   const timeFilter = filters.find(f => f.op === 'after_x_days' || f.op === 'after_x_hours');
   
   if (timeFilter) {

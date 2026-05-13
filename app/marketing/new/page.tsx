@@ -9,7 +9,7 @@ import Link from 'next/link'
 import { supabase } from '@/lib/supabase' 
 import { useRouter } from 'next/navigation'
 // IMPORT GENERATOR DARI KOMPONEN BUILDER
-import { generateSQLFilter, generateScheduling } from './AudienceSegmentBuilder'
+import { DEFAULT_ONE_TIME, DEFAULT_SCHEDULE, generateSQLFilter, generateScheduling, type AudienceFilter, type OneTimeConfig, type ScheduleConfig } from './AudienceSegmentBuilder'
 import { formatTemplateVarsForSupabase, type TemplateVarDraft } from './variables'
 
 export default function NewScenarioPage() {
@@ -20,7 +20,9 @@ export default function NewScenarioPage() {
   const [name, setName] = useState('')
   const [triggerType, setTriggerType] = useState('STATUS')
   const [timeType, setTimeType] = useState('LOOPING')
-  const [filters, setFilters] = useState([]) 
+  const [filters, setFilters] = useState<AudienceFilter[]>([]) 
+  const [schedule, setSchedule] = useState<ScheduleConfig>(DEFAULT_SCHEDULE)
+  const [oneTime, setOneTime] = useState<OneTimeConfig>(DEFAULT_ONE_TIME)
   const [templateName, setTemplateName] = useState('') 
   const [templateVars, setTemplateVars] = useState<TemplateVarDraft[]>([]) 
 
@@ -37,7 +39,11 @@ export default function NewScenarioPage() {
 
     // PROSES GENERATE: Mengubah array filter menjadi kalimat SQL
     const sqlFilter = generateSQLFilter(filters);
-    const schedulingLogic = generateScheduling(filters);
+    const schedulingLogic = generateScheduling(
+      filters,
+      triggerType === 'TIME' && timeType === 'SCHEDULED' ? schedule : undefined,
+      triggerType === 'TIME' && timeType === 'SPECIFIC' ? oneTime : undefined
+    );
 
     console.log("DEBUG: SQL Filter dihasilkan:", sqlFilter);
     console.log("DEBUG: Scheduling Logic dihasilkan:", schedulingLogic);
@@ -47,7 +53,7 @@ export default function NewScenarioPage() {
     const payload = {
       name: name,
       trigger_type: triggerType,
-      trigger_config: { timeType },
+      trigger_config: { timeType, schedule, oneTime },
       
       // KOLOM UNTUK SI PENJALA DI SUPABASE
       sql_filter: sqlFilter,
@@ -127,6 +133,10 @@ export default function NewScenarioPage() {
         setTimeType={setTimeType} 
         filters={filters} 
         setFilters={setFilters}
+        schedule={schedule}
+        setSchedule={setSchedule}
+        oneTime={oneTime}
+        setOneTime={setOneTime}
       />
 
       {/* STEP 3: MESSAGE CONTENT */}
