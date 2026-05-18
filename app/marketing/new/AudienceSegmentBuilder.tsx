@@ -144,6 +144,11 @@ const toNumericValue = (value: string) => {
   return Number.isFinite(numericValue) ? String(numericValue) : '0'
 }
 
+const toPositiveNumericValue = (value: string, fallback = '0') => {
+  const numericValue = Number(value)
+  return Number.isFinite(numericValue) && numericValue >= 0 ? String(numericValue) : fallback
+}
+
 const clampNumber = (value: string, min: number, max: number, fallback: number) => {
   const numericValue = Number(value)
   if (!Number.isFinite(numericValue)) return fallback
@@ -179,6 +184,8 @@ export const generateSQLFilter = (filters: AudienceFilter[]) => {
     const col = field.column;
     const val = escapeSQLValue(f.value);
     const numericVal = toNumericValue(f.value);
+    const positiveNumericVal = toPositiveNumericValue(f.value);
+    const currentBusinessTime = `(NOW() AT TIME ZONE ${BUSINESS_TIMEZONE})`;
 
     // Logika Operator
     switch (f.op) {
@@ -213,11 +220,11 @@ export const generateSQLFilter = (filters: AudienceFilter[]) => {
         break;
       case 'after_x_days': 
         // Sapu semua yang umurnya SUDAH LEBIH dari X hari
-        sqlPart = `${col} <= (NOW() - INTERVAL '${numericVal} days')`;
+        sqlPart = `${col} <= (${currentBusinessTime} - INTERVAL '${positiveNumericVal} days')`;
         break;
       case 'after_x_hours': 
         // Sapu semua yang umurnya SUDAH LEBIH dari X jam
-        sqlPart = `${col} <= (NOW() - INTERVAL '${numericVal} hours')`;
+        sqlPart = `${col} <= (${currentBusinessTime} - INTERVAL '${positiveNumericVal} hours')`;
         break;
       default: sqlPart = "TRUE";
     }
@@ -268,7 +275,7 @@ export const generateScheduling = (filters: AudienceFilter[], schedule?: Schedul
     const field = getAudienceField(timeFilter.key)
     const col = field.schedulingColumn || field.column;
     const unit = timeFilter.op === 'after_x_days' ? 'days' : 'hours';
-    return `${col} + interval '${toNumericValue(timeFilter.value)} ${unit}'`;
+    return `${col} + interval '${toPositiveNumericValue(timeFilter.value)} ${unit}'`;
   }
 
   return "NOW()";
