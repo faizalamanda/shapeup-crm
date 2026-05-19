@@ -173,7 +173,6 @@ const buildDefaultFilter = (): AudienceFilter => {
 
 /**
  * FUNGSI GENERATOR SQL: Menghasilkan string untuk kolom sql_filter
- * Menggunakan prinsip "Sapu Bersih" (<=) agar data lama tetap terjaring
  */
 export const generateSQLFilter = (filters: AudienceFilter[]) => {
   if (!filters || filters.length === 0) return "TRUE";
@@ -219,8 +218,7 @@ export const generateSQLFilter = (filters: AudienceFilter[]) => {
           : `${col} < '${val}'::timestamptz`;
         break;
       case 'after_x_days': 
-        // Sapu semua yang umurnya SUDAH LEBIH dari X hari
-        sqlPart = `${col} <= (${currentBusinessTime} - INTERVAL '${positiveNumericVal} days')`;
+        sqlPart = `${col}::date = (${currentBusinessTime} - INTERVAL '${positiveNumericVal} days')::date`;
         break;
       case 'after_x_hours': 
         // Sapu semua yang umurnya SUDAH LEBIH dari X jam

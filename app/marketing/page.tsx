@@ -55,13 +55,44 @@ const ensureUTCDateString = (dateStr: string) => {
 }
 
 type MarketingOrderPreview = {
+  id: string | number
+  created_at?: string | null
+  status?: string | null
   order_date_utc?: string | null
   order_date?: string | null
   updated_at?: string | null
   raw_source_data?: {
     date_completed_gmt?: string | null
     date_completed?: string | null
+    total?: string | number | null
+    number?: string | number | null
+    billing?: {
+      first_name?: string | null
+      last_name?: string | null
+      city?: string | null
+    } | null
   } | null
+}
+
+type MarketingFilter = {
+  key: string
+  op: string
+  value?: string
+  logic?: 'AND' | 'OR'
+}
+
+type MarketingScenario = {
+  id: string
+  name: string
+  trigger_type?: string | null
+  is_active?: boolean | null
+}
+
+type PreviewPerson = {
+  name: string
+  orderId: string
+  status: string
+  time: string
 }
 
 const getOrderDateKey = (order: MarketingOrderPreview, timezone: string) => {
@@ -81,6 +112,17 @@ const dateKeyToLocalDate = (dateKey: string) => {
   return new Date(year, month - 1, day)
 }
 
+const subtractDaysFromDateKey = (dateKey: string, days: number) => {
+  const date = dateKeyToLocalDate(dateKey)
+  date.setDate(date.getDate() - days)
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+
+  return `${year}-${month}-${day}`
+}
+
 const formatDateKeyID = (dateStr: string, timezone: string, useTimezone = false) => {
   const dateKey = useTimezone ? getDateKeyInTimezone(dateStr, timezone) : getLocalDateKey(dateStr)
   if (!dateKey) return '-'
@@ -88,19 +130,15 @@ const formatDateKeyID = (dateStr: string, timezone: string, useTimezone = false)
   return dateKeyToLocalDate(dateKey).toLocaleDateString('id-ID')
 }
 
-const isDateKeyMatch = (orderDateKey: string, filterValue: string, operator: string) => {
+const isDateKeyMatch = (orderDateKey: string, filterValue: string, operator: string, timezone: string) => {
   if (!orderDateKey || !filterValue) return false;
   
-  const orderDate = dateKeyToLocalDate(orderDateKey)
-  
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // Jika operatornya adalah "Setelah X Hari" (berbasis angka)
   if (operator === 'after_x_days') {
-    const diffTime = today.getTime() - orderDate.getTime();
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-    return diffDays === parseInt(filterValue);
+    const dayCount = Number(filterValue)
+    if (!Number.isFinite(dayCount) || dayCount < 0) return false
+
+    const todayKey = getDateKeyInTimezone(new Date().toISOString(), timezone)
+    return orderDateKey === subtractDaysFromDateKey(todayKey, Math.trunc(dayCount))
   }
 
   // Jika operator berbasis kalender (Sama Dengan, Sebelum, Sesudah)
@@ -112,16 +150,70 @@ const isDateKeyMatch = (orderDateKey: string, filterValue: string, operator: str
   }
 };
 
+const compareTextValue = (sourceValue: string, filterValue: string, operator: string) => {
+  const source = (sourceValue || '').toLowerCase()
+  const filter = (filterValue || '').toLowerCase()
+
+  switch (operator) {
+    case 'is': return source === filter
+    case 'is not': return source !== filter
+    case 'contains': return source.includes(filter)
+    default: return true
+  }
+}
+
+const compareNumberValue = (sourceValue: string | number | null | undefined, filterValue: string, operator: string) => {
+  const source = Number(sourceValue)
+  const filter = Number(filterValue)
+
+  if (!Number.isFinite(source) || !Number.isFinite(filter)) return false
+
+  switch (operator) {
+    case 'equal to': return source === filter
+    case 'more than': return source > filter
+    case 'less than': return source < filter
+    default: return true
+  }
+}
+
+const isOrderMatchFilter = (order: MarketingOrderPreview, filter: MarketingFilter, timezone: string) => {
+  switch (filter.key) {
+    case 'order_status':
+      return compareTextValue(order.status || '', filter.value || '', filter.op)
+    case 'customer_city':
+      return compareTextValue(order.raw_source_data?.billing?.city || '', filter.value || '', filter.op)
+    case 'total_spent':
+      return compareNumberValue(order.raw_source_data?.total, filter.value || '', filter.op)
+    case 'date_order':
+      return isDateKeyMatch(getOrderDateKey(order, timezone), filter.value || '', filter.op, timezone)
+    case 'date_completed':
+      return isDateKeyMatch(getCompletedDateKey(order, timezone), filter.value || '', filter.op, timezone)
+    default:
+      return true
+  }
+}
+
+const isOrderMatchFilters = (order: MarketingOrderPreview, filters: MarketingFilter[], timezone: string) => {
+  if (!filters.length) return true
+
+  return filters.reduce((result, filter, index) => {
+    const isMatch = isOrderMatchFilter(order, filter, timezone)
+    if (index === 0) return isMatch
+
+    return filter.logic === 'OR' ? result || isMatch : result && isMatch
+  }, true)
+}
+
 type NotificationState = {
   type: 'success' | 'error'
   message: string
 } | null
 
 export default function MarketingPage() {
-  const [scenarios, setScenarios] = useState<any[]>([])
+  const [scenarios, setScenarios] = useState<MarketingScenario[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedPreview, setSelectedPreview] = useState<any>(null)
-  const [previewList, setPreviewList] = useState<any[]>([])
+  const [selectedPreview, setSelectedPreview] = useState<MarketingScenario | null>(null)
+  const [previewList, setPreviewList] = useState<PreviewPerson[]>([])
   const [previewLoading, setPreviewLoading] = useState(false)
   const [activeBusinessTimezone, setActiveBusinessTimezone] = useState('Asia/Jakarta')
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set())
@@ -159,10 +251,10 @@ export default function MarketingPage() {
 
       if (error) throw error
 
-      setScenarios(data || [])
+      setScenarios((data || []) as MarketingScenario[])
 
-    } catch (err: any) {
-      console.error(err.message)
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : err)
     } finally {
       setLoading(false)
     }
@@ -189,50 +281,24 @@ export default function MarketingPage() {
           .eq('id', selectedPreview.id)
           .single();
 
-        const activeFilters = currentMA?.filters || [];
+        const activeFilters = (currentMA?.filters as MarketingFilter[] | null) || [];
         
-        let query = supabase.from('orders').select('*');
-
-        const statusFilter = activeFilters.find((f: any) => f.key === 'order_status');
-        if (statusFilter) {
-          if (statusFilter.op === 'is') query = query.eq('status', statusFilter.value);
-          if (statusFilter.op === 'is not') query = query.neq('status', statusFilter.value);
-        }
-
-        const { data: rawOrders, error: orderError } = await query
+        const { data: rawOrders, error: orderError } = await supabase
+          .from('orders')
+          .select('*')
           .order('created_at', { ascending: false })
           .limit(500);
 
         if (orderError) throw orderError;
 
         if (rawOrders) {
-          const filtered = rawOrders.filter((order) => {
-            let isMatch = true;
-            activeFilters.forEach((f: any) => {
-              // 1. Filter Kota
-              if (f.key === 'customer_city') {
-                const city = (order.raw_source_data?.billing?.city || '').toLowerCase();
-                const search = (f.value || '').toLowerCase();
-                if (!city.includes(search)) isMatch = false;
-              }
-
-              // 2. Filter Order Date
-              if (f.key === 'date_order') {
-                if (!isDateKeyMatch(getOrderDateKey(order, activeBusinessTimezone), f.value, f.op)) isMatch = false;
-              }
-
-              // 3. Filter Completed Date
-              if (f.key === 'date_completed') {
-                if (!isDateKeyMatch(getCompletedDateKey(order, activeBusinessTimezone), f.value, f.op)) isMatch = false;
-              }
-            });
-            return isMatch;
-          });
+          const previewOrders = rawOrders as MarketingOrderPreview[]
+          const filtered = previewOrders.filter((order) => isOrderMatchFilters(order, activeFilters, activeBusinessTimezone));
 
           // Urutan tetap: yang paling baru di atas
           const sorted = filtered.sort((a, b) => {
-            const timeA = `${getOrderDateKey(a, activeBusinessTimezone) || getLocalDateKey(a.created_at)} ${a.order_date_utc || a.order_date || a.created_at}`;
-            const timeB = `${getOrderDateKey(b, activeBusinessTimezone) || getLocalDateKey(b.created_at)} ${b.order_date_utc || b.order_date || b.created_at}`;
+            const timeA = `${getOrderDateKey(a, activeBusinessTimezone) || getLocalDateKey(a.created_at || '')} ${a.order_date_utc || a.order_date || a.created_at || ''}`;
+            const timeB = `${getOrderDateKey(b, activeBusinessTimezone) || getLocalDateKey(b.created_at || '')} ${b.order_date_utc || b.order_date || b.created_at || ''}`;
             return timeB.localeCompare(timeA);
           });
 
@@ -251,7 +317,7 @@ export default function MarketingPage() {
                         ? formatDateKeyID(raw.date_completed, activeBusinessTimezone)
                         : d.order_date_utc
                         ? formatDateKeyID(d.order_date_utc, activeBusinessTimezone, true)
-                        : formatDateKeyID(d.order_date || d.created_at, activeBusinessTimezone)
+                        : formatDateKeyID(d.order_date || d.created_at || '', activeBusinessTimezone)
                     : '-'
             };
           }));
