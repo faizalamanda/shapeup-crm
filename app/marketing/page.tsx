@@ -54,6 +54,40 @@ const ensureUTCDateString = (dateStr: string) => {
   return /(?:z|[+-]\d{2}:?\d{2})$/i.test(dateStr) ? dateStr : `${dateStr}Z`
 }
 
+type OrderItem = {
+  name?: string | null
+  product_name?: string | null
+}
+
+const parseRecord = (value: unknown): Record<string, unknown> | null => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+
+  if (typeof value !== 'string') return null
+
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null
+  } catch {
+    return null
+  }
+}
+
+const parseArray = <T,>(value: unknown): T[] => {
+  if (Array.isArray(value)) return value as T[]
+  if (typeof value !== 'string') return []
+
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed as T[] : []
+  } catch {
+    return []
+  }
+}
+
 type MarketingOrderPreview = {
   id: string | number
   created_at?: string | null
@@ -61,17 +95,19 @@ type MarketingOrderPreview = {
   order_date_utc?: string | null
   order_date?: string | null
   updated_at?: string | null
+  items_json?: OrderItem[] | string | null
   raw_source_data?: {
     date_completed_gmt?: string | null
     date_completed?: string | null
     total?: string | number | null
     number?: string | number | null
+    line_items?: OrderItem[] | null
     billing?: {
       first_name?: string | null
       last_name?: string | null
       city?: string | null
     } | null
-  } | null
+  } | string | null
 }
 
 type MarketingFilter = {
@@ -84,6 +120,7 @@ type MarketingFilter = {
 type MarketingScenario = {
   id: string
   name: string
+  business_id?: string | null
   trigger_type?: string | null
   is_active?: boolean | null
 }
@@ -101,10 +138,25 @@ const getOrderDateKey = (order: MarketingOrderPreview, timezone: string) => {
 }
 
 const getCompletedDateKey = (order: MarketingOrderPreview, timezone: string) => {
-  const raw = order.raw_source_data || {}
-  if (raw.date_completed_gmt) return getDateKeyInTimezone(ensureUTCDateString(raw.date_completed_gmt), timezone)
-  if (raw.date_completed) return getLocalDateKey(raw.date_completed)
+  const raw = parseRecord(order.raw_source_data) || {}
+  const completedGmt = typeof raw.date_completed_gmt === 'string' ? raw.date_completed_gmt : ''
+  const completed = typeof raw.date_completed === 'string' ? raw.date_completed : ''
+
+  if (completedGmt) return getDateKeyInTimezone(ensureUTCDateString(completedGmt), timezone)
+  if (completed) return getLocalDateKey(completed)
   return getDateKeyInTimezone(order.updated_at || '', timezone)
+}
+
+const getOrderProductNames = (order: MarketingOrderPreview) => {
+  const raw = parseRecord(order.raw_source_data)
+  const items = parseArray<OrderItem>(order.items_json)
+  const rawItems = parseArray<OrderItem>(raw?.line_items)
+  const orderItems = items.length > 0 ? items : rawItems
+
+  return orderItems
+    .map((item) => item.name || item.product_name || '')
+    .filter(Boolean)
+    .join(', ')
 }
 
 const dateKeyToLocalDate = (dateKey: string) => {
@@ -177,13 +229,18 @@ const compareNumberValue = (sourceValue: string | number | null | undefined, fil
 }
 
 const isOrderMatchFilter = (order: MarketingOrderPreview, filter: MarketingFilter, timezone: string) => {
+  const raw = parseRecord(order.raw_source_data) || {}
+  const billing = parseRecord(raw.billing)
+
   switch (filter.key) {
     case 'order_status':
       return compareTextValue(order.status || '', filter.value || '', filter.op)
     case 'customer_city':
-      return compareTextValue(order.raw_source_data?.billing?.city || '', filter.value || '', filter.op)
+      return compareTextValue(String(billing?.city || ''), filter.value || '', filter.op)
+    case 'product_name':
+      return compareTextValue(getOrderProductNames(order), filter.value || '', filter.op)
     case 'total_spent':
-      return compareNumberValue(order.raw_source_data?.total, filter.value || '', filter.op)
+      return compareNumberValue(raw.total as string | number | null | undefined, filter.value || '', filter.op)
     case 'date_order':
       return isDateKeyMatch(getOrderDateKey(order, timezone), filter.value || '', filter.op, timezone)
     case 'date_completed':
@@ -215,6 +272,7 @@ export default function MarketingPage() {
   const [selectedPreview, setSelectedPreview] = useState<MarketingScenario | null>(null)
   const [previewList, setPreviewList] = useState<PreviewPerson[]>([])
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [activeBusinessId, setActiveBusinessId] = useState<string | null>(null)
   const [activeBusinessTimezone, setActiveBusinessTimezone] = useState('Asia/Jakarta')
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set())
   const [notification, setNotification] = useState<NotificationState>(null)
@@ -241,6 +299,7 @@ export default function MarketingPage() {
         return
       }
 
+      setActiveBusinessId(activeBusiness.id)
       setActiveBusinessTimezone(activeBusiness.timezone)
 
       const { data, error } = await supabase
@@ -277,17 +336,24 @@ export default function MarketingPage() {
       try {
         const { data: currentMA } = await supabase
           .from('marketing_scenarios')
-          .select('filters')
+          .select('filters, business_id')
           .eq('id', selectedPreview.id)
           .single();
 
         const activeFilters = (currentMA?.filters as MarketingFilter[] | null) || [];
+        const previewBusinessId = currentMA?.business_id || selectedPreview.business_id || activeBusinessId
+
+        if (!previewBusinessId) {
+          setPreviewList([])
+          return
+        }
         
         const { data: rawOrders, error: orderError } = await supabase
           .from('orders')
           .select('*')
+          .eq('business_id', previewBusinessId)
           .order('created_at', { ascending: false })
-          .limit(500);
+          .limit(5000);
 
         if (orderError) throw orderError;
 
@@ -303,18 +369,24 @@ export default function MarketingPage() {
           });
 
           setPreviewList(sorted.map(d => {
-            const raw = d.raw_source_data || {};
+            const raw = parseRecord(d.raw_source_data) || {};
+            const billing = parseRecord(raw.billing)
+            const firstName = typeof billing?.first_name === 'string' ? billing.first_name : ''
+            const lastName = typeof billing?.last_name === 'string' ? billing.last_name : ''
+            const orderNumber = raw.number || d.id
+            const completedGmt = typeof raw.date_completed_gmt === 'string' ? raw.date_completed_gmt : ''
+            const completed = typeof raw.date_completed === 'string' ? raw.date_completed : ''
             return {
-              name: raw.billing?.first_name 
-                    ? `${raw.billing.first_name} ${raw.billing.last_name || ''}`.trim() 
+              name: firstName
+                    ? `${firstName} ${lastName}`.trim() 
                     : 'Customer',
-              orderId: `#${raw.number || d.id}`,
+              orderId: `#${orderNumber}`,
               status: (d.status || 'unknown').toUpperCase(),
-              time: raw.date_completed_gmt || raw.date_completed || d.order_date_utc || d.order_date || d.created_at
-                    ? raw.date_completed_gmt
-                      ? formatDateKeyID(ensureUTCDateString(raw.date_completed_gmt), activeBusinessTimezone, true)
-                      : raw.date_completed
-                        ? formatDateKeyID(raw.date_completed, activeBusinessTimezone)
+              time: completedGmt || completed || d.order_date_utc || d.order_date || d.created_at
+                    ? completedGmt
+                      ? formatDateKeyID(ensureUTCDateString(completedGmt), activeBusinessTimezone, true)
+                      : completed
+                        ? formatDateKeyID(completed, activeBusinessTimezone)
                         : d.order_date_utc
                         ? formatDateKeyID(d.order_date_utc, activeBusinessTimezone, true)
                         : formatDateKeyID(d.order_date || d.created_at || '', activeBusinessTimezone)
@@ -330,7 +402,7 @@ export default function MarketingPage() {
     };
 
     getValidAudience();
-  }, [selectedPreview, activeBusinessTimezone]);
+  }, [selectedPreview, activeBusinessId, activeBusinessTimezone]);
 
   const handleDelete = async (id: string, name: string) => {
     if (confirm(`YAKIN INGIN MENGHAPUS SKENARIO: ${name}?`)) {

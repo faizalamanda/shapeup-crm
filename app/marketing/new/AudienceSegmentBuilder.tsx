@@ -68,6 +68,16 @@ const COMPLETED_DATE_COLUMN = `COALESCE(
   NULLIF(o.raw_source_data->>'date_completed', '')::timestamp,
   o.updated_at AT TIME ZONE ${BUSINESS_TIMEZONE}
 )`
+const PRODUCT_NAME_COLUMN = `COALESCE((
+  SELECT string_agg(COALESCE(item->>'name', item->>'product_name'), ', ')
+  FROM jsonb_array_elements(
+    CASE
+      WHEN jsonb_typeof(o.items_json) = 'array' THEN o.items_json
+      WHEN jsonb_typeof(o.raw_source_data->'line_items') = 'array' THEN o.raw_source_data->'line_items'
+      ELSE '[]'::jsonb
+    END
+  ) AS item
+), '')`
 
 // Tambah mapping baru cukup dari sini: key UI, label, tipe input, dan kolom SQL.
 const AUDIENCE_FIELDS: AudienceFieldConfig[] = [
@@ -99,6 +109,13 @@ const AUDIENCE_FIELDS: AudienceFieldConfig[] = [
     type: 'text',
     column: "o.raw_source_data->'billing'->>'city'",
     placeholder: 'KOTA',
+  },
+  {
+    key: 'product_name',
+    label: 'ORDER: NAMA PRODUK',
+    type: 'text',
+    column: PRODUCT_NAME_COLUMN,
+    placeholder: 'NAMA PRODUK',
   },
   {
     key: 'total_spent',
