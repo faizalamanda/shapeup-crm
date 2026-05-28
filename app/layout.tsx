@@ -8,6 +8,16 @@ import "./globals.css"
 
 const inter = Inter({ subsets: ['latin'] })
 
+type MenuItem = {
+  name: string
+  href: string
+  icon: string
+  children?: {
+    name: string
+    href: string
+  }[]
+}
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -16,7 +26,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   // Memastikan komponen sudah nempel di browser sebelum render UI berat
   useEffect(() => {
-    setMounted(true)
+    const timer = window.setTimeout(() => setMounted(true), 0)
+    return () => window.clearTimeout(timer)
   }, [])
 
   const supabase = createBrowserClient(
@@ -33,9 +44,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const noSidebar = ["/login", "/register", "/"].includes(pathname)
 
   // Menu Items (Marketing Aktif)
-  const menuItems = [
+  const menuItems: MenuItem[] = [
     { name: 'Overview', href: '/dashboard', icon: 'M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1v-2zM14 11a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z' },
-    { name: 'Customers', href: '/customers', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z' },
+    {
+      name: 'Customers',
+      href: '/customers',
+      icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z',
+      children: [
+        { name: 'Customer List', href: '/customers' },
+        { name: 'Returning Cohort', href: '/customers/cohorts/returning' },
+      ],
+    },
     { name: 'Orders', href: '/orders', icon: 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z' },
     { name: 'Marketing', href: '/marketing', icon: 'M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z' }, 
     { name: 'Manual Input', href: '/orders/new', icon: 'M12 4v16m8-8H4' },
@@ -78,23 +97,52 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
           
           <nav className="flex-1 px-4 space-y-1.5 overflow-y-auto">
-            {menuItems.map((item) => (
-              <Link 
-                key={item.href} 
-                href={item.href}
-                onClick={() => setIsMobileMenuOpen(false)}
-                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-bold tracking-tight transition-all duration-200 ${
-                  pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
-                  ? 'bg-blue-50 text-blue-600' 
-                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
-                }`}
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={item.icon} />
-                </svg>
-                <span className="uppercase">{item.name}</span>
-              </Link>
-            ))}
+            {menuItems.map((item) => {
+              const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
+              const showChildren = Boolean(item.children?.length && isActive)
+
+              return (
+                <div key={item.href} className="space-y-1">
+                  <Link
+                    href={item.href}
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-bold tracking-tight transition-all duration-200 ${
+                      isActive
+                      ? 'bg-blue-50 text-blue-600'
+                      : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                    }`}
+                  >
+                    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={item.icon} />
+                    </svg>
+                    <span className="uppercase">{item.name}</span>
+                  </Link>
+
+                  {showChildren && (
+                    <div className="ml-6 border-l border-slate-200 pl-3 space-y-1">
+                      {item.children?.map((child) => {
+                        const childActive = pathname === child.href
+
+                        return (
+                          <Link
+                            key={child.href}
+                            href={child.href}
+                            onClick={() => setIsMobileMenuOpen(false)}
+                            className={`block rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest transition-colors ${
+                              childActive
+                                ? 'bg-slate-900 text-white'
+                                : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
+                            }`}
+                          >
+                            {child.name}
+                          </Link>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </nav>
 
           <div className="p-4 mt-auto border-t border-slate-100 space-y-1">
