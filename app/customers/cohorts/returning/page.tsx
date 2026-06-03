@@ -45,6 +45,7 @@ const segmentOperatorOptions: { value: SegmentOperator; label: string }[] = [
   { value: 'is_not', label: 'Is Not' },
 ]
 
+const ordersPageSize = 1000
 const allowedOrderStatuses = new Set(['shipped', 'processing', 'complete', 'completed'])
 
 const formatIDR = (value: number) => (
@@ -231,14 +232,26 @@ export default function ReturningCohortPage() {
 
       if (!profile?.active_business_id) return
 
-      const { data, error } = await supabase
-        .from('orders')
-        .select('id, customer_id, order_date, created_at, grand_total, status, items_json')
-        .eq('business_id', profile.active_business_id)
-        .order('order_date', { ascending: true })
+      const allOrders: CohortOrder[] = []
+      let from = 0
 
-      if (error) throw error
-      setOrders(data || [])
+      while (true) {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('id, customer_id, order_date, created_at, grand_total, status, items_json')
+          .eq('business_id', profile.active_business_id)
+          .order('order_date', { ascending: true })
+          .range(from, from + ordersPageSize - 1)
+
+        if (error) throw error
+
+        allOrders.push(...((data || []) as CohortOrder[]))
+
+        if (!data || data.length < ordersPageSize) break
+        from += ordersPageSize
+      }
+
+      setOrders(allOrders)
     } catch (error) {
       console.error('Error fetching returning cohort:', error)
     } finally {
@@ -247,8 +260,48 @@ export default function ReturningCohortPage() {
   }, [supabase])
 
   useEffect(() => {
+    let isMounted = true
+    let ordersChannel: ReturnType<typeof supabase.channel> | null = null
+
+    const subscribeToOrderChanges = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user || !isMounted) return
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('active_business_id')
+        .eq('id', user.id)
+        .single()
+
+      if (!profile?.active_business_id || !isMounted) return
+
+      ordersChannel = supabase
+        .channel(`returning-cohort-orders-${profile.active_business_id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'orders',
+            filter: `business_id=eq.${profile.active_business_id}`,
+          },
+          () => {
+            fetchOrders()
+          }
+        )
+        .subscribe()
+    }
+
     fetchOrders()
-  }, [fetchOrders])
+    subscribeToOrderChanges()
+
+    return () => {
+      isMounted = false
+      if (ordersChannel) {
+        supabase.removeChannel(ordersChannel)
+      }
+    }
+  }, [fetchOrders, supabase])
 
   const cohortData = useMemo(() => {
     const firstOrderStart = dateInputToDate(firstOrderStartDate)
