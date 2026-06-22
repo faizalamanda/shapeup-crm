@@ -1,8 +1,8 @@
 "use client"
 import { Inter } from 'next/font/google'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
-import { createBrowserClient } from '@supabase/ssr'
+import { usePathname } from 'next/navigation'
+import { logoutAction } from '@/app/auth/actions'
 import { useState, useEffect } from 'react' // Tambah useEffect
 import "./globals.css"
 
@@ -20,7 +20,6 @@ type MenuItem = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const router = useRouter()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [mounted, setMounted] = useState(false) // State untuk handle hydration
 
@@ -30,15 +29,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     return () => window.clearTimeout(timer)
   }, [])
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-
   const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.refresh()
-    router.push('/login')
+    await logoutAction()
   }
   
   const noSidebar = ["/login", "/register", "/"].includes(pathname)

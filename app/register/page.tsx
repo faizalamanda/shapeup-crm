@@ -1,6 +1,6 @@
 "use client"
 import { useState } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { registerAction } from '@/app/auth/actions'
 import { useRouter } from 'next/navigation'
 
 export default function Register() {
@@ -10,29 +10,19 @@ export default function Register() {
   const [loading, setLoading] = useState(false)
   const router = useRouter()
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
 
-    // Mendaftarkan user ke Auth Supabase dengan metadata
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName, // Ini akan ditangkap trigger SQL di atas
-        },
-        emailRedirectTo: `${location.origin}/auth/callback`,
-      },
-    })
+    const formData = new FormData()
+    formData.append('email', email)
+    formData.append('password', password)
+    formData.append('fullName', fullName)
 
-    if (error) {
-      alert(error.message)
+    const res = await registerAction(formData)
+
+    if (res?.error) {
+      alert(res.error)
     } else {
       alert("Cek email Anda untuk konfirmasi pendaftaran!")
       router.push('/login')

@@ -1,42 +1,36 @@
 "use client"
-import { useState } from 'react'
-import { createBrowserClient } from '@supabase/ssr' // Gunakan ini
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, Suspense } from 'react'
+import { loginAction } from '@/app/auth/actions'
+import { useSearchParams } from 'next/navigation'
 
-export default function Login() {
+function LoginForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
-  const router = useRouter()
+  const searchParams = useSearchParams()
 
-  // Inisialisasi client Supabase khusus browser
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  useEffect(() => {
+    const errorParam = searchParams.get('error')
+    if (errorParam) {
+      setErrorMsg(errorParam)
+    }
+  }, [searchParams])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setErrorMsg('')
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    const formData = new FormData()
+    formData.append('email', email)
+    formData.append('password', password)
 
-    if (error) {
-      setErrorMsg(error.message)
+    const res = await loginAction(formData)
+
+    if (res?.error) {
+      setErrorMsg(res.error)
       setLoading(false)
-    } else {
-      // PENTING: Gunakan refresh() untuk memastikan middleware membaca cookie terbaru
-      router.refresh() 
-      
-      // Berikan jeda sangat singkat agar cookie tertanam sempurna sebelum pindah
-      setTimeout(() => {
-        router.push('/dashboard')
-      }, 100)
     }
   }
 
@@ -96,5 +90,17 @@ export default function Login() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function Login() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+        <div className="text-center font-bold text-slate-500">Memuat...</div>
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
   )
 }
