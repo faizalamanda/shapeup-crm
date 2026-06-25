@@ -3,7 +3,7 @@ import { Inter } from 'next/font/google'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { logoutAction } from '@/app/auth/actions'
-import { useState, useEffect } from 'react' // Tambah useEffect
+import { useState, useEffect } from 'react'
 import "./globals.css"
 
 const inter = Inter({ subsets: ['latin'] })
@@ -11,19 +11,77 @@ const inter = Inter({ subsets: ['latin'] })
 type MenuItem = {
   name: string
   href: string
-  icon: string
-  children?: {
-    name: string
-    href: string
-  }[]
+  icon: React.ReactNode
+  children?: { name: string; href: string }[]
+}
+
+const Icons = {
+  overview: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+      <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+    </svg>
+  ),
+  customers: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+      <circle cx="9" cy="7" r="4"/>
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+      <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+  ),
+  orders: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+      <line x1="3" y1="6" x2="21" y2="6"/>
+      <path d="M16 10a4 4 0 0 1-8 0"/>
+    </svg>
+  ),
+  marketing: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </svg>
+  ),
+  input: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+    </svg>
+  ),
+  business: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+    </svg>
+  ),
+  settings: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
+  ),
+  logout: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+      <polyline points="16 17 21 12 16 7"/>
+      <line x1="21" y1="12" x2="9" y2="12"/>
+    </svg>
+  ),
+  menu: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  ),
+  close: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+    </svg>
+  ),
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
-  const [mounted, setMounted] = useState(false) // State untuk handle hydration
+  const [mounted, setMounted] = useState(false)
 
-  // Memastikan komponen sudah nempel di browser sebelum render UI berat
   useEffect(() => {
     const timer = window.setTimeout(() => setMounted(true), 0)
     return () => window.clearTimeout(timer)
@@ -32,38 +90,33 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const handleLogout = async () => {
     await logoutAction()
   }
-  
+
   const noSidebar = ["/login", "/register", "/"].includes(pathname)
 
-  // Menu Items (Marketing Aktif)
   const menuItems: MenuItem[] = [
-    { name: 'Overview', href: '/dashboard', icon: 'M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1v-2zM14 11a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z' },
+    { name: 'Overview',     href: '/dashboard',         icon: Icons.overview },
     {
-      name: 'Customers',
-      href: '/customers',
-      icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z',
+      name: 'Customers', href: '/customers', icon: Icons.customers,
       children: [
-        { name: 'Customer List', href: '/customers' },
-        { name: 'Returning Cohort', href: '/customers/cohorts/returning' },
-        { name: 'Product Retention', href: '/customers/product-retention' },
+        { name: 'Customer List',      href: '/customers' },
+        { name: 'Returning Cohort',   href: '/customers/cohorts/returning' },
+        { name: 'Product Retention',  href: '/customers/product-retention' },
       ],
     },
-    { name: 'Orders', href: '/orders', icon: 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z' },
-    { name: 'Marketing', href: '/marketing', icon: 'M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z' }, 
-    { name: 'Manual Input', href: '/orders/new', icon: 'M12 4v16m8-8H4' },
-    { name: 'Business', href: '/settings/business', icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' },
+    { name: 'Orders',       href: '/orders',            icon: Icons.orders },
+    { name: 'Marketing',    href: '/marketing',         icon: Icons.marketing },
+    { name: 'Input Order',  href: '/orders/new',        icon: Icons.input },
+    { name: 'Business',     href: '/settings/business', icon: Icons.business },
   ]
 
-  // Jika belum mounted, jangan render body dulu untuk menghindari mismatch atribut dari extension browser
   if (!mounted) {
     return (
       <html lang="en" suppressHydrationWarning>
-        <body className={`${inter.className} bg-[#F8FAFC]`}></body>
+        <body className={inter.className} style={{ background: '#F7F7F5' }} />
       </html>
     )
   }
 
-  // Handle halaman Login/Register/Landing
   if (noSidebar) {
     return (
       <html lang="en" suppressHydrationWarning>
@@ -74,58 +127,106 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.className} flex bg-[#F8FAFC] text-[#1E293B] antialiased min-h-screen`}>
-        
-        {/* SIDEBAR */}
-        <aside className={`
-          w-64 bg-white h-screen sticky top-0 border-r border-slate-200/60 flex flex-col z-50 transition-transform duration-300
-          fixed lg:sticky lg:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full lg:translate-x-0'}
-        `}>
-          <div className="p-7 mb-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold shadow-lg shadow-blue-200">S</div>
-              <span className="text-xl font-bold tracking-tight text-slate-800 uppercase">ShapeUp</span>
+      <body className={inter.className} style={{ display: 'flex', minHeight: '100vh', background: 'var(--su-bg)', color: 'var(--su-text)' }}>
+
+        {/* ── SIDEBAR ────────────────────────────────────────────────────── */}
+        <aside style={{
+          width: '220px',
+          background: 'var(--su-sidebar-bg)',
+          display: 'flex',
+          flexDirection: 'column',
+          position: 'fixed',
+          top: 0,
+          bottom: 0,
+          left: 0,
+          zIndex: 50,
+          transition: 'transform 0.25s ease',
+          transform: isMobileMenuOpen ? 'translateX(0)' : undefined,
+        }}
+          className={`${isMobileMenuOpen ? '' : 'max-lg:-translate-x-full'} lg:sticky lg:top-0 lg:h-screen lg:translate-x-0`}
+        >
+          {/* Logo */}
+          <div style={{ padding: '20px 16px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none' }}>
+                {/* Logo mark */}
+                <div style={{
+                  width: '32px', height: '32px',
+                  background: 'linear-gradient(135deg, #2563EB 0%, #F59E0B 100%)',
+                  borderRadius: '8px',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontWeight: 900, fontSize: '14px', color: 'white',
+                  flexShrink: 0,
+                  boxShadow: '0 4px 12px rgba(37,99,235,0.4)',
+                }}>S</div>
+                <div>
+                  <div style={{ fontSize: '14px', fontWeight: 800, color: '#FFFEF9', letterSpacing: '-0.01em', lineHeight: 1.1 }}>ShapeUp</div>
+                  <div style={{ fontSize: '9px', fontWeight: 600, color: 'rgba(255,254,249,0.35)', letterSpacing: '0.18em', textTransform: 'uppercase' }}>CRM</div>
+                </div>
+              </Link>
+              <button onClick={() => setIsMobileMenuOpen(false)} className="lg:hidden"
+                style={{ color: 'rgba(255,255,255,0.4)', padding: '4px', background: 'none', border: 'none', cursor: 'pointer', borderRadius: '6px' }}>
+                {Icons.close}
+              </button>
             </div>
-            <button onClick={() => setIsMobileMenuOpen(false)} className="lg:hidden text-slate-400 p-2">✕</button>
           </div>
-          
-          <nav className="flex-1 px-4 space-y-1.5 overflow-y-auto">
+
+          {/* Nav */}
+          <nav style={{ flex: 1, overflowY: 'auto', padding: '12px 8px' }}>
             {menuItems.map((item) => {
               const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
               const showChildren = Boolean(item.children?.length && isActive)
 
               return (
-                <div key={item.href} className="space-y-1">
+                <div key={item.href} style={{ marginBottom: '2px' }}>
                   <Link
                     href={item.href}
                     onClick={() => setIsMobileMenuOpen(false)}
-                    className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-bold tracking-tight transition-all duration-200 ${
-                      isActive
-                      ? 'bg-blue-50 text-blue-600'
-                      : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
-                    }`}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '8px 12px', borderRadius: '7px',
+                      fontSize: '12px', fontWeight: isActive ? 700 : 500,
+                      textDecoration: 'none', transition: 'all 0.15s',
+                      color: isActive ? '#FFFEF9' : 'rgba(255,254,249,0.5)',
+                      background: isActive ? 'var(--su-sidebar-active)' : 'transparent',
+                      borderLeft: isActive ? '2.5px solid #F59E0B' : '2.5px solid transparent',
+                      letterSpacing: '0.01em',
+                    }}
+                    onMouseEnter={e => {
+                      if (!isActive) {
+                        (e.currentTarget as HTMLElement).style.background = 'var(--su-sidebar-hover)'
+                        ;(e.currentTarget as HTMLElement).style.color = '#FFFEF9'
+                      }
+                    }}
+                    onMouseLeave={e => {
+                      if (!isActive) {
+                        (e.currentTarget as HTMLElement).style.background = 'transparent'
+                        ;(e.currentTarget as HTMLElement).style.color = 'rgba(255,254,249,0.5)'
+                      }
+                    }}
                   >
-                    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={item.icon} />
-                    </svg>
-                    <span className="uppercase">{item.name}</span>
+                    <span style={{ opacity: isActive ? 1 : 0.6, flexShrink: 0 }}>{item.icon}</span>
+                    <span style={{ textTransform: 'uppercase', letterSpacing: '0.06em', fontSize: '11px' }}>{item.name}</span>
                   </Link>
 
                   {showChildren && (
-                    <div className="ml-6 border-l border-slate-200 pl-3 space-y-1">
-                      {item.children?.map((child) => {
+                    <div style={{ marginLeft: '28px', paddingLeft: '12px', borderLeft: '1px solid rgba(255,255,255,0.07)', marginTop: '2px', marginBottom: '4px' }}>
+                      {item.children?.map(child => {
                         const childActive = pathname === child.href
-
                         return (
                           <Link
                             key={child.href}
                             href={child.href}
                             onClick={() => setIsMobileMenuOpen(false)}
-                            className={`block rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest transition-colors ${
-                              childActive
-                                ? 'bg-slate-900 text-white'
-                                : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
-                            }`}
+                            style={{
+                              display: 'block', padding: '6px 10px', borderRadius: '6px',
+                              fontSize: '10px', fontWeight: childActive ? 700 : 500,
+                              textDecoration: 'none', transition: 'all 0.15s',
+                              color: childActive ? '#F59E0B' : 'rgba(255,254,249,0.4)',
+                              background: childActive ? 'rgba(245,158,11,0.08)' : 'transparent',
+                              textTransform: 'uppercase', letterSpacing: '0.1em',
+                              marginBottom: '1px',
+                            }}
                           >
                             {child.name}
                           </Link>
@@ -138,46 +239,117 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             })}
           </nav>
 
-          <div className="p-4 mt-auto border-t border-slate-100 space-y-1">
-             <Link href="/settings" className={`flex items-center gap-3 px-4 py-2 text-[11px] font-black uppercase tracking-widest transition-colors ${pathname.startsWith('/settings') ? 'text-blue-600' : 'text-slate-500 hover:text-slate-900'}`}>
-               Settings
-             </Link>
-             <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-2 text-[11px] font-black uppercase tracking-widest text-red-500 hover:bg-red-50 rounded-xl transition-all">
-               Logout
-             </button>
+          {/* Bottom */}
+          <div style={{ padding: '8px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <Link
+              href="/settings"
+              style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '8px 12px', borderRadius: '7px',
+                fontSize: '11px', fontWeight: 500, textDecoration: 'none',
+                color: pathname.startsWith('/settings') ? '#FFFEF9' : 'rgba(255,254,249,0.4)',
+                background: pathname.startsWith('/settings') ? 'var(--su-sidebar-active)' : 'transparent',
+                textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '2px',
+              }}
+            >
+              <span style={{ opacity: 0.6 }}>{Icons.settings}</span>
+              Settings
+            </Link>
+            <button
+              onClick={handleLogout}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '10px', width: '100%',
+                padding: '8px 12px', borderRadius: '7px', cursor: 'pointer',
+                fontSize: '11px', fontWeight: 500,
+                color: 'rgba(239,68,68,0.6)',
+                background: 'none', border: 'none',
+                textTransform: 'uppercase', letterSpacing: '0.06em', transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => {
+                ;(e.currentTarget as HTMLElement).style.color = '#EF4444'
+                ;(e.currentTarget as HTMLElement).style.background = 'rgba(239,68,68,0.08)'
+              }}
+              onMouseLeave={e => {
+                ;(e.currentTarget as HTMLElement).style.color = 'rgba(239,68,68,0.6)'
+                ;(e.currentTarget as HTMLElement).style.background = 'none'
+              }}
+            >
+              {Icons.logout}
+              Logout
+            </button>
           </div>
         </aside>
 
-        {/* MAIN AREA */}
-        <div className="flex-1 min-w-0 flex flex-col h-screen overflow-hidden">
-          <header className="h-16 bg-white/80 backdrop-blur-md border-b border-slate-200/60 sticky top-0 z-40 px-6 md:px-8 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <button onClick={() => setIsMobileMenuOpen(true)} className="lg:hidden p-2 -ml-2 text-slate-600">
-                ☰
+        {/* ── MAIN AREA ──────────────────────────────────────────────────── */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', minWidth: 0, marginLeft: '220px' }} className="max-lg:ml-0">
+
+          {/* Topbar */}
+          <header style={{
+            height: '52px', background: 'var(--su-card)',
+            borderBottom: '1px solid var(--su-border)',
+            position: 'sticky', top: 0, zIndex: 40,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '0 24px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <button
+                onClick={() => setIsMobileMenuOpen(true)}
+                className="lg:hidden"
+                style={{ padding: '4px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--su-text-muted)' }}
+              >
+                {Icons.menu}
               </button>
-              <h2 className="font-bold text-slate-800 uppercase tracking-tight truncate max-w-[150px] md:max-w-none">
-                {pathname.split('/').pop()?.replace('-', ' ') || 'Dashboard'}
-              </h2>
+              <span style={{
+                fontSize: '11px', fontWeight: 700,
+                color: 'var(--su-text-faint)',
+                textTransform: 'uppercase', letterSpacing: '0.14em',
+              }}>
+                {pathname.split('/').filter(Boolean).map((s, i, arr) => (
+                  <span key={i}>
+                    {i > 0 && <span style={{ margin: '0 6px', opacity: 0.4 }}>/</span>}
+                    <span style={{ color: i === arr.length - 1 ? 'var(--su-text)' : undefined }}>
+                      {s.replace(/-/g, ' ')}
+                    </span>
+                  </span>
+                ))}
+              </span>
             </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right mr-2 hidden sm:block">
-                <p className="text-[10px] font-black text-slate-900 uppercase">Admin ShapeUp</p>
-                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Premium</p>
+
+            {/* User chip */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div className="hidden sm:block" style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--su-text)', lineHeight: 1.3 }}>Admin</div>
+                <div style={{ fontSize: '9px', fontWeight: 600, color: 'var(--su-accent)', textTransform: 'uppercase', letterSpacing: '0.14em' }}>Premium</div>
               </div>
-              <div className="w-9 h-9 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center font-bold text-blue-600 text-sm">A</div>
+              <div style={{
+                width: '32px', height: '32px', borderRadius: '50%',
+                background: 'linear-gradient(135deg, #2563EB 0%, #F59E0B 100%)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontWeight: 800, fontSize: '12px', color: 'white',
+                flexShrink: 0,
+              }}>A</div>
             </div>
           </header>
 
-          <main className="flex-1 overflow-y-auto p-4 md:p-8 lg:p-10">
-            <div className="w-full max-w-[1600px] mx-auto animate-in fade-in duration-500">
+          {/* Page content */}
+          <main style={{ flex: 1, overflowY: 'auto', padding: '28px 28px 48px' }}>
+            <div style={{ maxWidth: '1600px', margin: '0 auto' }} className="su-fade-in">
               {children}
             </div>
           </main>
         </div>
 
-        {/* Overlay Mobile */}
+        {/* Mobile overlay */}
         {isMobileMenuOpen && (
-          <div onClick={() => setIsMobileMenuOpen(false)} className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] z-40 lg:hidden animate-in fade-in" />
+          <div
+            onClick={() => setIsMobileMenuOpen(false)}
+            style={{
+              position: 'fixed', inset: 0,
+              background: 'rgba(28,28,26,0.5)', backdropFilter: 'blur(2px)',
+              zIndex: 40,
+            }}
+            className="lg:hidden su-fade-in"
+          />
         )}
       </body>
     </html>

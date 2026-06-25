@@ -1,26 +1,208 @@
 @import "tailwindcss";
 
+/* ─── ShapeUp CRM — Brand Design System ─────────────────────────────────── */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Brand Colors — Navy Indigo + Warm Amber */
+  --su-primary:       #2563EB;
+  --su-primary-light: #EFF6FF;
+  --su-primary-dark:  #1D4ED8;
+
+  --su-accent:        #F59E0B;
+  --su-accent-light:  #FFFBEB;
+  --su-accent-dark:   #D97706;
+
+  /* Surfaces (Basecamp-style warm off-whites) */
+  --su-bg:            #F7F7F5;
+  --su-surface:       #FFFEF9;
+  --su-sidebar-bg:    #1C1C1A;
+  --su-sidebar-hover: #2A2A27;
+  --su-sidebar-active:#333330;
+  --su-card:          #FFFFFF;
+
+  /* Borders */
+  --su-border:        #E2E2DC;
+  --su-border-strong: #C8C8C0;
+
+  /* Text */
+  --su-text:          #1C1C1A;
+  --su-text-muted:    #6B6B63;
+  --su-text-faint:    #A8A89E;
+  --su-text-inverse:  #FFFEF9;
+
+  /* Status */
+  --su-success:       #16A34A;
+  --su-success-light: #F0FDF4;
+  --su-danger:        #DC2626;
+  --su-danger-light:  #FEF2F2;
+  --su-warning:       #D97706;
+  --su-warning-light: #FFFBEB;
+
+  /* Shadows */
+  --su-shadow-sm:     0 1px 3px rgba(28,28,26,0.06), 0 1px 2px rgba(28,28,26,0.04);
+  --su-shadow:        0 4px 12px rgba(28,28,26,0.08), 0 2px 4px rgba(28,28,26,0.04);
+  --su-shadow-lg:     0 12px 32px rgba(28,28,26,0.12), 0 4px 8px rgba(28,28,26,0.06);
+
+  --background: var(--su-bg);
+  --foreground: var(--su-text);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* ─── Base ───────────────────────────────────────────────────────────────── */
+
+*, *::before, *::after {
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--su-bg);
+  color: var(--su-text);
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--su-border-strong);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--su-text-faint);
+}
+
+/* ─── Typography ─────────────────────────────────────────────────────────── */
+
+.su-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--su-text-faint);
+}
+
+.su-heading {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--su-text);
+  line-height: 1.2;
+}
+
+/* ─── Cards ──────────────────────────────────────────────────────────────── */
+
+.su-card {
+  background: var(--su-card);
+  border: 1px solid var(--su-border);
+  border-radius: 10px;
+  box-shadow: var(--su-shadow-sm);
+}
+
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
+
+.su-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: none;
+  outline: none;
+}
+
+.su-btn-primary {
+  background: var(--su-primary);
+  color: white;
+}
+.su-btn-primary:hover {
+  background: var(--su-primary-dark);
+  transform: translateY(-0.5px);
+  box-shadow: 0 4px 12px rgba(37,99,235,0.3);
+}
+
+.su-btn-ghost {
+  background: transparent;
+  color: var(--su-text-muted);
+  border: 1px solid var(--su-border);
+}
+.su-btn-ghost:hover {
+  background: var(--su-bg);
+  color: var(--su-text);
+}
+
+/* ─── Badges ─────────────────────────────────────────────────────────────── */
+
+.su-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────────── */
+
+@keyframes su-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes su-slide-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes su-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes su-pulse-bar {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+.su-fade-in   { animation: su-fade-in 0.25s ease forwards; }
+.su-slide-in  { animation: su-slide-in 0.2s ease forwards; }
+.su-spinner   { animation: su-spin 0.8s linear infinite; }
+.su-pulse-bar { animation: su-pulse-bar 1.5s ease-in-out infinite; }
+
+/* ─── Progress Bar ───────────────────────────────────────────────────────── */
+
+.su-progress-track {
+  height: 3px;
+  background: var(--su-border);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.su-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--su-primary), var(--su-accent));
+  border-radius: 99px;
+  transition: width 0.4s ease;
+}
+
+/* ─── Virtual Scroll Table ───────────────────────────────────────────────── */
+
+.su-vscroll-container {
+  overflow-y: auto;
+  position: relative;
+}
+.su-vscroll-spacer {
+  pointer-events: none;
 }

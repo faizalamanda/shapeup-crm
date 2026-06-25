@@ -1,8 +1,8 @@
 import { useState } from 'react'
 
-export interface FilterRule {
+export interface OrderFilterRule {
   id: string
-  field: 'ltv' | 'aov' | 'total_order_count' | 'last_order_status' | 'last_order_date' | 'joined_at'
+  field: 'grand_total' | 'total_qty' | 'status' | 'payment_method' | 'order_date'
   operator: 'greater_or_equal' | 'less_or_equal' | 'equal' | 'after' | 'before' | 'is' | 'is_not'
   value: string
 }
@@ -10,20 +10,20 @@ export interface FilterRule {
 interface FilterBarProps {
   searchQuery: string
   setSearchQuery: (query: string) => void
-  rules: FilterRule[]
-  setRules: (rules: FilterRule[]) => void
+  rules: OrderFilterRule[]
+  setRules: (rules: OrderFilterRule[]) => void
   showCharts: boolean
   setShowCharts: (show: boolean) => void
   availableStatuses: string[]
+  availablePaymentMethods: string[]
 }
 
 const FIELD_OPTIONS = [
-  { value: 'ltv',               label: 'Total Belanja (LTV)',     type: 'number' },
-  { value: 'aov',               label: 'Rata-rata Order (AOV)',   type: 'number' },
-  { value: 'total_order_count', label: 'Jumlah Order',            type: 'number' },
-  { value: 'last_order_status', label: 'Status Order Terakhir',   type: 'select' },
-  { value: 'last_order_date',   label: 'Tanggal Order Terakhir',  type: 'date'   },
-  { value: 'joined_at',         label: 'Tanggal Bergabung',       type: 'date'   },
+  { value: 'grand_total',    label: 'Total Belanja',       type: 'number' },
+  { value: 'total_qty',       label: 'Jumlah Item (Qty)',   type: 'number' },
+  { value: 'status',          label: 'Status Pesanan',      type: 'select-status' },
+  { value: 'payment_method',  label: 'Metode Pembayaran',   type: 'select-payment' },
+  { value: 'order_date',      label: 'Tanggal Pesanan',     type: 'date'   },
 ]
 
 const OPERATOR_OPTIONS: Record<string, { value: string; label: string }[]> = {
@@ -36,18 +36,22 @@ const OPERATOR_OPTIONS: Record<string, { value: string; label: string }[]> = {
     { value: 'after',  label: 'Setelah tanggal' },
     { value: 'before', label: 'Sebelum tanggal' },
   ],
-  select: [
+  'select-status': [
+    { value: 'is',     label: 'Sama dengan' },
+    { value: 'is_not', label: 'Tidak sama dengan' },
+  ],
+  'select-payment': [
     { value: 'is',     label: 'Sama dengan' },
     { value: 'is_not', label: 'Tidak sama dengan' },
   ],
 }
 
 const PRESETS = [
-  { key: 'all',      label: 'Semua',         emoji: '👥' },
-  { key: 'vip',      label: 'VIP ≥1jt',      emoji: '💎' },
-  { key: 'churn',    label: 'Churn Risk',     emoji: '⚠️' },
-  { key: 'high_aov', label: 'High AOV ≥500k', emoji: '💰' },
-  { key: 'one_time', label: 'One-Timer',      emoji: '👤' },
+  { key: 'all',      label: 'Semua',                     emoji: '📦' },
+  { key: 'high_val', label: 'High Value ≥500k',          emoji: '💰' },
+  { key: 'cod',      label: 'Bayar COD',                 emoji: '🚚' },
+  { key: 'completed',label: 'Selesai / Completed',       emoji: '✅' },
+  { key: 'pending',  label: 'Pending / Processing',      emoji: '⏳' },
 ]
 
 const btnBase: React.CSSProperties = {
@@ -64,43 +68,45 @@ export function FilterBar({
   rules, setRules,
   showCharts, setShowCharts,
   availableStatuses,
+  availablePaymentMethods,
 }: FilterBarProps) {
   const [showBuilder, setShowBuilder] = useState(false)
 
-  const today = new Date()
-
   const applyPreset = (key: string) => {
     if (key === 'all') return setRules([])
-    if (key === 'vip') return setRules([{ id: uid(), field: 'ltv', operator: 'greater_or_equal', value: '1000000' }])
-    if (key === 'churn') {
-      const d = new Date(today.getTime() - 60 * 86400000).toISOString().split('T')[0]
-      return setRules([{ id: uid(), field: 'last_order_date', operator: 'before', value: d }])
-    }
-    if (key === 'high_aov') return setRules([{ id: uid(), field: 'aov', operator: 'greater_or_equal', value: '500000' }])
-    if (key === 'one_time') return setRules([{ id: uid(), field: 'total_order_count', operator: 'equal', value: '1' }])
+    if (key === 'high_val') return setRules([{ id: uid(), field: 'grand_total', operator: 'greater_or_equal', value: '500000' }])
+    if (key === 'cod') return setRules([{ id: uid(), field: 'payment_method', operator: 'is', value: 'cod' }])
+    if (key === 'completed') return setRules([{ id: uid(), field: 'status', operator: 'is', value: 'completed' }])
+    if (key === 'pending') return setRules([{ id: uid(), field: 'status', operator: 'is_not', value: 'completed' }])
   }
 
   const addRule = () => {
-    setRules([...rules, { id: uid(), field: 'ltv', operator: 'greater_or_equal', value: '' }])
+    setRules([...rules, { id: uid(), field: 'grand_total', operator: 'greater_or_equal', value: '' }])
     setShowBuilder(true)
   }
 
   const removeRule = (id: string) => setRules(rules.filter(r => r.id !== id))
 
-  const updateRule = (id: string, updates: Partial<FilterRule>) => {
+  const updateRule = (id: string, updates: Partial<OrderFilterRule>) => {
     setRules(rules.map(r => {
       if (r.id !== id) return r
       const next = { ...r, ...updates }
       if (updates.field) {
-        const ft = FIELD_OPTIONS.find(f => f.value === updates.field)?.type || 'number'
+        const fieldOpt = FIELD_OPTIONS.find(f => f.value === updates.field)
+        const ft = fieldOpt?.type || 'number'
         next.operator = OPERATOR_OPTIONS[ft][0].value as any
-        next.value    = ft === 'select' ? (availableStatuses[0] || '') : ''
+        
+        if (ft === 'select-status') {
+          next.value = availableStatuses[0] || 'completed'
+        } else if (ft === 'select-payment') {
+          next.value = availablePaymentMethods[0] || 'cod'
+        } else {
+          next.value = ''
+        }
       }
       return next
     }))
   }
-
-  const activePreset = rules.length === 0 ? 'all' : null
 
   return (
     <div style={{ marginBottom: '24px' }}>
@@ -112,7 +118,7 @@ export function FilterBar({
         <div style={{ position: 'relative', flex: '1 1 220px' }}>
           <input
             type="text"
-            placeholder="Cari nama, nomor HP..."
+            placeholder="Cari pelanggan, nomor HP, nomor order (#)..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             style={{
@@ -175,7 +181,6 @@ export function FilterBar({
           Preset:
         </span>
         {PRESETS.map(p => {
-          const isActive = p.key === 'all' ? rules.length === 0 : false
           return (
             <button
               key={p.key}
@@ -183,12 +188,9 @@ export function FilterBar({
               style={{
                 ...btnBase,
                 padding: '5px 10px',
-                background: isActive ? 'var(--su-sidebar-bg)' : 'white',
-                borderColor: isActive ? 'var(--su-sidebar-bg)' : 'var(--su-border)',
-                color: isActive ? '#FFFEF9' : 'var(--su-text-muted)',
               }}
-              onMouseEnter={e => { if (!isActive) { (e.currentTarget as HTMLElement).style.background = 'var(--su-bg)'; (e.currentTarget as HTMLElement).style.color = 'var(--su-text)' } }}
-              onMouseLeave={e => { if (!isActive) { (e.currentTarget as HTMLElement).style.background = 'white'; (e.currentTarget as HTMLElement).style.color = 'var(--su-text-muted)' } }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--su-bg)'; (e.currentTarget as HTMLElement).style.color = 'var(--su-text)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'white'; (e.currentTarget as HTMLElement).style.color = 'var(--su-text-muted)' }}
             >
               {p.emoji} {p.label}
             </button>
@@ -207,10 +209,10 @@ export function FilterBar({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
             <div>
               <h3 style={{ margin: 0, fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--su-text)' }}>
-                Segment Builder
+                Order Segment Builder
               </h3>
               <p style={{ margin: '2px 0 0', fontSize: '10px', color: 'var(--su-text-faint)' }}>
-                Tampilkan pelanggan yang memenuhi semua kriteria
+                Tampilkan pesanan yang memenuhi seluruh kriteria
               </p>
             </div>
             {rules.length > 0 && (
@@ -225,19 +227,22 @@ export function FilterBar({
 
           {rules.length === 0 ? (
             <p style={{ textAlign: 'center', color: 'var(--su-text-faint)', fontSize: '12px', fontStyle: 'italic', padding: '12px 0' }}>
-              Belum ada kriteria. Klik "Tambah Kriteria" untuk mulai segmentasi.
+              Belum ada kriteria. Klik "Tambah Kriteria" untuk mulai menyaring pesanan.
             </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {rules.map(rule => {
-                const ft = FIELD_OPTIONS.find(f => f.value === rule.field)?.type || 'number'
-                const operators = OPERATOR_OPTIONS[ft]
+                const fieldOpt = FIELD_OPTIONS.find(f => f.value === rule.field)
+                const ft = fieldOpt?.type || 'number'
+                const operators = OPERATOR_OPTIONS[ft] || []
+                
                 const selectStyle: React.CSSProperties = {
                   padding: '7px 10px', borderRadius: '7px',
                   border: '1px solid var(--su-border)', background: 'white',
                   fontSize: '12px', color: 'var(--su-text)', outline: 'none',
                   fontWeight: 500,
                 }
+                
                 return (
                   <div key={rule.id} style={{
                     display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center',
@@ -247,25 +252,32 @@ export function FilterBar({
                     <select value={rule.field} onChange={e => updateRule(rule.id, { field: e.target.value as any })} style={{ ...selectStyle, minWidth: '180px' }}>
                       {FIELD_OPTIONS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                     </select>
+                    
                     <select value={rule.operator} onChange={e => updateRule(rule.id, { operator: e.target.value as any })} style={{ ...selectStyle, minWidth: '180px' }}>
                       {operators.map(op => <option key={op.value} value={op.value}>{op.label}</option>)}
                     </select>
-                    {ft === 'select' ? (
+                    
+                    {ft === 'select-status' ? (
                       <select value={rule.value} onChange={e => updateRule(rule.id, { value: e.target.value })} style={{ ...selectStyle, flex: 1 }}>
                         {availableStatuses.map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
+                      </select>
+                    ) : ft === 'select-payment' ? (
+                      <select value={rule.value} onChange={e => updateRule(rule.id, { value: e.target.value })} style={{ ...selectStyle, flex: 1 }}>
+                        {availablePaymentMethods.map(p => <option key={p} value={p}>{p.toUpperCase()}</option>)}
                       </select>
                     ) : (
                       <input
                         type={ft}
-                        placeholder={ft === 'number' ? 'Contoh: 500000' : ''}
+                        placeholder={ft === 'number' ? 'Contoh: 150000' : ''}
                         value={rule.value}
                         onChange={e => updateRule(rule.id, { value: e.target.value })}
                         style={{ ...selectStyle, flex: 1, minWidth: '140px' }}
                       />
                     )}
+                    
                     <button
                       onClick={() => removeRule(rule.id)}
-                      title="Hapus rule ini"
+                      title="Hapus kriteria ini"
                       style={{
                         padding: '7px', borderRadius: '7px', cursor: 'pointer',
                         background: 'none', border: '1px solid var(--su-border)',

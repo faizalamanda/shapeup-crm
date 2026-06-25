@@ -1,73 +1,105 @@
+const formatIDR = (val: number) =>
+  new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Math.round(val || 0))
+
+function StatCard({
+  label,
+  value,
+  sub,
+  accentColor,
+}: {
+  label: string
+  value: React.ReactNode
+  sub: string
+  accentColor: string
+}) {
+  return (
+    <div style={{
+      background: 'white',
+      border: '1px solid var(--su-border)',
+      borderRadius: '10px',
+      padding: '16px 20px',
+      borderLeft: `3px solid ${accentColor}`,
+      boxShadow: 'var(--su-shadow-sm)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '4px',
+      transition: 'box-shadow 0.15s',
+    }}
+      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.boxShadow = 'var(--su-shadow)' }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.boxShadow = 'var(--su-shadow-sm)' }}
+    >
+      <p style={{
+        fontSize: '9px', fontWeight: 800, textTransform: 'uppercase',
+        letterSpacing: '0.18em', color: 'var(--su-text-faint)', margin: 0,
+      }}>{label}</p>
+      <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--su-text)', lineHeight: 1.2, margin: '2px 0' }}>
+        {value}
+      </div>
+      <p style={{ fontSize: '10px', color: 'var(--su-text-faint)', margin: 0 }}>{sub}</p>
+    </div>
+  )
+}
+
 export function StatsPanel({ customers }: { customers: any[] }) {
-  const formatIDR = (val: number) => 
-    new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Math.round(val || 0))
+  const total = customers.length
 
-  const totalCustomers = customers.length
-  
-  // Total Revenue for this segment is the sum of LTV
-  const totalRevenue = customers.reduce((acc, curr) => acc + (Number(curr.ltv) || 0), 0)
-  
-  // Avg LTV
-  const avgLTV = totalCustomers > 0 ? totalRevenue / totalCustomers : 0
-  
-  // Avg AOV
-  const customersWithOrders = customers.filter(c => (c.total_order_count || 0) > 0)
-  const avgAOV = customersWithOrders.length > 0 
-    ? customersWithOrders.reduce((acc, curr) => acc + (Number(curr.aov) || 0), 0) / customersWithOrders.length 
+  const totalRevenue = customers.reduce((a, c) => a + (Number(c.ltv) || 0), 0)
+  const avgLTV = total > 0 ? totalRevenue / total : 0
+
+  const withOrders = customers.filter(c => (c.total_order_count || 0) > 0)
+  const avgAOV = withOrders.length > 0
+    ? withOrders.reduce((a, c) => a + (Number(c.aov) || 0), 0) / withOrders.length
     : 0
 
-  // Repeat Customer Rate
-  const repeatRate = totalCustomers > 0 
-    ? (customers.filter(c => (c.total_order_count || 0) > 1).length / totalCustomers) * 100 
+  const repeatRate = total > 0
+    ? (customers.filter(c => (c.total_order_count || 0) > 1).length / total) * 100
     : 0
+
+  const vipCount = customers.filter(c => (Number(c.ltv) || 0) >= 1000000).length
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-8">
-      {/* Total Customers */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
-        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2">Total Customer</p>
-        <div className="flex items-baseline gap-1.5">
-          <p className="text-3xl font-black text-slate-900">{totalCustomers.toLocaleString('id-ID')}</p>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Orang</p>
-        </div>
-        <p className="text-[9px] text-slate-400 font-medium mt-1">Dalam segmen aktif</p>
-      </div>
-      
-      {/* Total Revenue Segment */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
-        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2">Omset Segmen (LTV)</p>
-        <p className="text-xl font-black text-blue-600 truncate" title={formatIDR(totalRevenue)}>
-          {formatIDR(totalRevenue)}
-        </p>
-        <p className="text-[9px] text-slate-400 font-medium mt-2">Akumulasi seluruh belanja</p>
-      </div>
-
-      {/* Rata-Rata LTV */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
-        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2">Rata-Rata LTV</p>
-        <p className="text-xl font-black text-slate-900 truncate" title={formatIDR(avgLTV)}>
-          {formatIDR(avgLTV)}
-        </p>
-        <p className="text-[9px] text-slate-400 font-medium mt-2">Nilai per pelanggan</p>
-      </div>
-
-      {/* Rata-Rata AOV */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
-        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2">Rata-Rata AOV</p>
-        <p className="text-xl font-black text-slate-900 truncate" title={formatIDR(avgAOV)}>
-          {formatIDR(avgAOV)}
-        </p>
-        <p className="text-[9px] text-slate-400 font-medium mt-2">Nilai per transaksi</p>
-      </div>
-
-      {/* Repeat Order Rate */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow col-span-2 md:col-span-1">
-        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2">Repeat Order Rate</p>
-        <p className="text-3xl font-black text-emerald-600">
-          {repeatRate.toFixed(1)}%
-        </p>
-        <p className="text-[9px] text-slate-400 font-medium mt-1">Membeli lebih dari sekali</p>
-      </div>
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+      gap: '12px',
+      marginBottom: '24px',
+    }}>
+      <StatCard
+        label="Total Customer"
+        value={<span style={{ color: 'var(--su-text)' }}>{total.toLocaleString('id-ID')}<span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--su-text-faint)', marginLeft: '4px' }}>orang</span></span>}
+        sub="Dalam segmen aktif"
+        accentColor="var(--su-primary)"
+      />
+      <StatCard
+        label="Omset Segmen (LTV)"
+        value={<span style={{ color: 'var(--su-primary)', fontSize: '16px' }} title={formatIDR(totalRevenue)}>{formatIDR(totalRevenue)}</span>}
+        sub="Akumulasi seluruh belanja"
+        accentColor="#6366F1"
+      />
+      <StatCard
+        label="Rata-rata LTV"
+        value={<span style={{ fontSize: '16px' }} title={formatIDR(avgLTV)}>{formatIDR(avgLTV)}</span>}
+        sub="Nilai per pelanggan"
+        accentColor="var(--su-accent)"
+      />
+      <StatCard
+        label="Rata-rata AOV"
+        value={<span style={{ fontSize: '16px' }} title={formatIDR(avgAOV)}>{formatIDR(avgAOV)}</span>}
+        sub="Nilai per transaksi"
+        accentColor="#F59E0B"
+      />
+      <StatCard
+        label="Repeat Order Rate"
+        value={<span style={{ color: 'var(--su-success)' }}>{repeatRate.toFixed(1)}%</span>}
+        sub="Membeli lebih dari sekali"
+        accentColor="var(--su-success)"
+      />
+      <StatCard
+        label="VIP (LTV ≥ 1jt)"
+        value={<span style={{ color: '#7C3AED' }}>{vipCount.toLocaleString('id-ID')}</span>}
+        sub="Pelanggan bernilai tinggi"
+        accentColor="#7C3AED"
+      />
     </div>
   )
 }
