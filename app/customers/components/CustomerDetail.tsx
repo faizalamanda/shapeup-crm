@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
 
 interface CustomerDetailProps {
@@ -7,9 +8,23 @@ interface CustomerDetailProps {
 }
 
 export function CustomerDetail({ customer, onClose }: CustomerDetailProps) {
+  const [mounted, setMounted] = useState(false)
   const [activeTab, setActiveTab] = useState<'order' | 'contact' | 'notes'>('order')
   const [orders, setOrders] = useState<any[]>([])
   const [loadingOrders, setLoadingOrders] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (customer) {
+      document.body.style.overflow = 'hidden'
+      return () => {
+        document.body.style.overflow = ''
+      }
+    }
+  }, [customer])
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -40,12 +55,12 @@ export function CustomerDetail({ customer, onClose }: CustomerDetailProps) {
     }
   }
 
-  if (!customer) return null
+  if (!customer || !mounted) return null
 
   const formatIDR = (val: number) => 
     new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val)
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[100] flex justify-center items-start pt-10 pb-10 overflow-y-auto bg-slate-900/60 backdrop-blur-[2px]" onClick={onClose}>
       <div className="bg-white w-full max-w-4xl border border-slate-200 shadow-2xl rounded-2xl relative mx-4 animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
         
@@ -233,6 +248,7 @@ export function CustomerDetail({ customer, onClose }: CustomerDetailProps) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

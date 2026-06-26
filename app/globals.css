@@ -206,3 +206,11 @@ body {
 .su-vscroll-spacer {
   pointer-events: none;
 }
+
+/* ─── Skeleton Loader ────────────────────────────────────────────────────── */
+.su-skeleton {
+  background: #EDEDE8;
+  border-radius: 4px;
+  animation: su-pulse-bar 1.5s ease-in-out infinite;
+  display: inline-block;
+}

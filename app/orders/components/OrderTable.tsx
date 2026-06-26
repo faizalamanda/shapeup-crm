@@ -171,15 +171,33 @@ function OrderRow({ o, onSelect, style }: { o: any; onSelect: (o: any) => void; 
   )
 }
 
-export function OrderTable({ orders, onSelectOrder }: { orders: any[]; onSelectOrder: (o: any) => void }) {
+export function OrderTable({
+  orders,
+  onSelectOrder,
+  onLoadMore,
+  hasMore = false,
+  isLoadingMore = false,
+}: {
+  orders: any[]
+  onSelectOrder: (o: any) => void
+  onLoadMore?: () => void
+  hasMore?: boolean
+  isLoadingMore?: boolean
+}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
 
   const handleScroll = useCallback(() => {
     if (containerRef.current) {
-      setScrollTop(containerRef.current.scrollTop)
+      const { scrollTop, scrollHeight, clientHeight } = containerRef.current
+      setScrollTop(scrollTop)
+      
+      // If we scroll close to bottom, trigger load more
+      if (hasMore && !isLoadingMore && onLoadMore && (scrollHeight - scrollTop - clientHeight < 150)) {
+        onLoadMore()
+      }
     }
-  }, [])
+  }, [hasMore, isLoadingMore, onLoadMore])
 
   useEffect(() => {
     const el = containerRef.current
@@ -188,9 +206,9 @@ export function OrderTable({ orders, onSelectOrder }: { orders: any[]; onSelectO
     return () => el.removeEventListener('scroll', handleScroll)
   }, [handleScroll])
 
-  // Reset scroll on data change
+  // Reset scroll on data change (only when order list is cleared/first page loaded)
   useEffect(() => {
-    if (containerRef.current) {
+    if (containerRef.current && orders.length <= 50) {
       containerRef.current.scrollTop = 0
       setScrollTop(0)
     }
@@ -290,11 +308,27 @@ export function OrderTable({ orders, onSelectOrder }: { orders: any[]; onSelectO
             fontSize: '10px', fontWeight: 600,
             color: 'var(--su-text-faint)',
             display: 'flex', justifyContent: 'space-between',
+            alignItems: 'center',
           }}>
             <span>
-              Menampilkan {Math.min(endIndex - startIndex + 1, visibleCount)} baris dari {orders.length.toLocaleString('id-ID')}
+              Menampilkan {orders.length.toLocaleString('id-ID')} baris
             </span>
-            <span>Virtual Scroll aktif</span>
+            {isLoadingMore ? (
+              <span style={{ color: 'var(--su-accent)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                <span className="su-spinner" style={{
+                  width: '10px', height: '10px',
+                  border: '1.5px solid var(--su-border)',
+                  borderTopColor: 'var(--su-accent)',
+                  borderRadius: '50%',
+                  display: 'inline-block',
+                }} />
+                Memuat data lainnya...
+              </span>
+            ) : hasMore ? (
+              <span>Scroll ke bawah untuk memuat lebih banyak</span>
+            ) : (
+              <span>Semua data telah dimuat</span>
+            )}
           </div>
         )}
       </div>

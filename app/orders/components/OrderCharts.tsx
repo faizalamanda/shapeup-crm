@@ -53,70 +53,66 @@ function ChartCard({
   )
 }
 
-export function OrderCharts({ orders }: { orders: any[] }) {
+export interface OrderChartsData {
+  value_dist: {
+    under_100k: number
+    "100k_300k": number
+    "300k_500k": number
+    "500k_1m": number
+    over_1m: number
+  }
+  payment_dist: { payment_method: string; count: number }[]
+  status_dist: { status: string; count: number }[]
+}
+
+export function OrderCharts({ data }: { data: OrderChartsData | null }) {
   const valueDist = useMemo(() => {
+    if (!data?.value_dist) return { buckets: [], total: 0, maxCount: 1 }
+    
     const buckets = [
-      { label: '< 100rb',       min: 0,       max: 100000,   count: 0, color: '#2563EB' },
-      { label: '100rb – 300rb', min: 100000,   max: 300000,   count: 0, color: '#6366F1' },
-      { label: '300rb – 500rb', min: 300000,   max: 500000,   count: 0, color: '#8B5CF6' },
-      { label: '500rb – 1jt',   min: 500000,   max: 1000000,  count: 0, color: '#A855F7' },
-      { label: '> 1jt',         min: 1000000,  max: Infinity, count: 0, color: '#D946EF' },
+      { label: '< 100rb',       count: data.value_dist.under_100k || 0, color: '#2563EB' },
+      { label: '100rb – 300rb', count: data.value_dist["100k_300k"] || 0, color: '#6366F1' },
+      { label: '300rb – 500rb', count: data.value_dist["300k_500k"] || 0, color: '#8B5CF6' },
+      { label: '500rb – 1jt',   count: data.value_dist["500k_1m"] || 0, color: '#A855F7' },
+      { label: '> 1jt',         count: data.value_dist.over_1m || 0, color: '#D946EF' },
     ]
-    orders.forEach(o => {
-      const v = Number(o.grand_total) || 0
-      const b = buckets.find(b => v >= b.min && v < b.max)
-      if (b) b.count++
-    })
-    return { buckets, total: orders.length, maxCount: Math.max(...buckets.map(b => b.count), 1) }
-  }, [orders])
+    const total = buckets.reduce((sum, b) => sum + b.count, 0)
+    const maxCount = Math.max(...buckets.map(b => b.count), 1)
+    return { buckets, total, maxCount }
+  }, [data])
 
   const paymentDist = useMemo(() => {
-    const counts: Record<string, number> = {}
-    orders.forEach(o => {
-      const pm = (o.payment_method || 'bacs').toLowerCase()
-      counts[pm] = (counts[pm] || 0) + 1
-    })
-
-    const sortedPM = Object.entries(counts).sort((a, b) => b[1] - a[1])
+    if (!data?.payment_dist || data.payment_dist.length === 0) {
+      return { buckets: [{ label: 'N/A', count: 0, color: '#10B981' }], total: 0, maxCount: 1 }
+    }
     const colors = ['#10B981', '#059669', '#0D9488', '#0891B2', '#0284C7']
-    
-    const buckets = sortedPM.map(([pm, count], idx) => ({
-      label: pm.toUpperCase(),
-      count,
+    const buckets = data.payment_dist.map((item, idx) => ({
+      label: (item.payment_method || 'Manual').toUpperCase(),
+      count: Number(item.count) || 0,
       color: colors[idx % colors.length]
     }))
-
-    if (buckets.length === 0) {
-      buckets.push({ label: 'N/A', count: 0, color: '#10B981' })
-    }
-
-    return { buckets, total: orders.length, maxCount: Math.max(...buckets.map(b => b.count), 1) }
-  }, [orders])
+    const total = buckets.reduce((sum, b) => sum + b.count, 0)
+    const maxCount = Math.max(...buckets.map(b => b.count), 1)
+    return { buckets, total, maxCount }
+  }, [data])
 
   const statusDist = useMemo(() => {
-    const counts: Record<string, number> = {}
-    orders.forEach(o => {
-      const st = (o.status || 'pending').toLowerCase()
-      counts[st] = (counts[st] || 0) + 1
-    })
-
-    const sortedST = Object.entries(counts).sort((a, b) => b[1] - a[1])
+    if (!data?.status_dist || data.status_dist.length === 0) {
+      return { buckets: [{ label: 'N/A', count: 0, color: '#F59E0B' }], total: 0, maxCount: 1 }
+    }
     const colors = ['#F59E0B', '#F97316', '#EF4444', '#DC2626', '#B91C1C']
-    
-    const buckets = sortedST.map(([st, count], idx) => ({
-      label: st.toUpperCase(),
-      count,
+    const buckets = data.status_dist.map((item, idx) => ({
+      label: (item.status || 'Pending').toUpperCase(),
+      count: Number(item.count) || 0,
       color: colors[idx % colors.length]
     }))
+    const total = buckets.reduce((sum, b) => sum + b.count, 0)
+    const maxCount = Math.max(...buckets.map(b => b.count), 1)
+    return { buckets, total, maxCount }
+  }, [data])
 
-    if (buckets.length === 0) {
-      buckets.push({ label: 'N/A', count: 0, color: '#F59E0B' })
-    }
-
-    return { buckets, total: orders.length, maxCount: Math.max(...buckets.map(b => b.count), 1) }
-  }, [orders])
-
-  if (orders.length === 0) {
+  const totalAll = valueDist.total + paymentDist.total + statusDist.total
+  if (!data || totalAll === 0) {
     return (
       <div style={{
         background: 'white', border: '1px solid var(--su-border)',

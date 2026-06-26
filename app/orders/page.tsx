@@ -6,13 +6,15 @@ import { OrderTable } from './components/OrderTable'
 import { OrderCharts } from './components/OrderCharts'
 import { FilterBar, OrderFilterRule } from './components/FilterBar'
 import { OrderDetailModal } from './components/OrderDetailModal'
+import { OrderStatsSkeleton, OrderChartsSkeleton, OrderTableSkeleton } from './components/Skeletons'
 
 const CACHE_TTL_MS   = 5 * 60 * 1000  // 5 minutes
-const BATCH_SIZE     = 1000            // Supabase max rows per request
 const STALE_RECHECK  = 2 * 60 * 1000  // Background refresh after 2 minutes
 
 type CachePayload = {
-  data: any[]
+  metrics: any
+  orders: any[]
+  total: number
   ts: number
   businessId: string
 }
@@ -23,7 +25,7 @@ function getCacheKey(bid: string) {
 
 function readCache(bid: string): CachePayload | null {
   try {
-    const raw = sessionStorage.getItem(getCacheKey(bid))
+    const raw = localStorage.getItem(getCacheKey(bid))
     if (!raw) return null
     const parsed: CachePayload = JSON.parse(raw)
     if (Date.now() - parsed.ts > CACHE_TTL_MS) return null
@@ -33,12 +35,16 @@ function readCache(bid: string): CachePayload | null {
   }
 }
 
-function writeCache(bid: string, data: any[]) {
+function writeCache(bid: string, payloadData: { metrics: any; orders: any[]; total: number }) {
   try {
-    const payload: CachePayload = { data, ts: Date.now(), businessId: bid }
-    sessionStorage.setItem(getCacheKey(bid), JSON.stringify(payload))
+    const payload: CachePayload = {
+      ...payloadData,
+      ts: Date.now(),
+      businessId: bid
+    }
+    localStorage.setItem(getCacheKey(bid), JSON.stringify(payload))
   } catch {
-    // sessionStorage might be full — silently ignore
+    // localStorage might be full — silently ignore
   }
 }
 
@@ -48,81 +54,92 @@ export default function OrderPage() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
 
-  const [orders, setOrders]                 = useState<any[]>([])
-  const [totalCount, setTotalCount]         = useState<number>(0)
-  const [fetchedCount, setFetchedCount]     = useState<number>(0)
-  const [isFetching, setIsFetching]         = useState(false)
-  const [isBackground, setIsBackground]     = useState(false)
-  const [selectedOrder, setSelectedOrder]   = useState<any>(null)
-  const [searchQuery, setSearchQuery]       = useState('')
-  const [rules, setRules]                   = useState<OrderFilterRule[]>([])
-  const [showCharts, setShowCharts]         = useState(true)
-  const [activeBiz, setActiveBiz]           = useState<any>(null)
+  const [orders, setOrders]                     = useState<any[]>([])
+  const [totalCount, setTotalCount]             = useState<number>(0)
+  const [metrics, setMetrics]                   = useState<any>(null)
+  const [isFetching, setIsFetching]             = useState(false)
+  const [isBackground, setIsBackground]         = useState(false)
+  const [isLoadingMore, setIsLoadingMore]       = useState(false)
+  const [hasMore, setHasMore]                   = useState(false)
+  const [offset, setOffset]                     = useState(0)
 
-  // ─── Batch Fetcher ────────────────────────────────────────────────────────
-  const fetchAllBatches = useCallback(async (businessId: string, background = false) => {
-    if (!background) setIsFetching(true)
-    else setIsBackground(true)
+  const [selectedOrder, setSelectedOrder]       = useState<any>(null)
+  const [searchQuery, setSearchQuery]           = useState('')
+  const [debouncedSearch, setDebouncedSearch]   = useState('')
+  const [rules, setRules]                       = useState<OrderFilterRule[]>([])
+  const [showCharts, setShowCharts]             = useState(true)
+  const [activeBiz, setActiveBiz]               = useState<any>(null)
+  const [activeBizId, setActiveBizId]           = useState<string | null>(null)
 
-    const allData: any[] = []
-    let from = 0
-    let total = 0
+  // ─── Search Debounce ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchQuery)
+    }, 400)
+    return () => clearTimeout(handler)
+  }, [searchQuery])
+
+  // Serialize rules to use in useEffect dependency
+  const serializedRules = JSON.stringify(rules)
+
+  // ─── Fetcher function for metrics and initial orders page ──────────────────
+  const fetchMetricsAndOrders = useCallback(async (
+    businessId: string,
+    search: string,
+    rulesArray: OrderFilterRule[],
+    isBg = false
+  ) => {
+    if (!isBg) {
+      setIsFetching(true)
+    } else {
+      setIsBackground(true)
+    }
+    setOffset(0)
 
     try {
-      // First batch — also get total count
-      const { data: firstBatch, error, count } = await supabase
-        .from('orders')
-        .select(`*, customer:customer_metrics(name, phone)`, { count: 'exact' })
-        .eq('business_id', businessId)
-        .order('order_date', { ascending: false })
-        .range(from, from + BATCH_SIZE - 1)
+      // 1. Fetch metrics
+      const { data: metricsData, error: metricsErr } = await supabase
+        .rpc('get_order_analytics_metrics', {
+          p_business_id: businessId,
+          p_search: search,
+          p_rules: rulesArray
+        })
 
-      if (error) throw error
-
-      total = count ?? 0
+      if (metricsErr) throw metricsErr
+      setMetrics(metricsData)
+      const total = metricsData?.stats?.total_orders ?? 0
       setTotalCount(total)
 
-      const batch1 = firstBatch || []
-      allData.push(...batch1)
-      from += BATCH_SIZE
+      // 2. Fetch first page of orders
+      const { data: ordersData, error: ordersErr } = await supabase
+        .rpc('get_order_list', {
+          p_business_id: businessId,
+          p_search: search,
+          p_rules: rulesArray,
+          p_limit: 50,
+          p_offset: 0
+        })
 
-      // Show first batch immediately — user sees data fast
-      setOrders([...allData])
-      setFetchedCount(allData.length)
+      if (ordersErr) throw ordersErr
+      const page1Orders = ordersData || []
+      setOrders(page1Orders)
+      setHasMore(page1Orders.length === 50 && page1Orders.length < total)
 
-      // Fetch remaining batches
-      while (from < total) {
-        const { data: nextBatch, error: bErr } = await supabase
-          .from('orders')
-          .select(`*, customer:customer_metrics(name, phone)`)
-          .eq('business_id', businessId)
-          .order('order_date', { ascending: false })
-          .range(from, from + BATCH_SIZE - 1)
-
-        if (bErr) break
-
-        allData.push(...(nextBatch || []))
-        from += BATCH_SIZE
-
-        // Update state after each batch — live progress
-        setOrders([...allData])
-        setFetchedCount(allData.length)
+      // Write to cache only for empty filters
+      if (!search && rulesArray.length === 0) {
+        writeCache(businessId, { metrics: metricsData, orders: page1Orders, total })
       }
-
-      // Write full dataset to cache
-      writeCache(businessId, allData)
-
     } catch (err) {
-      console.error('[ShapeUp] Error fetching orders:', err)
+      console.error('[ShapeUp] Error fetching orders & metrics:', err)
     } finally {
       setIsFetching(false)
       setIsBackground(false)
     }
   }, [supabase])
 
-  // ─── Initial Load + Cache Strategy ───────────────────────────────────────
+  // ─── Load profile / active business ID ─────────────────────────────────────
   useEffect(() => {
-    async function init() {
+    async function loadProfile() {
       try {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
@@ -136,141 +153,95 @@ export default function OrderPage() {
         const businessId = profile?.active_business_id
         if (!businessId) return
         
+        setActiveBizId(businessId)
         setActiveBiz(profile.businesses)
-
-        // Cache-first strategy
-        const cached = readCache(businessId)
-        if (cached) {
-          // Show cached data immediately
-          setOrders(cached.data)
-          setFetchedCount(cached.data.length)
-          setTotalCount(cached.data.length)
-
-          // Background revalidation if cache is getting stale (>2min)
-          const age = Date.now() - cached.ts
-          if (age > STALE_RECHECK) {
-            fetchAllBatches(businessId, true)
-          }
-        } else {
-          // No cache — full fetch
-          await fetchAllBatches(businessId, false)
-        }
       } catch (err) {
-        console.error('[ShapeUp] Init error:', err)
-        setIsFetching(false)
+        console.error('[ShapeUp] Profile init error:', err)
+      }
+    }
+    loadProfile()
+  }, [supabase])
+
+  // ─── Refresh when active business or filters change ────────────────────────
+  useEffect(() => {
+    if (!activeBizId) return
+
+    const rulesArray = JSON.parse(serializedRules)
+
+    // Check if we can use cache (only for empty filters on initial load of this business)
+    const isDefaultFilters = !debouncedSearch && rulesArray.length === 0
+    if (isDefaultFilters) {
+      const cached = readCache(activeBizId)
+      if (cached) {
+        setMetrics(cached.metrics)
+        setOrders(cached.orders)
+        setTotalCount(cached.total)
+        setHasMore(cached.orders.length === 50 && cached.orders.length < cached.total)
+
+        // Background revalidation
+        const age = Date.now() - cached.ts
+        if (age > STALE_RECHECK) {
+          fetchMetricsAndOrders(activeBizId, debouncedSearch, rulesArray, true)
+        }
+        return
       }
     }
 
-    init()
-  }, [fetchAllBatches]) // eslint-disable-line react-hooks/exhaustive-deps
+    // Otherwise, fetch fresh data
+    fetchMetricsAndOrders(activeBizId, debouncedSearch, rulesArray, false)
+  }, [activeBizId, debouncedSearch, serializedRules, fetchMetricsAndOrders])
+
+  // ─── Load More (Pagination) ────────────────────────────────────────────────
+  const loadMoreOrders = useCallback(async () => {
+    if (isLoadingMore || !hasMore || !activeBizId) return
+    setIsLoadingMore(true)
+
+    const nextOffset = offset + 50
+    const rulesArray = JSON.parse(serializedRules)
+
+    try {
+      const { data: ordersData, error: ordersErr } = await supabase
+        .rpc('get_order_list', {
+          p_business_id: activeBizId,
+          p_search: debouncedSearch,
+          p_rules: rulesArray,
+          p_limit: 50,
+          p_offset: nextOffset
+        })
+
+      if (ordersErr) throw ordersErr
+
+      const newOrders = ordersData || []
+      setOrders(prev => [...prev, ...newOrders])
+      setOffset(nextOffset)
+      setHasMore(newOrders.length === 50 && (nextOffset + newOrders.length) < totalCount)
+    } catch (err) {
+      console.error('[ShapeUp] Error loading more orders:', err)
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [activeBizId, debouncedSearch, serializedRules, offset, hasMore, isLoadingMore, totalCount, supabase])
 
   // ─── Derived Dropdown Data for Filters ────────────────────────────────────
   const availableStatuses = useMemo(() => {
-    const statuses = new Set<string>()
+    const defaultStatuses = ['completed', 'processing', 'pending', 'failed', 'cancelled']
+    const statuses = new Set<string>(defaultStatuses)
     orders.forEach(o => {
       if (o.status) statuses.add(o.status.toLowerCase())
     })
-    if (statuses.size === 0) {
-      return ['completed', 'processing', 'pending', 'failed', 'cancelled']
-    }
     return Array.from(statuses).sort()
   }, [orders])
 
   const availablePaymentMethods = useMemo(() => {
-    const methods = new Set<string>()
+    const defaultMethods = ['cod', 'bacs', 'midtrans', 'manual']
+    const methods = new Set<string>(defaultMethods)
     orders.forEach(o => {
       if (o.payment_method) methods.add(o.payment_method.toLowerCase())
     })
-    if (methods.size === 0) {
-      return ['cod', 'bacs']
-    }
     return Array.from(methods).sort()
   }, [orders])
 
-  // ─── Filter Logic ─────────────────────────────────────────────────────────
-  const filteredOrders = useMemo(() => {
-    return orders.filter(o => {
-      // Search matches customer name, customer phone, or order number
-      const orderNumStr = `#${o.order_number || o.id}`
-      const matchesSearch =
-        (o.customer?.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (o.customer?.phone || '').includes(searchQuery) ||
-        orderNumStr.toLowerCase().includes(searchQuery.toLowerCase())
-
-      if (!matchesSearch) return false
-
-      for (const rule of rules) {
-        if (!rule.value) continue
-
-        const field    = rule.field
-        const operator = rule.operator
-
-        if (field === 'grand_total' || field === 'total_qty') {
-          const oVal = Number(o[field]) || 0
-          const rVal = Number(rule.value) || 0
-          if (operator === 'greater_or_equal' && !(oVal >= rVal)) return false
-          if (operator === 'less_or_equal'    && !(oVal <= rVal)) return false
-          if (operator === 'equal'            && !(oVal === rVal)) return false
-        }
-
-        if (field === 'order_date') {
-          if (!o[field]) return false
-          const oDate = new Date(o[field]).getTime()
-          const rDate = new Date(rule.value).getTime()
-          if (isNaN(oDate) || isNaN(rDate)) return false
-          if (operator === 'after'  && !(oDate >= rDate)) return false
-          if (operator === 'before' && !(oDate <= rDate)) return false
-        }
-
-        if (field === 'status') {
-          const oStr = (o[field] || '').toLowerCase()
-          const rStr = (rule.value || '').toLowerCase()
-          if (operator === 'is'     && oStr !== rStr) return false
-          if (operator === 'is_not' && oStr === rStr) return false
-        }
-
-        if (field === 'payment_method') {
-          const oStr = (o[field] || '').toLowerCase()
-          const rStr = (rule.value || '').toLowerCase()
-          if (operator === 'is'     && oStr !== rStr) return false
-          if (operator === 'is_not' && oStr === rStr) return false
-        }
-      }
-
-      return true
-    })
-  }, [orders, searchQuery, rules])
-
-  // ─── Loading Progress ─────────────────────────────────────────────────────
-  const progressPct = totalCount > 0
-    ? Math.min(Math.round((fetchedCount / totalCount) * 100), 100)
-    : 0
-
   const isLoadingFirst = isFetching && orders.length === 0
-
-  if (isLoadingFirst) {
-    return (
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        minHeight: '60vh', flexDirection: 'column', gap: '16px',
-      }}>
-        <div style={{
-          width: '36px', height: '36px', border: '3px solid var(--su-border)',
-          borderTopColor: 'var(--su-primary)', borderRadius: '50%',
-        }} className="su-spinner" />
-        <div style={{ textAlign: 'center' }}>
-          <p style={{ fontSize: '11px', fontWeight: 700, color: 'var(--su-text-faint)', textTransform: 'uppercase', letterSpacing: '0.18em' }}>
-            Memuat Data Pesanan
-          </p>
-          {totalCount > 0 && (
-            <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--su-text-muted)', marginTop: '4px' }}>
-              {fetchedCount.toLocaleString('id-ID')} / {totalCount.toLocaleString('id-ID')} pesanan
-            </p>
-          )}
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div style={{ paddingBottom: '48px' }}>
@@ -310,30 +281,13 @@ export default function OrderPage() {
           {/* Live data counter */}
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
             <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--su-text)', lineHeight: 1.1 }}>
-              {orders.length.toLocaleString('id-ID')}
+              {totalCount.toLocaleString('id-ID')}
             </div>
             <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--su-text-faint)', textTransform: 'uppercase', letterSpacing: '0.14em' }}>
               Total Transaksi
             </div>
           </div>
         </div>
-
-        {/* Fetch progress bar (visible during multi-batch fetch) */}
-        {isFetching && orders.length > 0 && (
-          <div style={{ marginTop: '12px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-              <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--su-text-faint)', textTransform: 'uppercase', letterSpacing: '0.14em' }}>
-                Mengambil data pesanan terbaru...
-              </span>
-              <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--su-text-muted)' }}>
-                {fetchedCount.toLocaleString('id-ID')} / {totalCount.toLocaleString('id-ID')}
-              </span>
-            </div>
-            <div className="su-progress-track">
-              <div className="su-progress-fill" style={{ width: `${progressPct}%` }} />
-            </div>
-          </div>
-        )}
 
         {/* Background revalidation indicator */}
         {isBackground && (
@@ -348,7 +302,7 @@ export default function OrderPage() {
       </div>
 
       {/* ── KPI Stats ─────────────────────────────────────────────────────── */}
-      <OrderStats orders={filteredOrders} />
+      {isLoadingFirst ? <OrderStatsSkeleton /> : <OrderStats stats={metrics?.stats ?? null} />}
 
       {/* ── Filter Bar ────────────────────────────────────────────────────── */}
       <FilterBar
@@ -363,24 +317,29 @@ export default function OrderPage() {
       />
 
       {/* ── Charts ────────────────────────────────────────────────────────── */}
-      {showCharts && <OrderCharts orders={filteredOrders} />}
+      {showCharts && (isLoadingFirst ? <OrderChartsSkeleton /> : <OrderCharts data={metrics} />)}
 
       {/* ── Order Table ───────────────────────────────────────────────────── */}
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', padding: '0 2px' }}>
           <p style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--su-text-faint)' }}>
-            {filteredOrders.length.toLocaleString('id-ID')} dari {orders.length.toLocaleString('id-ID')} pesanan
+            {isLoadingFirst ? 'Memuat data...' : `Menampilkan ${orders.length.toLocaleString('id-ID')} dari ${totalCount.toLocaleString('id-ID')} pesanan`}
           </p>
-          {isFetching && (
+          {isFetching && orders.length > 0 && (
             <span style={{ fontSize: '10px', color: 'var(--su-accent)', fontWeight: 600 }}>
-              • Live updating
+              • Memperbarui...
             </span>
           )}
         </div>
-        <OrderTable
-          orders={filteredOrders}
-          onSelectOrder={(order) => setSelectedOrder(order)}
-        />
+        {isLoadingFirst ? <OrderTableSkeleton /> : (
+          <OrderTable
+            orders={orders}
+            onSelectOrder={(order) => setSelectedOrder(order)}
+            onLoadMore={loadMoreOrders}
+            hasMore={hasMore}
+            isLoadingMore={isLoadingMore}
+          />
+        )}
       </div>
 
       {/* ── Order Detail Modal ────────────────────────────────────────────── */}

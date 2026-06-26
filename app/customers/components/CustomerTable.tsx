@@ -202,12 +202,6 @@ export function CustomerTable({ customers, onSelect }: { customers: any[]; onSel
     }
   }, [])
 
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    el.addEventListener('scroll', handleScroll, { passive: true })
-    return () => el.removeEventListener('scroll', handleScroll)
-  }, [handleScroll])
 
   // Reset scroll on data change
   useEffect(() => {
@@ -278,6 +272,7 @@ export function CustomerTable({ customers, onSelect }: { customers: any[]; onSel
           ref={containerRef}
           className="su-vscroll-container"
           style={{ height: `${CONTAINER_H}px`, overflowY: 'auto' }}
+          onScroll={handleScroll}
         >
           {/* Total height spacer */}
           <div style={{ height: `${totalHeight}px`, position: 'relative' }}>

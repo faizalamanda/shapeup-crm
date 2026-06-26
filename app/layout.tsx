@@ -141,9 +141,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           left: 0,
           zIndex: 50,
           transition: 'transform 0.25s ease',
-          transform: isMobileMenuOpen ? 'translateX(0)' : undefined,
         }}
-          className={`${isMobileMenuOpen ? '' : 'max-lg:-translate-x-full'} lg:sticky lg:top-0 lg:h-screen lg:translate-x-0`}
+          className={`${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
         >
           {/* Logo */}
           <div style={{ padding: '20px 16px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
@@ -281,7 +280,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </aside>
 
         {/* ── MAIN AREA ──────────────────────────────────────────────────── */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', minWidth: 0, marginLeft: '220px' }} className="max-lg:ml-0">
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', minWidth: 0 }} className="ml-0 lg:ml-[220px]">
 
           {/* Topbar */}
           <header style={{

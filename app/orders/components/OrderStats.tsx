@@ -40,20 +40,22 @@ function StatCard({
   )
 }
 
-export function OrderStats({ orders }: { orders: any[] }) {
-  const totalOrders = orders.length
+export interface OrderStatsData {
+  total_orders: number
+  gross_sales: number
+  total_discounts: number
+  net_sales: number
+  aov: number
+  avg_items_per_order: number
+}
 
-  const grossSales = orders.reduce((acc, curr) => acc + (Number(curr.grand_total) || 0), 0)
-  
-  const totalDiscounts = orders.reduce((acc, curr) => acc + (Number(curr.discount_amount) || 0), 0)
-  
-  // Net Sales = Gross Sales - Discounts
-  const netSales = grossSales - totalDiscounts
-
-  const aov = totalOrders > 0 ? grossSales / totalOrders : 0
-
-  const totalItems = orders.reduce((acc, curr) => acc + (Number(curr.total_qty) || 0), 0)
-  const avgItemsPerOrder = totalOrders > 0 ? totalItems / totalOrders : 0
+export function OrderStats({ stats }: { stats: OrderStatsData | null }) {
+  const totalOrders = stats?.total_orders ?? 0
+  const grossSales = stats?.gross_sales ?? 0
+  const totalDiscounts = stats?.total_discounts ?? 0
+  const netSales = stats?.net_sales ?? 0
+  const aov = stats?.aov ?? 0
+  const avgItemsPerOrder = stats?.avg_items_per_order ?? 0
 
   return (
     <div style={{

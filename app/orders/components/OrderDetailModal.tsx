@@ -1,7 +1,24 @@
 "use client"
+import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 
 export function OrderDetailModal({ order, onClose }: { order: any, onClose: () => void }) {
-  if (!order) return null
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (order) {
+      document.body.style.overflow = 'hidden'
+      return () => {
+        document.body.style.overflow = ''
+      }
+    }
+  }, [order])
+
+  if (!order || !mounted) return null
 
   const formatIDR = (val: any) => new Intl.NumberFormat('id-ID', { 
     style: 'currency', currency: 'IDR', maximumFractionDigits: 0 
@@ -26,7 +43,7 @@ export function OrderDetailModal({ order, onClose }: { order: any, onClose: () =
 
   const items = Array.isArray(order.items_json) ? order.items_json : []
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[99] flex justify-center items-center p-4">
       <div className="bg-white w-full max-w-4xl rounded-sm shadow-2xl overflow-hidden flex flex-col max-h-[90vh] font-sans">
         
@@ -139,6 +156,7 @@ export function OrderDetailModal({ order, onClose }: { order: any, onClose: () =
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
