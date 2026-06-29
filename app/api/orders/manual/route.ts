@@ -15,8 +15,7 @@ export async function POST(req: Request) {
       .from('customers')
       .upsert({ 
         phone: cleanPhone, 
-        full_name: name,
-        source: 'manual' 
+        name: name
       }, { onConflict: 'phone' })
       .select()
       .single();

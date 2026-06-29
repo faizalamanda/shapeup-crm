@@ -113,7 +113,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     { name: 'Products',     href: '/products',          icon: Icons.products },
     { name: 'Orders',       href: '/orders',            icon: Icons.orders },
     { name: 'Marketing',    href: '/marketing',         icon: Icons.marketing },
-    { name: 'Input Order',  href: '/orders/new',        icon: Icons.input },
+    { name: 'Point of Sale', href: '/orders/pos',        icon: Icons.input },
     { name: 'Business',     href: '/settings/business', icon: Icons.business },
   ]
 
