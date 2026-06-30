@@ -72,7 +72,7 @@ export default function AddCustomerModal({ isOpen, onClose, onSave, businessId }
         },
         body: JSON.stringify({
           name: name.trim(),
-          phone: phone,
+          phone: cleanPhone,
           email: email.trim() || null,
         }),
       })
@@ -106,18 +106,21 @@ export default function AddCustomerModal({ isOpen, onClose, onSave, businessId }
   return createPortal(
     <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex justify-center items-center p-4 overflow-y-auto z-[10000] animate-in fade-in duration-200">
       <div 
-        className="bg-white border border-gray-300 rounded-xl shadow-2xl w-full max-w-md flex flex-col max-h-[90vh] overflow-hidden transform scale-100 transition-all duration-200"
+        className="bg-white border border-[#E2E2DC] rounded-2xl shadow-xl w-full max-w-md flex flex-col max-h-[90vh] overflow-hidden transform scale-100 transition-all duration-200"
         role="dialog"
         aria-modal="true"
       >
         {/* Header */}
-        <div className="flex justify-between items-center px-6 py-4 bg-gray-50 border-b border-gray-200">
-          <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">
-            Tambah Pelanggan Baru
-          </h3>
+        <div className="flex justify-between items-center px-6 py-4 bg-white border-b border-[#E2E2DC]">
+          <div>
+            <span className="text-[9px] font-bold text-[#2563EB] uppercase tracking-widest block">CRM Database</span>
+            <h3 className="text-sm font-black text-[#1C1C1A] uppercase tracking-tight mt-0.5">
+              Tambah Pelanggan Baru
+            </h3>
+          </div>
           <button 
             onClick={onClose} 
-            className="text-gray-400 hover:text-gray-600 transition-colors text-xl font-light focus:outline-none"
+            className="text-[#6B6B63] hover:text-[#1C1C1A] transition-colors text-xl font-light focus:outline-none"
             aria-label="Tutup"
           >
             ✕
@@ -125,13 +128,13 @@ export default function AddCustomerModal({ isOpen, onClose, onSave, businessId }
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-6 space-y-4">
+        <form id="add-customer-form" onSubmit={handleSave} className="flex-1 overflow-y-auto p-6 space-y-4 bg-[#F7F7F5]">
           <div>
-            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Nama Lengkap *</label>
+            <label className="block text-[10px] font-bold text-[#6B6B63] uppercase tracking-widest mb-1.5">Nama Lengkap *</label>
             <input
               type="text"
               required
-              className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-sm font-semibold text-gray-800 transition-all placeholder:text-gray-300"
+              className="w-full p-3 border border-[#E2E2DC] bg-white rounded-xl focus:ring-2 focus:ring-[#2563EB]/10 focus:border-[#2563EB] outline-none text-sm font-semibold text-[#1C1C1A] transition-all placeholder:text-gray-300"
               placeholder="Contoh: Ahmad Fauzi"
               value={name}
               onChange={e => setName(e.target.value)}
@@ -139,11 +142,11 @@ export default function AddCustomerModal({ isOpen, onClose, onSave, businessId }
           </div>
 
           <div>
-            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Nomor HP / WhatsApp *</label>
+            <label className="block text-[10px] font-bold text-[#6B6B63] uppercase tracking-widest mb-1.5">Nomor HP / WhatsApp *</label>
             <input
               type="text"
               required
-              className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-sm font-semibold text-gray-800 transition-all placeholder:text-gray-300"
+              className="w-full p-3 border border-[#E2E2DC] bg-white rounded-xl focus:ring-2 focus:ring-[#2563EB]/10 focus:border-[#2563EB] outline-none text-sm font-semibold text-[#1C1C1A] transition-all placeholder:text-gray-300"
               placeholder="Contoh: 08123456789"
               value={phone}
               onChange={e => setPhone(e.target.value)}
@@ -151,10 +154,10 @@ export default function AddCustomerModal({ isOpen, onClose, onSave, businessId }
           </div>
 
           <div>
-            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Email (Opsional)</label>
+            <label className="block text-[10px] font-bold text-[#6B6B63] uppercase tracking-widest mb-1.5">Email (Opsional)</label>
             <input
               type="email"
-              className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-sm font-semibold text-gray-800 transition-all placeholder:text-gray-300"
+              className="w-full p-3 border border-[#E2E2DC] bg-white rounded-xl focus:ring-2 focus:ring-[#2563EB]/10 focus:border-[#2563EB] outline-none text-sm font-semibold text-[#1C1C1A] transition-all placeholder:text-gray-300"
               placeholder="Contoh: ahmad@gmail.com"
               value={email}
               onChange={e => setEmail(e.target.value)}
@@ -163,19 +166,20 @@ export default function AddCustomerModal({ isOpen, onClose, onSave, businessId }
         </form>
 
         {/* Footer */}
-        <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex gap-3 justify-end">
+        <div className="px-6 py-4 bg-white border-t border-[#E2E2DC] flex gap-3 justify-end">
           <button
             type="button"
             disabled={saving}
             onClick={onClose}
-            className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-100 disabled:opacity-50 transition-all"
+            className="px-5 py-3 border border-[#E2E2DC] rounded-xl text-xs font-bold uppercase tracking-wider text-[#6B6B63] hover:bg-slate-50 disabled:opacity-50 transition-all"
           >
             Batal
           </button>
           <button
-            onClick={handleSave}
+            type="submit"
+            form="add-customer-form"
             disabled={saving}
-            className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold shadow-md hover:bg-blue-700 disabled:bg-blue-400 transition-all"
+            className="px-5 py-3 bg-[#2563EB] text-white rounded-xl text-xs font-bold uppercase tracking-wider shadow-md shadow-blue-100 hover:bg-[#1D4ED8] disabled:opacity-50 transition-all"
           >
             {saving ? 'Menyimpan...' : 'Simpan Pelanggan'}
           </button>

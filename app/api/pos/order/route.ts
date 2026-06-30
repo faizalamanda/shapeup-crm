@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     }
 
     // 2. Validate products & check stock
-    const productIds = items.map((i: any) => i.id)
+    const productIds = items.filter((i: any) => !String(i.id).startsWith('custom-')).map((i: any) => i.id)
     const { data: dbProducts, error: prodErr } = await supabase
       .from('products')
       .select('id, name, type, price, cost_price, stock_type, stock_quantity')
@@ -47,6 +47,9 @@ export async function POST(req: Request) {
     let totalCogs = 0
 
     for (const item of items) {
+      const isCustom = String(item.id).startsWith('custom-')
+      if (isCustom) continue
+
       const dbProd = productMap.get(item.id)
       if (!dbProd) {
         return NextResponse.json({ error: `Produk dengan ID ${item.id} tidak ditemukan` }, { status: 404 })
@@ -129,11 +132,11 @@ export async function POST(req: Request) {
       )
 
       const { data: guestCust } = await supabaseAdmin
-        .from('customers')
-        .select('id')
-        .eq('business_id', businessId)
-        .eq('phone', '0')
-        .maybeSingle()
+          .from('customers')
+          .select('id')
+          .eq('business_id', businessId)
+          .eq('phone', '0')
+          .maybeSingle()
 
       if (guestCust) {
         resolvedCustomerId = guestCust.id
@@ -160,10 +163,12 @@ export async function POST(req: Request) {
     const orderNumber = 'POS-' + Date.now().toString().slice(-8)
     
     const lineItems = items.map((item: any, idx: number) => {
-      const dbProd = productMap.get(item.id)
+      const isCustom = String(item.id).startsWith('custom-')
+      const name = isCustom ? (item.name || 'Biaya Kustom') : productMap.get(item.id).name
+      const sku = isCustom ? 'CUSTOM' : (productMap.get(item.id).sku || '')
       return {
         id: idx + 1,
-        name: dbProd.name,
+        name: name,
         product_id: item.id,
         variation_id: 0,
         quantity: item.quantity,
@@ -174,7 +179,7 @@ export async function POST(req: Request) {
         total_tax: '0.00',
         taxes: [],
         meta_data: item.discount > 0 ? [{ key: 'Discount', value: String(item.discount) }] : [],
-        sku: dbProd.sku || '',
+        sku: sku,
         price: item.price
       }
     })
@@ -230,8 +235,9 @@ export async function POST(req: Request) {
 
     // 7. Update Stock for tracked items
     for (const item of items) {
+      if (String(item.id).startsWith('custom-')) continue
       const dbProd = productMap.get(item.id)
-      if (dbProd.stock_type === 'tracked') {
+      if (dbProd && dbProd.stock_type === 'tracked') {
         const { error: stockUpdErr } = await supabase
           .from('products')
           .update({ stock_quantity: dbProd.stock_quantity - item.quantity })
