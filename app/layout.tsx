@@ -82,40 +82,73 @@ const Icons = {
       <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
     </svg>
   ),
+  chevronDown: (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="6 9 12 15 18 9"/>
+    </svg>
+  ),
+  pemasukan: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="1" x2="12" y2="23"/>
+      <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+    </svg>
+  ),
 }
+
+const menuItems: MenuItem[] = [
+  { name: 'Overview',     href: '/dashboard',         icon: Icons.overview },
+  {
+    name: 'Pemasukan',    href: '#',                  icon: Icons.pemasukan,
+    children: [
+      { name: 'Orders',   href: '/orders' },
+      { name: 'Invoices', href: '/orders/invoices' },
+      { name: 'POS',      href: '/orders/pos' },
+    ],
+  },
+  {
+    name: 'Customers', href: '/customers', icon: Icons.customers,
+    children: [
+      { name: 'Customer List',      href: '/customers' },
+      { name: 'Returning Cohort',   href: '/customers/cohorts/returning' },
+      { name: 'Product Retention',  href: '/customers/product-retention' },
+    ],
+  },
+  { name: 'Products',     href: '/products',          icon: Icons.products },
+  { name: 'Marketing',    href: '/marketing',         icon: Icons.marketing },
+  { name: 'Business',     href: '/settings/business', icon: Icons.business },
+]
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     const timer = window.setTimeout(() => setMounted(true), 0)
     return () => window.clearTimeout(timer)
   }, [])
 
+  useEffect(() => {
+    const updated: Record<string, boolean> = {}
+    menuItems.forEach(item => {
+      if (item.children) {
+        const hasActiveChild = item.children.some(child => 
+          pathname === child.href || (child.href !== '/' && pathname.startsWith(child.href))
+        )
+        if (hasActiveChild || pathname === item.href || (item.href !== '/dashboard' && item.href !== '#' && pathname.startsWith(item.href))) {
+          updated[item.name] = true
+        }
+      }
+    })
+    setExpandedMenus(prev => ({ ...prev, ...updated }))
+  }, [pathname])
+
   const handleLogout = async () => {
     await logoutAction()
   }
 
   const noSidebar = ["/login", "/register", "/"].includes(pathname)
-
-  const menuItems: MenuItem[] = [
-    { name: 'Overview',     href: '/dashboard',         icon: Icons.overview },
-    {
-      name: 'Customers', href: '/customers', icon: Icons.customers,
-      children: [
-        { name: 'Customer List',      href: '/customers' },
-        { name: 'Returning Cohort',   href: '/customers/cohorts/returning' },
-        { name: 'Product Retention',  href: '/customers/product-retention' },
-      ],
-    },
-    { name: 'Products',     href: '/products',          icon: Icons.products },
-    { name: 'Orders',       href: '/orders',            icon: Icons.orders },
-    { name: 'Marketing',    href: '/marketing',         icon: Icons.marketing },
-    { name: 'Point of Sale', href: '/orders/pos',        icon: Icons.input },
-    { name: 'Business',     href: '/settings/business', icon: Icons.business },
-  ]
 
   if (!mounted) {
     return (
@@ -181,16 +214,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* Nav */}
           <nav style={{ flex: 1, overflowY: 'auto', padding: '12px 8px' }}>
             {menuItems.map((item) => {
-              const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
-              const showChildren = Boolean(item.children?.length && isActive)
+              const isChildActive = Boolean(item.children?.some(child => pathname === child.href))
+              const isActive = pathname === item.href || 
+                (item.href !== '/dashboard' && item.href !== '#' && pathname.startsWith(item.href)) ||
+                isChildActive
+              const showChildren = Boolean(item.children?.length && expandedMenus[item.name])
 
               return (
-                <div key={item.href} style={{ marginBottom: '2px' }}>
+                <div key={item.name} style={{ marginBottom: '2px' }}>
                   <Link
                     href={item.href}
-                    onClick={() => setIsMobileMenuOpen(false)}
+                    onClick={(e) => {
+                      if (item.children) {
+                        e.preventDefault()
+                        setExpandedMenus(prev => ({
+                          ...prev,
+                          [item.name]: !prev[item.name]
+                        }))
+                      } else {
+                        setIsMobileMenuOpen(false)
+                      }
+                    }}
                     style={{
-                      display: 'flex', alignItems: 'center', gap: '10px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       padding: '8px 12px', borderRadius: '7px',
                       fontSize: '12px', fontWeight: isActive ? 700 : 500,
                       textDecoration: 'none', transition: 'all 0.15s',
@@ -212,8 +258,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                       }
                     }}
                   >
-                    <span style={{ opacity: isActive ? 1 : 0.6, flexShrink: 0 }}>{item.icon}</span>
-                    <span style={{ textTransform: 'uppercase', letterSpacing: '0.06em', fontSize: '11px' }}>{item.name}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ opacity: isActive ? 1 : 0.6, flexShrink: 0 }}>{item.icon}</span>
+                      <span style={{ textTransform: 'uppercase', letterSpacing: '0.06em', fontSize: '11px' }}>{item.name}</span>
+                    </div>
+                    {item.children && (
+                      <span style={{ 
+                        transform: expandedMenus[item.name] ? 'rotate(180deg)' : 'rotate(0deg)',
+                        transition: 'transform 0.2s ease',
+                        display: 'flex',
+                        alignItems: 'center',
+                        opacity: 0.5
+                      }}>
+                        {Icons.chevronDown}
+                      </span>
+                    )}
                   </Link>
 
                   {showChildren && (
