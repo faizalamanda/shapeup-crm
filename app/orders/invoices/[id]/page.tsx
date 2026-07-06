@@ -18,6 +18,7 @@ type InvoiceItem = {
   price: number
   quantity: number
   sku?: string
+  description?: string
   subtotal: string
   total: string
   product_id?: string | null
@@ -49,6 +50,12 @@ type Invoice = {
     show_notes?: boolean
   } | null
   customers: Customer | null
+  user_id?: string | null
+  creator?: {
+    id: string
+    full_name: string
+    email: string
+  } | null
 }
 
 type JournalLine = {
@@ -95,6 +102,14 @@ export default function InvoiceDetailPage() {
   const [submitting, setSubmitting] = useState<boolean>(false)
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [activeTab, setActiveTab] = useState<'actions' | 'design' | 'ledger'>('actions')
+  const [currentUserProfile, setCurrentUserProfile] = useState<{ id: string; role: string } | null>(null)
+
+  const canEdit = useMemo(() => {
+    if (!currentUserProfile || !invoice) return false
+    if (currentUserProfile.role === 'admin') return true
+    if (!invoice.user_id) return true // Legacy invoice has no creator, so anyone can edit/claim it
+    return invoice.user_id === currentUserProfile.id
+  }, [currentUserProfile, invoice])
 
   // Payment Record Modal
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false)
@@ -124,12 +139,13 @@ export default function InvoiceDetailPage() {
 
       const { data: profile } = await supabase
         .from('profiles')
-        .select('active_business_id, businesses!active_business_id(name)')
+        .select('id, role, active_business_id, businesses!active_business_id(name)')
         .eq('id', user.id)
         .single()
 
       if (!profile?.active_business_id) return
       setBusinessName((profile.businesses as { name?: string } | null)?.name || 'Bisnis Saya')
+      setCurrentUserProfile({ id: profile.id, role: profile.role || 'staff' })
 
       const response = await fetch(`/api/orders/invoices/${invoiceId}`)
       const result = await response.json()
@@ -485,6 +501,11 @@ export default function InvoiceDetailPage() {
               <div className="space-y-1">
                 <div className="text-xl font-black text-[#1C1C1A] tracking-tight">{businessName}</div>
                 <div className="text-xs text-[#70706E]">Penerbit Faktur Resmi</div>
+                {invoice.creator && (
+                  <div className="text-[10px] text-[#70706E]">
+                    Dibuat oleh: <span className="font-bold text-slate-800">{invoice.creator.full_name}</span>
+                  </div>
+                )}
               </div>
 
               <div className="text-right sm:text-right space-y-1">
@@ -566,8 +587,8 @@ export default function InvoiceDetailPage() {
                     <tr key={idx}>
                       <td className={getTdStyle()}>
                         <div className="font-bold text-[#1C1C1A]">{item.name}</div>
-                        {showDescription && (
-                          <div className="text-xs text-[#70706E] mt-0.5">Produk layanan POS / invoice</div>
+                        {showDescription && item.description && (
+                          <div className="text-xs text-[#70706E] mt-0.5 whitespace-pre-wrap">{item.description}</div>
                         )}
                       </td>
                       {showSku && (
@@ -701,32 +722,44 @@ export default function InvoiceDetailPage() {
                   🖨️ Cetak / Simpan PDF
                 </button>
 
+                {!canEdit && (
+                  <div className="p-3 bg-amber-50 border border-amber-250 rounded-xl text-[11px] text-amber-800 font-semibold leading-relaxed">
+                    ℹ️ Anda memiliki hak akses baca-saja. Tombol edit, terbitkan, batalkan, dan hapus dinonaktifkan karena Anda bukan pembuat invoice ini atau Admin.
+                  </div>
+                )}
+
                 {invoice.status === 'pending' && (
                   <>
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={handleApproveInvoice}
-                      className="w-full py-2.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition-all"
-                    >
-                      🚀 Kirim & Terbitkan (Outstanding)
-                    </button>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={handleApproveInvoice}
+                        className="w-full py-2.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition-all"
+                      >
+                        🚀 Kirim & Terbitkan (Outstanding)
+                      </button>
+                    )}
 
-                    <Link
-                      href={`/orders/invoices/${invoiceId}/edit`}
-                      className="block w-full py-2.5 text-xs text-center font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all"
-                    >
-                      ✏️ Edit Invoice
-                    </Link>
+                    {canEdit && (
+                      <Link
+                        href={`/orders/invoices/${invoiceId}/edit`}
+                        className="block w-full py-2.5 text-xs text-center font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all"
+                      >
+                        ✏️ Edit Invoice
+                      </Link>
+                    )}
 
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={handleDeleteInvoice}
-                      className="w-full py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                    >
-                      🗑️ Hapus Invoice Draft
-                    </button>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={handleDeleteInvoice}
+                        className="w-full py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                      >
+                        🗑️ Hapus Invoice Draft
+                      </button>
+                    )}
                   </>
                 )}
 
@@ -740,21 +773,25 @@ export default function InvoiceDetailPage() {
                       💰 Catat Pelunasan Pembayaran
                     </button>
 
-                    <Link
-                      href={`/orders/invoices/${invoiceId}/edit`}
-                      className="block w-full py-2.5 text-xs text-center font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all"
-                    >
-                      ✏️ Edit Invoice
-                    </Link>
+                    {canEdit && (
+                      <Link
+                        href={`/orders/invoices/${invoiceId}/edit`}
+                        className="block w-full py-2.5 text-xs text-center font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all"
+                      >
+                        ✏️ Edit Invoice
+                      </Link>
+                    )}
 
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={handleCancelInvoice}
-                      className="w-full py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                    >
-                      🚫 Batalkan / Void Invoice
-                    </button>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={handleCancelInvoice}
+                        className="w-full py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                      >
+                        🚫 Batalkan / Void Invoice
+                      </button>
+                    )}
                   </>
                 )}
 
@@ -764,21 +801,25 @@ export default function InvoiceDetailPage() {
                       Lunas: Pembayaran telah dicatat dan kas/bank serta piutang telah disesuaikan secara otomatis di ledger akuntansi.
                     </div>
 
-                    <Link
-                      href={`/orders/invoices/${invoiceId}/edit`}
-                      className="block w-full py-2.5 text-xs text-center font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all"
-                    >
-                      ✏️ Edit Desain / Tampilan
-                    </Link>
+                    {canEdit && (
+                      <Link
+                        href={`/orders/invoices/${invoiceId}/edit`}
+                        className="block w-full py-2.5 text-xs text-center font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all"
+                      >
+                        ✏️ Edit Desain / Tampilan
+                      </Link>
+                    )}
 
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={handleCancelInvoice}
-                      className="w-full py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
-                    >
-                      🚫 Batalkan & Balik Jurnal (Refund)
-                    </button>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={handleCancelInvoice}
+                        className="w-full py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                      >
+                        🚫 Batalkan & Balik Jurnal (Refund)
+                      </button>
+                    )}
                   </>
                 )}
 
@@ -793,121 +834,129 @@ export default function InvoiceDetailPage() {
             {/* TAB CONTENT: DESIGN */}
             {activeTab === 'design' && (
               <div className="space-y-4 pt-2 text-xs">
-                {/* Custom Title */}
-                <div className="space-y-1">
-                  <label className="font-bold text-[#70706E]">Judul Dokumen</label>
-                  <input
-                    type="text"
-                    value={customTitle}
-                    onChange={e => setCustomTitle(e.target.value)}
-                    placeholder="INVOICE"
-                    className="w-full p-2 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                </div>
-
-                {/* Custom Subtitle */}
-                <div className="space-y-1">
-                  <label className="font-bold text-[#70706E]">Subjudul Dokumen</label>
-                  <input
-                    type="text"
-                    value={customSubtitle}
-                    onChange={e => setCustomSubtitle(e.target.value)}
-                    placeholder="Keterangan tambahan"
-                    className="w-full p-2 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                </div>
-
-                {/* Custom Footer Notes */}
-                <div className="space-y-1">
-                  <label className="font-bold text-[#70706E]">Teks Catatan Kaki</label>
-                  <textarea
-                    rows={4}
-                    value={customNotes}
-                    onChange={e => setCustomNotes(e.target.value)}
-                    placeholder="Detail bank transfer..."
-                    className="w-full p-2 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                </div>
-
-                {/* Accent Color picker */}
-                <div className="space-y-1.5">
-                  <label className="font-bold text-[#70706E]">Warna Aksen</label>
-                  <div className="flex gap-2">
-                    {[
-                      { id: 'slate', bg: 'bg-slate-500' },
-                      { id: 'blue', bg: 'bg-blue-600' },
-                      { id: 'emerald', bg: 'bg-emerald-600' },
-                      { id: 'amber', bg: 'bg-amber-500' },
-                      { id: 'indigo', bg: 'bg-indigo-600' },
-                      { id: 'rose', bg: 'bg-rose-500' }
-                    ].map(color => (
-                      <button
-                        key={color.id}
-                        type="button"
-                        onClick={() => setAccentColor(color.id)}
-                        className={`w-6 h-6 rounded-full ${color.bg} border-2 transition-all ${
-                          accentColor === color.id ? 'border-[#1C1C1A] scale-110' : 'border-transparent'
-                        }`}
-                      />
-                    ))}
+                {!canEdit ? (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 font-semibold leading-relaxed">
+                    Hanya Pembuat Invoice atau Admin yang dapat mengubah kustomisasi tampilan invoice.
                   </div>
-                </div>
+                ) : (
+                  <>
+                    {/* Custom Title */}
+                    <div className="space-y-1">
+                      <label className="font-bold text-[#70706E]">Judul Dokumen</label>
+                      <input
+                        type="text"
+                        value={customTitle}
+                        onChange={e => setCustomTitle(e.target.value)}
+                        placeholder="INVOICE"
+                        className="w-full p-2 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      />
+                    </div>
 
-                {/* Layout templates */}
-                <div className="space-y-1">
-                  <label className="font-bold text-[#70706E]">Gaya Template Layout</label>
-                  <select
-                    value={layoutStyle}
-                    onChange={e => setLayoutStyle(e.target.value)}
-                    className="w-full p-2 text-xs rounded-xl border border-[#EBEBEA] bg-white focus:outline-none"
-                  >
-                    <option value="modern">Modern (Bold Accent)</option>
-                    <option value="classic">Classic (Grid Bordered)</option>
-                    <option value="minimal">Minimal (Clean Spacing)</option>
-                  </select>
-                </div>
+                    {/* Custom Subtitle */}
+                    <div className="space-y-1">
+                      <label className="font-bold text-[#70706E]">Subjudul Dokumen</label>
+                      <input
+                        type="text"
+                        value={customSubtitle}
+                        onChange={e => setCustomSubtitle(e.target.value)}
+                        placeholder="Keterangan tambahan"
+                        className="w-full p-2 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      />
+                    </div>
 
-                {/* Toggles */}
-                <div className="pt-2 space-y-2 border-t border-gray-100">
-                  <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
-                    <input
-                      type="checkbox"
-                      checked={showSku}
-                      onChange={e => setShowSku(e.target.checked)}
-                      className="rounded border-[#EBEBEA] text-[#1E40AF]"
-                    />
-                    <span>Tampilkan SKU</span>
-                  </label>
+                    {/* Custom Footer Notes */}
+                    <div className="space-y-1">
+                      <label className="font-bold text-[#70706E]">Teks Catatan Kaki</label>
+                      <textarea
+                        rows={4}
+                        value={customNotes}
+                        onChange={e => setCustomNotes(e.target.value)}
+                        placeholder="Detail bank transfer..."
+                        className="w-full p-2 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      />
+                    </div>
 
-                  <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
-                    <input
-                      type="checkbox"
-                      checked={showDescription}
-                      onChange={e => setShowDescription(e.target.checked)}
-                      className="rounded border-[#EBEBEA] text-[#1E40AF]"
-                    />
-                    <span>Tampilkan Detail Item</span>
-                  </label>
+                    {/* Accent Color picker */}
+                    <div className="space-y-1.5">
+                      <label className="font-bold text-[#70706E]">Warna Aksen</label>
+                      <div className="flex gap-2">
+                        {[
+                          { id: 'slate', bg: 'bg-slate-500' },
+                          { id: 'blue', bg: 'bg-blue-600' },
+                          { id: 'emerald', bg: 'bg-emerald-600' },
+                          { id: 'amber', bg: 'bg-amber-500' },
+                          { id: 'indigo', bg: 'bg-indigo-600' },
+                          { id: 'rose', bg: 'bg-rose-500' }
+                        ].map(color => (
+                          <button
+                            key={color.id}
+                            type="button"
+                            onClick={() => setAccentColor(color.id)}
+                            className={`w-6 h-6 rounded-full ${color.bg} border-2 transition-all ${
+                              accentColor === color.id ? 'border-[#1C1C1A] scale-110' : 'border-transparent'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    </div>
 
-                  <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
-                    <input
-                      type="checkbox"
-                      checked={showNotes}
-                      onChange={e => setShowNotes(e.target.checked)}
-                      className="rounded border-[#EBEBEA] text-[#1E40AF]"
-                    />
-                    <span>Tampilkan Catatan Kaki</span>
-                  </label>
-                </div>
+                    {/* Layout templates */}
+                    <div className="space-y-1">
+                      <label className="font-bold text-[#70706E]">Gaya Template Layout</label>
+                      <select
+                        value={layoutStyle}
+                        onChange={e => setLayoutStyle(e.target.value)}
+                        className="w-full p-2 text-xs rounded-xl border border-[#EBEBEA] bg-white focus:outline-none"
+                      >
+                        <option value="modern">Modern (Bold Accent)</option>
+                        <option value="classic">Classic (Grid Bordered)</option>
+                        <option value="minimal">Minimal (Clean Spacing)</option>
+                      </select>
+                    </div>
 
-                <button
-                  type="button"
-                  disabled={submitting}
-                  onClick={handleSaveCustomization}
-                  className="w-full py-2 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all"
-                >
-                  {submitting ? 'Menyimpan...' : '💾 Simpan Kustomisasi'}
-                </button>
+                    {/* Toggles */}
+                    <div className="pt-2 space-y-2 border-t border-gray-100">
+                      <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
+                        <input
+                          type="checkbox"
+                          checked={showSku}
+                          onChange={e => setShowSku(e.target.checked)}
+                          className="rounded border-[#EBEBEA] text-[#1E40AF]"
+                        />
+                        <span>Tampilkan SKU</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
+                        <input
+                          type="checkbox"
+                          checked={showDescription}
+                          onChange={e => setShowDescription(e.target.checked)}
+                          className="rounded border-[#EBEBEA] text-[#1E40AF]"
+                        />
+                        <span>Tampilkan Detail Item</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
+                        <input
+                          type="checkbox"
+                          checked={showNotes}
+                          onChange={e => setShowNotes(e.target.checked)}
+                          className="rounded border-[#EBEBEA] text-[#1E40AF]"
+                        />
+                        <span>Tampilkan Catatan Kaki</span>
+                      </label>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={handleSaveCustomization}
+                      className="w-full py-2 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all"
+                    >
+                      {submitting ? 'Menyimpan...' : '💾 Simpan Kustomisasi'}
+                    </button>
+                  </>
+                )}
               </div>
             )}
 

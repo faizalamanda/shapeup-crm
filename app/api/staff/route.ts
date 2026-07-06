@@ -29,7 +29,7 @@ async function checkAdminSession(cookieStore: any) {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('business_id, role')
+    .select('business_id, active_business_id, role')
     .eq('id', user.id)
     .single()
 
@@ -46,13 +46,55 @@ export async function POST(req: Request) {
 
   try {
     const { isAdmin, adminProfile, error: authError } = await checkAdminSession(cookieStore)
-    if (!isAdmin) {
-      return NextResponse.json({ error: authError }, { status: 403 })
+    if (!isAdmin || !adminProfile || !adminProfile.active_business_id) {
+      return NextResponse.json({ error: authError || "Akses ditolak atau bisnis aktif tidak ditemukan" }, { status: 403 })
     }
 
     const supabaseAdmin = getSupabaseAdmin()
 
-    // 1. Buat User di Auth Supabase (Tanpa konfirmasi email)
+    // 1. Cek apakah user dengan email tersebut sudah terdaftar di profiles
+    const { data: existingProfile } = await supabaseAdmin
+      .from('profiles')
+      .select('id, business_id')
+      .eq('email', email)
+      .maybeSingle()
+
+    if (existingProfile) {
+      // Cek apakah sudah ditugaskan ke bisnis ini
+      const { data: existingAssignment } = await supabaseAdmin
+        .from('business_staff')
+        .select('id')
+        .eq('business_id', adminProfile.active_business_id)
+        .eq('profile_id', existingProfile.id)
+        .maybeSingle()
+
+      if (existingAssignment) {
+        return NextResponse.json({ error: "Staf dengan email ini sudah terdaftar di bisnis ini." }, { status: 400 })
+      }
+
+      // Tambahkan ke business_staff
+      const { error: bsError } = await supabaseAdmin
+        .from('business_staff')
+        .insert({
+          business_id: adminProfile.active_business_id,
+          profile_id: existingProfile.id,
+          role: role || 'staff'
+        })
+
+      if (bsError) throw bsError
+
+      // Jika business_id utamanya kosong, update dengan bisnis ini
+      if (!existingProfile.business_id) {
+        await supabaseAdmin
+          .from('profiles')
+          .update({ business_id: adminProfile.active_business_id })
+          .eq('id', existingProfile.id)
+      }
+
+      return NextResponse.json({ success: true, message: "Staf yang ada berhasil ditambahkan ke unit bisnis ini." })
+    }
+
+    // 2. Jika belum terdaftar, buat User Baru di Auth Supabase (Tanpa konfirmasi email)
     const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
@@ -62,18 +104,29 @@ export async function POST(req: Request) {
 
     if (createError) throw createError
 
-    // 2. Update Profile Staff tersebut agar nyambung ke Bisnis Admin dan Role yang dipilih
+    // 3. Update Profile Staff tersebut agar nyambung ke Bisnis Admin dan Role yang dipilih
     const { error: profileError } = await supabaseAdmin
       .from('profiles')
       .update({ 
         full_name,
-        business_id: adminProfile.business_id,
-        active_business_id: adminProfile.business_id, // Also set active business ID
+        business_id: adminProfile.active_business_id,
+        active_business_id: adminProfile.active_business_id,
         role: role || 'staff'
       })
       .eq('id', newUser.user.id)
 
     if (profileError) throw profileError
+
+    // 4. Tambahkan relasi many-to-many ke business_staff
+    const { error: bsError } = await supabaseAdmin
+      .from('business_staff')
+      .insert({
+        business_id: adminProfile.active_business_id,
+        profile_id: newUser.user.id,
+        role: role || 'staff'
+      })
+
+    if (bsError) throw bsError
 
     return NextResponse.json({ success: true, message: "Staff berhasil didaftarkan" })
 
@@ -92,25 +145,22 @@ export async function PUT(req: Request) {
 
   try {
     const { isAdmin, adminProfile, error: authError } = await checkAdminSession(cookieStore)
-    if (!isAdmin) {
-      return NextResponse.json({ error: authError }, { status: 403 })
+    if (!isAdmin || !adminProfile || !adminProfile.active_business_id) {
+      return NextResponse.json({ error: authError || "Akses ditolak" }, { status: 403 })
     }
 
     const supabaseAdmin = getSupabaseAdmin()
 
-    // Cek apakah staff yang diedit berada dalam bisnis yang sama dengan admin
-    const { data: targetProfile, error: targetProfileError } = await supabaseAdmin
-      .from('profiles')
-      .select('business_id')
-      .eq('id', id)
-      .single()
+    // Cek apakah staff yang diedit ditugaskan ke bisnis aktif admin
+    const { data: targetAssignment, error: targetAssignmentError } = await supabaseAdmin
+      .from('business_staff')
+      .select('id')
+      .eq('business_id', adminProfile.active_business_id)
+      .eq('profile_id', id)
+      .maybeSingle()
 
-    if (targetProfileError || !targetProfile) {
-      return NextResponse.json({ error: "Staff tidak ditemukan" }, { status: 404 })
-    }
-
-    if (targetProfile.business_id !== adminProfile.business_id) {
-      return NextResponse.json({ error: "Anda tidak memiliki akses untuk mengedit staff di unit bisnis lain" }, { status: 403 })
+    if (targetAssignmentError || !targetAssignment) {
+      return NextResponse.json({ error: "Staf tidak ditemukan di unit bisnis ini atau Anda tidak memiliki akses" }, { status: 403 })
     }
 
     // 1. Update Auth Supabase jika email/password/metadata berubah
@@ -138,7 +188,51 @@ export async function PUT(req: Request) {
       if (updateProfileError) throw updateProfileError
     }
 
+    // 3. Update business_staff role
+    if (role !== undefined) {
+      const { error: updateBsError } = await supabaseAdmin
+        .from('business_staff')
+        .update({ role })
+        .eq('business_id', adminProfile.active_business_id)
+        .eq('profile_id', id)
+
+      if (updateBsError) throw updateBsError
+    }
+
     return NextResponse.json({ success: true, message: "Data staff berhasil diperbarui" })
+
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
+}
+
+export async function DELETE(req: Request) {
+  const cookieStore = await cookies()
+  const { searchParams } = new URL(req.url)
+  const id = searchParams.get('id')
+
+  if (!id) {
+    return NextResponse.json({ error: "ID staff wajib disertakan" }, { status: 400 })
+  }
+
+  try {
+    const { isAdmin, adminProfile, error: authError } = await checkAdminSession(cookieStore)
+    if (!isAdmin || !adminProfile || !adminProfile.active_business_id) {
+      return NextResponse.json({ error: authError || "Akses ditolak" }, { status: 403 })
+    }
+
+    const supabaseAdmin = getSupabaseAdmin()
+
+    // Hapus penugasan staff dari unit bisnis aktif admin saat ini
+    const { error: deleteError } = await supabaseAdmin
+      .from('business_staff')
+      .delete()
+      .eq('business_id', adminProfile.active_business_id)
+      .eq('profile_id', id)
+
+    if (deleteError) throw deleteError
+
+    return NextResponse.json({ success: true, message: "Hubungan staf dengan unit bisnis berhasil dihapus" })
 
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })

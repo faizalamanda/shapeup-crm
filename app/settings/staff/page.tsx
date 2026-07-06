@@ -43,20 +43,26 @@ export default function StaffSettings() {
         // Get logged in user's profile
         const { data: myProfile } = await supabase
           .from('profiles')
-          .select('id, business_id, role, full_name, email')
+          .select('id, business_id, active_business_id, role, full_name, email')
           .eq('id', user.id)
           .single()
 
         setCurrentUserProfile(myProfile)
 
-        if (myProfile?.business_id) {
-          const { data: staff, error: staffError } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('business_id', myProfile.business_id)
+        if (myProfile?.active_business_id) {
+          const { data: bsData, error: staffError } = await supabase
+            .from('business_staff')
+            .select('role, profiles (*)')
+            .eq('business_id', myProfile.active_business_id)
           
           if (staffError) throw staffError
-          setStaffList(staff || [])
+
+          const staff = bsData?.map((item: any) => ({
+            ...item.profiles,
+            role: item.role
+          })) || []
+
+          setStaffList(staff)
         }
       }
     } catch (error) {
@@ -174,6 +180,27 @@ export default function StaffSettings() {
     }
   }
 
+  async function handleRemoveStaff(staffId: string) {
+    if (!confirm("Apakah Anda yakin ingin mengeluarkan staf ini dari unit bisnis ini? Akun mereka tidak akan dihapus permanen, hanya penugasan ke bisnis ini yang dicabut.")) return
+
+    try {
+      const res = await fetch(`/api/staff?id=${staffId}`, {
+        method: 'DELETE'
+      })
+
+      const result = await res.json()
+
+      if (res.ok) {
+        alert("Staf berhasil dikeluarkan dari unit bisnis ini!")
+        fetchStaff()
+      } else {
+        alert(result.error || "Gagal mengeluarkan staf")
+      }
+    } catch (err) {
+      alert("Terjadi kesalahan koneksi ke server")
+    }
+  }
+
   const isAdmin = currentUserProfile?.role === 'admin'
 
   return (
@@ -250,13 +277,21 @@ export default function StaffSettings() {
                         </span>
                       </td>
                       {isAdmin && (
-                        <td className="px-6 py-4 text-right">
+                        <td className="px-6 py-4 text-right space-x-3">
                           <button
                             onClick={() => openEditModal(s)}
                             className="text-xs font-black text-slate-900 uppercase tracking-widest border-b-2 border-slate-900 hover:bg-yellow-200 px-1 py-0.5 cursor-pointer"
                           >
                             Edit
                           </button>
+                          {s.id !== currentUserProfile?.id && (
+                            <button
+                              onClick={() => handleRemoveStaff(s.id)}
+                              className="text-xs font-black text-red-600 uppercase tracking-widest border-b-2 border-red-600 hover:bg-red-50 px-1 py-0.5 cursor-pointer"
+                            >
+                              Hapus
+                            </button>
+                          )}
                         </td>
                       )}
                     </tr>

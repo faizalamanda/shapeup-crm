@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabaseServer'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { invalidateInvoicesCache } from '../../route'
 
 export async function POST(
   req: Request,
@@ -137,6 +138,8 @@ export async function POST(
       .insert(paymentLines)
 
     if (jlErr) throw jlErr
+
+    invalidateInvoicesCache(businessId)
 
     return NextResponse.json({
       success: true,

@@ -67,6 +67,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Gagal update profil: ${profileError.message}` }, { status: 400 })
     }
 
+    // 4. Hubungkan Owner ke business_staff
+    const { error: bsError } = await supabase
+      .from('business_staff')
+      .insert({
+        business_id: biz.id,
+        profile_id: user.id,
+        role: 'admin'
+      })
+
+    if (bsError) {
+      console.error("Business Staff Assignment Error:", bsError)
+      return NextResponse.json({ error: `Gagal mendaftarkan hak akses bisnis: ${bsError.message}` }, { status: 400 })
+    }
+
     return NextResponse.json({ success: true, business: biz })
   } catch (err: unknown) {
     console.error("Server Error:", err)

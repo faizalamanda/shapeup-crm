@@ -25,6 +25,7 @@ type InvoiceItemInput = {
   product_id: string | null
   name: string
   sku: string
+  description?: string
   price: number
   quantity: number
 }
@@ -52,6 +53,7 @@ export default function NewInvoicePage() {
   const [products, setProducts] = useState<Product[]>([])
   const [businessName, setBusinessName] = useState<string>('')
   const [businessId, setBusinessId] = useState<string>('')
+  const [staffName, setStaffName] = useState<string>('')
   const [loadingData, setLoadingData] = useState<boolean>(true)
 
   // Customer selection
@@ -69,7 +71,7 @@ export default function NewInvoicePage() {
 
   // Invoice Items
   const [items, setItems] = useState<InvoiceItemInput[]>([
-    { product_id: null, name: '', sku: '', price: 0, quantity: 1 }
+    { product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1 }
   ])
 
   // Financial summary
@@ -142,7 +144,7 @@ export default function NewInvoicePage() {
 
         const { data: profile } = await supabase
           .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name)')
+          .select('full_name, active_business_id, businesses!active_business_id(name)')
           .eq('id', user.id)
           .single()
 
@@ -150,6 +152,7 @@ export default function NewInvoicePage() {
 
         setBusinessId(profile.active_business_id)
         setBusinessName((profile.businesses as { name?: string } | null)?.name || 'Bisnis Saya')
+        setStaffName(profile.full_name || 'Tidak diketahui')
 
         // Fetch customers
         const custRes = await fetch('/api/customers')
@@ -180,12 +183,12 @@ export default function NewInvoicePage() {
 
   // Items Handlers
   const handleAddItemRow = () => {
-    setItems([...items, { product_id: null, name: '', sku: '', price: 0, quantity: 1 }])
+    setItems([...items, { product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1 }])
   }
 
   const handleRemoveItemRow = (index: number) => {
     if (items.length === 1) {
-      setItems([{ product_id: null, name: '', sku: '', price: 0, quantity: 1 }])
+      setItems([{ product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1 }])
       return
     }
     const nextItems = [...items]
@@ -326,7 +329,11 @@ export default function NewInvoicePage() {
       <div className="flex justify-between items-center border-b border-[#EBEBEA] pb-4">
         <div>
           <h1 className="text-xl font-black text-[#1C1C1A]">Buat Invoice Baru</h1>
-          <p className="text-xs text-[#70706E]">Penerbit: <span className="font-bold text-[#1C1C1A]">{businessName}</span></p>
+          <p className="text-xs text-[#70706E]">
+            Penerbit: <span className="font-bold text-[#1C1C1A]">{businessName}</span>
+            <span className="mx-2">•</span>
+            Dibuat oleh: <span className="font-bold text-[#1C1C1A]">{staffName || 'Memuat...'}</span>
+          </p>
         </div>
       </div>
 
@@ -459,7 +466,7 @@ export default function NewInvoicePage() {
 
             <div className="space-y-3">
               {items.map((item, idx) => (
-                <div key={idx} className="relative flex flex-col md:flex-row gap-3 items-start md:items-center border-b border-gray-100 pb-3 md:pb-0 md:border-none">
+                <div key={idx} className="relative flex flex-col md:flex-row gap-3 items-start md:items-start border-b border-gray-100 pb-3 md:pb-0 md:border-none">
                   {/* Item name input with product search */}
                   <div className="w-full md:flex-1 relative">
                     <input
@@ -475,6 +482,17 @@ export default function NewInvoicePage() {
                       onBlur={() => setTimeout(() => setShowProductDropdown({ ...showProductDropdown, [idx]: false }), 200)}
                       className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
                     />
+                    
+                    {/* Indented description field to show it is a sub-part of the item */}
+                    <div className="pl-3 border-l-2 border-slate-200 mt-1.5 ml-2">
+                      <input
+                        type="text"
+                        placeholder="Deskripsi / Detail Item"
+                        value={item.description || ''}
+                        onChange={e => handleItemFieldChange(idx, 'description', e.target.value)}
+                        className="w-full p-1.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none text-[#70706E]"
+                      />
+                    </div>
 
                     {/* Product Autocomplete Dropdown */}
                     {showProductDropdown[idx] && (
@@ -556,14 +574,14 @@ export default function NewInvoicePage() {
                     </div>
                   </div>
 
-                  <div className="text-right w-full md:w-28 font-bold text-slate-700 hidden md:block">
+                  <div className="text-right w-full md:w-28 font-bold text-slate-700 hidden md:block md:pt-2">
                     {formatIDR(item.price * item.quantity)}
                   </div>
 
                   <button
                     type="button"
                     onClick={() => handleRemoveItemRow(idx)}
-                    className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg self-end md:self-center transition-colors"
+                    className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg self-end md:self-start md:mt-0.5 transition-colors"
                     title="Hapus baris"
                   >
                     🗑️

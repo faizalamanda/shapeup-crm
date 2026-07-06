@@ -2,6 +2,32 @@ import { createClient } from '@/lib/supabaseServer'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
+// Global in-memory cache for invoices
+const globalCache = (global as any).invoicesCache || new Map<string, { data: any, timestamp: number }>();
+if (!(global as any).invoicesCache) {
+  (global as any).invoicesCache = globalCache;
+}
+
+export function getInvoicesCache(cacheKey: string) {
+  const cached = globalCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < 10000) { // 10 seconds cache
+    return cached.data
+  }
+  return null
+}
+
+export function setInvoicesCache(cacheKey: string, data: any) {
+  globalCache.set(cacheKey, { data, timestamp: Date.now() })
+}
+
+export function invalidateInvoicesCache(businessId: string) {
+  for (const key of globalCache.keys()) {
+    if (key.startsWith(`${businessId}:`)) {
+      globalCache.delete(key)
+    }
+  }
+}
+
 // Helper to format Date to DDMMYYYY
 function formatDDMMYYYY(date: Date): string {
   const day = String(date.getDate()).padStart(2, '0')
@@ -34,8 +60,24 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url)
     const status = searchParams.get('status')
 
-    // 2. Query invoices
-    let query = supabase
+    // Check Server-Side Cache
+    const cacheKey = `${businessId}:${status || 'all'}`
+    const cachedData = getInvoicesCache(cacheKey)
+    if (cachedData) {
+      return NextResponse.json({ success: true, invoices: cachedData })
+    }
+
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!serviceRoleKey) {
+      return NextResponse.json({ error: 'Admin service key not found' }, { status: 500 })
+    }
+    const supabaseAdmin = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      serviceRoleKey
+    )
+
+    // 2. Query invoices using supabaseAdmin to bypass RLS for customers
+    let query = supabaseAdmin
       .from('orders')
       .select('*, customers(id, name, phone, email)')
       .eq('business_id', businessId)
@@ -50,7 +92,28 @@ export async function GET(req: Request) {
 
     if (queryErr) throw queryErr
 
-    return NextResponse.json({ success: true, invoices })
+    // Fetch creators (profiles)
+    let invoicesWithCreator = invoices
+    const userIds = Array.from(new Set(invoices.map(inv => inv.user_id).filter(Boolean)))
+    if (userIds.length > 0) {
+      const { data: staffMembers, error: staffErr } = await supabaseAdmin
+        .from('profiles')
+        .select('id, full_name, email')
+        .in('id', userIds)
+
+      if (!staffErr && staffMembers) {
+        const profileMap = new Map(staffMembers.map(p => [p.id, p]))
+        invoicesWithCreator = invoices.map(inv => ({
+          ...inv,
+          creator: inv.user_id ? (profileMap.get(inv.user_id) || null) : null
+        }))
+      }
+    }
+
+    // Set Server-Side Cache
+    setInvoicesCache(cacheKey, invoicesWithCreator)
+
+    return NextResponse.json({ success: true, invoices: invoicesWithCreator })
   } catch (err: any) {
     console.error('Fetch Invoices Error:', err)
     return NextResponse.json({ error: err.message || 'Internal server error' }, { status: 500 })
@@ -234,6 +297,7 @@ export async function POST(req: Request) {
     const lineItems = items.map((item: any, idx: number) => ({
       id: item.product_id || idx,
       name: item.name,
+      description: item.description || '',
       price: Number(item.price),
       quantity: Number(item.quantity),
       sku: item.sku || '',
@@ -246,6 +310,7 @@ export async function POST(req: Request) {
       .from('orders')
       .insert({
         business_id: businessId,
+        user_id: user.id, // Save creator ID!
         customer_id: resolvedCustomerId,
         order_number: finalInvoiceNumber,
         source_platform: 'Invoice',
@@ -427,6 +492,8 @@ export async function POST(req: Request) {
         if (jlPayErr) throw jlPayErr
       }
     }
+
+    invalidateInvoicesCache(businessId)
 
     return NextResponse.json({ success: true, order })
 

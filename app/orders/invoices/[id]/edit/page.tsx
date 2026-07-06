@@ -25,6 +25,7 @@ type InvoiceItemInput = {
   product_id: string | null
   name: string
   sku: string
+  description?: string
   price: number
   quantity: number
 }
@@ -57,6 +58,18 @@ export default function EditInvoicePage() {
   const [loadingData, setLoadingData] = useState<boolean>(true)
   const [loadingInvoice, setLoadingInvoice] = useState<boolean>(true)
 
+  // Creator & User Profile Permissions
+  const [currentUserProfile, setCurrentUserProfile] = useState<{ id: string; role: string } | null>(null)
+  const [creatorName, setCreatorName] = useState<string>('')
+  const [creatorUserId, setCreatorUserId] = useState<string | null>(null)
+
+  const canEdit = useMemo(() => {
+    if (!currentUserProfile) return true
+    if (currentUserProfile.role === 'admin') return true
+    if (!creatorUserId) return true
+    return creatorUserId === currentUserProfile.id
+  }, [currentUserProfile, creatorUserId])
+
   // Invoice status
   const [invoiceStatus, setInvoiceStatus] = useState<string>('pending')
 
@@ -75,7 +88,7 @@ export default function EditInvoicePage() {
 
   // Invoice Items
   const [items, setItems] = useState<InvoiceItemInput[]>([
-    { product_id: null, name: '', sku: '', price: 0, quantity: 1 }
+    { product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1 }
   ])
 
   // Financial summary
@@ -143,7 +156,7 @@ export default function EditInvoicePage() {
 
         const { data: profile } = await supabase
           .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name)')
+          .select('id, role, active_business_id, businesses!active_business_id(name)')
           .eq('id', user.id)
           .single()
 
@@ -151,6 +164,7 @@ export default function EditInvoicePage() {
 
         setBusinessId(profile.active_business_id)
         setBusinessName((profile.businesses as { name?: string } | null)?.name || 'Bisnis Saya')
+        setCurrentUserProfile({ id: profile.id, role: profile.role || 'staff' })
 
         // Fetch customers from secure endpoint
         const custRes = await fetch('/api/customers')
@@ -198,6 +212,8 @@ export default function EditInvoicePage() {
           setInvoiceStatus(inv.status)
           setSelectedCustomerId(inv.customer_id || '')
           setInvoiceNumber(inv.order_number || '')
+          setCreatorUserId(inv.user_id || null)
+          setCreatorName(inv.creator?.full_name || 'Tidak diketahui')
           
           // Format dates to YYYY-MM-DD
           const fmtDate = (dStr: string) => {
@@ -230,6 +246,7 @@ export default function EditInvoicePage() {
               product_id: item.product_id || null,
               name: item.name || '',
               sku: item.sku || '',
+              description: item.description || '',
               price: Number(item.price || 0),
               quantity: Number(item.quantity || 1)
             }))
@@ -256,13 +273,13 @@ export default function EditInvoicePage() {
   // Items Handlers
   const handleAddItemRow = () => {
     if (isFinancialsLocked) return
-    setItems([...items, { product_id: null, name: '', sku: '', price: 0, quantity: 1 }])
+    setItems([...items, { product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1 }])
   }
 
   const handleRemoveItemRow = (index: number) => {
     if (isFinancialsLocked) return
     if (items.length === 1) {
-      setItems([{ product_id: null, name: '', sku: '', price: 0, quantity: 1 }])
+      setItems([{ product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1 }])
       return
     }
     const nextItems = [...items]
@@ -405,6 +422,36 @@ export default function EditInvoicePage() {
     )
   }
 
+  if (!canEdit) {
+    return (
+      <div className="space-y-6 text-[#1C1C1A] px-2 py-4">
+        <div className="flex items-center gap-2 text-xs font-bold text-[#70706E]">
+          <Link href="/orders/invoices" className="hover:text-[#1C1C1A]">Tagihan</Link>
+          <span>/</span>
+          <span className="text-[#1C1C1A]">{invoiceNumber || 'Detail'}</span>
+          <span>/</span>
+          <span className="text-[#1C1C1A]">Edit</span>
+        </div>
+
+        <div className="p-5 bg-white rounded-2xl border border-[#EBEBEA] shadow-sm max-w-lg mx-auto text-center space-y-4">
+          <div className="text-4xl">🚫</div>
+          <h2 className="text-sm font-black text-rose-700">Akses Ditolak</h2>
+          <p className="text-xs text-[#70706E]">
+            Anda tidak memiliki akses untuk mengubah invoice ini karena invoice ini dibuat oleh staff lain dan Anda bukan Admin.
+          </p>
+          <div className="pt-2">
+            <Link
+              href={`/orders/invoices/${invoiceId}`}
+              className="inline-flex px-4 py-2 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition-all"
+            >
+              Kembali ke Detail Invoice
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (isCancelled) {
     return (
       <div className="space-y-6 text-[#1C1C1A] px-2 py-4">
@@ -456,7 +503,11 @@ export default function EditInvoicePage() {
               </span>
             )}
           </div>
-          <p className="text-xs text-[#70706E]">Penerbit: <span className="font-bold text-[#1C1C1A]">{businessName}</span></p>
+          <p className="text-xs text-[#70706E]">
+            Penerbit: <span className="font-bold text-[#1C1C1A]">{businessName}</span>
+            <span className="mx-2">•</span>
+            Dibuat oleh: <span className="font-bold text-[#1C1C1A]">{creatorName || 'Tidak diketahui'}</span>
+          </p>
         </div>
       </div>
 
@@ -604,7 +655,7 @@ export default function EditInvoicePage() {
 
             <div className="space-y-3">
               {items.map((item, idx) => (
-                <div key={idx} className="relative flex flex-col md:flex-row gap-3 items-start md:items-center border-b border-gray-100 pb-3 md:pb-0 md:border-none">
+                <div key={idx} className="relative flex flex-col md:flex-row gap-3 items-start md:items-start border-b border-gray-100 pb-3 md:pb-0 md:border-none">
                   {/* Item name input with product search */}
                   <div className="w-full md:flex-1 relative">
                     <input
@@ -621,6 +672,18 @@ export default function EditInvoicePage() {
                       onBlur={() => setTimeout(() => setShowProductDropdown({ ...showProductDropdown, [idx]: false }), 200)}
                       className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
                     />
+
+                    {/* Indented description field to show it is a sub-part of the item */}
+                    <div className="pl-3 border-l-2 border-slate-200 mt-1.5 ml-2">
+                      <input
+                        type="text"
+                        disabled={isFinancialsLocked}
+                        placeholder="Deskripsi / Detail Item"
+                        value={item.description || ''}
+                        onChange={e => handleItemFieldChange(idx, 'description', e.target.value)}
+                        className="w-full p-1.5 text-xs rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none text-[#70706E]"
+                      />
+                    </div>
 
                      {/* Product Autocomplete Dropdown */}
                     {!isFinancialsLocked && showProductDropdown[idx] && (
@@ -705,7 +768,7 @@ export default function EditInvoicePage() {
                     </div>
                   </div>
 
-                  <div className="text-right w-full md:w-28 font-bold text-slate-700 hidden md:block">
+                  <div className="text-right w-full md:w-28 font-bold text-slate-700 hidden md:block md:pt-2">
                     {formatIDR(item.price * item.quantity)}
                   </div>
 
@@ -713,7 +776,7 @@ export default function EditInvoicePage() {
                     <button
                       type="button"
                       onClick={() => handleRemoveItemRow(idx)}
-                      className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg self-end md:self-center transition-colors"
+                      className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg self-end md:self-start md:mt-0.5 transition-colors"
                       title="Hapus baris"
                     >
                       🗑️

@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabaseServer'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { invalidateInvoicesCache } from '../route'
 
 export async function GET(
   req: Request,
@@ -25,7 +26,16 @@ export async function GET(
       return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
     }
 
-    const { data: invoice, error: fetchErr } = await supabase
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!serviceRoleKey) {
+      return NextResponse.json({ error: 'Admin service key not found' }, { status: 500 })
+    }
+    const supabaseAdmin = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      serviceRoleKey
+    )
+
+    const { data: invoice, error: fetchErr } = await supabaseAdmin
       .from('orders')
       .select('*, customers(*)')
       .eq('id', id)
@@ -37,7 +47,25 @@ export async function GET(
       return NextResponse.json({ error: 'Invoice tidak ditemukan' }, { status: 404 })
     }
 
-    return NextResponse.json({ success: true, invoice })
+    let creator = null
+    if (invoice.user_id) {
+      const { data: creatorProfile } = await supabaseAdmin
+        .from('profiles')
+        .select('id, full_name, email')
+        .eq('id', invoice.user_id)
+        .maybeSingle()
+      if (creatorProfile) {
+        creator = creatorProfile
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      invoice: {
+        ...invoice,
+        creator
+      }
+    })
   } catch (err: any) {
     console.error('Get Invoice Detail Error:', err)
     return NextResponse.json({ error: err.message || 'Internal server error' }, { status: 500 })
@@ -59,7 +87,7 @@ export async function PUT(
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('active_business_id')
+      .select('active_business_id, role')
       .eq('id', user.id)
       .single()
 
@@ -89,6 +117,13 @@ export async function PUT(
 
     if (existErr || !existing) {
       return NextResponse.json({ error: 'Invoice tidak ditemukan' }, { status: 404 })
+    }
+
+    // Permission check: only admin, or invoice creator, or legacy (null user_id)
+    if (profile?.role !== 'admin' && existing.user_id && existing.user_id !== user.id) {
+      return NextResponse.json({
+        error: 'Anda tidak memiliki akses untuk mengubah invoice ini. Hanya pembuat invoice atau Admin yang dapat mengubahnya.'
+      }, { status: 403 })
     }
 
     const body = await req.json()
@@ -248,6 +283,7 @@ export async function PUT(
         if (jlErr) throw jlErr
       }
 
+      invalidateInvoicesCache(businessId)
       return NextResponse.json({ success: true, message: 'Invoice berhasil dibatalkan' })
     }
 
@@ -275,6 +311,7 @@ export async function PUT(
         .single()
 
       if (updErr) throw updErr
+      invalidateInvoicesCache(businessId)
       return NextResponse.json({ success: true, message: 'Desain Invoice diperbarui', order: updated })
     }
 
@@ -346,6 +383,7 @@ export async function PUT(
       finalItems = items.map((item: any, idx: number) => ({
         id: item.product_id || idx,
         name: item.name,
+        description: item.description || '',
         price: Number(item.price),
         quantity: Number(item.quantity),
         sku: item.sku || '',
@@ -378,6 +416,10 @@ export async function PUT(
 
     if (nextStatus === 'completed' && payment_method) {
       updatePayload.payment_method = payment_method
+    }
+
+    if (!existing.user_id) {
+      updatePayload.user_id = user.id
     }
 
     // 3. Save Invoice details
@@ -650,6 +692,7 @@ export async function PUT(
       if (jlErr) throw jlErr
     }
 
+    invalidateInvoicesCache(businessId)
     return NextResponse.json({ success: true, order: updated })
   } catch (err: any) {
     console.error('Update Invoice Error:', err)
@@ -672,7 +715,7 @@ export async function DELETE(
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('active_business_id')
+      .select('active_business_id, role')
       .eq('id', user.id)
       .single()
 
@@ -685,7 +728,7 @@ export async function DELETE(
     // Fetch existing
     const { data: existing, error: existErr } = await supabase
       .from('orders')
-      .select('id, status')
+      .select('id, status, user_id')
       .eq('id', id)
       .eq('business_id', businessId)
       .eq('source_platform', 'Invoice')
@@ -693,6 +736,13 @@ export async function DELETE(
 
     if (existErr || !existing) {
       return NextResponse.json({ error: 'Invoice tidak ditemukan' }, { status: 404 })
+    }
+
+    // Permission check: only admin, or invoice creator, or legacy (null user_id)
+    if (profile?.role !== 'admin' && existing.user_id && existing.user_id !== user.id) {
+      return NextResponse.json({
+        error: 'Anda tidak memiliki akses untuk menghapus invoice ini. Hanya pembuat invoice atau Admin yang dapat menghapusnya.'
+      }, { status: 403 })
     }
 
     // Only allow deleting Drafts ('pending')
@@ -709,6 +759,7 @@ export async function DELETE(
 
     if (delErr) throw delErr
 
+    invalidateInvoicesCache(businessId)
     return NextResponse.json({ success: true, message: 'Invoice berhasil dihapus' })
   } catch (err: any) {
     console.error('Delete Invoice Error:', err)

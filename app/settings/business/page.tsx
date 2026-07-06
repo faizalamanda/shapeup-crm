@@ -61,8 +61,30 @@ export default function BusinessSettings() {
       setUserRole(profile?.role || 'staff')
       setActiveBid(profile?.active_business_id || null)
 
-      const { data: bizData } = await supabase.from('businesses').select('*')
-      setBusinesses(bizData || [])
+      // Ambil bisnis yang ditugaskan di business_staff
+      const { data: bsData } = await supabase
+        .from('business_staff')
+        .select('role, businesses (*)')
+        .eq('profile_id', user.id)
+
+      // Ambil bisnis milik sendiri (owner)
+      const { data: ownedBiz } = await supabase
+        .from('businesses')
+        .select('*')
+        .eq('owner_id', user.id)
+
+      // Gabungkan dan pastikan unik berdasarkan ID
+      const bizMap = new Map<string, any>()
+      bsData?.forEach((item: any) => {
+        if (item.businesses) {
+          bizMap.set(item.businesses.id, item.businesses)
+        }
+      })
+      ownedBiz?.forEach((biz: any) => {
+        bizMap.set(biz.id, biz)
+      })
+
+      setBusinesses(Array.from(bizMap.values()))
     }
     setLoading(false)
   }, [supabase])
@@ -87,22 +109,31 @@ export default function BusinessSettings() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error("Sesi habis, silakan login ulang.")
 
-      // 1. Insert Bisnis Baru
-      // Pastikan kolom di tabel 'businesses' sesuai (name, phone)
+      // 1. Insert Bisnis Baru dengan owner_id
       const { data: newBiz, error: bizError } = await supabase
         .from('businesses')
         .insert([{ 
           name: formData.name, 
           phone: formData.phone,
           timezone: formData.timezone,
+          owner_id: user.id
         }])
         .select()
         .single()
 
       if (bizError) throw bizError
 
+      // Hubungkan Owner ke business_staff
+      const { error: bsError } = await supabase
+        .from('business_staff')
+        .insert({
+          business_id: newBiz.id,
+          profile_id: user.id,
+          role: 'admin'
+        })
+      if (bsError) throw bsError
+
       // 2. Jika ini bisnis pertama, atau user ingin langsung aktifkan
-      // Kita bisa otomatis set ini jadi active_business_id di profile
       if (!activeBid) {
         await supabase
           .from('profiles')
