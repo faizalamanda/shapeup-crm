@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
-import { useRouter } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import QuickAddProductModal from '@/components/QuickAddProductModal'
 
@@ -37,7 +37,7 @@ const formatIDR = (value: number) => {
   }).format(value)
 }
 
-export default function NewInvoicePage() {
+export default function EditInvoicePage() {
   const supabase = useMemo(
     () => createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -46,6 +46,8 @@ export default function NewInvoicePage() {
     []
   )
   const router = useRouter()
+  const params = useParams()
+  const invoiceId = params.id as string
 
   // Master Data States
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -53,6 +55,10 @@ export default function NewInvoicePage() {
   const [businessName, setBusinessName] = useState<string>('')
   const [businessId, setBusinessId] = useState<string>('')
   const [loadingData, setLoadingData] = useState<boolean>(true)
+  const [loadingInvoice, setLoadingInvoice] = useState<boolean>(true)
+
+  // Invoice status
+  const [invoiceStatus, setInvoiceStatus] = useState<string>('pending')
 
   // Customer selection
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
@@ -62,7 +68,7 @@ export default function NewInvoicePage() {
   const [newCustEmail, setNewCustEmail] = useState<string>('')
 
   // Invoice Fields
-  const [invoiceNumber, setInvoiceNumber] = useState<string>('') // if empty, API generates
+  const [invoiceNumber, setInvoiceNumber] = useState<string>('')
   const [invoiceDate, setInvoiceDate] = useState<string>('')
   const [paymentTerms, setPaymentTerms] = useState<string>('due-on-receipt')
   const [dueDate, setDueDate] = useState<string>('')
@@ -102,20 +108,15 @@ export default function NewInvoicePage() {
   const [submitting, setSubmitting] = useState<boolean>(false)
   const [errorMessage, setErrorMessage] = useState<string>('')
 
-  // Set default dates on mount
-  useEffect(() => {
-    const today = new Date()
-    const yyyy = today.getFullYear()
-    const mm = String(today.getMonth() + 1).padStart(2, '0')
-    const dd = String(today.getDate()).padStart(2, '0')
-    const dateStr = `${yyyy}-${mm}-${dd}`
-    setInvoiceDate(dateStr)
-    setDueDate(dateStr) // Due on receipt default
-  }, [])
+  // Check if financials are locked (if already paid/completed)
+  const isFinancialsLocked = useMemo(() => invoiceStatus === 'completed', [invoiceStatus])
+
+  // Check if invoice is cancelled
+  const isCancelled = useMemo(() => invoiceStatus === 'cancelled', [invoiceStatus])
 
   // Auto calculate due date when invoice date or terms change
   useEffect(() => {
-    if (!invoiceDate) return
+    if (!invoiceDate || isFinancialsLocked) return
     if (paymentTerms === 'custom') return
 
     const baseDate = new Date(invoiceDate)
@@ -130,11 +131,11 @@ export default function NewInvoicePage() {
     const mm = String(baseDate.getMonth() + 1).padStart(2, '0')
     const dd = String(baseDate.getDate()).padStart(2, '0')
     setDueDate(`${yyyy}-${mm}-${dd}`)
-  }, [invoiceDate, paymentTerms])
+  }, [invoiceDate, paymentTerms, isFinancialsLocked])
 
-  // Load Initial Data
+  // Load Initial Data (Customers & Products)
   useEffect(() => {
-    const loadData = async () => {
+    const loadMasterData = async () => {
       setLoadingData(true)
       try {
         const { data: { user } } = await supabase.auth.getUser()
@@ -151,7 +152,7 @@ export default function NewInvoicePage() {
         setBusinessId(profile.active_business_id)
         setBusinessName((profile.businesses as { name?: string } | null)?.name || 'Bisnis Saya')
 
-        // Fetch customers
+        // Fetch customers from secure endpoint
         const custRes = await fetch('/api/customers')
         if (custRes.ok) {
           const custJson = await custRes.json()
@@ -175,15 +176,91 @@ export default function NewInvoicePage() {
       }
     }
 
-    loadData()
+    loadMasterData()
   }, [supabase])
+
+  // Load Invoice Details
+  useEffect(() => {
+    if (!invoiceId) return
+
+    const loadInvoice = async () => {
+      setLoadingInvoice(true)
+      try {
+        const res = await fetch(`/api/orders/invoices/${invoiceId}`)
+        if (!res.ok) {
+          setErrorMessage('Gagal memuat detail invoice.')
+          return
+        }
+
+        const json = await res.json()
+        if (json.success && json.invoice) {
+          const inv = json.invoice
+          setInvoiceStatus(inv.status)
+          setSelectedCustomerId(inv.customer_id || '')
+          setInvoiceNumber(inv.order_number || '')
+          
+          // Format dates to YYYY-MM-DD
+          const fmtDate = (dStr: string) => {
+            if (!dStr) return ''
+            const d = new Date(dStr)
+            const yyyy = d.getFullYear()
+            const mm = String(d.getMonth() + 1).padStart(2, '0')
+            const dd = String(d.getDate()).padStart(2, '0')
+            return `${yyyy}-${mm}-${dd}`
+          }
+
+          setInvoiceDate(fmtDate(inv.order_date))
+          setDueDate(fmtDate(inv.due_date))
+
+          // Raw source data customization
+          const raw = inv.raw_source_data || {}
+          setPaymentTerms(raw.payment_terms || 'custom')
+          setNotes(raw.notes || '')
+          setCustomTitle(raw.custom_title || 'INVOICE')
+          setCustomSubtitle(raw.custom_subtitle || '')
+          setAccentColor(raw.accent_color || 'slate')
+          setLayoutStyle(raw.layout_style || 'modern')
+          setShowSku(raw.show_sku !== undefined ? raw.show_sku : true)
+          setShowDescription(raw.show_description !== undefined ? raw.show_description : true)
+          setShowNotes(raw.show_notes !== undefined ? raw.show_notes : true)
+
+          // Items mapping
+          if (Array.isArray(inv.items_json)) {
+            const mappedItems = inv.items_json.map((item: any) => ({
+              product_id: item.product_id || null,
+              name: item.name || '',
+              sku: item.sku || '',
+              price: Number(item.price || 0),
+              quantity: Number(item.quantity || 1)
+            }))
+            setItems(mappedItems)
+          }
+
+          setDiscountAmount(Number(inv.discount_amount || 0))
+          setShippingCost(Number(inv.shipping_cost || 0))
+          setOtherFees(Number(inv.other_fees || 0))
+        } else {
+          setErrorMessage('Invoice tidak ditemukan.')
+        }
+      } catch (err) {
+        console.error('Error loading invoice details:', err)
+        setErrorMessage('Terjadi kesalahan saat memuat detail invoice.')
+      } finally {
+        setLoadingInvoice(false)
+      }
+    }
+
+    loadInvoice()
+  }, [invoiceId])
 
   // Items Handlers
   const handleAddItemRow = () => {
+    if (isFinancialsLocked) return
     setItems([...items, { product_id: null, name: '', sku: '', price: 0, quantity: 1 }])
   }
 
   const handleRemoveItemRow = (index: number) => {
+    if (isFinancialsLocked) return
     if (items.length === 1) {
       setItems([{ product_id: null, name: '', sku: '', price: 0, quantity: 1 }])
       return
@@ -194,6 +271,7 @@ export default function NewInvoicePage() {
   }
 
   const handleItemFieldChange = (index: number, field: keyof InvoiceItemInput, val: any) => {
+    if (isFinancialsLocked) return
     setItems(prev => {
       const nextItems = [...prev]
       if (field === 'price' || field === 'quantity') {
@@ -206,6 +284,7 @@ export default function NewInvoicePage() {
   }
 
   const handleItemFieldsChange = (index: number, fields: Partial<InvoiceItemInput>) => {
+    if (isFinancialsLocked) return
     setItems(prev => {
       const nextItems = [...prev]
       nextItems[index] = {
@@ -245,28 +324,30 @@ export default function NewInvoicePage() {
 
   // Submit Handler
   const handleSubmit = async (submitStatus: 'pending' | 'processing' | 'completed') => {
-    if (isNewCustomer && (!newCustName || !newCustPhone)) {
-      setErrorMessage('Nama dan Nomor HP Customer baru wajib diisi.')
-      return
-    }
+    if (!isFinancialsLocked) {
+      if (isNewCustomer && (!newCustName || !newCustPhone)) {
+        setErrorMessage('Nama dan Nomor HP Customer baru wajib diisi.')
+        return
+      }
 
-    if (!isNewCustomer && !selectedCustomerId) {
-      setErrorMessage('Pilih Customer terlebih dahulu.')
-      return
-    }
+      if (!isNewCustomer && !selectedCustomerId) {
+        setErrorMessage('Pilih Customer terlebih dahulu.')
+        return
+      }
 
-    // Validate items
-    const invalidItems = items.filter(i => !i.name || i.quantity <= 0 || i.price < 0)
-    if (invalidItems.length > 0) {
-      setErrorMessage('Semua baris item wajib diisi Nama, Jumlah (>0), dan Harga (>=0).')
-      return
+      // Validate items
+      const invalidItems = items.filter(i => !i.name || i.quantity <= 0 || i.price < 0)
+      if (invalidItems.length > 0) {
+        setErrorMessage('Semua baris item wajib diisi Nama, Jumlah (>0), dan Harga (>=0).')
+        return
+      }
     }
 
     setSubmitting(true)
     setErrorMessage('')
 
     try {
-      const payload = {
+      const payload: Record<string, any> = {
         customer_id: isNewCustomer ? null : selectedCustomerId,
         customer_name: isNewCustomer ? newCustName : null,
         customer_phone: isNewCustomer ? newCustPhone : null,
@@ -292,19 +373,20 @@ export default function NewInvoicePage() {
         show_notes: showNotes
       }
 
-      const response = await fetch('/api/orders/invoices', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch(`/api/orders/invoices/${invoiceId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify(payload)
       })
 
-      const result = await response.json()
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Gagal menyimpan invoice')
+      const json = await res.json()
+      if (!res.ok) {
+        throw new Error(json.error || 'Gagal menyimpan perubahan invoice.')
       }
 
-      router.push(`/orders/invoices/${result.order.id}`)
+      router.push(`/orders/invoices/${invoiceId}`)
       router.refresh()
     } catch (err: any) {
       setErrorMessage(err.message || 'Terjadi kesalahan sistem.')
@@ -314,18 +396,66 @@ export default function NewInvoicePage() {
     }
   }
 
+  if (loadingInvoice || loadingData) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[300px] gap-2">
+        <div className="w-8 h-8 rounded-full border-4 border-slate-200 border-t-slate-800 animate-spin" />
+        <p className="text-xs text-[#70706E]">Memuat data invoice...</p>
+      </div>
+    )
+  }
+
+  if (isCancelled) {
+    return (
+      <div className="space-y-6 text-[#1C1C1A] px-2 py-4">
+        <div className="flex items-center gap-2 text-xs font-bold text-[#70706E]">
+          <Link href="/orders/invoices" className="hover:text-[#1C1C1A]">Tagihan</Link>
+          <span>/</span>
+          <span className="text-[#1C1C1A]">{invoiceNumber || 'Detail'}</span>
+          <span>/</span>
+          <span className="text-[#1C1C1A]">Edit</span>
+        </div>
+
+        <div className="p-5 bg-white rounded-2xl border border-[#EBEBEA] shadow-sm max-w-lg mx-auto text-center space-y-4">
+          <div className="text-4xl">🚫</div>
+          <h2 className="text-sm font-black text-rose-700">Invoice Telah Dibatalkan</h2>
+          <p className="text-xs text-[#70706E]">
+            Invoice yang telah dibatalkan tidak dapat diedit atau diubah kembali detail keuangannya.
+          </p>
+          <div className="pt-2">
+            <Link
+              href={`/orders/invoices/${invoiceId}`}
+              className="inline-flex px-4 py-2 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition-all"
+            >
+              Kembali ke Detail Invoice
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6 text-[#1C1C1A] px-2 py-4">
       {/* Breadcrumb & Title */}
       <div className="flex items-center gap-2 text-xs font-bold text-[#70706E]">
         <Link href="/orders/invoices" className="hover:text-[#1C1C1A]">Tagihan</Link>
         <span>/</span>
-        <span className="text-[#1C1C1A]">Buat Baru</span>
+        <Link href={`/orders/invoices/${invoiceId}`} className="hover:text-[#1C1C1A]">{invoiceNumber || 'Detail'}</Link>
+        <span>/</span>
+        <span className="text-[#1C1C1A]">Edit</span>
       </div>
 
       <div className="flex justify-between items-center border-b border-[#EBEBEA] pb-4">
         <div>
-          <h1 className="text-xl font-black text-[#1C1C1A]">Buat Invoice Baru</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-black text-[#1C1C1A]">Edit Invoice</h1>
+            {isFinancialsLocked && (
+              <span className="px-2 py-0.5 text-[10px] font-bold bg-[#DCFCE7] text-[#15803D] rounded-full border border-[#BBF7D0]">
+                LUNAS
+              </span>
+            )}
+          </div>
           <p className="text-xs text-[#70706E]">Penerbit: <span className="font-bold text-[#1C1C1A]">{businessName}</span></p>
         </div>
       </div>
@@ -336,6 +466,12 @@ export default function NewInvoicePage() {
         </div>
       )}
 
+      {isFinancialsLocked && (
+        <div className="p-3 text-xs font-medium text-[#15803D] bg-[#F0FDF4] border border-[#DCFCE7] rounded-xl">
+          💡 **Invoice ini telah LUNAS.** Sesuai dengan pembukuan kas/bank, rincian produk, nominal, dan customer terkunci. Anda masih dapat menyesuaikan warna aksen, gaya template, catatan kaki, serta judul dokumen di panel kanan.
+        </div>
+      )}
+
       {/* Grid: Form (Left) & Customize Panel (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         {/* Invoice Form (Left) */}
@@ -343,17 +479,19 @@ export default function NewInvoicePage() {
           {/* Section 1: Customer */}
           <div className="p-5 bg-white rounded-2xl border border-[#EBEBEA] shadow-sm space-y-4">
             <div className="flex justify-between items-center">
-              <h2 className="text-xs font-bold uppercase tracking-wider text-[#70706E]">Pilih Customer (Bill To)</h2>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsNewCustomer(!isNewCustomer)
-                  setSelectedCustomerId('')
-                }}
-                className="text-xs font-black text-[#1E40AF] hover:underline"
-              >
-                {isNewCustomer ? 'Select Existing Customer' : '➕ Tambah Customer Baru'}
-              </button>
+              <h2 className="text-xs font-bold uppercase tracking-wider text-[#70706E]">Customer (Bill To)</h2>
+              {!isFinancialsLocked && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsNewCustomer(!isNewCustomer)
+                    setSelectedCustomerId('')
+                  }}
+                  className="text-xs font-black text-[#1E40AF] hover:underline"
+                >
+                  {isNewCustomer ? 'Select Existing Customer' : '➕ Tambah Customer Baru'}
+                </button>
+              )}
             </div>
 
             {!isNewCustomer ? (
@@ -361,8 +499,9 @@ export default function NewInvoicePage() {
                 <label className="text-xs font-bold text-[#70706E]">Customer</label>
                 <select
                   value={selectedCustomerId}
+                  disabled={isFinancialsLocked}
                   onChange={e => setSelectedCustomerId(e.target.value)}
-                  className="w-full p-2.5 text-sm rounded-xl border border-[#EBEBEA] bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+                  className="w-full p-2.5 text-sm rounded-xl border border-[#EBEBEA] bg-white disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
                 >
                   <option value="">-- Pilih Customer --</option>
                   {customers.map(c => (
@@ -376,30 +515,33 @@ export default function NewInvoicePage() {
                   <label className="text-xs font-bold text-[#70706E]">Nama Lengkap *</label>
                   <input
                     type="text"
+                    disabled={isFinancialsLocked}
                     value={newCustName}
                     onChange={e => setNewCustName(e.target.value)}
                     placeholder="Nama Customer"
-                    className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                    className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
                   />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-[#70706E]">Nomor HP *</label>
                   <input
                     type="text"
+                    disabled={isFinancialsLocked}
                     value={newCustPhone}
                     onChange={e => setNewCustPhone(e.target.value)}
                     placeholder="Contoh: 08123456789"
-                    className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                    className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
                   />
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-[#70706E]">Email (Opsional)</label>
                   <input
                     type="email"
+                    disabled={isFinancialsLocked}
                     value={newCustEmail}
                     onChange={e => setNewCustEmail(e.target.value)}
                     placeholder="email@customer.com"
-                    className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                    className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
                   />
                 </div>
               </div>
@@ -412,27 +554,30 @@ export default function NewInvoicePage() {
               <label className="text-xs font-bold text-[#70706E]">No. Invoice</label>
               <input
                 type="text"
+                disabled={isFinancialsLocked}
                 placeholder="Otomatis (INV-DDMMYYYY-xxx)"
                 value={invoiceNumber}
                 onChange={e => setInvoiceNumber(e.target.value)}
-                className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none font-mono"
+                className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none font-mono"
               />
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-[#70706E]">Tanggal Invoice</label>
               <input
                 type="date"
+                disabled={isFinancialsLocked}
                 value={invoiceDate}
                 onChange={e => setInvoiceDate(e.target.value)}
-                className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
               />
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-[#70706E]">Jatuh Tempo</label>
               <select
                 value={paymentTerms}
+                disabled={isFinancialsLocked}
                 onChange={e => setPaymentTerms(e.target.value)}
-                className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] bg-white disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
               >
                 <option value="due-on-receipt">Saat Diterima (Receipt)</option>
                 <option value="net-15">Dalam 15 Hari (Net 15)</option>
@@ -446,7 +591,7 @@ export default function NewInvoicePage() {
               <input
                 type="date"
                 value={dueDate}
-                disabled={paymentTerms !== 'custom'}
+                disabled={paymentTerms !== 'custom' || isFinancialsLocked}
                 onChange={e => setDueDate(e.target.value)}
                 className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] bg-white disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
               />
@@ -464,6 +609,7 @@ export default function NewInvoicePage() {
                   <div className="w-full md:flex-1 relative">
                     <input
                       type="text"
+                      disabled={isFinancialsLocked}
                       placeholder="Nama Produk / Deskripsi Item"
                       value={item.name}
                       onChange={e => {
@@ -471,13 +617,13 @@ export default function NewInvoicePage() {
                         setProductSearchQueries({ ...productSearchQueries, [idx]: e.target.value })
                         setShowProductDropdown({ ...showProductDropdown, [idx]: true })
                       }}
-                      onFocus={() => setShowProductDropdown({ ...showProductDropdown, [idx]: true })}
+                      onFocus={() => !isFinancialsLocked && setShowProductDropdown({ ...showProductDropdown, [idx]: true })}
                       onBlur={() => setTimeout(() => setShowProductDropdown({ ...showProductDropdown, [idx]: false }), 200)}
-                      className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                      className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
                     />
 
-                    {/* Product Autocomplete Dropdown */}
-                    {showProductDropdown[idx] && (
+                     {/* Product Autocomplete Dropdown */}
+                    {!isFinancialsLocked && showProductDropdown[idx] && (
                       <div className="absolute left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-white border border-[#EBEBEA] rounded-xl shadow-lg z-50 divide-y divide-gray-50">
                         {productSearchQueries[idx] && productSearchQueries[idx].trim() !== '' && (
                           <button
@@ -525,10 +671,11 @@ export default function NewInvoicePage() {
                     <div className="w-full md:w-28">
                       <input
                         type="text"
+                        disabled={isFinancialsLocked}
                         placeholder="SKU"
                         value={item.sku}
                         onChange={e => handleItemFieldChange(idx, 'sku', e.target.value)}
-                        className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none font-mono"
+                        className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none font-mono"
                       />
                     </div>
                   )}
@@ -538,20 +685,22 @@ export default function NewInvoicePage() {
                       <input
                         type="number"
                         min="1"
+                        disabled={isFinancialsLocked}
                         placeholder="Qty"
                         value={item.quantity}
                         onChange={e => handleItemFieldChange(idx, 'quantity', e.target.value)}
-                        className="w-full p-2 text-sm text-center rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                        className="w-full p-2 text-sm text-center rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
                       />
                     </div>
 
                     <div className="flex-1">
                       <input
                         type="number"
+                        disabled={isFinancialsLocked}
                         placeholder="Harga Satuan (Rp)"
                         value={item.price || ''}
                         onChange={e => handleItemFieldChange(idx, 'price', e.target.value)}
-                        className="w-full p-2 text-sm text-right rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                        className="w-full p-2 text-sm text-right rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
                       />
                     </div>
                   </div>
@@ -560,25 +709,29 @@ export default function NewInvoicePage() {
                     {formatIDR(item.price * item.quantity)}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveItemRow(idx)}
-                    className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg self-end md:self-center transition-colors"
-                    title="Hapus baris"
-                  >
-                    🗑️
-                  </button>
+                  {!isFinancialsLocked && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveItemRow(idx)}
+                      className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg self-end md:self-center transition-colors"
+                      title="Hapus baris"
+                    >
+                      🗑️
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
 
-            <button
-              type="button"
-              onClick={handleAddItemRow}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#1E40AF] bg-[#1E40AF]/5 hover:bg-[#1E40AF]/10 rounded-xl transition-all"
-            >
-              ➕ Tambah Baris Baru
-            </button>
+            {!isFinancialsLocked && (
+              <button
+                type="button"
+                onClick={handleAddItemRow}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#1E40AF] bg-[#1E40AF]/5 hover:bg-[#1E40AF]/10 rounded-xl transition-all"
+              >
+                ➕ Tambah Baris Baru
+              </button>
+            )}
           </div>
 
           {/* Section 4: Bottom details & Notes */}
@@ -610,9 +763,10 @@ export default function NewInvoicePage() {
                 <input
                   type="number"
                   min="0"
+                  disabled={isFinancialsLocked}
                   value={discountAmount || ''}
                   onChange={e => setDiscountAmount(Math.max(0, Number(e.target.value)))}
-                  className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] disabled:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-400"
                 />
               </div>
 
@@ -621,9 +775,10 @@ export default function NewInvoicePage() {
                 <input
                   type="number"
                   min="0"
+                  disabled={isFinancialsLocked}
                   value={shippingCost || ''}
                   onChange={e => setShippingCost(Math.max(0, Number(e.target.value)))}
-                  className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] disabled:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-400"
                 />
               </div>
 
@@ -632,9 +787,10 @@ export default function NewInvoicePage() {
                 <input
                   type="number"
                   min="0"
+                  disabled={isFinancialsLocked}
                   value={otherFees || ''}
                   onChange={e => setOtherFees(Math.max(0, Number(e.target.value)))}
-                  className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] disabled:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-400"
                 />
               </div>
 
@@ -750,35 +906,48 @@ export default function NewInvoicePage() {
 
           {/* Action Panel */}
           <div className="p-4 bg-slate-50 border border-[#EBEBEA] rounded-2xl space-y-2.5">
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => handleSubmit('pending')}
-              className="w-full py-2.5 text-xs font-bold text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-all"
-            >
-              💾 Simpan sebagai Draft
-            </button>
+            {isFinancialsLocked ? (
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => handleSubmit('completed')}
+                className="w-full py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all"
+              >
+                {submitting ? 'Menyimpan...' : '💾 Simpan Perubahan Desain'}
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => handleSubmit('pending')}
+                  className="w-full py-2.5 text-xs font-bold text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-all"
+                >
+                  💾 Simpan sebagai Draft
+                </button>
 
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => handleSubmit('processing')}
-              className="w-full py-2.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition-all"
-            >
-              🚀 Kirim & Terbitkan (Outstanding)
-            </button>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => handleSubmit('processing')}
+                  className="w-full py-2.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition-all"
+                >
+                  🚀 Terbitkan (Outstanding)
+                </button>
 
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => setShowPaymentModal(true)}
-              className="w-full py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all"
-            >
-              💰 Simpan & Tandai Lunas Langsung
-            </button>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => setShowPaymentModal(true)}
+                  className="w-full py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all"
+                >
+                  💰 Simpan & Tandai Lunas
+                </button>
+              </>
+            )}
 
             <Link
-              href="/orders/invoices"
+              href={`/orders/invoices/${invoiceId}`}
               className="block w-full py-2 text-xs text-center font-bold text-[#70706E] hover:text-[#1C1C1A] transition-colors"
             >
               Batal

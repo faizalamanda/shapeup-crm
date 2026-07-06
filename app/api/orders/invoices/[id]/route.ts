@@ -133,12 +133,13 @@ export async function PUT(
       if (existing.status === 'processing' || existing.status === 'completed') {
         const orderItems = Array.isArray(existing.items_json) ? existing.items_json : []
         const productIds = orderItems.map((i: any) => i.product_id).filter(Boolean)
+        let totalCogs = 0
 
         // Restock
         if (productIds.length > 0) {
           const { data: dbProducts } = await supabaseAdmin
             .from('products')
-            .select('id, stock_type, stock_quantity')
+            .select('id, stock_type, stock_quantity, type, cost_price')
             .in('id', productIds)
 
           if (dbProducts) {
@@ -147,11 +148,16 @@ export async function PUT(
 
             for (const item of orderItems) {
               const dbProd = productMap.get(item.product_id)
-              if (dbProd && dbProd.stock_type === 'tracked') {
-                await supabaseAdmin
-                  .from('products')
-                  .update({ stock_quantity: dbProd.stock_quantity + Number(item.quantity) })
-                  .eq('id', dbProd.id)
+              if (dbProd) {
+                if (dbProd.stock_type === 'tracked') {
+                  await supabaseAdmin
+                    .from('products')
+                    .update({ stock_quantity: dbProd.stock_quantity + Number(item.quantity) })
+                    .eq('id', dbProd.id)
+                }
+                if (dbProd.type === 'physical' && dbProd.cost_price > 0) {
+                  totalCogs += dbProd.cost_price * Number(item.quantity)
+                }
               }
             }
           }
@@ -188,16 +194,33 @@ export async function PUT(
           {
             transaction_id: tx.id,
             account_id: accountMap['401000'], // Debit Pendapatan
-            debit: existing.grand_total,
+            debit: Number(existing.grand_total),
             credit: 0
           },
           {
             transaction_id: tx.id,
             account_id: accountMap['103000'], // Kredit Piutang Usaha
             debit: 0,
-            credit: existing.grand_total
+            credit: Number(existing.grand_total)
           }
         ]
+
+        if (totalCogs > 0) {
+          reversalLines.push(
+            {
+              transaction_id: tx.id,
+              account_id: accountMap['102000'], // Debit Persediaan
+              debit: totalCogs,
+              credit: 0
+            },
+            {
+              transaction_id: tx.id,
+              account_id: accountMap['501000'], // Kredit HPP
+              debit: 0,
+              credit: totalCogs
+            }
+          )
+        }
 
         // If it was already completed (Paid), reverse the cash/bank as well!
         if (existing.status === 'completed') {
@@ -206,14 +229,14 @@ export async function PUT(
             {
               transaction_id: tx.id,
               account_id: accountMap['103000'], // Debit Piutang Usaha (balancing payment)
-              debit: existing.grand_total,
+              debit: Number(existing.grand_total),
               credit: 0
             },
             {
               transaction_id: tx.id,
               account_id: accountMap[payAccountCode], // Kredit Kas/Bank
               debit: 0,
-              credit: existing.grand_total
+              credit: Number(existing.grand_total)
             }
           )
         }
@@ -366,6 +389,145 @@ export async function PUT(
       .single()
 
     if (updErr) throw updErr
+
+    // 3.5. If the invoice was already processing (outstanding) and its items/prices were edited
+    if (existing.status === 'processing' && items && Array.isArray(items)) {
+      // Fetch Accounts
+      const { data: refetchedAccounts } = await supabaseAdmin
+        .from('accounts')
+        .select('id, code')
+        .eq('business_id', businessId)
+
+      const accountMap: Record<string, string> = {}
+      if (refetchedAccounts) {
+        refetchedAccounts.forEach(a => {
+          accountMap[a.code] = a.id
+        })
+      }
+
+      // Restore stock for old items
+      const oldItems = Array.isArray(existing.items_json) ? existing.items_json : []
+      const oldProductIds = oldItems.map((i: any) => i.product_id).filter(Boolean)
+      if (oldProductIds.length > 0) {
+        const { data: dbOldProducts } = await supabaseAdmin
+          .from('products')
+          .select('id, stock_type, stock_quantity')
+          .in('id', oldProductIds)
+        if (dbOldProducts) {
+          const oldProdMap = new Map<string, any>()
+          dbOldProducts.forEach(p => oldProdMap.set(p.id, p))
+          for (const item of oldItems) {
+            const dbProd = oldProdMap.get(item.product_id)
+            if (dbProd && dbProd.stock_type === 'tracked') {
+              await supabaseAdmin
+                .from('products')
+                .update({ stock_quantity: dbProd.stock_quantity + Number(item.quantity) })
+                .eq('id', dbProd.id)
+            }
+          }
+        }
+      }
+
+      // Deduct stock for new items and calculate COGS
+      let totalCogs = 0
+      const newItems = Array.isArray(finalItems) ? finalItems : []
+      const newProductIds = newItems.map((i: any) => i.product_id).filter(Boolean)
+      if (newProductIds.length > 0) {
+        const { data: dbNewProducts } = await supabaseAdmin
+          .from('products')
+          .select('id, cost_price, stock_type, stock_quantity, type')
+          .in('id', newProductIds)
+        if (dbNewProducts) {
+          const newProdMap = new Map<string, any>()
+          dbNewProducts.forEach(p => newProdMap.set(p.id, p))
+          for (const item of newItems) {
+            const dbProd = newProdMap.get(item.product_id)
+            if (dbProd) {
+              if (dbProd.stock_type === 'tracked') {
+                await supabaseAdmin
+                  .from('products')
+                  .update({ stock_quantity: Math.max(0, dbProd.stock_quantity - Number(item.quantity)) })
+                  .eq('id', dbProd.id)
+              }
+              if (dbProd.type === 'physical' && dbProd.cost_price > 0) {
+                totalCogs += dbProd.cost_price * Number(item.quantity)
+              }
+            }
+          }
+        }
+      }
+
+      // Update the ledger publishing transaction
+      let { data: tx } = await supabaseAdmin
+        .from('transactions')
+        .select('id')
+        .eq('order_id', id)
+        .like('description', 'Penerbitan Invoice%')
+        .maybeSingle()
+
+      if (!tx) {
+        // If the transaction didn't exist for some reason, create it
+        const { data: newTx, error: txErr } = await supabaseAdmin
+          .from('transactions')
+          .insert({
+            business_id: businessId,
+            order_id: id,
+            date: updated.order_date,
+            description: `Penerbitan Invoice #${updated.order_number}`
+          })
+          .select('id')
+          .single()
+        if (txErr) throw txErr
+        tx = newTx
+      }
+
+      if (tx) {
+        // Delete old journal lines
+        await supabaseAdmin
+          .from('journal_lines')
+          .delete()
+          .eq('transaction_id', tx.id)
+
+        // Insert new journal lines
+        const journalLines = [
+          {
+            transaction_id: tx.id,
+            account_id: accountMap['103000'], // Piutang Usaha
+            debit: Number(updated.grand_total),
+            credit: 0
+          },
+          {
+            transaction_id: tx.id,
+            account_id: accountMap['401000'], // Pendapatan
+            debit: 0,
+            credit: Number(updated.grand_total)
+          }
+        ]
+
+        if (totalCogs > 0) {
+          journalLines.push(
+            {
+              transaction_id: tx.id,
+              account_id: accountMap['501000'], // HPP
+              debit: totalCogs,
+              credit: 0
+            },
+            {
+              transaction_id: tx.id,
+              account_id: accountMap['102000'], // Persediaan
+              debit: 0,
+              credit: totalCogs
+            }
+          )
+        }
+
+        const { error: jlErr } = await supabaseAdmin
+          .from('journal_lines')
+          .insert(journalLines)
+
+        if (jlErr) throw jlErr
+      }
+    }
 
     // 4. If status changed from Draft ('pending') to Sent ('processing')
     if (existing.status === 'pending' && nextStatus === 'processing') {

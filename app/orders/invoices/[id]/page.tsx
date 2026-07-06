@@ -712,6 +712,13 @@ export default function InvoiceDetailPage() {
                       🚀 Kirim & Terbitkan (Outstanding)
                     </button>
 
+                    <Link
+                      href={`/orders/invoices/${invoiceId}/edit`}
+                      className="block w-full py-2.5 text-xs text-center font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all"
+                    >
+                      ✏️ Edit Invoice
+                    </Link>
+
                     <button
                       type="button"
                       disabled={submitting}
@@ -733,6 +740,13 @@ export default function InvoiceDetailPage() {
                       💰 Catat Pelunasan Pembayaran
                     </button>
 
+                    <Link
+                      href={`/orders/invoices/${invoiceId}/edit`}
+                      className="block w-full py-2.5 text-xs text-center font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all"
+                    >
+                      ✏️ Edit Invoice
+                    </Link>
+
                     <button
                       type="button"
                       disabled={submitting}
@@ -749,6 +763,13 @@ export default function InvoiceDetailPage() {
                     <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl text-[11px] text-emerald-800 font-semibold leading-relaxed">
                       Lunas: Pembayaran telah dicatat dan kas/bank serta piutang telah disesuaikan secara otomatis di ledger akuntansi.
                     </div>
+
+                    <Link
+                      href={`/orders/invoices/${invoiceId}/edit`}
+                      className="block w-full py-2.5 text-xs text-center font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all"
+                    >
+                      ✏️ Edit Desain / Tampilan
+                    </Link>
 
                     <button
                       type="button"
