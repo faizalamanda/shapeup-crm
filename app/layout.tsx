@@ -3,7 +3,8 @@ import { Inter } from 'next/font/google'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { logoutAction } from '@/app/auth/actions'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { createBrowserClient } from '@supabase/ssr'
 import "./globals.css"
 
 const inter = Inter({ subsets: ['latin'] })
@@ -119,10 +120,21 @@ const menuItems: MenuItem[] = [
 ]
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const supabase = useMemo(() => createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  ), [])
+
   const pathname = usePathname()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({})
+
+  // Business switcher states
+  const [businesses, setBusinesses] = useState<any[]>([])
+  const [activeBusiness, setActiveBusiness] = useState<any>(null)
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+  const [userProfile, setUserProfile] = useState<any>(null)
 
   useEffect(() => {
     const timer = window.setTimeout(() => setMounted(true), 0)
@@ -143,6 +155,112 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     })
     setExpandedMenus(prev => ({ ...prev, ...updated }))
   }, [pathname])
+
+  // Load profile and businesses
+  useEffect(() => {
+    if (!mounted) return
+    let isMounted = true
+
+    const loadProfileAndBusinesses = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user || !isMounted) return
+
+      // Fetch user profile to get active_business_id
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single()
+
+      if (!isMounted) return
+
+      setUserProfile(profile || null)
+
+      // Fetch businesses assigned in business_staff
+      const { data: bsData } = await supabase
+        .from('business_staff')
+        .select('role, businesses (*)')
+        .eq('profile_id', user.id)
+
+      // Fetch businesses owned
+      const { data: ownedBiz } = await supabase
+        .from('businesses')
+        .select('*')
+        .eq('owner_id', user.id)
+
+      if (!isMounted) return
+
+      // Combine and deduplicate
+      const bizMap = new Map<string, any>()
+      bsData?.forEach((item: any) => {
+        if (item.businesses) {
+          bizMap.set(item.businesses.id, item.businesses)
+        }
+      })
+      ownedBiz?.forEach((biz: any) => {
+        bizMap.set(biz.id, biz)
+      })
+
+      const combined = Array.from(bizMap.values())
+      setBusinesses(combined)
+
+      // Find active business
+      if (profile?.active_business_id) {
+        const active = combined.find(b => b.id === profile.active_business_id)
+        if (active) {
+          setActiveBusiness(active)
+        } else {
+          // Fallback if not found in combined but exists in db
+          const { data: fallbackBiz } = await supabase
+            .from('businesses')
+            .select('*')
+            .eq('id', profile.active_business_id)
+            .single()
+          if (fallbackBiz && isMounted) {
+            setActiveBusiness(fallbackBiz)
+          }
+        }
+      }
+    }
+
+    loadProfileAndBusinesses()
+    return () => {
+      isMounted = false
+    }
+  }, [supabase, mounted])
+
+  // Close switcher dropdown on click outside
+  useEffect(() => {
+    if (!isDropdownOpen) return
+    const closeDropdown = () => setIsDropdownOpen(false)
+    window.addEventListener('click', closeDropdown)
+    return () => window.removeEventListener('click', closeDropdown)
+  }, [isDropdownOpen])
+
+  const handleSwitchBusiness = async (bizId: string) => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ active_business_id: bizId })
+      .eq('id', user.id)
+
+    if (error) {
+      alert("Gagal mengaktifkan bisnis: " + error.message)
+    } else {
+      // Clear ALL dashboard caches so the new business data loads fresh
+      const keysToRemove: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key && (key.startsWith('su_dash_orders_') || key.startsWith('su_dash_metrics_') || key.startsWith('su_dash_ts_'))) {
+          keysToRemove.push(key)
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k))
+      window.location.reload()
+    }
+  }
 
   const handleLogout = async () => {
     await logoutAction()
@@ -209,6 +327,158 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 {Icons.close}
               </button>
             </div>
+          </div>
+
+          {/* Business Switcher (WaveApps style) */}
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)', position: 'relative' }}>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setIsDropdownOpen(!isDropdownOpen)
+              }}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '8px 12px',
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '8px',
+                color: '#FFFEF9',
+                cursor: 'pointer',
+                textAlign: 'left',
+                outline: 'none',
+                gap: '8px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+                <span style={{ fontSize: '14px', flexShrink: 0 }}>🏢</span>
+                <span style={{ 
+                  fontSize: '11px', 
+                  fontWeight: 800, 
+                  textTransform: 'uppercase', 
+                  letterSpacing: '0.05em',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  display: 'block',
+                  flex: 1,
+                }}>
+                  {activeBusiness ? activeBusiness.name : 'Pilih Bisnis'}
+                </span>
+              </div>
+              <span style={{ 
+                transform: isDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)', 
+                transition: 'transform 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                opacity: 0.6,
+                flexShrink: 0,
+              }}>
+                {Icons.chevronDown}
+              </span>
+            </button>
+
+            {/* Dropdown Menu */}
+            {isDropdownOpen && (
+              <div 
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: '16px',
+                  right: '16px',
+                  marginTop: '6px',
+                  background: '#1C1C1A',
+                  border: '2px solid #000',
+                  borderRadius: '8px',
+                  boxShadow: '8px 8px 0px 0px rgba(0,0,0,0.15)',
+                  zIndex: 60,
+                  maxHeight: '220px',
+                  overflowY: 'auto',
+                  padding: '6px 0',
+                }}
+              >
+                <div style={{ padding: '6px 12px', fontSize: '9px', fontWeight: 850, color: 'rgba(255,254,249,0.4)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                  Unit Bisnis Anda
+                </div>
+                {businesses.length === 0 ? (
+                  <div style={{ padding: '8px 12px', fontSize: '11px', color: 'rgba(255,254,249,0.5)', fontStyle: 'italic' }}>
+                    Belum ada bisnis
+                  </div>
+                ) : (
+                  businesses.map((biz) => {
+                    const isActive = activeBusiness?.id === biz.id
+                    return (
+                      <button
+                        key={biz.id}
+                        onClick={() => {
+                          handleSwitchBusiness(biz.id)
+                          setIsDropdownOpen(false)
+                        }}
+                        style={{
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '8px 12px',
+                          background: isActive ? 'rgba(245,158,11,0.15)' : 'transparent',
+                          border: 'none',
+                          color: isActive ? '#F59E0B' : 'rgba(255,254,249,0.7)',
+                          fontSize: '11px',
+                          fontWeight: isActive ? 800 : 600,
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          transition: 'all 0.15s',
+                        }}
+                      >
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }}>{biz.name}</span>
+                        {isActive && <span style={{ fontSize: '10px', color: '#F59E0B', fontWeight: 'black' }}>✓</span>}
+                      </button>
+                    )
+                  })
+                )}
+                {userProfile?.role === 'admin' && (
+                  <>
+                    <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '6px 0' }} />
+                    <Link
+                      href="/settings/business?create=true"
+                      onClick={() => setIsDropdownOpen(false)}
+                      style={{
+                        display: 'block',
+                        padding: '8px 12px',
+                        color: '#F59E0B',
+                        fontSize: '10px',
+                        fontWeight: 800,
+                        textDecoration: 'none',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                      }}
+                    >
+                      ➕ Buat Bisnis Baru
+                    </Link>
+                  </>
+                )}
+                <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '6px 0' }} />
+                <Link
+                  href="/settings/business"
+                  onClick={() => setIsDropdownOpen(false)}
+                  style={{
+                    display: 'block',
+                    padding: '8px 12px',
+                    color: 'rgba(255,254,249,0.5)',
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    textDecoration: 'none',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                  }}
+                >
+                  ⚙️ Kelola Bisnis
+                </Link>
+              </div>
+            )}
           </div>
 
           {/* Nav */}

@@ -1,6 +1,7 @@
 "use client"
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
+import Link from 'next/link'
 
 export default function StaffSettings() {
   const supabase = useMemo(() => createBrowserClient(
@@ -19,6 +20,13 @@ export default function StaffSettings() {
   const [name, setName] = useState('')
   const [role, setRole] = useState('staff')
   const [submitting, setSubmitting] = useState(false)
+  const [createMessage, setCreateMessage] = useState({ text: '', type: '' })
+
+  // State for dynamic email check
+  const [checkingEmail, setCheckingEmail] = useState(false)
+  const [emailExists, setEmailExists] = useState<boolean | null>(null)
+  const [emailAlreadyInBusiness, setEmailAlreadyInBusiness] = useState<boolean | null>(null)
+  const [existingUserName, setExistingUserName] = useState('')
 
   // Edit Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
@@ -28,6 +36,13 @@ export default function StaffSettings() {
   const [editName, setEditName] = useState('')
   const [editRole, setEditRole] = useState('staff')
   const [editSubmitting, setEditSubmitting] = useState(false)
+  const [editMessage, setEditMessage] = useState({ text: '', type: '' })
+
+  // Delete Modal State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
+  const [deletingStaff, setDeletingStaff] = useState<any>(null)
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
+  const [deleteMessage, setDeleteMessage] = useState({ text: '', type: '' })
 
   // Self Password State
   const [myPassword, setMyPassword] = useState('')
@@ -50,19 +65,13 @@ export default function StaffSettings() {
         setCurrentUserProfile(myProfile)
 
         if (myProfile?.active_business_id) {
-          const { data: bsData, error: staffError } = await supabase
-            .from('business_staff')
-            .select('role, profiles (*)')
-            .eq('business_id', myProfile.active_business_id)
-          
-          if (staffError) throw staffError
-
-          const staff = bsData?.map((item: any) => ({
-            ...item.profiles,
-            role: item.role
-          })) || []
-
-          setStaffList(staff)
+          const res = await fetch('/api/staff')
+          if (!res.ok) {
+            const errData = await res.json()
+            throw new Error(errData.error || "Gagal mengambil data staff")
+          }
+          const { staff } = await res.json()
+          setStaffList(staff || [])
         }
       }
     } catch (error) {
@@ -76,35 +85,95 @@ export default function StaffSettings() {
     fetchStaff()
   }, [fetchStaff])
 
+  // Debounce email check
+  useEffect(() => {
+    if (!email || !email.includes('@')) {
+      setEmailExists(null)
+      setEmailAlreadyInBusiness(null)
+      setExistingUserName('')
+      return
+    }
+
+    const delayDebounceFn = setTimeout(async () => {
+      setCheckingEmail(true)
+      try {
+        const res = await fetch(`/api/staff?email=${encodeURIComponent(email)}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.exists) {
+            setEmailExists(true)
+            setEmailAlreadyInBusiness(data.alreadyInBusiness)
+            setExistingUserName(data.full_name || '')
+            setName(data.full_name || '')
+          } else {
+            setEmailExists(false)
+            setEmailAlreadyInBusiness(false)
+            setExistingUserName('')
+          }
+        }
+      } catch (err) {
+        console.error("Error checking email:", err)
+      } finally {
+        setCheckingEmail(false)
+      }
+    }, 500)
+
+    return () => clearTimeout(delayDebounceFn)
+  }, [email])
+
   async function handleCreateStaff(e: React.FormEvent) {
     e.preventDefault()
+    if (!emailExists && password.length < 6) {
+      setCreateMessage({ text: 'Password minimal harus 6 karakter!', type: 'error' })
+      return
+    }
     setSubmitting(true)
+    setCreateMessage({ text: '', type: '' })
 
     try {
+      const payload: any = {
+        email,
+        full_name: name,
+        role
+      }
+      if (!emailExists) {
+        payload.password = password
+      }
+
       const res = await fetch('/api/staff', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, full_name: name, role })
+        body: JSON.stringify(payload)
       })
 
       const result = await res.json()
       
       if (res.ok) {
-        alert("Akun Staff berhasil dibuat!")
-        setIsModalOpen(false)
+        setCreateMessage({ 
+          text: emailExists 
+            ? 'Staf yang ada berhasil ditambahkan ke unit bisnis ini!' 
+            : 'Akun Staff berhasil dibuat!', 
+          type: 'success' 
+        })
         setEmail(''); setPassword(''); setName(''); setRole('staff')
+        setEmailExists(null); setEmailAlreadyInBusiness(null); setExistingUserName('')
         fetchStaff()
+        setTimeout(() => {
+          setIsModalOpen(false)
+          setCreateMessage({ text: '', type: '' })
+        }, 1500)
       } else {
-        alert(result.error || "Gagal membuat staff")
+        setCreateMessage({ text: result.error || "Gagal membuat staff", type: 'error' })
       }
     } catch (err) {
-      alert("Terjadi kesalahan koneksi ke server")
+      setCreateMessage({ text: "Terjadi kesalahan koneksi ke server", type: 'error' })
     } finally {
       setSubmitting(false)
     }
   }
 
   function openEditModal(staff: any) {
+    setEditMessage({ text: '', type: '' })
     setEditingStaff(staff)
     setEditName(staff.full_name || '')
     setEditEmail(staff.email || '')
@@ -115,7 +184,12 @@ export default function StaffSettings() {
 
   async function handleEditStaff(e: React.FormEvent) {
     e.preventDefault()
+    if (editPassword && editPassword.length < 6) {
+      setEditMessage({ text: 'Password minimal harus 6 karakter!', type: 'error' })
+      return
+    }
     setEditSubmitting(true)
+    setEditMessage({ text: '', type: '' })
 
     try {
       const payload: any = {
@@ -137,16 +211,19 @@ export default function StaffSettings() {
       const result = await res.json()
 
       if (res.ok) {
-        alert("Informasi staff berhasil diperbarui!")
-        setIsEditModalOpen(false)
-        setEditingStaff(null)
+        setEditMessage({ text: "Informasi staff berhasil diperbarui!", type: 'success' })
         setEditName(''); setEditEmail(''); setEditRole('staff'); setEditPassword('')
         fetchStaff()
+        setTimeout(() => {
+          setIsEditModalOpen(false)
+          setEditingStaff(null)
+          setEditMessage({ text: '', type: '' })
+        }, 1500)
       } else {
-        alert(result.error || "Gagal memperbarui staff")
+        setEditMessage({ text: result.error || "Gagal memperbarui staff", type: 'error' })
       }
     } catch (err) {
-      alert("Terjadi kesalahan koneksi ke server")
+      setEditMessage({ text: "Terjadi kesalahan koneksi ke server", type: 'error' })
     } finally {
       setEditSubmitting(false)
     }
@@ -180,25 +257,66 @@ export default function StaffSettings() {
     }
   }
 
-  async function handleRemoveStaff(staffId: string) {
-    if (!confirm("Apakah Anda yakin ingin mengeluarkan staf ini dari unit bisnis ini? Akun mereka tidak akan dihapus permanen, hanya penugasan ke bisnis ini yang dicabut.")) return
+  function handleRemoveStaff(staff: any) {
+    setDeleteMessage({ text: '', type: '' })
+    setDeletingStaff(staff)
+    setIsDeleteModalOpen(true)
+  }
+
+  async function executeRemoveStaff() {
+    if (!deletingStaff) return
+    setDeleteSubmitting(true)
+    setDeleteMessage({ text: '', type: '' })
 
     try {
-      const res = await fetch(`/api/staff?id=${staffId}`, {
+      const res = await fetch(`/api/staff?id=${deletingStaff.id}`, {
         method: 'DELETE'
       })
 
       const result = await res.json()
 
       if (res.ok) {
-        alert("Staf berhasil dikeluarkan dari unit bisnis ini!")
+        setDeleteMessage({ text: "Staf berhasil dikeluarkan dari unit bisnis ini!", type: 'success' })
         fetchStaff()
+        setTimeout(() => {
+          setIsDeleteModalOpen(false)
+          setDeletingStaff(null)
+          setDeleteMessage({ text: '', type: '' })
+        }, 1500)
       } else {
-        alert(result.error || "Gagal mengeluarkan staf")
+        setDeleteMessage({ text: result.error || "Gagal mengeluarkan staf", type: 'error' })
       }
     } catch (err) {
-      alert("Terjadi kesalahan koneksi ke server")
+      setDeleteMessage({ text: "Terjadi kesalahan koneksi ke server", type: 'error' })
+    } finally {
+      setDeleteSubmitting(false)
     }
+  }
+
+  if (!loading && !currentUserProfile?.active_business_id) {
+    return (
+      <div className="min-h-screen bg-[#f4f1ea] p-4 md:p-8 text-[#2e2e2e] flex items-center justify-center">
+        <div className="bg-white border-4 border-black p-10 text-center space-y-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-w-xl">
+          <div className="w-16 h-16 bg-red-100 border-4 border-black flex items-center justify-center text-3xl mx-auto rounded-full">
+            ⚠️
+          </div>
+          <h2 className="text-3xl font-black uppercase italic tracking-tight text-slate-900 leading-none">
+            Bisnis Aktif Tidak Terdeteksi
+          </h2>
+          <p className="text-sm font-bold text-slate-600 uppercase tracking-widest leading-relaxed">
+            Anda harus memilih atau mengaktifkan salah satu unit bisnis terlebih dahulu untuk mengakses Manajemen Tim.
+          </p>
+          <div className="pt-4">
+            <Link 
+              href="/settings/business" 
+              className="inline-block bg-black text-white font-black uppercase text-xs tracking-widest px-8 py-4 border-4 border-black hover:bg-yellow-200 hover:text-black transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-[4px] hover:translate-y-[4px]"
+            >
+              Pilih / Aktifkan Bisnis
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   const isAdmin = currentUserProfile?.role === 'admin'
@@ -214,7 +332,17 @@ export default function StaffSettings() {
           </div>
           {isAdmin && (
             <button 
-              onClick={() => setIsModalOpen(true)}
+              onClick={() => {
+                setCreateMessage({ text: '', type: '' })
+                setEmail('')
+                setPassword('')
+                setName('')
+                setRole('staff')
+                setEmailExists(null)
+                setEmailAlreadyInBusiness(null)
+                setExistingUserName('')
+                setIsModalOpen(true)
+              }}
               className="bg-black text-white font-black uppercase text-xs tracking-widest px-6 py-4 border-4 border-black hover:bg-yellow-200 hover:text-black transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-[4px] hover:translate-y-[4px] cursor-pointer"
             >
               + Tambah Anggota
@@ -286,7 +414,7 @@ export default function StaffSettings() {
                           </button>
                           {s.id !== currentUserProfile?.id && (
                             <button
-                              onClick={() => handleRemoveStaff(s.id)}
+                              onClick={() => handleRemoveStaff(s)}
                               className="text-xs font-black text-red-600 uppercase tracking-widest border-b-2 border-red-600 hover:bg-red-50 px-1 py-0.5 cursor-pointer"
                             >
                               Hapus
@@ -355,31 +483,77 @@ export default function StaffSettings() {
             <div className="bg-white border-4 border-black p-8 md:p-10 w-full max-w-md shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
               <h2 className="text-3xl font-black uppercase italic mb-6 border-b-4 border-black pb-3 text-center">Tambah Tim</h2>
               
+              {createMessage.text && (
+                <div className={`p-4 mb-5 border-4 font-bold text-xs uppercase tracking-wider ${
+                  createMessage.type === 'success' 
+                    ? 'bg-green-50 border-green-600 text-green-700' 
+                    : 'bg-red-50 border-red-600 text-red-700'
+                }`}>
+                  {createMessage.text}
+                </div>
+              )}
+
               <form onSubmit={handleCreateStaff} className="space-y-5">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-black uppercase tracking-widest">Email Kerja</label>
+                  <div className="relative">
+                    <input 
+                      type="email" placeholder="budi@shapeup.com" required
+                      className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
+                      value={email} onChange={e => setEmail(e.target.value)}
+                    />
+                    {checkingEmail && (
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500 uppercase animate-pulse">
+                        Memeriksa...
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Feedback based on email check */}
+                  {emailExists === true && (
+                    <div className={`p-3 border-2 font-bold text-[11px] uppercase tracking-wider ${
+                      emailAlreadyInBusiness
+                        ? 'bg-red-50 border-red-600 text-red-700'
+                        : 'bg-green-50 border-green-600 text-green-700'
+                    }`}>
+                      {emailAlreadyInBusiness ? (
+                        <span>⚠️ Email ini sudah terdaftar sebagai staf di bisnis ini.</span>
+                      ) : (
+                        <span>💡 Terdaftar sebagai "${existingUserName}". Staf ini akan ditambahkan ke bisnis ini (password tidak berubah).</span>
+                      )}
+                    </div>
+                  )}
+
+                  {emailExists === false && email && email.includes('@') && (
+                    <div className="p-3 bg-green-50 border-2 border-green-600 text-green-700 font-bold text-[11px] uppercase tracking-wider">
+                      ✨ Email baru siap didaftarkan.
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black uppercase tracking-widest">Nama Lengkap</label>
                   <input 
                     type="text" placeholder="Contoh: Budi Santoso" required
-                    className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
+                    disabled={!!emailExists}
+                    className={`w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm ${
+                      emailExists ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''
+                    }`}
                     value={name} onChange={e => setName(e.target.value)}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-black uppercase tracking-widest">Email Kerja</label>
-                  <input 
-                    type="email" placeholder="budi@shapeup.com" required
-                    className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
-                    value={email} onChange={e => setEmail(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-black uppercase tracking-widest">Password Awal</label>
-                  <input 
-                    type="password" placeholder="Min. 6 karakter" required
-                    className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
-                    value={password} onChange={e => setPassword(e.target.value)}
-                  />
-                </div>
+
+                {!emailExists && (
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-black uppercase tracking-widest">Password Awal</label>
+                    <input 
+                      type="password" placeholder="Min. 6 karakter" required minLength={6}
+                      className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
+                      value={password} onChange={e => setPassword(e.target.value)}
+                    />
+                  </div>
+                )}
+
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black uppercase tracking-widest">Role</label>
                   <select 
@@ -394,17 +568,25 @@ export default function StaffSettings() {
                 <div className="flex gap-4 pt-6 border-t-4 border-black mt-8">
                   <button 
                     type="button" 
-                    onClick={() => setIsModalOpen(false)} 
+                    onClick={() => {
+                      setIsModalOpen(false)
+                      setCreateMessage({ text: '', type: '' })
+                      setEmailExists(null)
+                      setEmailAlreadyInBusiness(null)
+                      setExistingUserName('')
+                    }} 
                     className="flex-1 font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-slate-100 transition-all cursor-pointer"
                   >
                     Batal
                   </button>
                   <button 
                     type="submit" 
-                    disabled={submitting} 
+                    disabled={submitting || checkingEmail || (!!emailExists && !!emailAlreadyInBusiness)} 
                     className="flex-[1.5] bg-black text-white font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-[#2e8540] hover:text-white transition-all disabled:opacity-50 cursor-pointer"
                   >
-                    {submitting ? 'MEMBUAT...' : 'BUAT AKUN'}
+                    {submitting 
+                      ? (emailExists ? 'MENAMBAHKAN...' : 'MEMBUAT...') 
+                      : (emailExists ? 'TAMBAHKAN KE BISNIS' : 'BUAT AKUN')}
                   </button>
                 </div>
               </form>
@@ -418,6 +600,16 @@ export default function StaffSettings() {
             <div className="bg-white border-4 border-black p-8 md:p-10 w-full max-w-md shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
               <h2 className="text-3xl font-black uppercase italic mb-6 border-b-4 border-black pb-3 text-center">Edit Tim</h2>
               
+              {editMessage.text && (
+                <div className={`p-4 mb-5 border-4 font-bold text-xs uppercase tracking-wider ${
+                  editMessage.type === 'success' 
+                    ? 'bg-green-50 border-green-600 text-green-700' 
+                    : 'bg-red-50 border-red-600 text-red-700'
+                }`}>
+                  {editMessage.text}
+                </div>
+              )}
+
               <form onSubmit={handleEditStaff} className="space-y-5">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black uppercase tracking-widest">Nama Lengkap</label>
@@ -428,17 +620,17 @@ export default function StaffSettings() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-black uppercase tracking-widest">Email Kerja</label>
+                  <label className="block text-xs font-black uppercase tracking-widest text-slate-500">Email Kerja (Tidak Dapat Diubah)</label>
                   <input 
-                    type="email" required
-                    className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
-                    value={editEmail} onChange={e => setEditEmail(e.target.value)}
+                    type="email" required disabled readOnly
+                    className="w-full p-4 border-4 border-black font-bold outline-none bg-slate-100 text-slate-500 cursor-not-allowed text-sm"
+                    value={editEmail}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <label className="block text-xs font-black uppercase tracking-widest">Ubah Password (Opsional)</label>
                   <input 
-                    type="password" placeholder="Kosongkan jika tidak ingin diubah"
+                    type="password" placeholder="Kosongkan jika tidak ingin diubah" minLength={6}
                     className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
                     value={editPassword} onChange={e => setEditPassword(e.target.value)}
                   />
@@ -460,6 +652,7 @@ export default function StaffSettings() {
                     onClick={() => {
                       setIsEditModalOpen(false)
                       setEditingStaff(null)
+                      setEditMessage({ text: '', type: '' })
                     }} 
                     className="flex-1 font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-slate-100 transition-all cursor-pointer"
                   >
@@ -474,6 +667,55 @@ export default function StaffSettings() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL DELETE CONFIRMATION (BRUTALIST STYLE) */}
+        {isDeleteModalOpen && deletingStaff && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+            <div className="bg-white border-4 border-black p-8 md:p-10 w-full max-w-md shadow-[16px_16px_0px_0px_rgba(0,0,0,1)]">
+              <h2 className="text-3xl font-black uppercase italic mb-6 border-b-4 border-black pb-3 text-center text-red-600">Konfirmasi</h2>
+              
+              {deleteMessage.text && (
+                <div className={`p-4 mb-5 border-4 font-bold text-xs uppercase tracking-wider ${
+                  deleteMessage.type === 'success' 
+                    ? 'bg-green-50 border-green-600 text-green-700' 
+                    : 'bg-red-50 border-red-600 text-red-700'
+                }`}>
+                  {deleteMessage.text}
+                </div>
+              )}
+
+              <div className="space-y-4 text-center">
+                <p className="font-bold text-slate-800">
+                  Apakah Anda yakin ingin mengeluarkan <span className="font-black underline text-red-600">{deletingStaff.full_name || deletingStaff.email}</span> dari unit bisnis ini?
+                </p>
+                <p className="text-xs text-slate-500 uppercase tracking-wider font-bold">
+                  Akun mereka tidak akan dihapus secara permanen, hanya penugasan ke bisnis ini yang akan dicabut.
+                </p>
+              </div>
+              <div className="flex gap-4 pt-6 border-t-4 border-black mt-8">
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setIsDeleteModalOpen(false)
+                    setDeletingStaff(null)
+                    setDeleteMessage({ text: '', type: '' })
+                  }} 
+                  className="flex-1 font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-slate-100 transition-all cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button 
+                  type="button"
+                  disabled={deleteSubmitting} 
+                  onClick={executeRemoveStaff}
+                  className="flex-[1.5] bg-red-600 text-white font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-red-700 hover:text-white transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {deleteSubmitting ? 'MENGELUARKAN...' : 'YA, KELUARKAN'}
+                </button>
+              </div>
             </div>
           </div>
         )}

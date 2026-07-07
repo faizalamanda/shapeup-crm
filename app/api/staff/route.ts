@@ -40,6 +40,122 @@ async function checkAdminSession(cookieStore: any) {
   return { isAdmin: true, adminProfile: profile, user }
 }
 
+export async function GET(req: Request) {
+  const cookieStore = await cookies()
+  const { searchParams } = new URL(req.url)
+  const email = searchParams.get('email')
+
+  try {
+    const { isAdmin, adminProfile, error: authError } = await checkAdminSession(cookieStore)
+    if (!isAdmin || !adminProfile || !adminProfile.active_business_id) {
+      return NextResponse.json({ error: authError || "Akses ditolak" }, { status: 403 })
+    }
+
+    const supabaseAdmin = getSupabaseAdmin()
+
+    if (email) {
+      const trimmedEmail = email.trim().toLowerCase()
+      
+      // Check in auth.users first using listUsers
+      const { data: { users }, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+      if (listError) throw listError
+
+      const existingAuthUser = users?.find(u => u.email?.toLowerCase() === trimmedEmail)
+      let existingProfile = null
+
+      if (existingAuthUser) {
+        // Query profile by ID
+        const { data: profile, error: profileError } = await supabaseAdmin
+          .from('profiles')
+          .select('id, full_name, email, business_id')
+          .eq('id', existingAuthUser.id)
+          .maybeSingle()
+
+        if (profileError) throw profileError
+
+        if (profile) {
+          existingProfile = profile
+          // Sync email if mismatched
+          if (profile.email !== existingAuthUser.email) {
+            const { data: updatedProfile } = await supabaseAdmin
+              .from('profiles')
+              .update({ email: existingAuthUser.email })
+              .eq('id', profile.id)
+              .select('id, full_name, email, business_id')
+              .single()
+            if (updatedProfile) {
+              existingProfile = updatedProfile
+            }
+          }
+        } else {
+          // Create profile on the fly if missing
+          const { data: newProfile } = await supabaseAdmin
+            .from('profiles')
+            .insert({
+              id: existingAuthUser.id,
+              email: existingAuthUser.email,
+              full_name: existingAuthUser.user_metadata?.full_name || email.split('@')[0],
+              role: 'staff'
+            })
+            .select('id, full_name, email, business_id')
+            .single()
+          existingProfile = newProfile
+        }
+      } else {
+        // If not found in auth, check in profiles table as fallback
+        const { data: profile, error: profileError } = await supabaseAdmin
+          .from('profiles')
+          .select('id, full_name, email, business_id')
+          .eq('email', trimmedEmail)
+          .maybeSingle()
+
+        if (profileError) throw profileError
+        existingProfile = profile
+      }
+
+      if (!existingProfile) {
+        return NextResponse.json({ exists: false })
+      }
+
+      // Cek apakah sudah ditugaskan ke bisnis aktif ini
+      const { data: existingAssignment, error: assignmentError } = await supabaseAdmin
+        .from('business_staff')
+        .select('id')
+        .eq('business_id', adminProfile.active_business_id)
+        .eq('profile_id', existingProfile.id)
+        .maybeSingle()
+
+      if (assignmentError) throw assignmentError
+
+      return NextResponse.json({
+        exists: true,
+        id: existingProfile.id,
+        full_name: existingProfile.full_name,
+        email: existingProfile.email,
+        alreadyInBusiness: !!existingAssignment
+      })
+    }
+
+    // Ambil daftar staff dari business_staff join profiles menggunakan admin client
+    const { data: bsData, error: staffError } = await supabaseAdmin
+      .from('business_staff')
+      .select('role, profiles (*)')
+      .eq('business_id', adminProfile.active_business_id)
+
+    if (staffError) throw staffError
+
+    const staff = bsData?.map((item: any) => ({
+      ...item.profiles,
+      role: item.role
+    })) || []
+
+    return NextResponse.json({ staff })
+
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
+}
+
 export async function POST(req: Request) {
   const cookieStore = await cookies()
   const { email, password, full_name, role } = await req.json()
@@ -52,12 +168,66 @@ export async function POST(req: Request) {
 
     const supabaseAdmin = getSupabaseAdmin()
 
-    // 1. Cek apakah user dengan email tersebut sudah terdaftar di profiles
-    const { data: existingProfile } = await supabaseAdmin
-      .from('profiles')
-      .select('id, business_id')
-      .eq('email', email)
-      .maybeSingle()
+    const trimmedEmail = email.trim().toLowerCase()
+
+    // 1. Cek apakah user dengan email tersebut sudah terdaftar di auth atau profiles
+    const { data: { users }, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+    if (listError) throw listError
+
+    const existingAuthUser = users?.find(u => u.email?.toLowerCase() === trimmedEmail)
+    let existingProfile = null
+
+    if (existingAuthUser) {
+      // Get profile by ID
+      const { data: profile, error: profileError } = await supabaseAdmin
+        .from('profiles')
+        .select('id, business_id, email, full_name')
+        .eq('id', existingAuthUser.id)
+        .maybeSingle()
+
+      if (profileError) throw profileError
+
+      if (profile) {
+        existingProfile = profile
+        // Sync email if mismatched
+        if (profile.email !== existingAuthUser.email) {
+          const { data: updated } = await supabaseAdmin
+            .from('profiles')
+            .update({ email: existingAuthUser.email })
+            .eq('id', profile.id)
+            .select('id, business_id, email, full_name')
+            .single()
+          if (updated) {
+            existingProfile = updated
+          }
+        }
+      } else {
+        // Create profile on the fly if missing
+        const { data: newProfile, error: insertProfileError } = await supabaseAdmin
+          .from('profiles')
+          .insert({
+            id: existingAuthUser.id,
+            email: existingAuthUser.email,
+            full_name: existingAuthUser.user_metadata?.full_name || email.split('@')[0],
+            role: role || 'staff'
+          })
+          .select('id, business_id, email, full_name')
+          .single()
+        
+        if (insertProfileError) throw insertProfileError
+        existingProfile = newProfile
+      }
+    } else {
+      // Fallback check by email in profiles
+      const { data: profile, error: profileError } = await supabaseAdmin
+        .from('profiles')
+        .select('id, business_id, email, full_name')
+        .eq('email', trimmedEmail)
+        .maybeSingle()
+
+      if (profileError) throw profileError
+      existingProfile = profile
+    }
 
     if (existingProfile) {
       // Cek apakah sudah ditugaskan ke bisnis ini
@@ -104,20 +274,7 @@ export async function POST(req: Request) {
 
     if (createError) throw createError
 
-    // 3. Update Profile Staff tersebut agar nyambung ke Bisnis Admin dan Role yang dipilih
-    const { error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .update({ 
-        full_name,
-        business_id: adminProfile.active_business_id,
-        active_business_id: adminProfile.active_business_id,
-        role: role || 'staff'
-      })
-      .eq('id', newUser.user.id)
-
-    if (profileError) throw profileError
-
-    // 4. Tambahkan relasi many-to-many ke business_staff
+    // 3. Tambahkan relasi many-to-many ke business_staff FIRST
     const { error: bsError } = await supabaseAdmin
       .from('business_staff')
       .insert({
@@ -127,6 +284,21 @@ export async function POST(req: Request) {
       })
 
     if (bsError) throw bsError
+
+    // 4. Update Profile Staff tersebut agar nyambung ke Bisnis Admin dan Role yang dipilih SECOND
+    const { error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .update({ 
+        full_name,
+        business_id: adminProfile.active_business_id,
+        // Only set active_business_id if none exists yet (don't override their current context)
+        active_business_id: adminProfile.active_business_id,
+        role: role || 'staff'
+      })
+      .eq('id', newUser.user.id)
+      .is('active_business_id', null)
+
+    if (profileError) throw profileError
 
     return NextResponse.json({ success: true, message: "Staff berhasil didaftarkan" })
 

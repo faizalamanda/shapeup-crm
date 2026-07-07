@@ -114,6 +114,7 @@ export default function DashboardPage() {
   const [customerMetrics, setCustomerMetrics] = useState<CustomerMetric[]>([])
   const [loading, setLoading] = useState(true)
   const [isSyncing, setIsSyncing] = useState(false)
+  const [isStaleRefresh, setIsStaleRefresh] = useState(false)
   const [businessName, setBusinessName] = useState('')
   const [businessId, setBusinessId] = useState('')
 
@@ -157,6 +158,7 @@ export default function DashboardPage() {
   const fetchAllData = useCallback(async (bid: string, silently = false) => {
     if (!silently) setLoading(true)
     setIsSyncing(true)
+    setIsStaleRefresh(false)
 
     try {
       // 1. Fetch Orders in batches (select only necessary fields for dashboard)
@@ -251,11 +253,44 @@ export default function DashboardPage() {
         .eq('id', user.id)
         .single()
 
-      if (!profile?.active_business_id || !isMounted) return
+      if (!isMounted) return
 
-      const activeBid = profile.active_business_id
+      // ── Resolve valid active business ──────────────────────────────────
+      // Fetch businesses this user actually has access to (staff or owner)
+      const [{ data: bsData }, { data: ownedData }] = await Promise.all([
+        supabase.from('business_staff').select('business_id, businesses(id, name)').eq('profile_id', user.id),
+        supabase.from('businesses').select('id, name').eq('owner_id', user.id),
+      ])
+
+      if (!isMounted) return
+
+      // Build a Set of accessible business IDs
+      const accessibleMap = new Map<string, string>()
+      bsData?.forEach((item: any) => {
+        if (item.businesses?.id) accessibleMap.set(item.businesses.id, item.businesses.name || '')
+      })
+      ownedData?.forEach((biz: any) => {
+        if (biz.id) accessibleMap.set(biz.id, biz.name || '')
+      })
+
+      let activeBid = profile?.active_business_id as string | undefined
+      let activeName = (profile?.businesses as { name?: string } | null)?.name || ''
+
+      // If the stored active_business_id is not accessible by this user, fallback to first accessible
+      if (!activeBid || !accessibleMap.has(activeBid)) {
+        const firstEntry = accessibleMap.entries().next().value
+        if (!firstEntry) return // no accessible businesses at all
+        activeBid = firstEntry[0]
+        activeName = firstEntry[1]
+
+        // Update the profile so next load is correct
+        await supabase.from('profiles').update({ active_business_id: activeBid }).eq('id', user.id)
+      }
+
+      if (!activeBid || !isMounted) return
+
       setBusinessId(activeBid)
-      setBusinessName((profile.businesses as { name?: string } | null)?.name || '')
+      setBusinessName(activeName)
 
       // Load layout settings
       const savedLayout = localStorage.getItem(`su_dash_layout_${activeBid}`)
@@ -267,26 +302,48 @@ export default function DashboardPage() {
         }
       }
 
-      // Load cached data
-      const cachedOrders = localStorage.getItem(`su_dash_orders_${activeBid}`)
-      const cachedMetrics = localStorage.getItem(`su_dash_metrics_${activeBid}`)
-      const cachedTs = localStorage.getItem(`su_dash_ts_${activeBid}`)
+      // ── Smart Tiered Cache Strategy ────────────────────────────────────
+      // Tier 1: <30s  → show cache, skip sync (definitely fresh)
+      // Tier 2: 30s–5m → show cache + silent background sync
+      // Tier 3: >5m   → show cache + background sync with spinner
+      // Tier 4: no cache or business changed → fresh foreground fetch
+      const SKIP_SYNC_MS    = 30 * 1000        //  30 seconds
+      const SILENT_SYNC_MS  =  5 * 60 * 1000  //   5 minutes
 
-      if (cachedOrders && cachedMetrics && cachedTs) {
+      const cachedOrders  = localStorage.getItem(`su_dash_orders_${activeBid}`)
+      const cachedMetrics = localStorage.getItem(`su_dash_metrics_${activeBid}`)
+      const cachedTs      = localStorage.getItem(`su_dash_ts_${activeBid}`)
+      const lastActiveBid = localStorage.getItem('su_last_active_bid')
+
+      // Detect if user just switched businesses since last visit
+      const businessJustChanged = lastActiveBid && lastActiveBid !== activeBid
+      localStorage.setItem('su_last_active_bid', activeBid)
+
+      if (cachedOrders && cachedMetrics && cachedTs && !businessJustChanged) {
+        // Show cache instantly
         setOrders(JSON.parse(cachedOrders))
         setCustomerMetrics(JSON.parse(cachedMetrics))
         setLoading(false)
 
-        // Background Sync if cache is older than 2 minutes
-        const age = Date.now() - Number(cachedTs)
-        if (age > 2 * 60 * 1000) {
+        const cacheAge = Date.now() - Number(cachedTs)
+
+        if (cacheAge < SKIP_SYNC_MS) {
+          // Tier 1: Cache is very fresh — skip network call entirely
+          // (Realtime subscription will handle live updates)
+        } else if (cacheAge < SILENT_SYNC_MS) {
+          // Tier 2: Moderately fresh — sync silently in background
+          fetchAllData(activeBid, true)
+        } else {
+          // Tier 3: Stale — show skeleton overlay while syncing in background
+          setIsStaleRefresh(true)
           fetchAllData(activeBid, true)
         }
       } else {
+        // Tier 4: No cache or business switched — fresh foreground fetch
         fetchAllData(activeBid, false)
       }
 
-      // Supabase Realtime Listener
+      // Supabase Realtime Listener (handles live order mutations instantly)
       ordersChannel = supabase
         .channel(`su_dash_orders_realtime_${activeBid}`)
         .on(
@@ -298,7 +355,7 @@ export default function DashboardPage() {
             filter: `business_id=eq.${activeBid}`,
           },
           () => {
-            fetchAllData(activeBid, true)
+            fetchAllData(activeBid!, true)
           }
         )
         .subscribe()
@@ -667,7 +724,7 @@ export default function DashboardPage() {
 
   // Generate SVG stacked paths
   const healthTrendPaths = useMemo(() => {
-    if (healthTrendData.length === 0) return { loyal: '', active: '', warning: '', lost: '' }
+    if (healthTrendData.length === 0) return { loyal: '', active: '', warning: '', lost: '', points: [] }
 
     const points = healthTrendData.map((m, idx) => {
       const total = m.loyal + m.active + m.warning + m.lost || 1
@@ -688,7 +745,9 @@ export default function DashboardPage() {
       }
     })
 
-    // Path for Loyal (y0 to y1)
+    const last = points[points.length - 1]
+
+    // Path for Loyal (bottom band)
     const loyalPath =
       points.map((p) => `L ${p.x} ${p.y1}`).join(' ').replace(/^L/, 'M') +
       ` L 100 100 L 0 100 Z`
@@ -696,25 +755,25 @@ export default function DashboardPage() {
     // Path for Active (y1 to y2)
     const activePath =
       points.map((p) => `L ${p.x} ${p.y2}`).join(' ').replace(/^L/, 'M') +
-      ` L 100 ${points[5].y1}` +
+      ` L ${last.x} ${last.y1}` +
       [...points].reverse().map((p) => ` L ${p.x} ${p.y1}`).join('') +
       ` Z`
 
     // Path for Warning (y2 to y3)
     const warningPath =
       points.map((p) => `L ${p.x} ${p.y3}`).join(' ').replace(/^L/, 'M') +
-      ` L 100 ${points[5].y2}` +
+      ` L ${last.x} ${last.y2}` +
       [...points].reverse().map((p) => ` L ${p.x} ${p.y2}`).join('') +
       ` Z`
 
-    // Path for Lost (y3 to y4)
+    // Path for Lost (top band, y3 to 0)
     const lostPath =
       points.map((p) => `L ${p.x} 0`).join(' ').replace(/^L/, 'M') +
-      ` L 100 ${points[5].y3}` +
+      ` L ${last.x} ${last.y3}` +
       [...points].reverse().map((p) => ` L ${p.x} ${p.y3}`).join('') +
       ` Z`
 
-    return { loyal: loyalPath, active: activePath, warning: warningPath, lost: lostPath }
+    return { loyal: loyalPath, active: activePath, warning: warningPath, lost: lostPath, points }
   }, [healthTrendData])
 
   // Customer Attention List Calculations
@@ -796,10 +855,128 @@ export default function DashboardPage() {
     }
   }
 
+  // ── Dashboard Skeleton Component ──────────────────────────────────────
+  const DashboardSkeleton = () => (
+    <div className="space-y-6 su-fade-in">
+      {/* KPI Cards Skeleton */}
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        {[...Array(5)].map((_, i) => (
+          <div key={i} className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
+            <div className="space-y-2">
+              <div className="h-3 w-24 bg-slate-100 rounded-full animate-pulse" />
+              <div className="h-7 w-28 bg-slate-200 rounded-lg animate-pulse" style={{ animationDelay: `${i * 80}ms` }} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="h-5 w-14 bg-slate-100 rounded-full animate-pulse" style={{ animationDelay: `${i * 100}ms` }} />
+              <div className="h-5 w-16 bg-slate-100 rounded-lg animate-pulse" style={{ animationDelay: `${i * 120}ms` }} />
+            </div>
+          </div>
+        ))}
+      </section>
+
+      {/* Charts Skeleton */}
+      <section className="grid gap-4 lg:grid-cols-3">
+        {/* Segmentation skeleton */}
+        <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5">
+          <div className="space-y-1.5">
+            <div className="h-4 w-36 bg-slate-200 rounded animate-pulse" />
+            <div className="h-3 w-48 bg-slate-100 rounded animate-pulse" />
+          </div>
+          <div className="space-y-4">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="space-y-1.5">
+                <div className="flex justify-between">
+                  <div className="h-3 w-20 bg-slate-200 rounded animate-pulse" style={{ animationDelay: `${i * 60}ms` }} />
+                  <div className="h-3 w-16 bg-slate-100 rounded animate-pulse" />
+                </div>
+                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-slate-200 rounded-full animate-pulse"
+                    style={{ width: `${[65, 45, 25, 30][i]}%`, animationDelay: `${i * 80}ms` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Revenue sources skeleton */}
+        <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5">
+          <div className="space-y-1.5">
+            <div className="h-4 w-32 bg-slate-200 rounded animate-pulse" />
+            <div className="h-3 w-52 bg-slate-100 rounded animate-pulse" />
+          </div>
+          <div className="flex justify-center py-2">
+            <div className="w-32 h-32 rounded-full bg-slate-200 animate-pulse flex items-center justify-center">
+              <div className="w-24 h-24 rounded-full bg-white" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="space-y-1 p-2 rounded-xl bg-slate-50">
+                <div className="h-3 w-16 bg-slate-200 rounded animate-pulse" style={{ animationDelay: `${i * 60}ms` }} />
+                <div className="h-4 w-20 bg-slate-200 rounded animate-pulse" style={{ animationDelay: `${i * 80}ms` }} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Health trend skeleton */}
+        <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5">
+          <div className="space-y-1.5">
+            <div className="h-4 w-40 bg-slate-200 rounded animate-pulse" />
+            <div className="h-3 w-44 bg-slate-100 rounded animate-pulse" />
+          </div>
+          <div className="h-40 w-full bg-slate-100 rounded-xl animate-pulse" />
+          <div className="flex justify-center gap-3">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-3 w-16 bg-slate-100 rounded-full animate-pulse" style={{ animationDelay: `${i * 60}ms` }} />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Bottom Detail Skeleton */}
+      <section className="grid gap-4 lg:grid-cols-2">
+        {/* Attention items */}
+        <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
+          <div className="h-4 w-40 bg-slate-200 rounded animate-pulse" />
+          <div className="grid grid-cols-2 gap-3">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="p-3 rounded-xl bg-slate-50 space-y-2">
+                <div className="h-6 w-12 bg-slate-200 rounded animate-pulse" style={{ animationDelay: `${i * 60}ms` }} />
+                <div className="h-3 w-24 bg-slate-100 rounded animate-pulse" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Top customers */}
+        <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
+          <div className="h-4 w-36 bg-slate-200 rounded animate-pulse" />
+          <div className="space-y-3">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="flex items-center justify-between py-2 border-b border-slate-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full bg-slate-200 animate-pulse flex-shrink-0" style={{ animationDelay: `${i * 60}ms` }} />
+                  <div className="space-y-1">
+                    <div className="h-3 w-28 bg-slate-200 rounded animate-pulse" style={{ animationDelay: `${i * 80}ms` }} />
+                    <div className="h-2.5 w-20 bg-slate-100 rounded animate-pulse" />
+                  </div>
+                </div>
+                <div className="h-4 w-20 bg-slate-100 rounded animate-pulse" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+
   return (
     <div className="space-y-6 text-[#1C1C1A] su-fade-in relative">
-      {/* Background sync progress bar */}
-      {isSyncing && (
+      {/* Background sync thin progress bar (silent sync only, not stale) */}
+      {isSyncing && !isStaleRefresh && (
         <div className="fixed top-0 left-0 right-0 z-50 h-[3px] bg-blue-500/20">
           <div className="h-full bg-blue-600 animate-pulse w-full" />
         </div>
@@ -872,6 +1049,17 @@ export default function DashboardPage() {
       </section>
 
       {/* ── SECTIONS DYNAMIC RENDER ─────────────────────────────────────── */}
+      {/* Stale skeleton overlay: show skeleton on top when refreshing stale cache */}
+      {isStaleRefresh ? (
+        <>
+          {/* "Memperbarui data..." badge */}
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-xl w-fit">
+            <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-amber-700">Memperbarui data...</span>
+          </div>
+          <DashboardSkeleton />
+        </>
+      ) : (
       <div className="space-y-6">
         {layout.map((item, index) => {
           if (!item.visible) return null
@@ -1121,42 +1309,54 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
+
                 {/* Column 3: Customer Health Trend */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
                   <div>
                     <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">Customer Health Trend</h2>
                     <p className="text-[10px] text-[#6B6B63] font-bold mt-0.5">Perkembangan segmentasi pelanggan 6 bulan terakhir.</p>
                   </div>
 
-                  <div className="h-32 relative">
-                    {loading ? (
-                      <div className="w-full h-full bg-slate-100 animate-pulse rounded flex items-center justify-center text-slate-300 text-xs">Memproses grafik...</div>
-                    ) : (
-                      <svg className="w-full h-full overflow-hidden" viewBox="0 0 100 100" preserveAspectRatio="none">
-                        {/* Area Paths */}
-                        <path d={healthTrendPaths.lost} fill="#f43f5e" fillOpacity="0.85" />
-                        <path d={healthTrendPaths.warning} fill="#f59e0b" fillOpacity="0.85" />
-                        <path d={healthTrendPaths.active} fill="#06b6d4" fillOpacity="0.85" />
-                        <path d={healthTrendPaths.loyal} fill="#2563eb" fillOpacity="0.85" />
-                      </svg>
-                    )}
-                  </div>
-
-                  {/* Months labels */}
-                  <div className="grid grid-cols-6 text-center text-[9px] font-bold text-[#8A8A80] pt-1">
-                    {healthTrendData.map((m) => (
-                      <span key={m.key}>{m.label}</span>
-                    ))}
-                  </div>
-
                   {/* Legend */}
-                  <div className="flex flex-wrap gap-x-3 gap-y-1.5 text-[9px] font-bold text-[#6B6B63] border-t border-[#E2E2DC] pt-3">
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-600" />Loyal</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-500" />Aktif</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" />Mulai Hilang</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500" />Hilang</span>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-[9px] font-bold text-[#6B6B63]">
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-blue-600 inline-block" />Loyal</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-cyan-500 inline-block" />Aktif</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-amber-400 inline-block" />Mulai Hilang</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block" />Hilang</span>
                   </div>
+
+                  {/* Chart */}
+                  {loading ? (
+                    <div className="h-36 w-full bg-slate-100 animate-pulse rounded-xl" />
+                  ) : healthTrendData.every(m => m.loyal + m.active + m.warning + m.lost === 0) ? (
+                    <div className="h-36 w-full rounded-xl border border-dashed border-slate-200 flex flex-col items-center justify-center gap-2">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                      <p className="text-[10px] font-bold text-slate-300">Belum ada data</p>
+                    </div>
+                  ) : (
+                    <svg
+                      className="w-full rounded-xl overflow-hidden"
+                      style={{ height: '144px', display: 'block' }}
+                      viewBox="0 0 100 100"
+                      preserveAspectRatio="none"
+                    >
+                      <path d={healthTrendPaths.loyal}   fill="#2563eb" />
+                      <path d={healthTrendPaths.active}   fill="#06b6d4" />
+                      <path d={healthTrendPaths.warning}  fill="#fbbf24" />
+                      <path d={healthTrendPaths.lost}     fill="#f43f5e" />
+                    </svg>
+                  )}
+
+                  {/* Month labels */}
+                  {!loading && (
+                    <div className="flex justify-between text-[9px] font-bold text-slate-400">
+                      {healthTrendData.map((m) => (
+                        <span key={m.key}>{m.label}</span>
+                      ))}
+                    </div>
+                  )}
                 </div>
+
               </section>
             )
           }
@@ -1294,6 +1494,7 @@ export default function DashboardPage() {
           return null
         })}
       </div>
+      )} {/* end isStaleRefresh ? skeleton : sections */}
 
       {/* ── PERSONALIZATION LAYOUT MODAL ────────────────────────────────────── */}
       {showLayoutModal && mounted && createPortal(

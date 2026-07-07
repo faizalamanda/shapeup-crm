@@ -1,9 +1,42 @@
 "use client"
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { createBrowserClient } from '@supabase/ssr'
+import Link from 'next/link'
 
 export default function SettingsPage() {
+  const supabase = useMemo(() => createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  ), [])
+
+  const [activeBusinessId, setActiveBusinessId] = useState<string | null>(null)
+  const [loadingActiveBusiness, setLoadingActiveBusiness] = useState(true)
   const [loading, setLoading] = useState(false)
   const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    let isMounted = true
+    const checkActiveBusiness = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('active_business_id')
+          .eq('id', user.id)
+          .single()
+        if (isMounted) {
+          setActiveBusinessId(profile?.active_business_id || null)
+        }
+      }
+      if (isMounted) {
+        setLoadingActiveBusiness(false)
+      }
+    }
+    checkActiveBusiness()
+    return () => {
+      isMounted = false
+    }
+  }, [supabase])
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault()
@@ -14,6 +47,40 @@ export default function SettingsPage() {
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
     }, 1500)
+  }
+
+  if (loadingActiveBusiness) {
+    return (
+      <div className="max-w-2xl mx-auto py-20 text-center font-black text-slate-400 uppercase tracking-widest animate-pulse">
+        Memeriksa Unit Bisnis Aktif...
+      </div>
+    )
+  }
+
+  if (!activeBusinessId) {
+    return (
+      <div className="max-w-2xl mx-auto py-12 px-6">
+        <div className="bg-[#fffdfa] border-4 border-black p-10 text-center space-y-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+          <div className="w-16 h-16 bg-red-50 border-4 border-black flex items-center justify-center text-3xl mx-auto rounded-full">
+            ⚠️
+          </div>
+          <h2 className="text-3xl font-black uppercase italic tracking-tight text-slate-900 leading-none">
+            Bisnis Aktif Tidak Terdeteksi
+          </h2>
+          <p className="text-sm font-bold text-slate-600 uppercase tracking-widest leading-relaxed">
+            Anda harus memilih atau mengaktifkan salah satu unit bisnis terlebih dahulu untuk mengakses Pengaturan Integrasi.
+          </p>
+          <div className="pt-4">
+            <Link 
+              href="/settings/business" 
+              className="inline-block bg-black text-white font-black uppercase text-xs tracking-widest px-8 py-4 border-4 border-black hover:bg-yellow-200 hover:text-black transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-[4px] hover:translate-y-[4px]"
+            >
+              Pilih / Aktifkan Bisnis
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (

@@ -91,6 +91,14 @@ export default function BusinessSettings() {
 
   useEffect(() => {
     fetchData()
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('create') === 'true') {
+        setIsCreating(true)
+        const newUrl = window.location.pathname
+        window.history.replaceState({}, document.title, newUrl)
+      }
+    }
   }, [fetchData])
 
   async function handleSwitch(bid: string) {
@@ -206,8 +214,14 @@ export default function BusinessSettings() {
           <p className="text-lg font-bold text-slate-600 uppercase tracking-widest">Manage Business Units & Access</p>
         </header>
 
+        {!activeBid && (
+          <div className="bg-yellow-50 border-4 border-yellow-400 p-6 mb-10 text-center font-bold text-sm uppercase tracking-wider text-yellow-800 animate-pulse">
+            ⚠️ Anda belum memilih unit bisnis aktif. Silakan pilih "Switch To This" pada salah satu unit di bawah atau buat unit bisnis baru untuk mengaktifkannya.
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-black border-4 border-black shadow-[12px_12px_0px_0px_rgba(0,0,0,0.1)]">
-          {businesses.map((biz) => (
+          {businesses.filter(biz => !activeBid || biz.id === activeBid).map((biz) => (
             <div 
               key={biz.id} 
               className={`p-10 transition-all ${activeBid === biz.id ? 'bg-[#fffdfa]' : 'bg-white hover:bg-[#fcfaf7]'}`}
@@ -246,18 +260,6 @@ export default function BusinessSettings() {
               </div>
             </div>
           ))}
-
-          {userRole === 'admin' && (
-            <button 
-              onClick={() => setIsCreating(true)}
-              className="bg-white p-10 flex flex-col items-center justify-center hover:bg-yellow-50 transition-all group min-h-[300px]"
-            >
-              <div className="w-16 h-16 border-4 border-dashed border-slate-300 flex items-center justify-center mb-4 group-hover:border-black group-hover:bg-black group-hover:text-white transition-all">
-                <span className="text-3xl font-black">+</span>
-              </div>
-              <span className="text-xs font-black text-slate-400 uppercase tracking-widest group-hover:text-black">Add New Business Unit</span>
-            </button>
-          )}
         </div>
 
         {/* MODAL CREATE (BASECAMP STYLE) */}
