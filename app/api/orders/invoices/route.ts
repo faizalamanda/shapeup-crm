@@ -147,6 +147,7 @@ export async function POST(req: Request) {
       customer_name,
       customer_phone,
       customer_email,
+      customer_address,     // AddressData JSONB — null if existing customer selected
       order_number, // invoice number from user
       order_date,
       due_date,
@@ -217,7 +218,8 @@ export async function POST(req: Request) {
             business_id: businessId,
             name: customer_name.trim(),
             phone: cleanPhone,
-            email: customer_email ? customer_email.trim() : null
+            email: customer_email ? customer_email.trim() : null,
+            address_data: customer_address ?? null
           })
           .select('id')
           .single()

@@ -54,18 +54,44 @@ export async function POST(req: Request) {
       : 0;
 
     // 4. UPSERT CUSTOMER
+    // Mapping country code WooCommerce → preset AddressData
+    const countryCode = (woo.billing?.country || '').toUpperCase()
+    const countryPreset =
+      countryCode === 'ID' ? 'indonesia' :
+      countryCode === 'MY' ? 'malaysia'  :
+      countryCode === 'US' ? 'usa'       : 'custom'
+
+    const countryName =
+      countryCode === 'ID' ? 'Indonesia'     :
+      countryCode === 'MY' ? 'Malaysia'      :
+      countryCode === 'US' ? 'United States' :
+      woo.billing?.country || ''
+
+    // Ambil kecamatan dari meta_data (sama seperti OrderDetailModal)
+    const metaData: any[] = woo.meta_data || []
+    const kecamatan = metaData.find((i: any) => i.key === 'shipping_kecamatan')?.value ||
+                      metaData.find((i: any) => i.key === 'billing_kecamatan')?.value || ''
+
+    // Struktur address_data sesuai AddressData (CustomerAddressForm)
+    const addressData = {
+      country_preset: countryPreset,
+      country:        countryName,
+      address_line1:  cleanText(woo.billing?.address_1 || ''),
+      address_line2:  cleanText(woo.billing?.address_2 || ''),
+      subdistrict:    kecamatan,                   // dari meta_data WooCommerce
+      city:           woo.billing?.city    || '',
+      state:          woo.billing?.state   || '',  // kode provinsi / state dari WooCommerce
+      postcode:       woo.billing?.postcode || '',
+    }
+
     const { data: customer, error: custError } = await supabaseAdmin
       .from('customers')
       .upsert({ 
-        business_id: businessId,
-        phone: billingPhone,
-        name: fullName,
-        email: woo.billing?.email || '',
-        metadata: { 
-          address: cleanText(woo.billing?.address_1), 
-          city: woo.billing?.city,
-          country: woo.billing?.country
-        }
+        business_id:  businessId,
+        phone:        billingPhone,
+        name:         fullName,
+        email:        woo.billing?.email || '',
+        address_data: addressData,
       }, { onConflict: 'business_id, phone' })
       .select('id')
       .single()

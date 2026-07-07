@@ -5,6 +5,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import QuickAddProductModal from '@/components/QuickAddProductModal'
+import { QuickAddCustomerForm, NewCustomerFormData, EMPTY_CUSTOMER_FORM } from '@/components/QuickAddCustomerForm'
 
 type Customer = {
   id: string
@@ -59,9 +60,7 @@ export default function NewInvoicePage() {
   // Customer selection
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
   const [isNewCustomer, setIsNewCustomer] = useState<boolean>(false)
-  const [newCustName, setNewCustName] = useState<string>('')
-  const [newCustPhone, setNewCustPhone] = useState<string>('')
-  const [newCustEmail, setNewCustEmail] = useState<string>('')
+  const [newCustForm, setNewCustForm] = useState<NewCustomerFormData>(EMPTY_CUSTOMER_FORM)
 
   // Invoice Fields
   const [invoiceNumber, setInvoiceNumber] = useState<string>('') // if empty, API generates
@@ -248,7 +247,7 @@ export default function NewInvoicePage() {
 
   // Submit Handler
   const handleSubmit = async (submitStatus: 'pending' | 'processing' | 'completed') => {
-    if (isNewCustomer && (!newCustName || !newCustPhone)) {
+    if (isNewCustomer && (!newCustForm.name || !newCustForm.phone)) {
       setErrorMessage('Nama dan Nomor HP Customer baru wajib diisi.')
       return
     }
@@ -271,9 +270,10 @@ export default function NewInvoicePage() {
     try {
       const payload = {
         customer_id: isNewCustomer ? null : selectedCustomerId,
-        customer_name: isNewCustomer ? newCustName : null,
-        customer_phone: isNewCustomer ? newCustPhone : null,
-        customer_email: isNewCustomer ? newCustEmail : null,
+        customer_name: isNewCustomer ? newCustForm.name : null,
+        customer_phone: isNewCustomer ? newCustForm.phone : null,
+        customer_email: isNewCustomer ? newCustForm.email : null,
+        customer_address: isNewCustomer ? newCustForm.address : null,
         order_number: invoiceNumber || null,
         order_date: invoiceDate,
         due_date: dueDate,
@@ -356,10 +356,11 @@ export default function NewInvoicePage() {
                 onClick={() => {
                   setIsNewCustomer(!isNewCustomer)
                   setSelectedCustomerId('')
+                  if (!isNewCustomer) setNewCustForm(EMPTY_CUSTOMER_FORM)
                 }}
                 className="text-xs font-black text-[#1E40AF] hover:underline"
               >
-                {isNewCustomer ? 'Select Existing Customer' : '➕ Tambah Customer Baru'}
+                {isNewCustomer ? '← Pilih Customer yang Ada' : '➕ Tambah Customer Baru'}
               </button>
             </div>
 
@@ -378,37 +379,12 @@ export default function NewInvoicePage() {
                 </select>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-slate-100 pt-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#70706E]">Nama Lengkap *</label>
-                  <input
-                    type="text"
-                    value={newCustName}
-                    onChange={e => setNewCustName(e.target.value)}
-                    placeholder="Nama Customer"
-                    className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#70706E]">Nomor HP *</label>
-                  <input
-                    type="text"
-                    value={newCustPhone}
-                    onChange={e => setNewCustPhone(e.target.value)}
-                    placeholder="Contoh: 08123456789"
-                    className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#70706E]">Email (Opsional)</label>
-                  <input
-                    type="email"
-                    value={newCustEmail}
-                    onChange={e => setNewCustEmail(e.target.value)}
-                    placeholder="email@customer.com"
-                    className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
-                  />
-                </div>
+              <div className="border-t border-slate-100 pt-3">
+                <QuickAddCustomerForm
+                  value={newCustForm}
+                  onChange={setNewCustForm}
+                  compact
+                />
               </div>
             )}
           </div>
