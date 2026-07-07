@@ -127,7 +127,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   const pathname = usePathname()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
-  const [mounted, setMounted] = useState(false)
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({})
 
   // Business switcher states
@@ -135,11 +134,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const [activeBusiness, setActiveBusiness] = useState<any>(null)
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const [userProfile, setUserProfile] = useState<any>(null)
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setMounted(true), 0)
-    return () => window.clearTimeout(timer)
-  }, [])
+  const [bizLoading, setBizLoading] = useState(true)
 
   useEffect(() => {
     const updated: Record<string, boolean> = {}
@@ -156,78 +151,105 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     setExpandedMenus(prev => ({ ...prev, ...updated }))
   }, [pathname])
 
-  // Load profile and businesses
+  // Load profile and businesses — onAuthStateChange as single source of truth
   useEffect(() => {
-    if (!mounted) return
-    let isMounted = true
+    // Each load request gets its own cancel token to prevent race conditions
+    let currentLoadId = 0
 
-    const loadProfileAndBusinesses = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user || !isMounted) return
+    const loadProfileAndBusinesses = async (userId: string) => {
+      const loadId = ++currentLoadId
+      setBizLoading(true)
 
-      // Fetch user profile to get active_business_id
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
+      console.log('[Layout] loadProfileAndBusinesses called, userId:', userId)
 
-      if (!isMounted) return
+      const [profileResult, bsResult, ownedResult] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', userId).single(),
+        supabase.from('business_staff').select('role, businesses (*)').eq('profile_id', userId),
+        supabase.from('businesses').select('*').eq('owner_id', userId),
+      ])
 
+      console.log('[Layout] profileResult:', profileResult.data, profileResult.error)
+      console.log('[Layout] bsResult:', bsResult.data, bsResult.error)
+      console.log('[Layout] ownedResult:', ownedResult.data, ownedResult.error)
+
+      // If a newer load has started, discard this result
+      if (loadId !== currentLoadId) return
+
+      const profile = profileResult.data
       setUserProfile(profile || null)
 
-      // Fetch businesses assigned in business_staff
-      const { data: bsData } = await supabase
-        .from('business_staff')
-        .select('role, businesses (*)')
-        .eq('profile_id', user.id)
-
-      // Fetch businesses owned
-      const { data: ownedBiz } = await supabase
-        .from('businesses')
-        .select('*')
-        .eq('owner_id', user.id)
-
-      if (!isMounted) return
-
-      // Combine and deduplicate
+      // Combine and deduplicate businesses
       const bizMap = new Map<string, any>()
-      bsData?.forEach((item: any) => {
+      bsResult.data?.forEach((item: any) => {
         if (item.businesses) {
           bizMap.set(item.businesses.id, item.businesses)
         }
       })
-      ownedBiz?.forEach((biz: any) => {
+      ownedResult.data?.forEach((biz: any) => {
         bizMap.set(biz.id, biz)
       })
 
       const combined = Array.from(bizMap.values())
+      console.log('[Layout] combined businesses:', combined)
       setBusinesses(combined)
 
-      // Find active business
+      // Find and set the active business
       if (profile?.active_business_id) {
         const active = combined.find(b => b.id === profile.active_business_id)
         if (active) {
+          console.log('[Layout] active business found:', active.name)
           setActiveBusiness(active)
         } else {
-          // Fallback if not found in combined but exists in db
+          // Fallback: direct lookup (edge case)
           const { data: fallbackBiz } = await supabase
             .from('businesses')
             .select('*')
             .eq('id', profile.active_business_id)
             .single()
-          if (fallbackBiz && isMounted) {
+          if (loadId === currentLoadId && fallbackBiz) {
+            console.log('[Layout] fallback business:', fallbackBiz.name)
             setActiveBusiness(fallbackBiz)
           }
         }
+      } else if (combined.length > 0) {
+        console.log('[Layout] no active_business_id, auto-selecting first:', combined[0].name)
+        setActiveBusiness(combined[0])
+      } else {
+        console.log('[Layout] no businesses found at all')
       }
+
+      if (loadId === currentLoadId) setBizLoading(false)
     }
 
-    loadProfileAndBusinesses()
+    // onAuthStateChange is the single source of truth.
+    // It fires INITIAL_SESSION immediately on mount with the current session,
+    // then SIGNED_IN / SIGNED_OUT on subsequent auth changes.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        console.log('[Layout] onAuthStateChange event:', event, 'user:', session?.user?.id)
+        if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+          if (session?.user?.id) {
+            loadProfileAndBusinesses(session.user.id)
+          } else {
+            // No session — clear state
+            setUserProfile(null)
+            setBusinesses([])
+            setActiveBusiness(null)
+            setBizLoading(false)
+          }
+        } else if (event === 'SIGNED_OUT') {
+          setUserProfile(null)
+          setBusinesses([])
+          setActiveBusiness(null)
+          setBizLoading(false)
+        }
+      }
+    )
+
     return () => {
-      isMounted = false
+      subscription.unsubscribe()
     }
-  }, [supabase, mounted])
+  }, [supabase])
 
   // Close switcher dropdown on click outside
   useEffect(() => {
@@ -267,14 +289,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   }
 
   const noSidebar = ["/login", "/register", "/"].includes(pathname)
-
-  if (!mounted) {
-    return (
-      <html lang="en" suppressHydrationWarning>
-        <body className={inter.className} style={{ background: '#F7F7F5' }} />
-      </html>
-    )
-  }
 
   if (noSidebar) {
     return (
@@ -364,8 +378,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   textOverflow: 'ellipsis',
                   display: 'block',
                   flex: 1,
+                  color: bizLoading ? 'rgba(255,254,249,0.3)' : undefined,
                 }}>
-                  {activeBusiness ? activeBusiness.name : 'Pilih Bisnis'}
+                  {bizLoading ? 'Memuat...' : (activeBusiness ? activeBusiness.name : 'Pilih Bisnis')}
                 </span>
               </div>
               <span style={{ 
