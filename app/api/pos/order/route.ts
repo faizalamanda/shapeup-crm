@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabaseServer'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { syncOrderToLedger } from '@/lib/orderLedger'
 
 export async function POST(req: Request) {
   const supabase = await createClient()
@@ -72,49 +73,6 @@ export async function POST(req: Request) {
         totalCogs += dbProd.cost_price * item.quantity
       }
     }
-
-    // 3. Resolve or create accounts (Tunai, Bank, Pendapatan, HPP, Persediaan)
-    const defaultAccounts = [
-      { code: '101000', name: 'Kas POS (Tunai)', type: 'ASSET', business_id: businessId },
-      { code: '101200', name: 'Bank / QRIS POS', type: 'ASSET', business_id: businessId },
-      { code: '401000', name: 'Pendapatan Penjualan POS', type: 'REVENUE', business_id: businessId },
-      { code: '501000', name: 'Harga Pokok Penjualan (HPP)', type: 'EXPENSE', business_id: businessId },
-      { code: '102000', name: 'Persediaan Barang', type: 'ASSET', business_id: businessId }
-    ]
-
-    const { data: existingAccounts, error: accErr } = await supabase
-      .from('accounts')
-      .select('id, code')
-      .eq('business_id', businessId)
-
-    if (accErr) {
-      return NextResponse.json({ error: 'Gagal memverifikasi akun ledger: ' + accErr.message }, { status: 500 })
-    }
-
-    const existingCodes = existingAccounts ? existingAccounts.map(a => a.code) : []
-    const accountsToCreate = defaultAccounts.filter(a => !existingCodes.includes(a.code))
-
-    if (accountsToCreate.length > 0) {
-      const { error: insAccErr } = await supabase.from('accounts').insert(accountsToCreate)
-      if (insAccErr) {
-        return NextResponse.json({ error: 'Gagal membuat akun ledger default: ' + insAccErr.message }, { status: 500 })
-      }
-    }
-
-    // Refetch all accounts to get mapping
-    const { data: allAccounts, error: refetchAccErr } = await supabase
-      .from('accounts')
-      .select('id, code')
-      .eq('business_id', businessId)
-
-    if (refetchAccErr || !allAccounts) {
-      return NextResponse.json({ error: 'Gagal mengambil pemetaan akun ledger' }, { status: 500 })
-    }
-
-    const accountMap: Record<string, string> = {}
-    allAccounts.forEach(a => {
-      accountMap[a.code] = a.id
-    })
 
     // 4. Resolve Guest Customer if needed
     let resolvedCustomerId = customer_id
@@ -249,64 +207,10 @@ export async function POST(req: Request) {
       }
     }
 
-    // 8. Record Ledger transaction & journal lines
-    const { data: tx, error: txErr } = await supabase
-      .from('transactions')
-      .insert({
-        business_id: businessId,
-        order_id: order.id,
-        date: new Date().toISOString(),
-        description: `Penjualan POS #${orderNumber}`
-      })
-      .select('id')
-      .single()
-
-    if (txErr) {
-      return NextResponse.json({ error: 'Gagal mencatat transaksi akuntansi: ' + txErr.message }, { status: 500 })
-    }
-
-    const debitAccountCode = payment_method === 'cash' ? '101000' : '101200'
-    const debitAccountId = accountMap[debitAccountCode]
-    const creditAccountId = accountMap['401000']
-
-    const journalLines = [
-      {
-        transaction_id: tx.id,
-        account_id: debitAccountId,
-        debit: grand_total,
-        credit: 0
-      },
-      {
-        transaction_id: tx.id,
-        account_id: creditAccountId,
-        debit: 0,
-        credit: grand_total
-      }
-    ]
-
-    if (totalCogs > 0) {
-      journalLines.push(
-        {
-          transaction_id: tx.id,
-          account_id: accountMap['501000'],
-          debit: totalCogs,
-          credit: 0
-        },
-        {
-          transaction_id: tx.id,
-          account_id: accountMap['102000'],
-          debit: 0,
-          credit: totalCogs
-        }
-      )
-    }
-
-    const { error: jlErr } = await supabase
-      .from('journal_lines')
-      .insert(journalLines)
-
-    if (jlErr) {
-      return NextResponse.json({ error: 'Gagal mencatat jurnal akuntansi (double-entry): ' + jlErr.message }, { status: 500 })
+    // 8. Record Ledger transaction & journal lines using unified service
+    const syncRes = await syncOrderToLedger(order.id, supabase)
+    if (!syncRes.success) {
+      return NextResponse.json({ error: 'Gagal mencatat transaksi akuntansi: ' + syncRes.message }, { status: 500 })
     }
 
     return NextResponse.json({

@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabaseServer'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { invalidateInvoicesCache } from '../../route'
+import { syncOrderToLedger } from '@/lib/orderLedger'
 
 export async function POST(
   req: Request,
@@ -80,64 +81,11 @@ export async function POST(
 
     if (updErr) throw updErr
 
-    // 4. Record Payment Ledger Jurnal
-    // Fetch Accounts
-    const { data: allAccounts } = await supabaseAdmin
-      .from('accounts')
-      .select('id, code')
-      .eq('business_id', businessId)
-
-    const accountMap: Record<string, string> = {}
-    if (allAccounts) {
-      allAccounts.forEach(a => {
-        accountMap[a.code] = a.id
-      })
+    // 4. Record Payment Ledger Jurnal using unified service
+    const syncRes = await syncOrderToLedger(invoice.id, supabaseAdmin)
+    if (!syncRes.success) {
+      throw new Error(syncRes.message)
     }
-
-    // Determine Kas or Bank account
-    const debitAccountCode = normalizedMethod === 'Cash' ? '101000' : '101200'
-    const debitAccountId = accountMap[debitAccountCode]
-    const creditAccountId = accountMap['103000'] // Piutang Usaha
-
-    if (!debitAccountId || !creditAccountId) {
-      throw new Error('Akun Kas/Bank atau Piutang Usaha tidak ditemukan di ledger bisnis Anda.')
-    }
-
-    // Write Ledger Transaction
-    const { data: tx, error: txErr } = await supabaseAdmin
-      .from('transactions')
-      .insert({
-        business_id: businessId,
-        order_id: invoice.id,
-        date: payment_date,
-        description: `Pelunasan Invoice #${invoice.order_number}`
-      })
-      .select('id')
-      .single()
-
-    if (txErr) throw txErr
-
-    // Debit Kas/Bank, Credit Piutang Usaha
-    const paymentLines = [
-      {
-        transaction_id: tx.id,
-        account_id: debitAccountId,
-        debit: Number(invoice.grand_total),
-        credit: 0
-      },
-      {
-        transaction_id: tx.id,
-        account_id: creditAccountId,
-        debit: 0,
-        credit: Number(invoice.grand_total)
-      }
-    ]
-
-    const { error: jlErr } = await supabaseAdmin
-      .from('journal_lines')
-      .insert(paymentLines)
-
-    if (jlErr) throw jlErr
 
     invalidateInvoicesCache(businessId)
 

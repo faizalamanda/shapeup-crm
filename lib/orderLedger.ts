@@ -1,5 +1,10 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 
+// Memory caches to optimize performance during batch operations
+const accountCache: Record<string, Record<string, string>> = {}
+const productCacheBySku: Record<string, Record<string, any>> = {}
+const productCacheByName: Record<string, Record<string, any>> = {}
+
 export async function syncOrderToLedger(
   orderId: string,
   supabase: SupabaseClient
@@ -18,45 +23,56 @@ export async function syncOrderToLedger(
 
     const { business_id: businessId, order_number: orderNumber, status, grand_total } = order
     
-    // 2. Resolve/Create Default Accounts
-    const defaultAccounts = [
-      { code: '101000', name: 'Kas POS (Tunai)', type: 'ASSET', business_id: businessId },
-      { code: '101200', name: 'Bank / QRIS POS', type: 'ASSET', business_id: businessId },
-      { code: '103000', name: 'Piutang Usaha', type: 'ASSET', business_id: businessId },
-      { code: '401000', name: 'Pendapatan Penjualan POS', type: 'REVENUE', business_id: businessId },
-      { code: '501000', name: 'Harga Pokok Penjualan (HPP)', type: 'EXPENSE', business_id: businessId },
-      { code: '102000', name: 'Persediaan Barang', type: 'ASSET', business_id: businessId }
-    ]
+    let accountMap = accountCache[businessId]
 
-    const { data: existingAccounts } = await supabase
-      .from('accounts')
-      .select('id, code')
-      .eq('business_id', businessId)
+    if (!accountMap) {
+      // 2. Resolve/Create Default Accounts
+      const defaultAccounts = [
+        { code: '101000', name: 'Kas POS (Tunai)', type: 'ASSET', business_id: businessId },
+        { code: '101200', name: 'Bank / QRIS POS', type: 'ASSET', business_id: businessId },
+        { code: '103000', name: 'Piutang Usaha', type: 'ASSET', business_id: businessId },
+        { code: '401000', name: 'Pendapatan Penjualan POS', type: 'REVENUE', business_id: businessId },
+        { code: '401100', name: 'Potongan Penjualan / Diskon', type: 'REVENUE', business_id: businessId },
+        { code: '402000', name: 'Pendapatan Ongkir', type: 'REVENUE', business_id: businessId },
+        { code: '403000', name: 'Pendapatan Lain-lain / Admin', type: 'REVENUE', business_id: businessId },
+        { code: '501000', name: 'Harga Pokok Penjualan (HPP)', type: 'EXPENSE', business_id: businessId },
+        { code: '102000', name: 'Persediaan Barang', type: 'ASSET', business_id: businessId }
+      ]
 
-    const existingCodes = existingAccounts ? existingAccounts.map(a => a.code) : []
-    const accountsToCreate = defaultAccounts.filter(a => !existingCodes.includes(a.code))
+      // Fetch existing accounts for this business to respect multi-tenant unique constraint on (business_id, code)
+      const { data: existingAccounts } = await supabase
+        .from('accounts')
+        .select('id, code')
+        .eq('business_id', businessId)
 
-    if (accountsToCreate.length > 0) {
-      const { error: insAccErr } = await supabase.from('accounts').insert(accountsToCreate)
-      if (insAccErr) {
-        throw new Error(`Failed to create default accounts: ${insAccErr.message}`)
+      const existingCodes = existingAccounts ? existingAccounts.map(a => a.code) : []
+      const accountsToCreate = defaultAccounts.filter(a => !existingCodes.includes(a.code))
+
+      if (accountsToCreate.length > 0) {
+        const { error: insAccErr } = await supabase.from('accounts').insert(accountsToCreate)
+        if (insAccErr && !insAccErr.message.includes('duplicate key')) {
+          throw new Error(`Failed to create default accounts: ${insAccErr.message}`)
+        }
       }
+
+      // Refetch all accounts for this business by code to build the mapping
+      const targetCodes = ['101000', '101200', '103000', '401000', '401100', '402000', '403000', '501000', '102000']
+      const { data: allAccounts, error: refetchAccErr } = await supabase
+        .from('accounts')
+        .select('id, code')
+        .eq('business_id', businessId)
+        .in('code', targetCodes)
+
+      if (refetchAccErr || !allAccounts) {
+        throw new Error(`Failed to refetch ledger accounts: ${refetchAccErr?.message || 'unknown'}`)
+      }
+
+      accountMap = {}
+      allAccounts.forEach(a => {
+        accountMap[a.code] = a.id
+      })
+      accountCache[businessId] = accountMap
     }
-
-    // Refetch all accounts
-    const { data: allAccounts, error: refetchAccErr } = await supabase
-      .from('accounts')
-      .select('id, code')
-      .eq('business_id', businessId)
-
-    if (refetchAccErr || !allAccounts) {
-      throw new Error(`Failed to refetch ledger accounts: ${refetchAccErr?.message || 'unknown'}`)
-    }
-
-    const accountMap: Record<string, string> = {}
-    allAccounts.forEach(a => {
-      accountMap[a.code] = a.id
-    })
 
     // Helper to check if COD
     const isCod = isCodOrder(order)
@@ -71,46 +87,72 @@ export async function syncOrderToLedger(
       const sku = item.sku ? String(item.sku).trim() : ''
       const name = item.name ? String(item.name).trim() : ''
 
-      // 3.1. Priority 1: SKU
-      if (sku) {
-        const { data } = await supabase
-          .from('products')
-          .select('*')
-          .eq('business_id', businessId)
-          .eq('sku', sku)
-          .limit(1)
-        if (data && data.length > 0) {
-          dbProd = data[0]
+      // Check cache first
+      if (sku && productCacheBySku[businessId]?.[sku]) {
+        dbProd = productCacheBySku[businessId][sku]
+      } else if (name && productCacheByName[businessId]?.[name.toLowerCase()]) {
+        dbProd = productCacheByName[businessId][name.toLowerCase()]
+      }
+
+      if (!dbProd) {
+        // 3.1. Priority 1: SKU
+        if (sku) {
+          const { data } = await supabase
+            .from('products')
+            .select('*')
+            .eq('business_id', businessId)
+            .eq('sku', sku)
+            .limit(1)
+          if (data && data.length > 0) {
+            dbProd = data[0]
+          }
+        }
+
+        // 3.2. Priority 2: Name
+        if (!dbProd && name) {
+          const { data } = await supabase
+            .from('products')
+            .select('*')
+            .eq('business_id', businessId)
+            .ilike('name', name)
+            .limit(1)
+          if (data && data.length > 0) {
+            dbProd = data[0]
+          }
         }
       }
 
-      // 3.2. Priority 2: Name
-      if (!dbProd && name) {
-        const { data } = await supabase
-          .from('products')
-          .select('*')
-          .eq('business_id', businessId)
-          .ilike('name', name)
-          .limit(1)
-        if (data && data.length > 0) {
-          dbProd = data[0]
+      // Resolve HPP/cost price from WooCommerce metadata, item fields, or default to 50%
+      let extractedCostPrice = 0
+      let isFallback = false
+
+      // 1. Check if cost_of_goods_sold object exists on the item
+      if (item.cost_of_goods_sold && typeof item.cost_of_goods_sold === 'object') {
+        const val = parseFloat(item.cost_of_goods_sold.value)
+        if (!isNaN(val) && val > 0) {
+          extractedCostPrice = val
         }
+      }
+
+      // 2. Check metadata
+      if (extractedCostPrice <= 0 && Array.isArray(item.meta_data)) {
+        const cogMeta = item.meta_data.find((m: any) => 
+          ['_wc_cog_item_cost', '_cog_item_cost', 'cost_price', 'cost', 'hpp'].includes(m.key)
+        )
+        if (cogMeta) {
+          const val = parseFloat(cogMeta.value)
+          if (!isNaN(val) && val > 0) extractedCostPrice = val
+        }
+      }
+
+      const itemPrice = parseFloat(item.price || item.total || 0) || 0
+      if (extractedCostPrice <= 0) {
+        extractedCostPrice = itemPrice * 0.5
+        isFallback = true
       }
 
       // 3.3. Auto-creation if not found
       if (!dbProd && name) {
-        // Extract HPP (cost price) from WooCommerce metadata
-        let extractedCostPrice = 0
-        if (Array.isArray(item.meta_data)) {
-          const cogMeta = item.meta_data.find((m: any) => 
-            ['_wc_cog_item_cost', '_cog_item_cost', 'cost_price', 'cost', 'hpp'].includes(m.key)
-          )
-          if (cogMeta) {
-            const val = parseFloat(cogMeta.value)
-            if (!isNaN(val)) extractedCostPrice = val
-          }
-        }
-
         // Create new product
         const { data: newProd, error: newProdErr } = await supabase
           .from('products')
@@ -118,7 +160,7 @@ export async function syncOrderToLedger(
             business_id: businessId,
             name: name,
             sku: sku || null,
-            price: parseFloat(item.price || item.total || 0) || 0,
+            price: itemPrice,
             cost_price: extractedCostPrice,
             type: 'physical',
             stock_type: 'tracked',
@@ -132,9 +174,38 @@ export async function syncOrderToLedger(
         } else {
           dbProd = newProd
         }
+      } else if (
+        dbProd && 
+        !isFallback && 
+        (dbProd.cost_price <= 0 || dbProd.cost_price === dbProd.price * 0.5) && 
+        extractedCostPrice > 0
+      ) {
+        // Update product in DB if its cost_price was 0 OR was exactly the 50% fallback price, 
+        // and we have found a valid real cost_price.
+        const { error: updErr } = await supabase
+          .from('products')
+          .update({ cost_price: extractedCostPrice })
+          .eq('id', dbProd.id)
+        
+        if (!updErr) {
+          dbProd.cost_price = extractedCostPrice
+          // Update cache so subsequent loops for this product use the corrected real HPP
+          if (dbProd.sku && productCacheBySku[businessId]?.[dbProd.sku]) {
+            productCacheBySku[businessId][dbProd.sku].cost_price = extractedCostPrice
+          }
+          if (dbProd.name && productCacheByName[businessId]?.[dbProd.name.toLowerCase()]) {
+            productCacheByName[businessId][dbProd.name.toLowerCase()].cost_price = extractedCostPrice
+          }
+        }
       }
 
       if (dbProd) {
+        // Add/Update Cache
+        if (!productCacheBySku[businessId]) productCacheBySku[businessId] = {}
+        if (!productCacheByName[businessId]) productCacheByName[businessId] = {}
+        if (dbProd.sku) productCacheBySku[businessId][dbProd.sku] = dbProd
+        if (dbProd.name) productCacheByName[businessId][dbProd.name.toLowerCase()] = dbProd
+
         matchedProducts.push({ item, dbProduct: dbProd })
         if (dbProd.type === 'physical' && dbProd.cost_price > 0) {
           totalCogs += dbProd.cost_price * (parseInt(item.quantity) || 1)
@@ -191,13 +262,21 @@ export async function syncOrderToLedger(
             console.error(`Failed to adjust stock for product ${dbProduct.id}: ${stockErr.message}`)
           } else {
             dbProduct.stock_quantity += delta
+            
+            // Sync cache
+            if (dbProduct.sku && productCacheBySku[businessId]?.[dbProduct.sku]) {
+              productCacheBySku[businessId][dbProduct.sku].stock_quantity = dbProduct.stock_quantity
+            }
+            if (dbProduct.name && productCacheByName[businessId]?.[dbProduct.name.toLowerCase()]) {
+              productCacheByName[businessId][dbProduct.name.toLowerCase()].stock_quantity = dbProduct.stock_quantity
+            }
           }
         }
       }
     }
 
     // 5. Handle transitions based on current status
-    if (status === 'processing') {
+    if (status === 'processing' || status === 'shipped') {
       // 5.1. SALES POSTING
       if (!salesTx) {
         // Deduct stock
@@ -218,20 +297,77 @@ export async function syncOrderToLedger(
         if (insSalesErr) throw insSalesErr
 
         // Insert journal lines
-        const journalLines = [
-          {
+        const sub = parseFloat(order.subtotal) || 0
+        const ship = parseFloat(order.shipping_cost) || 0
+        const fee = parseFloat(order.other_fees) || 0
+        const disc = parseFloat(order.discount_amount) || 0
+        const grand = parseFloat(order.grand_total) || 0
+
+        const journalLines: any[] = []
+
+        // Debit: Piutang Usaha
+        if (grand > 0) {
+          journalLines.push({
             transaction_id: newSalesTx.id,
-            account_id: accountMap['103000'], // Piutang Usaha
-            debit: parseFloat(grand_total) || 0,
+            account_id: accountMap['103000'],
+            debit: grand,
             credit: 0
-          },
-          {
+          })
+        } else if (grand < 0) {
+          journalLines.push({
             transaction_id: newSalesTx.id,
-            account_id: accountMap['401000'], // Pendapatan
+            account_id: accountMap['103000'],
             debit: 0,
-            credit: parseFloat(grand_total) || 0
-          }
-        ]
+            credit: Math.abs(grand)
+          })
+        }
+
+        // Debit: Potongan Penjualan / Diskon
+        if (disc > 0) {
+          journalLines.push({
+            transaction_id: newSalesTx.id,
+            account_id: accountMap['401100'],
+            debit: disc,
+            credit: 0
+          })
+        }
+
+        // Credit: Pendapatan Penjualan POS
+        if (sub > 0) {
+          journalLines.push({
+            transaction_id: newSalesTx.id,
+            account_id: accountMap['401000'],
+            debit: 0,
+            credit: sub
+          })
+        }
+
+        // Credit: Pendapatan Ongkir
+        if (ship > 0) {
+          journalLines.push({
+            transaction_id: newSalesTx.id,
+            account_id: accountMap['402000'],
+            debit: 0,
+            credit: ship
+          })
+        }
+
+        // Credit/Debit: Pendapatan Lain-lain / Admin
+        if (fee > 0) {
+          journalLines.push({
+            transaction_id: newSalesTx.id,
+            account_id: accountMap['403000'],
+            debit: 0,
+            credit: fee
+          })
+        } else if (fee < 0) {
+          journalLines.push({
+            transaction_id: newSalesTx.id,
+            account_id: accountMap['403000'],
+            debit: Math.abs(fee),
+            credit: 0
+          })
+        }
 
         if (totalCogs > 0) {
           journalLines.push(
@@ -337,20 +473,77 @@ export async function syncOrderToLedger(
 
         if (insSalesErr) throw insSalesErr
 
-        const journalLines = [
-          {
+        const sub = parseFloat(order.subtotal) || 0
+        const ship = parseFloat(order.shipping_cost) || 0
+        const fee = parseFloat(order.other_fees) || 0
+        const disc = parseFloat(order.discount_amount) || 0
+        const grand = parseFloat(order.grand_total) || 0
+
+        const journalLines: any[] = []
+
+        // Debit: Piutang Usaha
+        if (grand > 0) {
+          journalLines.push({
             transaction_id: newSalesTx.id,
             account_id: accountMap['103000'],
-            debit: parseFloat(grand_total) || 0,
+            debit: grand,
             credit: 0
-          },
-          {
+          })
+        } else if (grand < 0) {
+          journalLines.push({
+            transaction_id: newSalesTx.id,
+            account_id: accountMap['103000'],
+            debit: 0,
+            credit: Math.abs(grand)
+          })
+        }
+
+        // Debit: Potongan Penjualan / Diskon
+        if (disc > 0) {
+          journalLines.push({
+            transaction_id: newSalesTx.id,
+            account_id: accountMap['401100'],
+            debit: disc,
+            credit: 0
+          })
+        }
+
+        // Credit: Pendapatan Penjualan POS
+        if (sub > 0) {
+          journalLines.push({
             transaction_id: newSalesTx.id,
             account_id: accountMap['401000'],
             debit: 0,
-            credit: parseFloat(grand_total) || 0
-          }
-        ]
+            credit: sub
+          })
+        }
+
+        // Credit: Pendapatan Ongkir
+        if (ship > 0) {
+          journalLines.push({
+            transaction_id: newSalesTx.id,
+            account_id: accountMap['402000'],
+            debit: 0,
+            credit: ship
+          })
+        }
+
+        // Credit/Debit: Pendapatan Lain-lain / Admin
+        if (fee > 0) {
+          journalLines.push({
+            transaction_id: newSalesTx.id,
+            account_id: accountMap['403000'],
+            debit: 0,
+            credit: fee
+          })
+        } else if (fee < 0) {
+          journalLines.push({
+            transaction_id: newSalesTx.id,
+            account_id: accountMap['403000'],
+            debit: Math.abs(fee),
+            credit: 0
+          })
+        }
 
         if (totalCogs > 0) {
           journalLines.push(
@@ -484,9 +677,9 @@ export async function syncOrderToLedger(
 
         if (revSalesErr) throw revSalesErr
 
-        // Filter to ONLY reverse non-COGS lines (meaning 103000 Piutang and 401000 Pendapatan)
+        // Filter to ONLY reverse non-COGS lines (exclude HPP 501000 and Persediaan 102000)
         const nonCogsLines = salesTx.journal_lines.filter((line: any) => {
-          return line.account_id === accountMap['103000'] || line.account_id === accountMap['401000']
+          return line.account_id !== accountMap['501000'] && line.account_id !== accountMap['102000']
         })
 
         const reversalLines = nonCogsLines.map((line: any) => ({
