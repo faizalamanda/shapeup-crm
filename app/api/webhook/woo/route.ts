@@ -99,7 +99,7 @@ export async function POST(req: Request) {
     if (custError) throw new Error(`Customer Error: ${custError.message}`);
 
     // 5. UPSERT ORDER KE SUPABASE
-    const { error: orderError } = await supabaseAdmin
+    const { data: orderData, error: orderError } = await supabaseAdmin
       .from('orders')
       .upsert({
         business_id: businessId,
@@ -124,17 +124,26 @@ export async function POST(req: Request) {
         raw_source_data: woo,
         updated_at: new Date().toISOString()
       }, { onConflict: 'source_platform, external_id' })
+      .select('id')
+      .single()
 
-    if (orderError) throw new Error(`Order Error: ${orderError.message}`);
+    if (orderError || !orderData) throw new Error(`Order Error: ${orderError?.message || 'Failed to retrieve order ID'}`);
 
-    // 6. WHATSAPP LOGIC (DISABLED FOR NOW)
+    // 6. INTEGRATE ACCOUNTING LEDGER
+    const { syncOrderToLedger } = await import('@/lib/orderLedger')
+    const syncRes = await syncOrderToLedger(orderData.id, supabaseAdmin)
+    if (!syncRes.success) {
+      console.error(`Gagal melakukan sync jurnal ledger untuk order ${orderData.id}:`, syncRes.message)
+    }
+
+    // 7. WHATSAPP LOGIC (DISABLED FOR NOW)
     /*
     if (woo.billing?.email !== "alamanda1@alamanda.com") {
       // Logic kirim WA nanti ditaruh di sini
     }
     */
 
-    return NextResponse.json({ success: true, phone: billingPhone }, { status: 200 })
+    return NextResponse.json({ success: true, phone: billingPhone, syncMessage: syncRes.message }, { status: 200 })
 
   } catch (err: any) {
     console.error("Webhook Error:", err.message);
