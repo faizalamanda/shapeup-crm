@@ -3,7 +3,7 @@ import { Inter } from 'next/font/google'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { logoutAction } from '@/app/auth/actions'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import "./globals.css"
 
@@ -126,6 +126,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   ), [])
 
   const pathname = usePathname()
+  const noSidebar = ["/login", "/register", "/"].includes(pathname)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({})
 
@@ -152,75 +153,75 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   }, [pathname])
 
   // Load profile and businesses — onAuthStateChange as single source of truth
-  useEffect(() => {
-    // Each load request gets its own cancel token to prevent race conditions
-    let currentLoadId = 0
+  const loadIdRef = useRef(0)
 
-    const loadProfileAndBusinesses = async (userId: string) => {
-      const loadId = ++currentLoadId
-      setBizLoading(true)
+  const loadProfileAndBusinesses = useCallback(async (userId: string) => {
+    const loadId = ++loadIdRef.current
+    setBizLoading(true)
 
-      console.log('[Layout] loadProfileAndBusinesses called, userId:', userId)
+    console.log('[Layout] loadProfileAndBusinesses called, userId:', userId)
 
-      const [profileResult, bsResult, ownedResult] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', userId).single(),
-        supabase.from('business_staff').select('role, businesses (*)').eq('profile_id', userId),
-        supabase.from('businesses').select('*').eq('owner_id', userId),
-      ])
+    const [profileResult, bsResult, ownedResult] = await Promise.all([
+      supabase.from('profiles').select('*').eq('id', userId).single(),
+      supabase.from('business_staff').select('role, businesses (*)').eq('profile_id', userId),
+      supabase.from('businesses').select('*').eq('owner_id', userId),
+    ])
 
-      console.log('[Layout] profileResult:', profileResult.data, profileResult.error)
-      console.log('[Layout] bsResult:', bsResult.data, bsResult.error)
-      console.log('[Layout] ownedResult:', ownedResult.data, ownedResult.error)
+    console.log('[Layout] profileResult:', profileResult.data, profileResult.error)
+    console.log('[Layout] bsResult:', bsResult.data, bsResult.error)
+    console.log('[Layout] ownedResult:', ownedResult.data, ownedResult.error)
 
-      // If a newer load has started, discard this result
-      if (loadId !== currentLoadId) return
+    // If a newer load has started, discard this result
+    if (loadId !== loadIdRef.current) return
 
-      const profile = profileResult.data
-      setUserProfile(profile || null)
+    const profile = profileResult.data
+    setUserProfile(profile || null)
 
-      // Combine and deduplicate businesses
-      const bizMap = new Map<string, any>()
-      bsResult.data?.forEach((item: any) => {
-        if (item.businesses) {
-          bizMap.set(item.businesses.id, item.businesses)
-        }
-      })
-      ownedResult.data?.forEach((biz: any) => {
-        bizMap.set(biz.id, biz)
-      })
-
-      const combined = Array.from(bizMap.values())
-      console.log('[Layout] combined businesses:', combined)
-      setBusinesses(combined)
-
-      // Find and set the active business
-      if (profile?.active_business_id) {
-        const active = combined.find(b => b.id === profile.active_business_id)
-        if (active) {
-          console.log('[Layout] active business found:', active.name)
-          setActiveBusiness(active)
-        } else {
-          // Fallback: direct lookup (edge case)
-          const { data: fallbackBiz } = await supabase
-            .from('businesses')
-            .select('*')
-            .eq('id', profile.active_business_id)
-            .single()
-          if (loadId === currentLoadId && fallbackBiz) {
-            console.log('[Layout] fallback business:', fallbackBiz.name)
-            setActiveBusiness(fallbackBiz)
-          }
-        }
-      } else if (combined.length > 0) {
-        console.log('[Layout] no active_business_id, auto-selecting first:', combined[0].name)
-        setActiveBusiness(combined[0])
-      } else {
-        console.log('[Layout] no businesses found at all')
+    // Combine and deduplicate businesses
+    const bizMap = new Map<string, any>()
+    bsResult.data?.forEach((item: any) => {
+      if (item.businesses) {
+        bizMap.set(item.businesses.id, item.businesses)
       }
+    })
+    ownedResult.data?.forEach((biz: any) => {
+      bizMap.set(biz.id, biz)
+    })
 
-      if (loadId === currentLoadId) setBizLoading(false)
+    const combined = Array.from(bizMap.values())
+    console.log('[Layout] combined businesses:', combined)
+    setBusinesses(combined)
+
+    // Find and set the active business
+    if (profile?.active_business_id) {
+      const active = combined.find(b => b.id === profile.active_business_id)
+      if (active) {
+        console.log('[Layout] active business found:', active.name)
+        setActiveBusiness(active)
+      } else {
+        // Fallback: direct lookup (edge case)
+        const { data: fallbackBiz } = await supabase
+          .from('businesses')
+          .select('*')
+          .eq('id', profile.active_business_id)
+          .single()
+        if (loadId === loadIdRef.current && fallbackBiz) {
+          console.log('[Layout] fallback business:', fallbackBiz.name)
+          setActiveBusiness(fallbackBiz)
+        }
+      }
+    } else if (combined.length > 0) {
+      console.log('[Layout] no active_business_id, auto-selecting first:', combined[0].name)
+      setActiveBusiness(combined[0])
+    } else {
+      console.log('[Layout] no businesses found at all')
     }
 
+    if (loadId === loadIdRef.current) setBizLoading(false)
+  }, [supabase])
+
+  // Load profile and businesses — onAuthStateChange as single source of truth
+  useEffect(() => {
     // onAuthStateChange is the single source of truth.
     // It fires INITIAL_SESSION immediately on mount with the current session,
     // then SIGNED_IN / SIGNED_OUT on subsequent auth changes.
@@ -249,7 +250,36 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     return () => {
       subscription.unsubscribe()
     }
-  }, [supabase])
+  }, [supabase, loadProfileAndBusinesses])
+
+  // Sync session on navigation/pathname change when we are on a page with sidebar
+  useEffect(() => {
+    if (!noSidebar) {
+      console.log('[Layout] Pathname changed to sidebar page. Re-checking session...')
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        const sessionUserId = session?.user?.id
+        const currentProfileId = userProfile?.id
+
+        if (sessionUserId !== currentProfileId) {
+          console.log('[Layout] Session user ID changed or profile mismatch:', sessionUserId, 'vs', currentProfileId)
+          if (sessionUserId) {
+            loadProfileAndBusinesses(sessionUserId)
+          } else {
+            // No session — clear state
+            setUserProfile(null)
+            setBusinesses([])
+            setActiveBusiness(null)
+            setBizLoading(false)
+          }
+        }
+      })
+    } else {
+      // Clear profile state when transitioning to public pages (login, register, home) to ensure a clean state
+      setUserProfile(null)
+      setBusinesses([])
+      setActiveBusiness(null)
+    }
+  }, [pathname, noSidebar, userProfile?.id, supabase, loadProfileAndBusinesses])
 
   // Close switcher dropdown on click outside
   useEffect(() => {
@@ -285,10 +315,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   }
 
   const handleLogout = async () => {
+    setUserProfile(null)
+    setBusinesses([])
+    setActiveBusiness(null)
     await logoutAction()
   }
-
-  const noSidebar = ["/login", "/register", "/"].includes(pathname)
 
   if (noSidebar) {
     return (
