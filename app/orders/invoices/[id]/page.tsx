@@ -87,6 +87,67 @@ const formatIDR = (value: number) => {
   }).format(value)
 }
 
+
+const parseAddressLines = (invoice: Invoice | null) => {
+  if (!invoice) return ''
+  const lines: string[] = []
+  
+  if (invoice.customers) {
+    lines.push(invoice.customers.name)
+  } else {
+    lines.push('Customer Umum')
+  }
+
+  if (invoice.customers?.address_data) {
+    const addr = invoice.customers.address_data
+    if (addr.address_line1) lines.push(addr.address_line1)
+    if (addr.address_line2) lines.push(addr.address_line2)
+    
+    const line3Parts = []
+    if (addr.subdistrict) line3Parts.push(`Kel. / Kec. ${addr.subdistrict}`)
+    if (addr.city) line3Parts.push(addr.city)
+    if (line3Parts.length > 0) lines.push(line3Parts.join(', '))
+
+    const line4Parts = []
+    if (addr.state) line4Parts.push(addr.state)
+    if (addr.postcode) line4Parts.push(addr.postcode)
+    if (line4Parts.length > 0) lines.push(line4Parts.join(' '))
+  } else {
+    const raw = (invoice.raw_source_data || {}) as any
+    const s = raw.shipping || raw.billing || {}
+    const m = raw.meta_data || []
+    const kecamatan = m.find((i: any) => i.key === 'shipping_kecamatan')?.value || 
+                      m.find((i: any) => i.key === 'billing_kecamatan')?.value || ""
+
+    if (s.address_1) {
+      lines.push(s.address_1)
+      if (s.address_2) lines.push(s.address_2)
+      
+      const line3Parts = []
+      if (kecamatan) line3Parts.push(`Kec. ${kecamatan}`)
+      if (s.city) line3Parts.push(s.city)
+      if (line3Parts.length > 0) lines.push(line3Parts.join(', '))
+
+      const line4Parts = []
+      if (s.state) line4Parts.push(s.state)
+      if (s.postcode) line4Parts.push(s.postcode)
+      if (line4Parts.length > 0) lines.push(line4Parts.join(' '))
+    }
+  }
+
+  if (invoice.customers?.phone) {
+    lines.push(`HP: ${invoice.customers.phone}`)
+  } else {
+    const raw = (invoice.raw_source_data || {}) as any
+    const phone = raw.billing?.phone || raw.shipping?.phone || ''
+    if (phone) lines.push(`HP: ${phone}`)
+  }
+
+  return lines.join('\n')
+}
+
+
+
 const formatAddress = (addr: any) => {
   if (!addr) return 'Alamat belum diatur'
   const parts = [
@@ -153,6 +214,14 @@ export default function InvoiceDetailPage() {
   // Ledger Journal Lines State
   const [ledgerTransactions, setLedgerTransactions] = useState<Transaction[]>([])
   const [loadingLedger, setLoadingLedger] = useState<boolean>(false)
+
+  // Shipping Label print state
+  const [labelShopName, setLabelShopName] = useState<string>('')
+  const [labelSenderCity, setLabelSenderCity] = useState<string>('')
+  const [labelSenderPhone, setLabelSenderPhone] = useState<string>('')
+  const [labelRecipientAddress, setLabelRecipientAddress] = useState<string>('')
+  const [labelFooterBody, setLabelFooterBody] = useState<string>('')
+  const [isPrintingLabel, setIsPrintingLabel] = useState<boolean>(false)
 
   // Fetch Invoice Details
   const fetchInvoiceDetails = useCallback(async () => {
@@ -270,6 +339,55 @@ export default function InvoiceDetailPage() {
     const today = new Date()
     setPaymentDate(today.toISOString().split('T')[0])
   }, [showPaymentModal])
+
+  // Load persistent fields from localStorage on mount/when invoice changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const storedShop = localStorage.getItem('shapeup_label_shop_name')
+      const storedCity = localStorage.getItem('shapeup_label_sender_city')
+      const storedPhone = localStorage.getItem('shapeup_label_sender_phone')
+      const storedFooterBody = localStorage.getItem('shapeup_label_footer_body')
+      
+      setLabelShopName(storedShop || businessName || "Tan'eem")
+      setLabelSenderCity(storedCity || 'Kudus')
+      setLabelSenderPhone(storedPhone || '0812-2500-1717')
+      setLabelFooterBody(storedFooterBody || `@taneem_official  •  taneem_id\ntaneemlive  •  taneem_official\n0821-1545-4543 / 0812-3755-7090`)
+    }
+  }, [businessName])
+
+  // Update recipient address automatically when invoice loads
+  useEffect(() => {
+    if (invoice) {
+      const parsedAddr = parseAddressLines(invoice)
+      setLabelRecipientAddress(parsedAddr)
+    }
+  }, [invoice])
+
+  const handleLabelShopNameChange = (val: string) => {
+    setLabelShopName(val)
+    localStorage.setItem('shapeup_label_shop_name', val)
+  }
+  const handleLabelSenderCityChange = (val: string) => {
+    setLabelSenderCity(val)
+    localStorage.setItem('shapeup_label_sender_city', val)
+  }
+  const handleLabelSenderPhoneChange = (val: string) => {
+    setLabelSenderPhone(val)
+    localStorage.setItem('shapeup_label_sender_phone', val)
+  }
+  const handleLabelFooterBodyChange = (val: string) => {
+    setLabelFooterBody(val)
+    localStorage.setItem('shapeup_label_footer_body', val)
+  }
+
+  const handlePrintLabelDirectly = () => {
+    if (!invoice) return
+    setIsPrintingLabel(true)
+    setTimeout(() => {
+      window.print()
+      setIsPrintingLabel(false)
+    }, 150)
+  }
 
   // Save customization changes to server
   const handleSaveCustomization = async () => {
@@ -512,12 +630,40 @@ export default function InvoiceDetailPage() {
     )
   }
 
+  const getLabelShippingInfo = () => {
+    if (!invoice) return ''
+    const raw = (invoice.raw_source_data || {}) as any
+    const meta = raw.meta_data || []
+    
+    // Courier
+    let activeCourier = courier === 'Lainnya' ? customCourier : courier
+    if (!activeCourier) {
+      activeCourier = meta.find((m: any) => m.key === 'shapeup_kurir_awb')?.value || 
+                      meta.find((m: any) => m.key === '_kurir_awb')?.value || ''
+    }
+    if (!activeCourier && Array.isArray(raw.shipping_lines) && raw.shipping_lines.length > 0) {
+      activeCourier = raw.shipping_lines[0].method_title || ''
+    }
+
+    // Resi / Tracking
+    let activeResi = trackingNumber
+    if (!activeResi) {
+      activeResi = meta.find((m: any) => m.key === 'shapeup_resi_awb')?.value || 
+                   meta.find((m: any) => m.key === '_resi_awb')?.value || ''
+    }
+
+    if (activeCourier && activeResi) {
+      return `${activeCourier} - ${activeResi}`
+    }
+    return activeCourier || activeResi || ''
+  }
+
   const invItems = invoice.items_json || []
 
   return (
     <div className="space-y-6 text-[#1C1C1A] px-2 py-4">
       {/* Print Specific Styles */}
-      <style jsx global>{`
+      <style dangerouslySetInnerHTML={{ __html: `
         @media print {
           body * {
             visibility: hidden;
@@ -539,7 +685,7 @@ export default function InvoiceDetailPage() {
             display: none !important;
           }
         }
-      `}</style>
+      `}} />
 
       {/* Breadcrumb & Navigation */}
       <div className="flex items-center justify-between no-print">
@@ -826,6 +972,14 @@ export default function InvoiceDetailPage() {
                   🖨️ Cetak / Simpan PDF
                 </button>
 
+                <button
+                  type="button"
+                  onClick={handlePrintLabelDirectly}
+                  className="w-full py-2.5 text-xs font-bold text-[#1E40AF] bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl shadow-sm transition-all"
+                >
+                  📦 Cetak Label Pengiriman (A6)
+                </button>
+
                 {!canEdit && (
                   <div className="p-3 bg-amber-50 border border-amber-250 rounded-xl text-[11px] text-amber-800 font-semibold leading-relaxed">
                     ℹ️ Anda memiliki hak akses baca-saja. Tombol edit, terbitkan, batalkan, dan hapus dinonaktifkan karena Anda bukan pembuat invoice ini atau Admin.
@@ -1080,6 +1234,57 @@ export default function InvoiceDetailPage() {
                     >
                       {submitting ? 'Menyimpan...' : '💾 Simpan Kustomisasi'}
                     </button>
+
+                    {/* Pengaturan Label Pengiriman */}
+                    <div className="pt-4 mt-2 border-t border-[#EBEBEA] space-y-3">
+                      <span className="font-black text-[#1C1C1A] text-xs block">📦 PENGATURAN LABEL PENGIRIMAN (A6)</span>
+                      
+                      <div className="space-y-1">
+                        <label className="font-bold text-[#70706E]">Nama Toko/Pengirim</label>
+                        <input
+                          type="text"
+                          value={labelShopName}
+                          onChange={e => handleLabelShopNameChange(e.target.value)}
+                          placeholder="Contoh: Tan'eem"
+                          className="w-full p-2 text-xs rounded-xl border border-[#EBEBEA] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="font-bold text-[#70706E]">Kota Asal</label>
+                          <input
+                            type="text"
+                            value={labelSenderCity}
+                            onChange={e => handleLabelSenderCityChange(e.target.value)}
+                            placeholder="Contoh: Kudus"
+                            className="w-full p-2 text-xs rounded-xl border border-[#EBEBEA] bg-white focus:outline-none"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="font-bold text-[#70706E]">No. HP Pengirim</label>
+                          <input
+                            type="text"
+                            value={labelSenderPhone}
+                            onChange={e => handleLabelSenderPhoneChange(e.target.value)}
+                            placeholder="Contoh: 0812-2500-1717"
+                            className="w-full p-2 text-xs rounded-xl border border-[#EBEBEA] bg-white focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="font-bold text-[#70706E]">Footer Label (Bisa Ganti Baris)</label>
+                        <textarea
+                          rows={4}
+                          value={labelFooterBody}
+                          onChange={e => handleLabelFooterBodyChange(e.target.value)}
+                          placeholder="Detail IG / TikTok / WA..."
+                          className="w-full p-2 text-xs font-mono rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                        <p className="text-[10px] text-[#70706E] italic leading-tight">Catatan: Baris pertama (Kurir & Tanggal) diisi otomatis ketika mencetak.</p>
+                      </div>
+                    </div>
                   </>
                 )}
               </div>
@@ -1196,6 +1401,138 @@ export default function InvoiceDetailPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Hidden printable A6 Shipping Label Container */}
+      {invoice && (
+        <div id="print-shipping-label-area" className="hidden print:block font-sans text-black" style={{ boxSizing: 'border-box' }}>
+          <div className="w-full">
+            {/* Header (Shop Name & Sender) */}
+            <div className="text-center font-sans">
+              <div className="text-[18pt] font-black uppercase tracking-wide m-0 p-0 leading-none">
+                {labelShopName}
+              </div>
+              <div className="border-t-[0.6mm] border-black w-full mt-[1mm] mb-[1.5mm]"></div>
+              <div className="text-[8.5pt] font-bold font-mono uppercase tracking-tight">
+                PENGIRIM: {labelShopName}, {labelSenderCity} • {labelSenderPhone}
+              </div>
+              <div className="border-b-[0.4mm] border-black w-full mt-[1.5mm] mb-[2mm]"></div>
+            </div>
+
+            {/* Tanggal & No Invoice */}
+            <div className="flex justify-between items-center text-[8pt] font-mono border-b-[0.2mm] border-dashed border-black/40 pb-[1.5mm] mb-[2mm]">
+              <div>{invoice ? new Date(invoice.order_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : ''}</div>
+              <div className="font-bold">#{invoice.order_number}</div>
+            </div>
+
+            {/* Recipient details (no border box, dynamic height, normal case) */}
+            <div className="font-mono leading-relaxed my-[1.5mm]">
+              <div className="font-bold text-[7.5pt] tracking-widest text-[#70706E] mb-[1mm] uppercase">
+                KEPADA:
+              </div>
+              <div>
+                {/* Name - bold/black */}
+                <div className="font-black text-[8.5pt] text-black">
+                  {labelRecipientAddress.split('\n')[0] || ''}
+                </div>
+                {/* Address details - normal weight, description font size */}
+                <div className="whitespace-pre-wrap font-normal text-[8pt] text-black mt-[0.5mm]">
+                  {labelRecipientAddress.split('\n').slice(1).join('\n')}
+                </div>
+              </div>
+              
+              {/* Courier - Resi (Bold, uppercase, below recipient details) */}
+              {(() => {
+                const info = getLabelShippingInfo()
+                if (!info) return null
+                return (
+                  <div className="text-[11pt] font-extrabold font-mono mt-[3mm] border-t-[0.3mm] border-dashed border-black/40 pt-[2mm] uppercase">
+                    {info}
+                  </div>
+                )
+              })()}
+            </div>
+
+            {/* Product Table (Invoice matching headers) */}
+            <div className="my-[2mm] text-[8pt] font-mono">
+              <div className="border-t-[0.3mm] border-black mb-[1mm]"></div>
+              <table className="w-full text-left uppercase">
+                <thead>
+                  <tr className="font-bold text-[7.5pt] border-b-[0.3mm] border-black">
+                    <th className="pb-[1mm] py-[0.5mm]">Item / Deskripsi</th>
+                    {showSku && <th className="pb-[1mm] py-[0.5mm] w-[25mm]">SKU</th>}
+                    <th className="pb-[1mm] py-[0.5mm] w-[18mm] text-center">Kuantitas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(invoice.items_json || []).map((item: any, idx: number) => (
+                    <tr key={idx} className="border-t-[0.2mm] border-dashed border-black/30">
+                      <td className="py-[1mm] pr-[1mm]">
+                        <div className="font-bold">{item.name || '-'}</div>
+                        {showDescription && item.description && (
+                          <div className="text-[6.5pt] text-gray-650 mt-[0.5mm] normal-case leading-tight">{item.description}</div>
+                        )}
+                      </td>
+                      {showSku && (
+                        <td className="py-[1mm] font-mono text-[7pt] text-gray-750">{item.sku || '-'}</td>
+                      )}
+                      <td className="py-[1mm] text-center font-bold">{item.quantity}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="border-b-[0.3mm] border-black mt-[1mm]"></div>
+            </div>
+
+            {/* Footer - placed below item table with 2 lines gap */}
+            <div className="mt-[8mm] text-[8pt] font-mono leading-normal whitespace-pre-wrap text-center">
+              {labelFooterBody}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Conditional A6 Print Sizing Styles */}
+      {isPrintingLabel && (
+        <style dangerouslySetInnerHTML={{ __html: `
+          @media print {
+            @page {
+              size: 100mm 150mm;
+              margin: 0 !important;
+            }
+            html, body {
+              background-color: white !important;
+              background: white !important;
+              margin: 0 !important;
+              padding: 0 !important;
+            }
+            body * {
+              visibility: hidden !important;
+            }
+            #print-shipping-label-area, #print-shipping-label-area * {
+              visibility: visible !important;
+            }
+            #print-shipping-label-area {
+              position: fixed !important;
+              left: 0 !important;
+              top: 0 !important;
+              width: 100% !important;
+              height: 100% !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              box-sizing: border-box !important;
+              background-color: white !important;
+              color: black !important;
+              border: none !important;
+              z-index: 9999999 !important;
+              display: block !important;
+            }
+            * {
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+          }
+        `}} />
       )}
     </div>
   )
