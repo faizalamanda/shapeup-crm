@@ -382,11 +382,154 @@ export default function InvoiceDetailPage() {
 
   const handlePrintLabelDirectly = () => {
     if (!invoice) return
-    setIsPrintingLabel(true)
+
+    const iframe = document.getElementById('print-label-iframe') as HTMLIFrameElement
+    if (!iframe) return
+
+    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
+    if (!iframeDoc) return
+
+    const courierResiInfo = getLabelShippingInfo()
+    const itemsHtml = (invoice.items_json || []).map((item: any) => `
+      <tr style="border-top: 0.2mm dashed rgba(0,0,0,0.3);">
+        <td style="padding: 1mm 1mm 1mm 0; text-align: left; vertical-align: top;">
+          <div style="font-weight: bold; font-size: 8pt; color: black; font-family: monospace;">${item.name || '-'}</div>
+          ${showDescription && item.description ? `<div style="font-size: 6.5pt; color: #4b5563; margin-top: 0.5mm; line-height: 1.2; font-family: monospace; text-transform: none;">${item.description}</div>` : ''}
+        </td>
+        ${showSku ? `<td style="padding: 1mm 0; font-family: monospace; font-size: 7pt; color: #374151; vertical-align: top;">${item.sku || '-'}</td>` : ''}
+        <td style="padding: 1mm 0; text-align: center; font-weight: bold; font-family: monospace; font-size: 8pt; vertical-align: top; width: 18mm;">${item.quantity}</td>
+      </tr>
+    `).join('')
+
+    const notesHtml = showNotes && customNotes ? `
+      <div style="margin: 2mm 0; font-size: 6.5pt; font-family: monospace; color: black; line-height: 1.2; text-align: left;">
+        <div style="font-weight: bold; text-transform: uppercase; margin-bottom: 0.5mm;">Catatan Pembayaran & Informasi Tambahan:</div>
+        <div style="white-space: pre-wrap; padding: 1mm; border: 0.2mm dashed rgba(0,0,0,0.3); border-radius: 2px; text-transform: none;">${customNotes}</div>
+      </div>
+    ` : ''
+
+    const courierHtml = courierResiInfo ? `
+      <div style="font-size: 11pt; font-weight: 900; font-family: monospace; margin-top: 3mm; border-top: 0.3mm dashed rgba(0,0,0,0.4); padding-top: 2mm; text-transform: uppercase; text-align: left;">
+        ${courierResiInfo}
+      </div>
+    ` : ''
+
+    const recipientLines = labelRecipientAddress.split('\n').map(line => line.trim())
+    const recipientName = recipientLines[0] || ''
+    const recipientAddressDetails = recipientLines.slice(1).join('\n')
+
+    const htmlContent = `
+      <html>
+        <head>
+          <title>Cetak Label Pengiriman - ${invoice.order_number}</title>
+          <style>
+            @page {
+              size: 100mm 150mm;
+              margin: 0 !important;
+            }
+            html, body {
+              background-color: white !important;
+              color: black !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+              width: 100mm;
+              height: 150mm;
+              box-sizing: border-box;
+            }
+            * {
+              box-sizing: border-box;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            .wrapper {
+              width: 100%;
+              padding-top: 20pt;
+              padding-left: 4mm;
+              padding-right: 4mm;
+            }
+            .text-center { text-align: center; }
+            .font-bold { font-weight: bold; }
+            .font-mono { font-family: monospace; }
+            .uppercase { text-transform: uppercase; }
+            .w-full { width: 100%; }
+            .flex { display: flex; }
+            .justify-between { justify-content: space-between; }
+            .items-center { align-items: center; }
+          </style>
+        </head>
+        <body>
+          <div class="wrapper">
+            <!-- Header (Shop Name & Sender) -->
+            <div class="text-center">
+              <div style="font-size: 18pt; font-weight: 900; text-transform: uppercase; margin: 0; padding: 0; line-height: 1;">
+                ${labelShopName}
+              </div>
+              <div style="border-top: 0.6mm solid black; width: 100%; margin-top: 1mm; margin-bottom: 1.5mm;"></div>
+              <div style="font-size: 8.5pt; font-weight: bold; font-family: monospace; text-transform: uppercase; letter-spacing: -0.2px;">
+                PENGIRIM: ${labelShopName}, ${labelSenderCity} • ${labelSenderPhone}
+              </div>
+              <div style="border-bottom: 0.4mm solid black; width: 100%; margin-top: 1.5mm; margin-bottom: 2mm;"></div>
+            </div>
+
+            <!-- Tanggal & No Invoice -->
+            <div class="flex justify-between items-center" style="font-size: 8pt; font-family: monospace; border-bottom: 0.2mm dashed rgba(0,0,0,0.4); padding-bottom: 1.5mm; margin-bottom: 2mm;">
+              <div>${new Date(invoice.order_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+              <div class="font-bold">#${invoice.order_number}</div>
+            </div>
+
+            <!-- Recipient details -->
+            <div class="font-mono" style="line-height: 1.4; margin: 1.5mm 0; text-align: left;">
+              <div style="font-weight: bold; font-size: 7.5pt; letter-spacing: 1px; color: #70706e; margin-bottom: 1mm; text-transform: uppercase;">
+                KEPADA:
+              </div>
+              <div>
+                <!-- Name -->
+                <div style="font-weight: 900; font-size: 8pt; color: black;">${recipientName}</div>
+                <!-- Address details -->
+                <div style="white-space: pre-wrap; font-weight: normal; font-size: 6.5pt; color: black; margin-top: 0.5mm;">${recipientAddressDetails}</div>
+              </div>
+              ${courierHtml}
+            </div>
+
+            <!-- Product Table -->
+            <div style="margin: 2mm 0; font-size: 8pt; font-family: monospace;">
+              <div style="border-top: 0.3mm solid black; margin-bottom: 1mm;"></div>
+              <table class="w-full" style="text-align: left; border-collapse: collapse; text-transform: uppercase;">
+                <thead>
+                  <tr style="font-weight: bold; font-size: 7.5pt; border-bottom: 0.3mm solid black;">
+                    <th style="padding-bottom: 1mm; padding-top: 0.5mm; text-align: left;">Item / Deskripsi</th>
+                    ${showSku ? `<th style="padding-bottom: 1mm; padding-top: 0.5mm; width: 25mm; text-align: left;">SKU</th>` : ''}
+                    <th style="padding-bottom: 1mm; padding-top: 0.5mm; width: 18mm; text-align: center;">Kuantitas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${itemsHtml}
+                </tbody>
+              </table>
+              <div style="border-bottom: 0.3mm solid black; margin-top: 1mm;"></div>
+            </div>
+
+            <!-- Payment Notes & Additional Info -->
+            ${notesHtml}
+
+            <!-- Footer -->
+            <div style="margin-top: 8mm; font-size: 8pt; font-family: monospace; line-height: 1.4; white-space: pre-wrap; text-align: center;">${labelFooterBody.replace(/\n/g, '<br>')}</div>
+          </div>
+        </body>
+      </html>
+    `
+
+    iframeDoc.open()
+    iframeDoc.write(htmlContent)
+    iframeDoc.close()
+
     setTimeout(() => {
-      window.print()
-      setIsPrintingLabel(false)
-    }, 150)
+      if (iframe.contentWindow) {
+        iframe.contentWindow.focus()
+        iframe.contentWindow.print()
+      }
+    }, 100)
   }
 
   // Save customization changes to server
@@ -1403,137 +1546,11 @@ export default function InvoiceDetailPage() {
         </div>
       )}
 
-      {/* Hidden printable A6 Shipping Label Container */}
-      {invoice && (
-        <div id="print-shipping-label-area" className="hidden print:block font-sans text-black" style={{ boxSizing: 'border-box' }}>
-          <div className="w-full">
-            {/* Header (Shop Name & Sender) */}
-            <div className="text-center font-sans">
-              <div className="text-[18pt] font-black uppercase tracking-wide m-0 p-0 leading-none">
-                {labelShopName}
-              </div>
-              <div className="border-t-[0.6mm] border-black w-full mt-[1mm] mb-[1.5mm]"></div>
-              <div className="text-[8.5pt] font-bold font-mono uppercase tracking-tight">
-                PENGIRIM: {labelShopName}, {labelSenderCity} • {labelSenderPhone}
-              </div>
-              <div className="border-b-[0.4mm] border-black w-full mt-[1.5mm] mb-[2mm]"></div>
-            </div>
-
-            {/* Tanggal & No Invoice */}
-            <div className="flex justify-between items-center text-[8pt] font-mono border-b-[0.2mm] border-dashed border-black/40 pb-[1.5mm] mb-[2mm]">
-              <div>{invoice ? new Date(invoice.order_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : ''}</div>
-              <div className="font-bold">#{invoice.order_number}</div>
-            </div>
-
-            {/* Recipient details (no border box, dynamic height, normal case) */}
-            <div className="font-mono leading-relaxed my-[1.5mm]">
-              <div className="font-bold text-[7.5pt] tracking-widest text-[#70706E] mb-[1mm] uppercase">
-                KEPADA:
-              </div>
-              <div>
-                {/* Name - bold/black */}
-                <div className="font-black text-[8.5pt] text-black">
-                  {labelRecipientAddress.split('\n')[0] || ''}
-                </div>
-                {/* Address details - normal weight, description font size */}
-                <div className="whitespace-pre-wrap font-normal text-[8pt] text-black mt-[0.5mm]">
-                  {labelRecipientAddress.split('\n').slice(1).join('\n')}
-                </div>
-              </div>
-              
-              {/* Courier - Resi (Bold, uppercase, below recipient details) */}
-              {(() => {
-                const info = getLabelShippingInfo()
-                if (!info) return null
-                return (
-                  <div className="text-[11pt] font-extrabold font-mono mt-[3mm] border-t-[0.3mm] border-dashed border-black/40 pt-[2mm] uppercase">
-                    {info}
-                  </div>
-                )
-              })()}
-            </div>
-
-            {/* Product Table (Invoice matching headers) */}
-            <div className="my-[2mm] text-[8pt] font-mono">
-              <div className="border-t-[0.3mm] border-black mb-[1mm]"></div>
-              <table className="w-full text-left uppercase">
-                <thead>
-                  <tr className="font-bold text-[7.5pt] border-b-[0.3mm] border-black">
-                    <th className="pb-[1mm] py-[0.5mm]">Item / Deskripsi</th>
-                    {showSku && <th className="pb-[1mm] py-[0.5mm] w-[25mm]">SKU</th>}
-                    <th className="pb-[1mm] py-[0.5mm] w-[18mm] text-center">Kuantitas</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(invoice.items_json || []).map((item: any, idx: number) => (
-                    <tr key={idx} className="border-t-[0.2mm] border-dashed border-black/30">
-                      <td className="py-[1mm] pr-[1mm]">
-                        <div className="font-bold">{item.name || '-'}</div>
-                        {showDescription && item.description && (
-                          <div className="text-[6.5pt] text-gray-650 mt-[0.5mm] normal-case leading-tight">{item.description}</div>
-                        )}
-                      </td>
-                      {showSku && (
-                        <td className="py-[1mm] font-mono text-[7pt] text-gray-750">{item.sku || '-'}</td>
-                      )}
-                      <td className="py-[1mm] text-center font-bold">{item.quantity}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="border-b-[0.3mm] border-black mt-[1mm]"></div>
-            </div>
-
-            {/* Footer - placed below item table with 2 lines gap */}
-            <div className="mt-[8mm] text-[8pt] font-mono leading-normal whitespace-pre-wrap text-center">
-              {labelFooterBody}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Conditional A6 Print Sizing Styles */}
-      {isPrintingLabel && (
-        <style dangerouslySetInnerHTML={{ __html: `
-          @media print {
-            @page {
-              size: 100mm 150mm;
-              margin: 0 !important;
-            }
-            html, body {
-              background-color: white !important;
-              background: white !important;
-              margin: 0 !important;
-              padding: 0 !important;
-            }
-            body * {
-              visibility: hidden !important;
-            }
-            #print-shipping-label-area, #print-shipping-label-area * {
-              visibility: visible !important;
-            }
-            #print-shipping-label-area {
-              position: fixed !important;
-              left: 0 !important;
-              top: 0 !important;
-              width: 100% !important;
-              height: 100% !important;
-              margin: 0 !important;
-              padding: 0 !important;
-              box-sizing: border-box !important;
-              background-color: white !important;
-              color: black !important;
-              border: none !important;
-              z-index: 9999999 !important;
-              display: block !important;
-            }
-            * {
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-            }
-          }
-        `}} />
-      )}
+      {/* Hidden iframe for shipping label printing context */}
+      <iframe
+        id="print-label-iframe"
+        style={{ display: 'none', width: 0, height: 0, border: 'none' }}
+      />
     </div>
   )
 }
