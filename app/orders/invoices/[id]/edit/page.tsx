@@ -5,12 +5,14 @@ import { createBrowserClient } from '@supabase/ssr'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import QuickAddProductModal from '@/components/QuickAddProductModal'
+import { QuickAddCustomerForm, NewCustomerFormData, EMPTY_CUSTOMER_FORM } from '@/components/QuickAddCustomerForm'
 
 type Customer = {
   id: string
   name: string
   phone: string
   email: string | null
+  address_data?: any
 }
 
 type Product = {
@@ -36,6 +38,20 @@ const formatIDR = (value: number) => {
     currency: 'IDR',
     maximumFractionDigits: 0
   }).format(value)
+}
+
+const formatAddress = (addr: any) => {
+  if (!addr) return 'Alamat belum diatur'
+  const parts = [
+    addr.address_line1,
+    addr.address_line2,
+    addr.subdistrict,
+    addr.city,
+    addr.state,
+    addr.postcode,
+    addr.country
+  ].filter(Boolean)
+  return parts.join(', ') || 'Alamat belum diatur'
 }
 
 export default function EditInvoicePage() {
@@ -76,9 +92,8 @@ export default function EditInvoicePage() {
   // Customer selection
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
   const [isNewCustomer, setIsNewCustomer] = useState<boolean>(false)
-  const [newCustName, setNewCustName] = useState<string>('')
-  const [newCustPhone, setNewCustPhone] = useState<string>('')
-  const [newCustEmail, setNewCustEmail] = useState<string>('')
+  const [newCustForm, setNewCustForm] = useState<NewCustomerFormData>(EMPTY_CUSTOMER_FORM)
+  const [loadedCustomerAddress, setLoadedCustomerAddress] = useState<any>(null)
 
   // Invoice Fields
   const [invoiceNumber, setInvoiceNumber] = useState<string>('')
@@ -105,6 +120,13 @@ export default function EditInvoicePage() {
   const [showSku, setShowSku] = useState<boolean>(true)
   const [showDescription, setShowDescription] = useState<boolean>(true)
   const [showNotes, setShowNotes] = useState<boolean>(true)
+  const [showAddress, setShowAddress] = useState<boolean>(true)
+  const [showShipping, setShowShipping] = useState<boolean>(true)
+
+  // Shipping details
+  const [courier, setCourier] = useState<string>('')
+  const [customCourier, setCustomCourier] = useState<string>('')
+  const [trackingNumber, setTrackingNumber] = useState<string>('')
 
   // Autocomplete search states per row
   const [productSearchQueries, setProductSearchQueries] = useState<Record<number, string>>({})
@@ -211,6 +233,7 @@ export default function EditInvoicePage() {
           const inv = json.invoice
           setInvoiceStatus(inv.status)
           setSelectedCustomerId(inv.customer_id || '')
+          setLoadedCustomerAddress(inv.customers?.address_data || null)
           setInvoiceNumber(inv.order_number || '')
           setCreatorUserId(inv.user_id || null)
           setCreatorName(inv.creator?.full_name || 'Tidak diketahui')
@@ -239,6 +262,30 @@ export default function EditInvoicePage() {
           setShowSku(raw.show_sku !== undefined ? raw.show_sku : true)
           setShowDescription(raw.show_description !== undefined ? raw.show_description : true)
           setShowNotes(raw.show_notes !== undefined ? raw.show_notes : true)
+          setShowAddress(raw.show_address !== undefined ? raw.show_address : true)
+          setShowShipping(raw.show_shipping !== undefined ? raw.show_shipping : true)
+
+          // Shipping details extraction
+          const meta = raw.meta_data || []
+          const foundCourier = meta.find((m: any) => m.key === 'shapeup_kurir_awb')?.value || 
+                               meta.find((m: any) => m.key === '_kurir_awb')?.value || ''
+          const foundTracking = meta.find((m: any) => m.key === 'shapeup_resi_awb')?.value || 
+                                meta.find((m: any) => m.key === '_resi_awb')?.value || ''
+
+          const standardCouriers = ['JNE', 'J&T', 'Sicepat', 'POS', 'Tiki', 'Anteraja', 'Wahana']
+          if (foundCourier) {
+            if (standardCouriers.includes(foundCourier)) {
+              setCourier(foundCourier)
+              setCustomCourier('')
+            } else {
+              setCourier('Lainnya')
+              setCustomCourier(foundCourier)
+            }
+          } else {
+            setCourier('')
+            setCustomCourier('')
+          }
+          setTrackingNumber(foundTracking)
 
           // Items mapping
           if (Array.isArray(inv.items_json)) {
@@ -342,7 +389,7 @@ export default function EditInvoicePage() {
   // Submit Handler
   const handleSubmit = async (submitStatus: 'pending' | 'processing' | 'completed') => {
     if (!isFinancialsLocked) {
-      if (isNewCustomer && (!newCustName || !newCustPhone)) {
+      if (isNewCustomer && (!newCustForm.name || !newCustForm.phone)) {
         setErrorMessage('Nama dan Nomor HP Customer baru wajib diisi.')
         return
       }
@@ -366,9 +413,10 @@ export default function EditInvoicePage() {
     try {
       const payload: Record<string, any> = {
         customer_id: isNewCustomer ? null : selectedCustomerId,
-        customer_name: isNewCustomer ? newCustName : null,
-        customer_phone: isNewCustomer ? newCustPhone : null,
-        customer_email: isNewCustomer ? newCustEmail : null,
+        customer_name: isNewCustomer ? newCustForm.name : null,
+        customer_phone: isNewCustomer ? newCustForm.phone : null,
+        customer_email: isNewCustomer ? newCustForm.email : null,
+        customer_address: isNewCustomer ? newCustForm.address : null,
         order_number: invoiceNumber || null,
         order_date: invoiceDate,
         due_date: dueDate,
@@ -387,7 +435,11 @@ export default function EditInvoicePage() {
         layout_style: layoutStyle,
         show_sku: showSku,
         show_description: showDescription,
-        show_notes: showNotes
+        show_notes: showNotes,
+        show_address: showAddress,
+        show_shipping: showShipping,
+        courier: courier === 'Lainnya' ? customCourier : courier,
+        tracking_number: trackingNumber
       }
 
       const res = await fetch(`/api/orders/invoices/${invoiceId}`, {
@@ -537,6 +589,7 @@ export default function EditInvoicePage() {
                   onClick={() => {
                     setIsNewCustomer(!isNewCustomer)
                     setSelectedCustomerId('')
+                    if (!isNewCustomer) setNewCustForm(EMPTY_CUSTOMER_FORM)
                   }}
                   className="text-xs font-black text-[#1E40AF] hover:underline"
                 >
@@ -559,42 +612,21 @@ export default function EditInvoicePage() {
                     <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
                   ))}
                 </select>
+                {(selectedCustomerId || loadedCustomerAddress) && (
+                  <div className="mt-2 p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-semibold text-slate-700">
+                    📍 <span className="font-bold">Alamat:</span> {
+                      formatAddress(customers.find(c => c.id === selectedCustomerId)?.address_data || loadedCustomerAddress)
+                    }
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-slate-100 pt-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#70706E]">Nama Lengkap *</label>
-                  <input
-                    type="text"
-                    disabled={isFinancialsLocked}
-                    value={newCustName}
-                    onChange={e => setNewCustName(e.target.value)}
-                    placeholder="Nama Customer"
-                    className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#70706E]">Nomor HP *</label>
-                  <input
-                    type="text"
-                    disabled={isFinancialsLocked}
-                    value={newCustPhone}
-                    onChange={e => setNewCustPhone(e.target.value)}
-                    placeholder="Contoh: 08123456789"
-                    className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#70706E]">Email (Opsional)</label>
-                  <input
-                    type="email"
-                    disabled={isFinancialsLocked}
-                    value={newCustEmail}
-                    onChange={e => setNewCustEmail(e.target.value)}
-                    placeholder="email@customer.com"
-                    className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
-                  />
-                </div>
+              <div className="border-t border-slate-100 pt-3">
+                <QuickAddCustomerForm
+                  value={newCustForm}
+                  onChange={setNewCustForm}
+                  compact
+                />
               </div>
             )}
           </div>
@@ -645,6 +677,47 @@ export default function EditInvoicePage() {
                 disabled={paymentTerms !== 'custom' || isFinancialsLocked}
                 onChange={e => setDueDate(e.target.value)}
                 className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] bg-white disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Section 2.5: Shipping Details (Courier & Resi) */}
+          <div className="p-5 bg-white rounded-2xl border border-[#EBEBEA] shadow-sm grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-[#70706E]">Kurir Pengiriman (Opsional)</label>
+              <select
+                value={courier}
+                onChange={e => setCourier(e.target.value)}
+                className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+              >
+                <option value="">-- Pilih Kurir --</option>
+                <option value="JNE">JNE</option>
+                <option value="J&T">J&T</option>
+                <option value="Sicepat">Sicepat</option>
+                <option value="POS">POS Indonesia</option>
+                <option value="Tiki">TIKI</option>
+                <option value="Anteraja">Anteraja</option>
+                <option value="Wahana">Wahana</option>
+                <option value="Lainnya">Lainnya / Custom</option>
+              </select>
+              {courier === 'Lainnya' && (
+                <input
+                  type="text"
+                  placeholder="Masukkan nama kurir custom..."
+                  value={customCourier}
+                  onChange={e => setCustomCourier(e.target.value)}
+                  className="w-full mt-2 p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+                />
+              )}
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-[#70706E]">Nomor Resi (Opsional)</label>
+              <input
+                type="text"
+                placeholder="Masukkan nomor resi pengiriman..."
+                value={trackingNumber}
+                onChange={e => setTrackingNumber(e.target.value)}
+                className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all uppercase font-mono"
               />
             </div>
           </div>
@@ -962,6 +1035,26 @@ export default function EditInvoicePage() {
                     className="rounded border-[#EBEBEA] text-[#1E40AF] focus:ring-[#1E40AF]"
                   />
                   <span>Tampilkan Catatan Kaki</span>
+                </label>
+
+                <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
+                  <input
+                    type="checkbox"
+                    checked={showAddress}
+                    onChange={e => setShowAddress(e.target.checked)}
+                    className="rounded border-[#EBEBEA] text-[#1E40AF] focus:ring-[#1E40AF]"
+                  />
+                  <span>Tampilkan Alamat Customer</span>
+                </label>
+
+                <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
+                  <input
+                    type="checkbox"
+                    checked={showShipping}
+                    onChange={e => setShowShipping(e.target.checked)}
+                    className="rounded border-[#EBEBEA] text-[#1E40AF] focus:ring-[#1E40AF]"
+                  />
+                  <span>Tampilkan Kurir & Resi</span>
                 </label>
               </div>
             </div>

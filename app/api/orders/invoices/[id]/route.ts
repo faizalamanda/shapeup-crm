@@ -132,6 +132,7 @@ export async function PUT(
       customer_name,
       customer_phone,
       customer_email,
+      customer_address, // AddressData JSONB - from QuickAddCustomerForm
       order_date,
       due_date,
       payment_terms,
@@ -151,7 +152,11 @@ export async function PUT(
       layout_style,
       show_sku,
       show_description,
-      show_notes
+      show_notes,
+      courier,
+      tracking_number,
+      show_address,
+      show_shipping
     } = body
 
     // If it's a cancellation request
@@ -289,7 +294,7 @@ export async function PUT(
 
     // Lock financials if already Paid (completed)
     if (existing.status === 'completed') {
-      // Paid invoices can only update customization/appearance
+      // Paid invoices can only update customization/appearance, courier, and resi
       const currentRaw = (existing.raw_source_data || {}) as Record<string, any>
       const updatedRaw = {
         ...currentRaw,
@@ -300,7 +305,13 @@ export async function PUT(
         layout_style: layout_style !== undefined ? layout_style : currentRaw.layout_style,
         show_sku: show_sku !== undefined ? show_sku : currentRaw.show_sku,
         show_description: show_description !== undefined ? show_description : currentRaw.show_description,
-        show_notes: show_notes !== undefined ? show_notes : currentRaw.show_notes
+        show_notes: show_notes !== undefined ? show_notes : currentRaw.show_notes,
+        show_address: show_address !== undefined ? show_address : (currentRaw.show_address !== undefined ? currentRaw.show_address : true),
+        show_shipping: show_shipping !== undefined ? show_shipping : (currentRaw.show_shipping !== undefined ? currentRaw.show_shipping : true),
+        meta_data: [
+          { key: 'shapeup_kurir_awb', value: courier !== undefined ? courier : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_kurir_awb')?.value || '') },
+          { key: 'shapeup_resi_awb', value: tracking_number !== undefined ? tracking_number : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_resi_awb')?.value || '') }
+        ]
       }
 
       const { data: updated, error: updErr } = await supabaseAdmin
@@ -312,7 +323,7 @@ export async function PUT(
 
       if (updErr) throw updErr
       invalidateInvoicesCache(businessId)
-      return NextResponse.json({ success: true, message: 'Desain Invoice diperbarui', order: updated })
+      return NextResponse.json({ success: true, message: 'Desain & Pengiriman Invoice diperbarui', order: updated })
     }
 
     // For Draft or Unpaid (pending/processing), we can edit details
@@ -342,7 +353,8 @@ export async function PUT(
             business_id: businessId,
             name: customer_name.trim(),
             phone: cleanPhone,
-            email: customer_email ? customer_email.trim() : null
+            email: customer_email ? customer_email.trim() : null,
+            address_data: customer_address ?? null
           })
           .select('id')
           .single()
@@ -367,7 +379,13 @@ export async function PUT(
       layout_style: layout_style !== undefined ? layout_style : currentRaw.layout_style,
       show_sku: show_sku !== undefined ? show_sku : currentRaw.show_sku,
       show_description: show_description !== undefined ? show_description : currentRaw.show_description,
-      show_notes: show_notes !== undefined ? show_notes : currentRaw.show_notes
+      show_notes: show_notes !== undefined ? show_notes : currentRaw.show_notes,
+      show_address: show_address !== undefined ? show_address : (currentRaw.show_address !== undefined ? currentRaw.show_address : true),
+      show_shipping: show_shipping !== undefined ? show_shipping : (currentRaw.show_shipping !== undefined ? currentRaw.show_shipping : true),
+      meta_data: [
+        { key: 'shapeup_kurir_awb', value: courier !== undefined ? courier : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_kurir_awb')?.value || '') },
+        { key: 'shapeup_resi_awb', value: tracking_number !== undefined ? tracking_number : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_resi_awb')?.value || '') }
+      ]
     }
 
     let finalItems = existing.items_json

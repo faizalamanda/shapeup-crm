@@ -10,6 +10,7 @@ type Customer = {
   name: string
   phone: string
   email: string | null
+  address_data?: any
 }
 
 type InvoiceItem = {
@@ -48,6 +49,9 @@ type Invoice = {
     show_sku?: boolean
     show_description?: boolean
     show_notes?: boolean
+    show_address?: boolean
+    show_shipping?: boolean
+    meta_data?: Array<{ key: string; value: any }>
   } | null
   customers: Customer | null
   user_id?: string | null
@@ -81,6 +85,20 @@ const formatIDR = (value: number) => {
     currency: 'IDR',
     maximumFractionDigits: 0
   }).format(value)
+}
+
+const formatAddress = (addr: any) => {
+  if (!addr) return 'Alamat belum diatur'
+  const parts = [
+    addr.address_line1,
+    addr.address_line2,
+    addr.subdistrict,
+    addr.city,
+    addr.state,
+    addr.postcode,
+    addr.country
+  ].filter(Boolean)
+  return parts.join(', ') || 'Alamat belum diatur'
 }
 
 export default function InvoiceDetailPage() {
@@ -125,6 +143,12 @@ export default function InvoiceDetailPage() {
   const [showSku, setShowSku] = useState<boolean>(true)
   const [showDescription, setShowDescription] = useState<boolean>(true)
   const [showNotes, setShowNotes] = useState<boolean>(true)
+  const [showAddress, setShowAddress] = useState<boolean>(true)
+  const [showShipping, setShowShipping] = useState<boolean>(true)
+
+  const [courier, setCourier] = useState<string>('')
+  const [customCourier, setCustomCourier] = useState<string>('')
+  const [trackingNumber, setTrackingNumber] = useState<string>('')
 
   // Ledger Journal Lines State
   const [ledgerTransactions, setLedgerTransactions] = useState<Transaction[]>([])
@@ -167,6 +191,29 @@ export default function InvoiceDetailPage() {
       setShowSku(raw?.show_sku !== undefined ? raw.show_sku : true)
       setShowDescription(raw?.show_description !== undefined ? raw.show_description : true)
       setShowNotes(raw?.show_notes !== undefined ? raw.show_notes : true)
+      setShowAddress(raw?.show_address !== undefined ? raw.show_address : true)
+      setShowShipping(raw?.show_shipping !== undefined ? raw.show_shipping : true)
+
+      const meta = raw?.meta_data || []
+      const foundCourier = meta.find((m: any) => m.key === 'shapeup_kurir_awb')?.value || 
+                           meta.find((m: any) => m.key === '_kurir_awb')?.value || ''
+      const foundTracking = meta.find((m: any) => m.key === 'shapeup_resi_awb')?.value || 
+                            meta.find((m: any) => m.key === '_resi_awb')?.value || ''
+
+      const standardCouriers = ['JNE', 'J&T', 'Sicepat', 'POS', 'Tiki', 'Anteraja', 'Wahana']
+      if (foundCourier) {
+        if (standardCouriers.includes(foundCourier)) {
+          setCourier(foundCourier)
+          setCustomCourier('')
+        } else {
+          setCourier('Lainnya')
+          setCustomCourier(foundCourier)
+        }
+      } else {
+        setCourier('')
+        setCustomCourier('')
+      }
+      setTrackingNumber(foundTracking)
 
     } catch (err: any) {
       setErrorMessage(err.message || 'Gagal memuat detail invoice')
@@ -240,7 +287,9 @@ export default function InvoiceDetailPage() {
           layout_style: layoutStyle,
           show_sku: showSku,
           show_description: showDescription,
-          show_notes: showNotes
+          show_notes: showNotes,
+          show_address: showAddress,
+          show_shipping: showShipping
         })
       })
 
@@ -416,6 +465,33 @@ export default function InvoiceDetailPage() {
     }
   }
 
+  const getInvoiceAddress = () => {
+    if (invoice?.customers?.address_data) {
+      return formatAddress(invoice.customers.address_data)
+    }
+    
+    const raw = (invoice?.raw_source_data || {}) as any
+    const s = raw.shipping || raw.billing || {}
+    const m = raw.meta_data || []
+
+    const kecamatan = m.find((i: any) => i.key === 'shipping_kecamatan')?.value || 
+                      m.find((i: any) => i.key === 'billing_kecamatan')?.value || ""
+
+    if (s.address_1) {
+      const parts = [
+        s.address_1,
+        s.address_2,
+        kecamatan,
+        s.city,
+        s.state,
+        s.postcode
+      ].filter(Boolean)
+      return parts.join(', ')
+    }
+    
+    return null
+  }
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-40 gap-3">
@@ -532,9 +608,37 @@ export default function InvoiceDetailPage() {
                     {invoice.customers.email && (
                       <p className="text-xs text-[#70706E]">{invoice.customers.email}</p>
                     )}
+                    {showAddress && getInvoiceAddress() && (
+                      <p className="text-xs text-[#70706E] pt-1 border-t border-dashed border-gray-100">
+                        📍 {getInvoiceAddress()}
+                      </p>
+                    )}
+                    {showShipping && (courier || trackingNumber) && (
+                      <div className="text-xs text-slate-700 bg-slate-50 border border-slate-100 p-2.5 rounded-xl space-y-1 mt-2.5">
+                        {courier && (
+                          <div>
+                            <span className="text-[#70706E] font-bold">Kurir:</span>{' '}
+                            <span className="font-black text-[#1C1C1A]">{courier === 'Lainnya' ? customCourier : courier}</span>
+                          </div>
+                        )}
+                        {trackingNumber && (
+                          <div>
+                            <span className="text-[#70706E] font-bold">No. Resi:</span>{' '}
+                            <span className="font-mono font-black text-[#1C1C1A]">{trackingNumber}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
-                  <p className="text-slate-500 font-semibold italic">Customer Umum</p>
+                  <div className="space-y-1 text-sm">
+                    <p className="text-slate-500 font-semibold italic">Customer Umum</p>
+                    {showAddress && getInvoiceAddress() && (
+                      <p className="text-xs text-[#70706E] pt-1 border-t border-dashed border-gray-100">
+                        📍 {getInvoiceAddress()}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -914,6 +1018,7 @@ export default function InvoiceDetailPage() {
                       </select>
                     </div>
 
+
                     {/* Toggles */}
                     <div className="pt-2 space-y-2 border-t border-gray-100">
                       <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
@@ -944,6 +1049,26 @@ export default function InvoiceDetailPage() {
                           className="rounded border-[#EBEBEA] text-[#1E40AF]"
                         />
                         <span>Tampilkan Catatan Kaki</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
+                        <input
+                          type="checkbox"
+                          checked={showAddress}
+                          onChange={e => setShowAddress(e.target.checked)}
+                          className="rounded border-[#EBEBEA] text-[#1E40AF]"
+                        />
+                        <span>Tampilkan Alamat Customer</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
+                        <input
+                          type="checkbox"
+                          checked={showShipping}
+                          onChange={e => setShowShipping(e.target.checked)}
+                          className="rounded border-[#EBEBEA] text-[#1E40AF]"
+                        />
+                        <span>Tampilkan Kurir & Resi</span>
                       </label>
                     </div>
 

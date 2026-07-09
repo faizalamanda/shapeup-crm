@@ -169,7 +169,11 @@ export async function POST(req: Request) {
       layout_style = 'modern',
       show_sku = true,
       show_description = true,
-      show_notes = true
+      show_notes = true,
+      courier,
+      tracking_number,
+      show_address = true,
+      show_shipping = true
     } = body
 
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -293,7 +297,13 @@ export async function POST(req: Request) {
       layout_style,
       show_sku,
       show_description,
-      show_notes
+      show_notes,
+      show_address,
+      show_shipping,
+      meta_data: [
+        { key: 'shapeup_kurir_awb', value: courier || '' },
+        { key: 'shapeup_resi_awb', value: tracking_number || '' }
+      ]
     }
 
     // Map client items to order line_items structure

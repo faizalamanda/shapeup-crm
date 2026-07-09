@@ -12,6 +12,7 @@ type Customer = {
   name: string
   phone: string
   email: string | null
+  address_data?: any
 }
 
 type Product = {
@@ -37,6 +38,20 @@ const formatIDR = (value: number) => {
     currency: 'IDR',
     maximumFractionDigits: 0
   }).format(value)
+}
+
+const formatAddress = (addr: any) => {
+  if (!addr) return 'Alamat belum diatur'
+  const parts = [
+    addr.address_line1,
+    addr.address_line2,
+    addr.subdistrict,
+    addr.city,
+    addr.state,
+    addr.postcode,
+    addr.country
+  ].filter(Boolean)
+  return parts.join(', ') || 'Alamat belum diatur'
 }
 
 export default function NewInvoicePage() {
@@ -87,6 +102,13 @@ export default function NewInvoicePage() {
   const [showSku, setShowSku] = useState<boolean>(true)
   const [showDescription, setShowDescription] = useState<boolean>(true)
   const [showNotes, setShowNotes] = useState<boolean>(true)
+  const [showAddress, setShowAddress] = useState<boolean>(true)
+  const [showShipping, setShowShipping] = useState<boolean>(true)
+
+  // Shipping details
+  const [courier, setCourier] = useState<string>('')
+  const [customCourier, setCustomCourier] = useState<string>('')
+  const [trackingNumber, setTrackingNumber] = useState<string>('')
 
   // Autocomplete search states per row
   const [productSearchQueries, setProductSearchQueries] = useState<Record<number, string>>({})
@@ -292,7 +314,11 @@ export default function NewInvoicePage() {
         layout_style: layoutStyle,
         show_sku: showSku,
         show_description: showDescription,
-        show_notes: showNotes
+        show_notes: showNotes,
+        show_address: showAddress,
+        show_shipping: showShipping,
+        courier: courier === 'Lainnya' ? customCourier : courier,
+        tracking_number: trackingNumber
       }
 
       const response = await fetch('/api/orders/invoices', {
@@ -377,6 +403,13 @@ export default function NewInvoicePage() {
                     <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
                   ))}
                 </select>
+                {selectedCustomerId && (
+                  <div className="mt-2 p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-semibold text-slate-700">
+                    📍 <span className="font-bold">Alamat:</span> {
+                      formatAddress(customers.find(c => c.id === selectedCustomerId)?.address_data)
+                    }
+                  </div>
+                )}
               </div>
             ) : (
               <div className="border-t border-slate-100 pt-3">
@@ -432,6 +465,47 @@ export default function NewInvoicePage() {
                 disabled={paymentTerms !== 'custom'}
                 onChange={e => setDueDate(e.target.value)}
                 className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] bg-white disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Section 2.5: Shipping Details (Courier & Resi) */}
+          <div className="p-5 bg-white rounded-2xl border border-[#EBEBEA] shadow-sm grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-[#70706E]">Kurir Pengiriman (Opsional)</label>
+              <select
+                value={courier}
+                onChange={e => setCourier(e.target.value)}
+                className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+              >
+                <option value="">-- Pilih Kurir --</option>
+                <option value="JNE">JNE</option>
+                <option value="J&T">J&T</option>
+                <option value="Sicepat">Sicepat</option>
+                <option value="POS">POS Indonesia</option>
+                <option value="Tiki">TIKI</option>
+                <option value="Anteraja">Anteraja</option>
+                <option value="Wahana">Wahana</option>
+                <option value="Lainnya">Lainnya / Custom</option>
+              </select>
+              {courier === 'Lainnya' && (
+                <input
+                  type="text"
+                  placeholder="Masukkan nama kurir custom..."
+                  value={customCourier}
+                  onChange={e => setCustomCourier(e.target.value)}
+                  className="w-full mt-2 p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+                />
+              )}
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-[#70706E]">Nomor Resi (Opsional)</label>
+              <input
+                type="text"
+                placeholder="Masukkan nomor resi pengiriman..."
+                value={trackingNumber}
+                onChange={e => setTrackingNumber(e.target.value)}
+                className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all uppercase font-mono"
               />
             </div>
           </div>
@@ -737,6 +811,26 @@ export default function NewInvoicePage() {
                     className="rounded border-[#EBEBEA] text-[#1E40AF] focus:ring-[#1E40AF]"
                   />
                   <span>Tampilkan Catatan Kaki</span>
+                </label>
+
+                <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
+                  <input
+                    type="checkbox"
+                    checked={showAddress}
+                    onChange={e => setShowAddress(e.target.checked)}
+                    className="rounded border-[#EBEBEA] text-[#1E40AF] focus:ring-[#1E40AF]"
+                  />
+                  <span>Tampilkan Alamat Customer</span>
+                </label>
+
+                <label className="flex items-center gap-2 font-semibold text-[#1C1C1A]">
+                  <input
+                    type="checkbox"
+                    checked={showShipping}
+                    onChange={e => setShowShipping(e.target.checked)}
+                    className="rounded border-[#EBEBEA] text-[#1E40AF] focus:ring-[#1E40AF]"
+                  />
+                  <span>Tampilkan Kurir & Resi</span>
                 </label>
               </div>
             </div>

@@ -84,8 +84,36 @@ export function OrderDetailModal({ order, onClose }: { order: any, onClose: () =
     if (s.address_1) {
       return `${s.address_1}, ${s.address_2 ? s.address_2 + ', ' : ''}${kecamatan ? kecamatan + ', ' : ''}${s.city}, ${s.state} ${s.postcode || ''}`.trim()
     }
+
+    if (order.customer?.address_data) {
+      const addr = order.customer.address_data
+      const parts = [
+        addr.address_line1,
+        addr.address_line2,
+        addr.subdistrict,
+        addr.city,
+        addr.state,
+        addr.postcode,
+        addr.country
+      ].filter(Boolean)
+      if (parts.length > 0) return parts.join(', ')
+    }
     
     return order.shipping_address || "Alamat tidak terbaca."
+  }
+
+  // Ambil Kurir & Resi
+  const getCourierAndResi = () => {
+    const raw = order.raw_source_data || {}
+    const meta = raw.meta_data || []
+    
+    const courier = meta.find((m: any) => m.key === 'shapeup_kurir_awb')?.value || 
+                    meta.find((m: any) => m.key === '_kurir_awb')?.value || ''
+    
+    const resi = meta.find((m: any) => m.key === 'shapeup_resi_awb')?.value || 
+                 meta.find((m: any) => m.key === '_resi_awb')?.value || ''
+    
+    return { courier, resi }
   }
 
   const items = Array.isArray(order.items_json) ? order.items_json : []
@@ -283,6 +311,32 @@ export function OrderDetailModal({ order, onClose }: { order: any, onClose: () =
                 </p>
               </div>
             </div>
+
+            {/* COURIER & RESI */}
+            {(() => {
+              const { courier, resi } = getCourierAndResi()
+              if (!courier && !resi) return null
+              return (
+                <div>
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Informasi Pengiriman</h3>
+                  <div className="bg-white p-6 border border-slate-200 rounded-sm shadow-sm relative overflow-hidden space-y-2">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                    {courier && (
+                      <div className="text-xs">
+                        <span className="text-slate-400 font-bold uppercase">Kurir:</span>{' '}
+                        <span className="font-extrabold text-slate-800 uppercase">{courier}</span>
+                      </div>
+                    )}
+                    {resi && (
+                      <div className="text-xs">
+                        <span className="text-slate-400 font-bold uppercase">No. Resi:</span>{' '}
+                        <span className="font-mono font-extrabold text-slate-800 uppercase">{resi}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* INFO */}
             <div className="grid grid-cols-2 gap-2">
