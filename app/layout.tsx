@@ -6,6 +6,7 @@ import { logoutAction } from '@/app/auth/actions'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import "./globals.css"
+import BusinessOnboarding from '@/components/BusinessOnboarding'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -325,6 +326,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     return (
       <html lang="en" suppressHydrationWarning>
         <body className={inter.className}>{children}</body>
+      </html>
+    )
+  }
+
+  // Intercept layout to display onboarding if user is logged in but has no businesses
+  if (!bizLoading && userProfile && businesses.length === 0) {
+    return (
+      <html lang="en" suppressHydrationWarning>
+        <body className={inter.className}>
+          <BusinessOnboarding onLogout={handleLogout} />
+        </body>
       </html>
     )
   }
