@@ -95,6 +95,12 @@ const Icons = {
       <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
     </svg>
   ),
+  expenses: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="5" width="20" height="14" rx="2"/>
+      <line x1="2" y1="10" x2="22" y2="10"/>
+    </svg>
+  ),
 }
 
 const menuItems: MenuItem[] = [
@@ -115,7 +121,21 @@ const menuItems: MenuItem[] = [
       { name: 'Product Retention',  href: '/customers/product-retention' },
     ],
   },
-  { name: 'Products',     href: '/products',          icon: Icons.products },
+  {
+    name: 'Products', href: '#', icon: Icons.products,
+    children: [
+      { name: 'Daftar Produk', href: '/products' },
+      { name: 'Stock Opname',  href: '/stock-opname' },
+    ],
+  },
+  {
+    name: 'Pengeluaran', href: '#', icon: Icons.expenses,
+    children: [
+      { name: 'Daftar Pengeluaran', href: '/expenses' },
+      { name: 'Pembelian (Bills)',  href: '/purchases' },
+      { name: 'Pemasok (Suppliers)', href: '/suppliers' },
+    ],
+  },
   { name: 'Marketing',    href: '/marketing',         icon: Icons.marketing },
   { name: 'Business',     href: '/settings/business', icon: Icons.business },
 ]
