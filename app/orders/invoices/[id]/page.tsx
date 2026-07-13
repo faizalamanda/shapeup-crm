@@ -23,6 +23,7 @@ type InvoiceItem = {
   subtotal: string
   total: string
   product_id?: string | null
+  discount?: number
 }
 
 type Invoice = {
@@ -976,30 +977,59 @@ export default function InvoiceDetailPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {invItems.map((item, idx) => (
-                    <tr key={idx}>
-                      <td className={getTdStyle()}>
-                        <div className="font-bold text-[#1C1C1A]">{item.name}</div>
-                        {showDescription && item.description && (
-                          <div className="text-xs text-[#70706E] mt-0.5 whitespace-pre-wrap">{item.description}</div>
-                        )}
-                      </td>
-                      {showSku && (
-                        <td className={`${getTdStyle()} font-mono text-xs text-[#70706E]`}>
-                          {item.sku || '-'}
+                  {invItems.map((item, idx) => {
+                    const price = Number(item.price || 0)
+                    const qty = Number(item.quantity || 1)
+                    const discount = Number(item.discount || 0)
+                    const hasDiscount = discount > 0
+                    const discountedPrice = Math.max(0, price - discount)
+                    const lineOriginalTotal = price * qty
+                    const lineFinalTotal = discountedPrice * qty
+
+                    return (
+                      <tr key={idx}>
+                        <td className={getTdStyle()}>
+                          <div className="font-bold text-[#1C1C1A]">{item.name}</div>
+                          {showDescription && item.description && (
+                            <div className="text-xs text-[#70706E] mt-0.5 whitespace-pre-wrap">{item.description}</div>
+                          )}
                         </td>
-                      )}
-                      <td className={`${getTdStyle()} text-center font-bold text-slate-700`}>
-                        {item.quantity}
-                      </td>
-                      <td className={`${getTdStyle()} text-right text-slate-600`}>
-                        {formatIDR(item.price)}
-                      </td>
-                      <td className={`${getTdStyle()} text-right font-black text-slate-800`}>
-                        {formatIDR(Number(item.price) * Number(item.quantity))}
-                      </td>
-                    </tr>
-                  ))}
+                        {showSku && (
+                          <td className={`${getTdStyle()} font-mono text-xs text-[#70706E]`}>
+                            {item.sku || '-'}
+                          </td>
+                        )}
+                        <td className={`${getTdStyle()} text-center font-bold text-slate-700`}>
+                          {qty}
+                        </td>
+                        <td className={`${getTdStyle()} text-right text-slate-600`}>
+                          {hasDiscount && (
+                            <div className="text-[10px] text-gray-400 line-through">
+                              {formatIDR(price)}
+                            </div>
+                          )}
+                          <div>
+                            {formatIDR(discountedPrice)}
+                          </div>
+                          {hasDiscount && (
+                            <div className="text-[9px] text-rose-600 font-bold">
+                              (Potongan {formatIDR(discount)})
+                            </div>
+                          )}
+                        </td>
+                        <td className={`${getTdStyle()} text-right font-black text-slate-800`}>
+                          {hasDiscount && (
+                            <div className="text-[10px] text-gray-400 line-through">
+                              {formatIDR(lineOriginalTotal)}
+                            </div>
+                          )}
+                          <div className={hasDiscount ? 'text-rose-700' : ''}>
+                            {formatIDR(lineFinalTotal)}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

@@ -30,6 +30,7 @@ type InvoiceItemInput = {
   description?: string
   price: number
   quantity: number
+  discount?: number
 }
 
 const formatIDR = (value: number) => {
@@ -85,11 +86,15 @@ export default function NewInvoicePage() {
 
   // Invoice Items
   const [items, setItems] = useState<InvoiceItemInput[]>([
-    { product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1 }
+    { product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1, discount: 0 }
   ])
 
+  // Visibility toggles for additional fields
+  const [showShippingInput, setShowShippingInput] = useState<boolean>(false)
+  const [showOtherFeesInput, setShowOtherFeesInput] = useState<boolean>(false)
+  const [showItemDiscount, setShowItemDiscount] = useState<Record<number, boolean>>({})
+
   // Financial summary
-  const [discountAmount, setDiscountAmount] = useState<number>(0)
   const [shippingCost, setShippingCost] = useState<number>(0)
   const [otherFees, setOtherFees] = useState<number>(0)
   const [notes, setNotes] = useState<string>('')
@@ -204,12 +209,12 @@ export default function NewInvoicePage() {
 
   // Items Handlers
   const handleAddItemRow = () => {
-    setItems([...items, { product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1 }])
+    setItems([...items, { product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1, discount: 0 }])
   }
 
   const handleRemoveItemRow = (index: number) => {
     if (items.length === 1) {
-      setItems([{ product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1 }])
+      setItems([{ product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1, discount: 0 }])
       return
     }
     const nextItems = [...items]
@@ -220,7 +225,7 @@ export default function NewInvoicePage() {
   const handleItemFieldChange = (index: number, field: keyof InvoiceItemInput, val: any) => {
     setItems(prev => {
       const nextItems = [...prev]
-      if (field === 'price' || field === 'quantity') {
+      if (field === 'price' || field === 'quantity' || field === 'discount') {
         nextItems[index] = { ...nextItems[index], [field]: Number(val) }
       } else {
         nextItems[index] = { ...nextItems[index], [field]: val }
@@ -262,8 +267,12 @@ export default function NewInvoicePage() {
     return items.reduce((sum, item) => sum + (Number(item.price || 0) * Number(item.quantity || 1)), 0)
   }, [items])
 
+  const discountAmount = useMemo(() => {
+    return items.reduce((sum, item) => sum + (Number(item.discount || 0) * Number(item.quantity || 1)), 0)
+  }, [items])
+
   const grandTotal = useMemo(() => {
-    const total = subtotal - Number(discountAmount || 0) + Number(shippingCost || 0) + Number(otherFees || 0)
+    const total = subtotal - discountAmount + Number(shippingCost || 0) + Number(otherFees || 0)
     return Math.max(0, total)
   }, [subtotal, discountAmount, shippingCost, otherFees])
 
@@ -516,7 +525,8 @@ export default function NewInvoicePage() {
 
             <div className="space-y-3">
               {items.map((item, idx) => (
-                <div key={idx} className="relative flex flex-col md:flex-row gap-3 items-start md:items-start border-b border-gray-100 pb-3 md:pb-0 md:border-none">
+                <div key={idx} className="flex flex-col md:flex-row gap-3 items-start md:items-start border-b border-gray-100 pb-3 md:pb-0 md:border-none pt-4 md:pt-0">
+
                   {/* Item name input with product search */}
                   <div className="w-full md:flex-1 relative">
                     <input
@@ -576,7 +586,8 @@ export default function NewInvoicePage() {
                                   product_id: p.id,
                                   name: p.name,
                                   price: p.price,
-                                  sku: p.sku || ''
+                                  sku: p.sku || '',
+                                  discount: 0
                                 })
                                 setProductSearchQueries({ ...productSearchQueries, [idx]: '' })
                               }}
@@ -601,7 +612,7 @@ export default function NewInvoicePage() {
                     </div>
                   )}
 
-                  <div className="flex gap-2 w-full md:w-64 items-center">
+                  <div className="flex gap-2 w-full md:w-64 items-start">
                     <div className="w-16">
                       <input
                         type="number"
@@ -621,11 +632,58 @@ export default function NewInvoicePage() {
                         onChange={e => handleItemFieldChange(idx, 'price', e.target.value)}
                         className="w-full p-2 text-sm text-right rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
                       />
+                      
+                      {!showItemDiscount[idx] && (
+                        <div className="mt-1 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setShowItemDiscount(prev => ({ ...prev, [idx]: true }))}
+                            className="text-[10px] font-bold text-blue-600 hover:text-blue-700 transition-colors flex items-center gap-1"
+                            title="Tambah Diskon/Potongan"
+                          >
+                            🏷️ + Diskon
+                          </button>
+                        </div>
+                      )}
+
+                      {showItemDiscount[idx] && (
+                        <div className="mt-1.5 flex flex-col items-end gap-1">
+                          <span className="text-[10px] text-rose-600 font-bold">Potongan / Diskon (Rp):</span>
+                          <div className="flex items-center gap-1.5 w-full">
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              value={item.discount || ''}
+                              onChange={e => handleItemFieldChange(idx, 'discount', e.target.value)}
+                              className="w-full p-1.5 text-right text-xs rounded-xl border border-rose-200 focus:outline-none focus:ring-1 focus:ring-rose-400 text-rose-700 bg-rose-50/50"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleItemFieldChange(idx, 'discount', 0)
+                                setShowItemDiscount(prev => ({ ...prev, [idx]: false }))
+                              }}
+                              className="text-gray-400 hover:text-rose-500 text-sm p-1 font-bold"
+                              title="Hapus diskon"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   <div className="text-right w-full md:w-28 font-bold text-slate-700 hidden md:block md:pt-2">
-                    {formatIDR(item.price * item.quantity)}
+                    {Number(item.discount || 0) > 0 && (
+                      <div className="text-[10px] text-gray-400 line-through">
+                        {formatIDR(item.price * item.quantity)}
+                      </div>
+                    )}
+                    <div className={Number(item.discount || 0) > 0 ? 'text-rose-700' : ''}>
+                      {formatIDR((Number(item.price || 0) - Number(item.discount || 0)) * Number(item.quantity || 1))}
+                    </div>
                   </div>
 
                   <button
@@ -647,6 +705,108 @@ export default function NewInvoicePage() {
             >
               ➕ Tambah Baris Baru
             </button>
+
+            {/* Billing Summary Block below line items */}
+            <div className="border-t border-[#EBEBEA] pt-4 mt-6">
+              <div className="flex flex-col items-end">
+                <div className="w-full md:w-96 space-y-3">
+                  <div className="flex justify-between items-center border-b border-[#EBEBEA] pb-2 mb-2">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#70706E]">Ringkasan Tagihan</h3>
+                    <div className="flex gap-1.5">
+                      {!showShippingInput && (
+                        <button
+                          type="button"
+                          onClick={() => setShowShippingInput(true)}
+                          className="px-2 py-1 text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-all"
+                        >
+                          ➕ Biaya Pengiriman
+                        </button>
+                      )}
+                      {!showOtherFeesInput && (
+                        <button
+                          type="button"
+                          onClick={() => setShowOtherFeesInput(true)}
+                          className="px-2 py-1 text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-all"
+                        >
+                          ➕ Biaya Lainnya
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="divide-y divide-[#EBEBEA] text-xs font-semibold text-[#70706E]">
+                    <div className="py-2 flex justify-between">
+                      <span>Subtotal</span>
+                      <span className="text-[#1C1C1A] font-bold">{formatIDR(subtotal)}</span>
+                    </div>
+
+                    {discountAmount > 0 && (
+                      <div className="py-2 flex justify-between text-rose-600">
+                        <span>Total Potongan / Diskon</span>
+                        <span className="font-bold">-{formatIDR(discountAmount)}</span>
+                      </div>
+                    )}
+
+                    {showShippingInput && (
+                      <div className="py-2 flex justify-between items-center gap-3">
+                        <span>Biaya Pengiriman (Rp)</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min="0"
+                            value={shippingCost || ''}
+                            onChange={e => setShippingCost(Math.max(0, Number(e.target.value)))}
+                            className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShippingCost(0)
+                              setShowShippingInput(false)
+                            }}
+                            className="text-gray-400 hover:text-rose-500 text-xs font-bold"
+                            title="Hapus biaya pengiriman"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {showOtherFeesInput && (
+                      <div className="py-2 flex justify-between items-center gap-3">
+                        <span>Biaya Lainnya (Rp)</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min="0"
+                            value={otherFees || ''}
+                            onChange={e => setOtherFees(Math.max(0, Number(e.target.value)))}
+                            className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOtherFees(0)
+                              setShowOtherFeesInput(false)
+                            }}
+                            className="text-gray-400 hover:text-rose-500 text-xs font-bold"
+                            title="Hapus biaya lainnya"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="py-2.5 flex justify-between text-sm font-black text-[#1C1C1A] border-t-2 border-slate-800">
+                      <span>Total Akhir</span>
+                      <span className="text-[#1E40AF]">{formatIDR(grandTotal)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Section 4: Bottom details & Notes */}
@@ -662,55 +822,43 @@ export default function NewInvoicePage() {
           </div>
         </div>
 
-        {/* Customization & Billing Summary (Right) */}
+        {/* Actions & Customization (Right) */}
         <div className="space-y-6">
-          {/* Billing Summary */}
-          <div className="p-5 bg-white rounded-2xl border border-[#EBEBEA] shadow-sm space-y-4">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-[#70706E]">Ringkasan Tagihan</h2>
-            <div className="divide-y divide-[#EBEBEA] text-xs font-semibold text-[#70706E]">
-              <div className="py-2.5 flex justify-between">
-                <span>Subtotal</span>
-                <span className="text-[#1C1C1A]">{formatIDR(subtotal)}</span>
-              </div>
+          {/* Action Panel */}
+          <div className="p-4 bg-slate-50 border border-[#EBEBEA] rounded-2xl space-y-2.5">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => handleSubmit('pending')}
+              className="w-full py-2.5 text-xs font-bold text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-all"
+            >
+              💾 Simpan sebagai Draft
+            </button>
 
-              <div className="py-2.5 flex justify-between items-center gap-3">
-                <span>Potongan / Diskon (Rp)</span>
-                <input
-                  type="number"
-                  min="0"
-                  value={discountAmount || ''}
-                  onChange={e => setDiscountAmount(Math.max(0, Number(e.target.value)))}
-                  className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
-                />
-              </div>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => handleSubmit('processing')}
+              className="w-full py-2.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition-all"
+            >
+              🚀 Kirim & Terbitkan (Outstanding)
+            </button>
 
-              <div className="py-2.5 flex justify-between items-center gap-3">
-                <span>Biaya Pengiriman (Rp)</span>
-                <input
-                  type="number"
-                  min="0"
-                  value={shippingCost || ''}
-                  onChange={e => setShippingCost(Math.max(0, Number(e.target.value)))}
-                  className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
-                />
-              </div>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => setShowPaymentModal(true)}
+              className="w-full py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all"
+            >
+              💰 Simpan & Tandai Lunas Langsung
+            </button>
 
-              <div className="py-2.5 flex justify-between items-center gap-3">
-                <span>Biaya Lainnya (Rp)</span>
-                <input
-                  type="number"
-                  min="0"
-                  value={otherFees || ''}
-                  onChange={e => setOtherFees(Math.max(0, Number(e.target.value)))}
-                  className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
-                />
-              </div>
-
-              <div className="py-3 flex justify-between text-sm font-black text-[#1C1C1A] border-t-2 border-slate-800">
-                <span>Total Akhir</span>
-                <span className="text-[#1E40AF]">{formatIDR(grandTotal)}</span>
-              </div>
-            </div>
+            <Link
+              href="/orders/invoices"
+              className="block w-full py-2 text-xs text-center font-bold text-[#70706E] hover:text-[#1C1C1A] transition-colors"
+            >
+              Batal
+            </Link>
           </div>
 
           {/* Style Customization (Wave Apps premium feel) */}
@@ -834,43 +982,6 @@ export default function NewInvoicePage() {
                 </label>
               </div>
             </div>
-          </div>
-
-          {/* Action Panel */}
-          <div className="p-4 bg-slate-50 border border-[#EBEBEA] rounded-2xl space-y-2.5">
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => handleSubmit('pending')}
-              className="w-full py-2.5 text-xs font-bold text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-all"
-            >
-              💾 Simpan sebagai Draft
-            </button>
-
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => handleSubmit('processing')}
-              className="w-full py-2.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition-all"
-            >
-              🚀 Kirim & Terbitkan (Outstanding)
-            </button>
-
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => setShowPaymentModal(true)}
-              className="w-full py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all"
-            >
-              💰 Simpan & Tandai Lunas Langsung
-            </button>
-
-            <Link
-              href="/orders/invoices"
-              className="block w-full py-2 text-xs text-center font-bold text-[#70706E] hover:text-[#1C1C1A] transition-colors"
-            >
-              Batal
-            </Link>
           </div>
         </div>
       </div>

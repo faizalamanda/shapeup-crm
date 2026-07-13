@@ -284,6 +284,7 @@ export async function POST(req: Request) {
     // Calculate details
     const totalQty = items.reduce((sum: number, item: any) => sum + Number(item.quantity || 1), 0)
     const subtotal = items.reduce((sum: number, item: any) => sum + (Number(item.price || 0) * Number(item.quantity || 1)), 0)
+    const calculatedDiscountAmount = items.reduce((sum: number, item: any) => sum + (Number(item.discount || 0) * Number(item.quantity || 1)), 0)
 
     // 4. Save Invoice in orders table
     const rawSourceData = {
@@ -307,17 +308,24 @@ export async function POST(req: Request) {
     }
 
     // Map client items to order line_items structure
-    const lineItems = items.map((item: any, idx: number) => ({
-      id: item.product_id || idx,
-      name: item.name,
-      description: item.description || '',
-      price: Number(item.price),
-      quantity: Number(item.quantity),
-      sku: item.sku || '',
-      total: String(Number(item.price) * Number(item.quantity)),
-      subtotal: String(Number(item.price) * Number(item.quantity)),
-      product_id: item.product_id || null
-    }))
+    const lineItems = items.map((item: any, idx: number) => {
+      const price = Number(item.price || 0)
+      const qty = Number(item.quantity || 1)
+      const discount = Number(item.discount || 0)
+      const discountedPrice = Math.max(0, price - discount)
+      return {
+        id: item.product_id || idx,
+        name: item.name,
+        description: item.description || '',
+        price: price,
+        quantity: qty,
+        discount: discount,
+        sku: item.sku || '',
+        total: String(discountedPrice * qty),
+        subtotal: String(price * qty),
+        product_id: item.product_id || null
+      }
+    })
 
     const { data: order, error: insertErr } = await supabaseAdmin
       .from('orders')
@@ -332,7 +340,7 @@ export async function POST(req: Request) {
         total_qty: totalQty,
         subtotal: subtotal,
         shipping_cost: Number(shipping_cost),
-        discount_amount: Number(discount_amount),
+        discount_amount: calculatedDiscountAmount,
         other_fees: Number(other_fees),
         grand_total: Number(grand_total),
         payment_method: status === 'completed' ? (payment_method || 'Bank Transfer') : null,

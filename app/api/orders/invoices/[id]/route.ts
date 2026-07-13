@@ -396,19 +396,27 @@ export async function PUT(
     if (items && Array.isArray(items)) {
       totalQty = items.reduce((sum: number, item: any) => sum + Number(item.quantity || 1), 0)
       subtotal = items.reduce((sum: number, item: any) => sum + (Number(item.price || 0) * Number(item.quantity || 1)), 0)
-      finalGrandTotal = grand_total !== undefined ? grand_total : (subtotal - Number(discount_amount || 0) + Number(shipping_cost || 0) + Number(other_fees || 0))
+      const calculatedDiscountAmount = items.reduce((sum: number, item: any) => sum + (Number(item.discount || 0) * Number(item.quantity || 1)), 0)
+      finalGrandTotal = grand_total !== undefined ? grand_total : (subtotal - calculatedDiscountAmount + Number(shipping_cost || 0) + Number(other_fees || 0))
 
-      finalItems = items.map((item: any, idx: number) => ({
-        id: item.product_id || idx,
-        name: item.name,
-        description: item.description || '',
-        price: Number(item.price),
-        quantity: Number(item.quantity),
-        sku: item.sku || '',
-        total: String(Number(item.price) * Number(item.quantity)),
-        subtotal: String(Number(item.price) * Number(item.quantity)),
-        product_id: item.product_id || null
-      }))
+      finalItems = items.map((item: any, idx: number) => {
+        const price = Number(item.price || 0)
+        const qty = Number(item.quantity || 1)
+        const discount = Number(item.discount || 0)
+        const discountedPrice = Math.max(0, price - discount)
+        return {
+          id: item.product_id || idx,
+          name: item.name,
+          description: item.description || '',
+          price: price,
+          quantity: qty,
+          discount: discount,
+          sku: item.sku || '',
+          total: String(discountedPrice * qty),
+          subtotal: String(price * qty),
+          product_id: item.product_id || null
+        }
+      })
     } else {
       if (grand_total !== undefined) {
         finalGrandTotal = grand_total
@@ -417,6 +425,10 @@ export async function PUT(
 
     const nextStatus = status || existing.status
 
+    const calculatedDiscountAmount = items && Array.isArray(items)
+      ? items.reduce((sum: number, item: any) => sum + (Number(item.discount || 0) * Number(item.quantity || 1)), 0)
+      : (discount_amount !== undefined ? Number(discount_amount) : existing.discount_amount)
+
     const updatePayload: Record<string, any> = {
       customer_id: resolvedCustomerId,
       order_date: order_date ? new Date(order_date).toISOString() : existing.order_date,
@@ -424,7 +436,7 @@ export async function PUT(
       total_qty: totalQty,
       subtotal: subtotal,
       shipping_cost: shipping_cost !== undefined ? Number(shipping_cost) : existing.shipping_cost,
-      discount_amount: discount_amount !== undefined ? Number(discount_amount) : existing.discount_amount,
+      discount_amount: calculatedDiscountAmount,
       other_fees: other_fees !== undefined ? Number(other_fees) : existing.other_fees,
       grand_total: finalGrandTotal,
       status: nextStatus,
