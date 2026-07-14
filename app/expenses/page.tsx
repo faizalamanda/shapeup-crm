@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
 import Link from 'next/link'
+import { ExpenseDetailModal } from './components/ExpenseDetailModal'
 
 const STANDARD_CATEGORIES = [
   { key: 'marketing', name: 'Pemasaran & Promosi', code: '503100', icon: '📢', desc: 'Biaya iklan, sosmed, brosur, promo' },
@@ -76,6 +77,7 @@ export default function ExpensesPage() {
   const [activeBizName, setActiveBizName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [mounted, setMounted] = useState(false)
+  const [selectedExpenseForDetail, setSelectedExpenseForDetail] = useState<Expense | null>(null)
 
   // Filters State
   const [searchQuery, setSearchQuery] = useState('')
@@ -393,7 +395,11 @@ export default function ExpensesPage() {
               </thead>
               <tbody className="divide-y divide-gray-100 text-xs font-semibold text-gray-700">
                 {filteredExpenses.map(e => (
-                  <tr key={e.id} className="hover:bg-gray-50/50 transition-colors">
+                  <tr 
+                    key={e.id} 
+                    className="hover:bg-gray-50/50 transition-colors cursor-pointer"
+                    onClick={() => setSelectedExpenseForDetail(e)}
+                  >
                     <td className="p-4 space-y-0.5">
                       <div className="text-gray-900 font-bold">{e.date}</div>
                       <div className="text-gray-500 text-[10px] uppercase font-black">{e.vendor_name || 'Tanpa Vendor'}</div>
@@ -466,6 +472,7 @@ export default function ExpensesPage() {
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 px-2 py-1 rounded border border-amber-200 uppercase transition-colors"
+                          onClick={e => e.stopPropagation()}
                         >
                           📄 Lihat Nota
                         </a>
@@ -473,7 +480,7 @@ export default function ExpensesPage() {
                         <span className="text-gray-400 italic font-normal text-[10px]">Tidak ada</span>
                       )}
                     </td>
-                    <td className="p-4 text-right">
+                    <td className="p-4 text-right" onClick={e => e.stopPropagation()}>
                       <div className="flex justify-end gap-1.5">
                         {e.payment_status !== 'paid' && (
                           <button
@@ -616,6 +623,15 @@ export default function ExpensesPage() {
           </div>
         </div>,
         document.body
+      )}
+
+      {/* Detail Expense Modal */}
+      {selectedExpenseForDetail && (
+        <ExpenseDetailModal
+          expense={selectedExpenseForDetail}
+          accounts={accounts}
+          onClose={() => setSelectedExpenseForDetail(null)}
+        />
       )}
 
     </div>

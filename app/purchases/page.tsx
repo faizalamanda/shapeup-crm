@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
+import { PurchaseDetailModal } from './components/PurchaseDetailModal'
 
 type Supplier = {
   id: string
@@ -74,6 +75,7 @@ export default function PurchasesPage() {
   const [activeBizId, setActiveBizId] = useState<string | null>(null)
   const [activeBizName, setActiveBizName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [selectedPurchaseForDetail, setSelectedPurchaseForDetail] = useState<Purchase | null>(null)
 
   // Filter
   const [searchQuery, setSearchQuery] = useState('')
@@ -568,7 +570,11 @@ export default function PurchasesPage() {
                 {filteredPurchases.map(p => {
                   const remaining = p.grand_total - p.amount_paid
                   return (
-                    <tr key={p.id} className="hover:bg-gray-50/50 transition-colors">
+                    <tr 
+                      key={p.id} 
+                      className="hover:bg-gray-50/50 transition-colors cursor-pointer"
+                      onClick={() => setSelectedPurchaseForDetail(p)}
+                    >
                       <td className="p-4 space-y-1">
                         <div className="font-bold text-gray-900">{p.purchase_number}</div>
                         {p.attachment_url && (
@@ -577,6 +583,7 @@ export default function PurchasesPage() {
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-[9px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 uppercase"
+                            onClick={e => e.stopPropagation()}
                           >
                             📎 Nota
                           </a>
@@ -606,7 +613,7 @@ export default function PurchasesPage() {
                           </span>
                         )}
                       </td>
-                      <td className="p-4 text-right space-x-2">
+                      <td className="p-4 text-right space-x-2" onClick={e => e.stopPropagation()}>
                         {p.payment_status !== 'paid' && (
                           <button
                             onClick={() => openPayModal(p)}
@@ -1024,6 +1031,15 @@ export default function PurchasesPage() {
           </div>
         </div>,
         document.body
+      )}
+
+      {/* Detail Purchase Modal */}
+      {selectedPurchaseForDetail && (
+        <PurchaseDetailModal
+          purchase={selectedPurchaseForDetail}
+          accounts={accounts}
+          onClose={() => setSelectedPurchaseForDetail(null)}
+        />
       )}
 
     </div>
