@@ -139,14 +139,15 @@ export async function GET(req: Request) {
     // Ambil daftar staff dari business_staff join profiles menggunakan admin client
     const { data: bsData, error: staffError } = await supabaseAdmin
       .from('business_staff')
-      .select('role, profiles (*)')
+      .select('role, permissions, profiles (*)')
       .eq('business_id', adminProfile.active_business_id)
 
     if (staffError) throw staffError
 
     const staff = bsData?.map((item: any) => ({
       ...item.profiles,
-      role: item.role
+      role: item.role,
+      permissions: item.permissions || []
     })) || []
 
     return NextResponse.json({ staff })
@@ -158,7 +159,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const cookieStore = await cookies()
-  const { email, password, full_name, role } = await req.json()
+  const { email, password, full_name, role, permissions } = await req.json()
 
   try {
     const { isAdmin, adminProfile, error: authError } = await checkAdminSession(cookieStore)
@@ -248,7 +249,8 @@ export async function POST(req: Request) {
         .insert({
           business_id: adminProfile.active_business_id,
           profile_id: existingProfile.id,
-          role: role || 'staff'
+          role: role || 'staff',
+          permissions: permissions || []
         })
 
       if (bsError) throw bsError
@@ -280,7 +282,8 @@ export async function POST(req: Request) {
       .insert({
         business_id: adminProfile.active_business_id,
         profile_id: newUser.user.id,
-        role: role || 'staff'
+        role: role || 'staff',
+        permissions: permissions || []
       })
 
     if (bsError) throw bsError
@@ -309,7 +312,7 @@ export async function POST(req: Request) {
 
 export async function PUT(req: Request) {
   const cookieStore = await cookies()
-  const { id, email, password, full_name, role } = await req.json()
+  const { id, email, password, full_name, role, permissions } = await req.json()
 
   if (!id) {
     return NextResponse.json({ error: "ID staff wajib disertakan" }, { status: 400 })
@@ -360,11 +363,15 @@ export async function PUT(req: Request) {
       if (updateProfileError) throw updateProfileError
     }
 
-    // 3. Update business_staff role
-    if (role !== undefined) {
+    // 3. Update business_staff role and permissions
+    if (role !== undefined || permissions !== undefined) {
+      const updateData: any = {}
+      if (role !== undefined) updateData.role = role
+      if (permissions !== undefined) updateData.permissions = permissions
+
       const { error: updateBsError } = await supabaseAdmin
         .from('business_staff')
-        .update({ role })
+        .update(updateData)
         .eq('business_id', adminProfile.active_business_id)
         .eq('profile_id', id)
 

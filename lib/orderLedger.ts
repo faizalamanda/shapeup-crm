@@ -246,6 +246,30 @@ export async function syncOrderToLedger(
     const reversalPaymentTx = txs?.find(isReversalPaymentTx)
 
     const platform = order.source_platform || 'WooCommerce'
+    
+    // Determine payment date
+    let paymentDate = new Date().toISOString()
+    if (platform === 'WooCommerce') {
+      const isCod = (order.payment_method || '').toUpperCase().includes('COD')
+      const raw = order.raw_source_data || {}
+      if (isCod) {
+        if (raw.date_completed_gmt) {
+          paymentDate = new Date(raw.date_completed_gmt + 'Z').toISOString()
+        } else if (raw.date_completed) {
+          paymentDate = new Date(raw.date_completed).toISOString()
+        } else {
+          paymentDate = order.order_date || new Date().toISOString()
+        }
+      } else {
+        if (raw.date_paid_gmt) {
+          paymentDate = new Date(raw.date_paid_gmt + 'Z').toISOString()
+        } else if (raw.date_paid) {
+          paymentDate = new Date(raw.date_paid).toISOString()
+        } else {
+          paymentDate = order.order_date || new Date().toISOString()
+        }
+      }
+    }
 
     // Helper to adjust stock
     const adjustStock = async (direction: 'deduct' | 'restore') => {
@@ -399,7 +423,7 @@ export async function syncOrderToLedger(
             .insert({
               business_id: businessId,
               order_id: orderId,
-              date: new Date().toISOString(),
+              date: paymentDate,
               description: `Pembayaran ${platform} #${orderNumber}`
             })
             .select('id')
@@ -574,7 +598,7 @@ export async function syncOrderToLedger(
           .insert({
             business_id: businessId,
             order_id: orderId,
-            date: new Date().toISOString(),
+            date: paymentDate,
             description: `Pembayaran ${platform} #${orderNumber}`
           })
           .select('id')

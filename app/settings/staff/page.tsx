@@ -13,12 +13,21 @@ export default function StaffSettings() {
   const [loading, setLoading] = useState(true)
   const [currentUserProfile, setCurrentUserProfile] = useState<any>(null)
   
+  const PERMISSIONS_LIST = useMemo(() => [
+    { key: 'full_access', label: 'Akses Penuh', desc: 'Akses penuh ke seluruh modul (P&L, Neraca, detail Gaji karyawan)' },
+    { key: 'view_financials_no_salary', label: 'Keuangan Tanpa Gaji', desc: 'Bisa melihat P&L dan Neraca, tapi TIDAK BISA melihat rincian gaji per individu' },
+    { key: 'input_journal_expenses', label: 'Input Jurnal & Pengeluaran', desc: 'Hanya bisa input Jurnal harian dan pengeluaran operasional. Tidak punya akses ke dashboard P&L' },
+    { key: 'manage_invoices_bills', label: 'Kelola Invoice & Bills', desc: 'Hanya bisa mengelola Invoices (Piutang) dan Bills (Hutang)' },
+    { key: 'manage_employees_salary', label: 'Kelola Karyawan & Gaji (HR)', desc: 'Hanya bisa mengelola dan menambah data karyawan dan rincian gaji. Tidak punya akses ke modul akuntansi' }
+  ], [])
+  
   // Create Modal State
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [role, setRole] = useState('staff')
+  const [permissions, setPermissions] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [createMessage, setCreateMessage] = useState({ text: '', type: '' })
 
@@ -35,6 +44,7 @@ export default function StaffSettings() {
   const [editPassword, setEditPassword] = useState('')
   const [editName, setEditName] = useState('')
   const [editRole, setEditRole] = useState('staff')
+  const [editPermissions, setEditPermissions] = useState<string[]>([])
   const [editSubmitting, setEditSubmitting] = useState(false)
   const [editMessage, setEditMessage] = useState({ text: '', type: '' })
 
@@ -134,7 +144,8 @@ export default function StaffSettings() {
       const payload: any = {
         email,
         full_name: name,
-        role
+        role,
+        permissions: role === 'admin' ? ['full_access'] : permissions
       }
       if (!emailExists) {
         payload.password = password
@@ -155,7 +166,7 @@ export default function StaffSettings() {
             : 'Akun Staff berhasil dibuat!', 
           type: 'success' 
         })
-        setEmail(''); setPassword(''); setName(''); setRole('staff')
+        setEmail(''); setPassword(''); setName(''); setRole('staff'); setPermissions([])
         setEmailExists(null); setEmailAlreadyInBusiness(null); setExistingUserName('')
         fetchStaff()
         setTimeout(() => {
@@ -178,6 +189,7 @@ export default function StaffSettings() {
     setEditName(staff.full_name || '')
     setEditEmail(staff.email || '')
     setEditRole(staff.role || 'staff')
+    setEditPermissions(staff.permissions || [])
     setEditPassword('') // Blank by default, only updated if entered
     setIsEditModalOpen(true)
   }
@@ -197,6 +209,7 @@ export default function StaffSettings() {
         full_name: editName,
         email: editEmail,
         role: editRole,
+        permissions: editRole === 'admin' ? ['full_access'] : editPermissions
       }
       if (editPassword) {
         payload.password = editPassword
@@ -212,7 +225,7 @@ export default function StaffSettings() {
 
       if (res.ok) {
         setEditMessage({ text: "Informasi staff berhasil diperbarui!", type: 'success' })
-        setEditName(''); setEditEmail(''); setEditRole('staff'); setEditPassword('')
+        setEditName(''); setEditEmail(''); setEditRole('staff'); setEditPassword(''); setEditPermissions([])
         fetchStaff()
         setTimeout(() => {
           setIsEditModalOpen(false)
@@ -338,6 +351,7 @@ export default function StaffSettings() {
                 setPassword('')
                 setName('')
                 setRole('staff')
+                setPermissions([])
                 setEmailExists(null)
                 setEmailAlreadyInBusiness(null)
                 setExistingUserName('')
@@ -388,15 +402,34 @@ export default function StaffSettings() {
                       </td>
                       <td className="px-6 py-4 text-slate-600 font-bold border-r-4 border-black break-all">{s.email}</td>
                       <td className="px-6 py-4 border-r-4 border-black">
-                        {s.role === 'admin' ? (
-                          <span className="bg-black text-white text-[9px] font-black px-2 py-0.5 uppercase tracking-widest border-2 border-black">
-                            {s.role}
-                          </span>
-                        ) : (
-                          <span className="bg-white text-slate-700 text-[9px] font-black px-2 py-0.5 uppercase tracking-widest border-2 border-slate-400">
-                            {s.role || 'staff'}
-                          </span>
-                        )}
+                        <div className="space-y-2">
+                          <div>
+                            {s.role === 'admin' ? (
+                              <span className="bg-black text-white text-[9px] font-black px-2 py-0.5 uppercase tracking-widest border-2 border-black">
+                                {s.role}
+                              </span>
+                            ) : (
+                              <span className="bg-white text-slate-700 text-[9px] font-black px-2 py-0.5 uppercase tracking-widest border-2 border-slate-400">
+                                {s.role || 'staff'}
+                              </span>
+                            )}
+                          </div>
+                          {s.role !== 'admin' && s.permissions && s.permissions.length > 0 && (
+                            <div className="flex flex-wrap gap-1 max-w-[200px]">
+                              {s.permissions.map((pKey: string) => {
+                                const pObj = PERMISSIONS_LIST.find(p => p.key === pKey)
+                                return (
+                                  <span key={pKey} className="bg-yellow-100 text-[#2e2e2e] text-[8px] font-black px-1.5 py-0.5 border border-black uppercase tracking-tight block">
+                                    {pObj ? pObj.label : pKey}
+                                  </span>
+                                )
+                              })}
+                            </div>
+                          )}
+                          {s.role !== 'admin' && (!s.permissions || s.permissions.length === 0) && (
+                            <span className="text-[9px] italic text-slate-400 font-bold block">TIDAK ADA AKSES</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-center border-r-4 border-black last:border-r-0">
                         <span className="inline-flex items-center gap-1.5 bg-green-50 text-green-700 text-[9px] font-black px-2.5 py-0.5 uppercase tracking-widest border-2 border-green-600">
@@ -565,6 +598,37 @@ export default function StaffSettings() {
                   </select>
                 </div>
 
+                {role === 'staff' && (
+                  <div className="space-y-3 mt-4 border-t-4 border-black pt-4">
+                    <label className="block text-xs font-black uppercase tracking-widest">Hak Akses Modul (Pilih lebih dari satu)</label>
+                    <div className="space-y-2.5">
+                      {PERMISSIONS_LIST.map((p) => {
+                        const checked = permissions.includes(p.key)
+                        return (
+                          <label key={p.key} className="flex items-start gap-3 cursor-pointer p-2 border-2 border-black hover:bg-yellow-50/50">
+                            <input 
+                              type="checkbox"
+                              className="mt-1 accent-black cursor-pointer"
+                              checked={checked}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setPermissions([...permissions, p.key])
+                                } else {
+                                  setPermissions(permissions.filter(k => k !== p.key))
+                                }
+                              }}
+                            />
+                            <div>
+                              <div className="text-xs font-black uppercase tracking-wide">{p.label}</div>
+                              <div className="text-[10px] text-slate-500 font-bold leading-tight mt-0.5">{p.desc}</div>
+                            </div>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex gap-4 pt-6 border-t-4 border-black mt-8">
                   <button 
                     type="button" 
@@ -645,6 +709,37 @@ export default function StaffSettings() {
                     <option value="admin">Admin</option>
                   </select>
                 </div>
+
+                {editRole === 'staff' && (
+                  <div className="space-y-3 mt-4 border-t-4 border-black pt-4">
+                    <label className="block text-xs font-black uppercase tracking-widest">Hak Akses Modul (Pilih lebih dari satu)</label>
+                    <div className="space-y-2.5">
+                      {PERMISSIONS_LIST.map((p) => {
+                        const checked = editPermissions.includes(p.key)
+                        return (
+                          <label key={p.key} className="flex items-start gap-3 cursor-pointer p-2 border-2 border-black hover:bg-yellow-50/50">
+                            <input 
+                              type="checkbox"
+                              className="mt-1 accent-black cursor-pointer"
+                              checked={checked}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setEditPermissions([...editPermissions, p.key])
+                                } else {
+                                  setEditPermissions(editPermissions.filter(k => k !== p.key))
+                                }
+                              }}
+                            />
+                            <div>
+                              <div className="text-xs font-black uppercase tracking-wide">{p.label}</div>
+                              <div className="text-[10px] text-slate-500 font-bold leading-tight mt-0.5">{p.desc}</div>
+                            </div>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex gap-4 pt-6 border-t-4 border-black mt-8">
                   <button 

@@ -32,6 +32,14 @@ const Icons = {
       <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
     </svg>
   ),
+  employees: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+      <circle cx="9" cy="7" r="4"/>
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+      <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+  ),
   orders: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
@@ -101,6 +109,13 @@ const Icons = {
       <line x1="2" y1="10" x2="22" y2="10"/>
     </svg>
   ),
+  accounting: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="20" x2="18" y2="10"/>
+      <line x1="12" y1="20" x2="12" y2="4"/>
+      <line x1="6" y1="20" x2="6" y2="14"/>
+    </svg>
+  ),
 }
 
 const menuItems: MenuItem[] = [
@@ -136,6 +151,14 @@ const menuItems: MenuItem[] = [
       { name: 'Pemasok (Suppliers)', href: '/suppliers' },
     ],
   },
+  {
+    name: 'Akuntansi', href: '#', icon: Icons.accounting,
+    children: [
+      { name: 'Laporan Arus Kas', href: '/accounting/cash-flow' },
+      { name: 'Laporan Laba Rugi', href: '/accounting/profit-loss' },
+      { name: 'Neraca Keuangan', href: '/accounting/balance-sheet' },
+    ],
+  },
   { name: 'Marketing',    href: '/marketing',         icon: Icons.marketing },
   { name: 'Business',     href: '/settings/business', icon: Icons.business },
 ]
@@ -156,6 +179,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const [activeBusiness, setActiveBusiness] = useState<any>(null)
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const [userProfile, setUserProfile] = useState<any>(null)
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null)
+  const [currentUserPermissions, setCurrentUserPermissions] = useState<string[]>([])
   const [bizLoading, setBizLoading] = useState(true)
 
   useEffect(() => {
@@ -184,7 +209,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
     const [profileResult, bsResult, ownedResult] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', userId).single(),
-      supabase.from('business_staff').select('role, businesses (*)').eq('profile_id', userId),
+      supabase.from('business_staff').select('role, permissions, businesses (*)').eq('profile_id', userId),
       supabase.from('businesses').select('*').eq('owner_id', userId),
     ])
 
@@ -214,6 +239,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     setBusinesses(combined)
 
     // Find and set the active business
+    const activeBizId = profile?.active_business_id || combined[0]?.id
     if (profile?.active_business_id) {
       const active = combined.find(b => b.id === profile.active_business_id)
       if (active) {
@@ -238,6 +264,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       console.log('[Layout] no businesses found at all')
     }
 
+    // Resolve role and permissions
+    const activeBs = bsResult.data?.find((item: any) => item.businesses?.id === activeBizId)
+    const isUserAdmin = profile?.role === 'admin' || activeBs?.role === 'admin' || ownedResult.data?.some((biz: any) => biz.id === activeBizId)
+    
+    if (isUserAdmin) {
+      setCurrentUserRole('admin')
+      setCurrentUserPermissions(['full_access'])
+    } else if (activeBs) {
+      setCurrentUserRole(activeBs.role)
+      setCurrentUserPermissions(activeBs.permissions || [])
+    } else {
+      setCurrentUserRole('staff')
+      setCurrentUserPermissions([])
+    }
+
     if (loadId === loadIdRef.current) setBizLoading(false)
   }, [supabase])
 
@@ -257,12 +298,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             setUserProfile(null)
             setBusinesses([])
             setActiveBusiness(null)
+            setCurrentUserRole(null)
+            setCurrentUserPermissions([])
             setBizLoading(false)
           }
         } else if (event === 'SIGNED_OUT') {
           setUserProfile(null)
           setBusinesses([])
           setActiveBusiness(null)
+          setCurrentUserRole(null)
+          setCurrentUserPermissions([])
           setBizLoading(false)
         }
       }
@@ -290,6 +335,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             setUserProfile(null)
             setBusinesses([])
             setActiveBusiness(null)
+            setCurrentUserRole(null)
+            setCurrentUserPermissions([])
             setBizLoading(false)
           }
         }
@@ -299,8 +346,156 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       setUserProfile(null)
       setBusinesses([])
       setActiveBusiness(null)
+      setCurrentUserRole(null)
+      setCurrentUserPermissions([])
     }
   }, [pathname, noSidebar, userProfile?.id, supabase, loadProfileAndBusinesses])
+
+  // Dynamic menu filtering based on permissions
+  const allowedMenuItems = useMemo(() => {
+    if (bizLoading) return []
+    
+    const role = currentUserRole
+    const perms = currentUserPermissions
+
+    if (role === 'admin' || perms.includes('full_access')) {
+      // Admin/Full access sees all standard items + HR item
+      const fullList = [...menuItems]
+      // Insert HR right after Akuntansi (which is at index 5)
+      fullList.splice(6, 0, { name: 'Karyawan & Gaji', href: '/employees', icon: Icons.employees })
+      return fullList
+    }
+
+    const allowed: MenuItem[] = []
+
+    // 1. Overview
+    if (perms.includes('view_financials_no_salary') || perms.includes('input_journal_expenses') || perms.includes('manage_invoices_bills')) {
+      const overviewItem = menuItems.find(m => m.name === 'Overview')
+      if (overviewItem) allowed.push(overviewItem)
+    }
+
+    // 2. Pemasukan (Orders, Invoices, POS)
+    if (perms.includes('view_financials_no_salary') || perms.includes('manage_invoices_bills')) {
+      const pemasukanItem = menuItems.find(m => m.name === 'Pemasukan')
+      if (pemasukanItem) allowed.push(pemasukanItem)
+    }
+
+    // 3. Customers
+    if (perms.includes('view_financials_no_salary') || perms.includes('manage_invoices_bills')) {
+      const customersItem = menuItems.find(m => m.name === 'Customers')
+      if (customersItem) allowed.push(customersItem)
+    }
+
+    // 4. Products
+    if (perms.includes('view_financials_no_salary') || perms.includes('manage_invoices_bills')) {
+      const productsItem = menuItems.find(m => m.name === 'Products')
+      if (productsItem) allowed.push(productsItem)
+    }
+
+    // 5. Pengeluaran (Expenses, Purchases, Suppliers)
+    if (perms.includes('view_financials_no_salary') || perms.includes('input_journal_expenses') || perms.includes('manage_invoices_bills')) {
+      const expensesItem = menuItems.find(m => m.name === 'Pengeluaran')
+      if (expensesItem) allowed.push(expensesItem)
+    }
+
+    // 6. Akuntansi (Cash Flow, P&L, Balance Sheet)
+    if (perms.includes('view_financials_no_salary')) {
+      const accountingItem = menuItems.find(m => m.name === 'Akuntansi')
+      if (accountingItem) allowed.push(accountingItem)
+    }
+
+    // 7. Karyawan & Gaji (HR)
+    if (perms.includes('manage_employees_salary')) {
+      allowed.push({ name: 'Karyawan & Gaji', href: '/employees', icon: Icons.employees })
+    }
+
+    // Business Settings (Viewable by anyone, but restricted at page-level if needed)
+    const businessItem = menuItems.find(m => m.name === 'Business')
+    if (businessItem) allowed.push(businessItem)
+
+    return allowed
+  }, [currentUserRole, currentUserPermissions, bizLoading])
+
+  // Route protection path check
+  const isAllowedPath = useMemo(() => {
+    if (noSidebar || bizLoading) return true
+    
+    const role = currentUserRole
+    const perms = currentUserPermissions
+
+    if (role === 'admin' || perms.includes('full_access')) return true
+
+    if (pathname.startsWith('/settings/staff')) {
+      return false
+    }
+
+    if (pathname.startsWith('/marketing')) {
+      return false
+    }
+
+    if (pathname.startsWith('/employees')) {
+      return perms.includes('manage_employees_salary')
+    }
+
+    if (pathname.startsWith('/accounting')) {
+      return perms.includes('view_financials_no_salary')
+    }
+
+    if (
+      pathname.startsWith('/orders') ||
+      pathname.startsWith('/customers') ||
+      pathname.startsWith('/products') ||
+      pathname.startsWith('/stock-opname')
+    ) {
+      return perms.includes('view_financials_no_salary') || perms.includes('manage_invoices_bills')
+    }
+
+    if (
+      pathname.startsWith('/expenses') ||
+      pathname.startsWith('/purchases') ||
+      pathname.startsWith('/suppliers')
+    ) {
+      return (
+        perms.includes('view_financials_no_salary') ||
+        perms.includes('input_journal_expenses') ||
+        perms.includes('manage_invoices_bills')
+      )
+    }
+
+    if (pathname === '/dashboard') {
+      return (
+        perms.includes('view_financials_no_salary') ||
+        perms.includes('input_journal_expenses') ||
+        perms.includes('manage_invoices_bills')
+      )
+    }
+
+    return true
+  }, [pathname, currentUserRole, currentUserPermissions, noSidebar, bizLoading])
+
+  const accessDeniedScreen = (
+    <div className="min-h-[70vh] bg-[#f4f1ea] p-4 md:p-8 text-[#2e2e2e] flex items-center justify-center">
+      <div className="bg-white border-4 border-black p-10 text-center space-y-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-w-xl">
+        <div className="w-16 h-16 bg-red-100 border-4 border-black flex items-center justify-center text-3xl mx-auto rounded-full">
+          🚫
+        </div>
+        <h2 className="text-3xl font-black uppercase italic tracking-tight text-slate-900 leading-none">
+          Akses Ditolak
+        </h2>
+        <p className="text-sm font-bold text-slate-600 uppercase tracking-widest leading-relaxed">
+          Anda tidak memiliki hak akses (izin) untuk membuka modul ini.
+        </p>
+        <div className="pt-4">
+          <Link 
+            href={currentUserPermissions.includes('manage_employees_salary') ? "/employees" : "/dashboard"} 
+            className="inline-block bg-black text-white font-black uppercase text-xs tracking-widest px-8 py-4 border-4 border-black hover:bg-yellow-200 hover:text-black transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-[4px] hover:translate-y-[4px]"
+          >
+            Kembali ke Halaman Utama
+          </Link>
+        </div>
+      </div>
+    </div>
+  )
 
   // Close switcher dropdown on click outside
   useEffect(() => {
@@ -561,7 +756,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           {/* Nav */}
           <nav style={{ flex: 1, overflowY: 'auto', padding: '12px 8px' }}>
-            {menuItems.map((item) => {
+            {allowedMenuItems.map((item) => {
               const isChildActive = Boolean(item.children?.some(child => pathname === child.href))
               const isActive = pathname === item.href || 
                 (item.href !== '/dashboard' && item.href !== '#' && pathname.startsWith(item.href)) ||
@@ -732,7 +927,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {/* User chip */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <div className="hidden sm:block" style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--su-text)', lineHeight: 1.3 }}>Admin</div>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--su-text)', lineHeight: 1.3 }}>
+                  {currentUserRole === 'admin' ? 'Owner / Admin' : 'Anggota Tim'}
+                </div>
                 <div style={{ fontSize: '9px', fontWeight: 600, color: 'var(--su-accent)', textTransform: 'uppercase', letterSpacing: '0.14em' }}>Premium</div>
               </div>
               <div style={{
@@ -748,7 +945,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* Page content */}
           <main style={{ flex: 1, overflowY: 'auto', padding: '28px 28px 48px' }}>
             <div style={{ maxWidth: '1600px', margin: '0 auto' }} className="su-fade-in">
-              {children}
+              {isAllowedPath ? children : accessDeniedScreen}
             </div>
           </main>
         </div>
