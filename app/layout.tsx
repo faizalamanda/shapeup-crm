@@ -157,6 +157,7 @@ const menuItems: MenuItem[] = [
       { name: 'Laporan Arus Kas', href: '/accounting/cash-flow' },
       { name: 'Laporan Laba Rugi', href: '/accounting/profit-loss' },
       { name: 'Neraca Keuangan', href: '/accounting/balance-sheet' },
+      { name: 'Bagan Akun (COA)', href: '/accounting/coa' },
     ],
   },
   { name: 'Marketing',    href: '/marketing',         icon: Icons.marketing },
