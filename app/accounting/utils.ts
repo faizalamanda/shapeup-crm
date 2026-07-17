@@ -238,7 +238,8 @@ export async function fetchLedgerBalances(
   businessId: string,
   endDate: string, // YYYY-MM-DD
   startDate?: string, // Optional YYYY-MM-DD
-  timezone?: string
+  timezone?: string,
+  basis?: 'accrual' | 'cash'
 ): Promise<{ accounts: Account[]; balances: Record<string, { debit: number; credit: number }> }> {
   // 1. Fetch all accounts
   const { data: accounts, error: accountsErr } = await supabase
@@ -270,7 +271,8 @@ export async function fetchLedgerBalances(
     .rpc('get_ledger_balances', {
       p_business_id: businessId,
       p_start_date: startOfDayISO,
-      p_end_date: endOfDayISO
+      p_end_date: endOfDayISO,
+      p_basis: basis || 'accrual'
     })
 
   if (balancesErr) {

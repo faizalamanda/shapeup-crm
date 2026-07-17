@@ -17,6 +17,7 @@ export async function ensureExpenseAccounts(
 
   const defaultAccounts = [
     { code: '201000', name: 'Hutang Usaha', type: 'LIABILITY', business_id: businessId },
+    { code: '201100', name: 'Hutang Gaji & Upah', type: 'LIABILITY', business_id: businessId },
     { code: '502000', name: 'Penyesuaian Persediaan', type: 'EXPENSE', business_id: businessId },
     { code: '503000', name: 'Beban Operasional', type: 'EXPENSE', business_id: businessId },
     { code: '102000', name: 'Persediaan Barang', type: 'ASSET', business_id: businessId },
@@ -55,7 +56,7 @@ export async function ensureExpenseAccounts(
 
   // Refetch accounts to build the mapping
   const targetCodes = [
-    '201000', '502000', '503000', '102000',
+    '201000', '201100', '502000', '503000', '102000',
     '503100', '503200', '503300', '503400',
     '503500', '503600', '503700', '503800',
     '503900', '504000', '120000'

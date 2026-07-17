@@ -29,6 +29,7 @@ export default function ProfitLossPage() {
   const [dateRangeType, setDateRangeType] = useState<DateRangeKey>('this-month')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+  const [basis, setBasis] = useState<'accrual' | 'cash'>('accrual')
 
   // Toggle detail rows
   const [showRevenueDetail, setShowRevenueDetail] = useState(true)
@@ -80,10 +81,10 @@ export default function ProfitLossPage() {
   }, [supabase])
 
   // Fetch data from Ledger using server-side RPC
-  const loadData = useCallback(async (businessId: string, startD: string, endD: string, timezone: string) => {
+  const loadData = useCallback(async (businessId: string, startD: string, endD: string, timezone: string, reportBasis: 'accrual' | 'cash') => {
     setLoading(true)
     try {
-      const data = await fetchLedgerBalances(supabase, businessId, endD, startD, timezone)
+      const data = await fetchLedgerBalances(supabase, businessId, endD, startD, timezone, reportBasis)
       setAccounts(data.accounts)
       setBalances(data.balances)
       setErrorMsg(null)
@@ -95,12 +96,12 @@ export default function ProfitLossPage() {
     }
   }, [supabase])
 
-  // Trigger load when business or date range change
+  // Trigger load when business, date range, or basis change
   useEffect(() => {
     if (activeBizId && startDate && endDate && activeBizTimezone) {
-      loadData(activeBizId, startDate, endDate, activeBizTimezone)
+      loadData(activeBizId, startDate, endDate, activeBizTimezone, basis)
     }
-  }, [activeBizId, startDate, endDate, activeBizTimezone, loadData])
+  }, [activeBizId, startDate, endDate, activeBizTimezone, basis, loadData])
 
   // Dynamic calculations based on selected date range
   const reportData = useMemo(() => {
@@ -223,6 +224,13 @@ export default function ProfitLossPage() {
                 📍 {activeBizName}
               </span>
             )}
+            <span className={`text-[9px] font-black tracking-widest px-2 py-0.5 rounded-full border uppercase ${
+              basis === 'cash' 
+                ? 'text-emerald-700 bg-emerald-50 border-emerald-100' 
+                : 'text-blue-700 bg-blue-50 border-blue-100'
+            }`}>
+              {basis === 'cash' ? '💵 Cash Basis' : '📈 Accrual Basis'}
+            </span>
           </div>
           <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight leading-none uppercase">
             Laporan Laba Rugi
@@ -242,7 +250,9 @@ export default function ProfitLossPage() {
       {/* Printed Brand Header (Only shown when printing) */}
       <div className="hidden print-header">
         <h1 className="text-xl font-bold uppercase tracking-wide">{activeBizName || 'ShapeUp CRM'}</h1>
-        <h2 className="text-lg font-black uppercase text-blue-600 mt-1">Laporan Laba Rugi</h2>
+        <h2 className="text-lg font-black uppercase text-blue-600 mt-1">
+          Laporan Laba Rugi ({basis === 'cash' ? 'Cash Basis' : 'Accrual Basis'})
+        </h2>
         <p className="text-xs text-gray-500 mt-1">
           Periode: {startDate} s/d {endDate}
         </p>
@@ -265,6 +275,18 @@ export default function ProfitLossPage() {
             <option value="last-quarter">Kuartal Lalu</option>
             <option value="last-year">Tahun Lalu</option>
             <option value="custom">Kustom Tanggal</option>
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Basis Pelaporan</label>
+          <select
+            className="p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white min-w-40"
+            value={basis}
+            onChange={e => setBasis(e.target.value as 'accrual' | 'cash')}
+          >
+            <option value="accrual">Accrual Basis</option>
+            <option value="cash">Cash Basis</option>
           </select>
         </div>
 
