@@ -24,7 +24,13 @@ export default function BalanceSheetPage() {
   const [balances, setBalances] = useState<Record<string, { debit: number; credit: number }>>({})
 
   // Snapshot date
-  const [asOfDate, setAsOfDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [asOfDate, setAsOfDate] = useState(() => {
+    const d = new Date()
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  })
 
   // Collapsible groups
   const [showAssetsDetail, setShowAssetsDetail] = useState(true)

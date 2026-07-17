@@ -83,9 +83,14 @@ export function getDateRangeLimits(key: DateRangeKey): { start: string; end: str
       break
   }
 
-  // Format as YYYY-MM-DD
-  const toISODate = (d: Date) => d.toISOString().split('T')[0]
-  return { start: toISODate(start), end: toISODate(end) }
+  // Format as local YYYY-MM-DD
+  const toLocalISODate = (d: Date) => {
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+  return { start: toLocalISODate(start), end: toLocalISODate(end) }
 }
 
 // Helper to convert local calendar date to UTC timestamp based on timezone

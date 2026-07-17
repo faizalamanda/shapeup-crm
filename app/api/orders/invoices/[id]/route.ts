@@ -601,6 +601,58 @@ export async function PUT(
       }
     }
 
+    // If status is changed back to Draft ('pending')
+    if (nextStatus === 'pending' && existing.status !== 'pending') {
+      if (existing.status === 'processing' || existing.status === 'completed') {
+        const orderItems = Array.isArray(existing.items_json) ? existing.items_json : []
+        const productIds = orderItems.map((i: any) => i.product_id).filter(Boolean)
+
+        // Restock
+        if (productIds.length > 0) {
+          const { data: dbProducts } = await supabaseAdmin
+            .from('products')
+            .select('id, stock_type, stock_quantity')
+            .in('id', productIds)
+
+          if (dbProducts) {
+            const productMap = new Map<string, any>()
+            dbProducts.forEach(p => productMap.set(p.id, p))
+
+            for (const item of orderItems) {
+              const dbProd = productMap.get(item.product_id)
+              if (dbProd) {
+                if (dbProd.stock_type === 'tracked') {
+                  await supabaseAdmin
+                    .from('products')
+                    .update({ stock_quantity: dbProd.stock_quantity + Number(item.quantity) })
+                    .eq('id', dbProd.id)
+                }
+              }
+            }
+          }
+        }
+
+        // Delete ledger transactions
+        const { data: txs } = await supabaseAdmin
+          .from('transactions')
+          .select('id')
+          .eq('order_id', existing.id)
+
+        const txIds = txs ? txs.map(t => t.id) : []
+        if (txIds.length > 0) {
+          await supabaseAdmin
+            .from('journal_lines')
+            .delete()
+            .in('transaction_id', txIds)
+
+          await supabaseAdmin
+            .from('transactions')
+            .delete()
+            .eq('order_id', existing.id)
+        }
+      }
+    }
+
     // 4. If status changed from Draft ('pending') to Sent ('processing')
     if (existing.status === 'pending' && nextStatus === 'processing') {
       // Generate accounts if missing
