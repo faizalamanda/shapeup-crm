@@ -139,7 +139,14 @@ export default function ProfitLossPage() {
       if (acc.type === 'REVENUE') {
         revenueList.push({ account: acc, balance: bal })
       } else if (acc.type === 'EXPENSE') {
-        if (acc.code === '501000' || acc.name.toLowerCase().includes('harga pokok') || acc.name.toLowerCase().includes('hpp')) {
+        const isHpp = acc.sub_type === 'cogs' || 
+                      (!acc.sub_type && (
+                        acc.code.startsWith('501') || 
+                        acc.code === '501000' || 
+                        acc.name.toLowerCase().includes('harga pokok') || 
+                        acc.name.toLowerCase().includes('hpp')
+                      ));
+        if (isHpp) {
           hppList.push({ account: acc, balance: bal })
         } else {
           expenseList.push({ account: acc, balance: bal })

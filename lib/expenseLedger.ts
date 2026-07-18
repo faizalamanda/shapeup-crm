@@ -47,34 +47,45 @@ export async function ensureExpenseAccounts(
   const existingCodes = existingAccounts ? existingAccounts.map(a => a.code) : []
   const accountsToCreate = defaultAccounts.filter(a => !existingCodes.includes(a.code))
 
-  if (accountsToCreate.length > 0) {
-    const { error: insAccErr } = await supabase.from('accounts').insert(accountsToCreate)
-    if (insAccErr && !insAccErr.message.includes('duplicate key')) {
-      throw new Error(`Failed to create default accounts: ${insAccErr.message}`)
-    }
-  }
-
-  // Refetch accounts to build the mapping
   const targetCodes = [
     '201000', '201100', '502000', '503000', '102000',
     '503100', '503200', '503300', '503400',
     '503500', '503600', '503700', '503800',
     '503900', '504000', '120000'
   ]
-  const { data: allAccounts, error: refetchAccErr } = await supabase
-    .from('accounts')
-    .select('id, code')
-    .eq('business_id', businessId)
-    .in('code', targetCodes)
 
-  if (refetchAccErr || !allAccounts) {
-    throw new Error(`Failed to refetch ledger accounts: ${refetchAccErr?.message || 'unknown'}`)
+  if (accountsToCreate.length > 0) {
+    const { error: insAccErr } = await supabase.from('accounts').insert(accountsToCreate)
+    if (insAccErr && !insAccErr.message.includes('duplicate key')) {
+      throw new Error(`Failed to create default accounts: ${insAccErr.message}`)
+    }
+
+    // Refetch accounts to build the mapping only when we inserted new ones
+    const { data: allAccounts, error: refetchAccErr } = await supabase
+      .from('accounts')
+      .select('id, code')
+      .eq('business_id', businessId)
+      .in('code', targetCodes)
+
+    if (refetchAccErr || !allAccounts) {
+      throw new Error(`Failed to refetch ledger accounts: ${refetchAccErr?.message || 'unknown'}`)
+    }
+
+    accountMap = {}
+    allAccounts.forEach(a => {
+      accountMap[a.code] = a.id
+    })
+  } else {
+    // Build mapping directly from existingAccounts without an extra database query
+    accountMap = {}
+    if (existingAccounts) {
+      existingAccounts.forEach(a => {
+        if (targetCodes.includes(a.code)) {
+          accountMap[a.code] = a.id
+        }
+      })
+    }
   }
-
-  accountMap = {}
-  allAccounts.forEach(a => {
-    accountMap[a.code] = a.id
-  })
 
   expenseAccountCache[businessId] = accountMap
   return accountMap

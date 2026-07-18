@@ -147,15 +147,24 @@ export default function BalanceSheetPage() {
       const bal = accountBalances[acc.id] || 0
       
       if (acc.type === 'ASSET') {
-        const isCashOrBank = acc.code.startsWith('101') || 
-                             acc.code.startsWith('1100') ||
-                             acc.name.toLowerCase().includes('kas') ||
-                             acc.name.toLowerCase().includes('bank') ||
-                             acc.name.toLowerCase().includes('qris')
-        const isReceivable = acc.code.startsWith('103') || acc.name.toLowerCase().includes('piutang')
-        const isInventory = acc.code.startsWith('102') || acc.name.toLowerCase().includes('persediaan')
+        const isCurrentAsset = acc.sub_type ? (
+          acc.sub_type === 'bank_cash' ||
+          acc.sub_type === 'receivable' ||
+          acc.sub_type === 'current_assets' ||
+          acc.sub_type === 'prepayments'
+        ) : (
+          acc.code.startsWith('101') || 
+          acc.code.startsWith('1100') ||
+          acc.code.startsWith('102') ||
+          acc.code.startsWith('103') ||
+          acc.name.toLowerCase().includes('kas') ||
+          acc.name.toLowerCase().includes('bank') ||
+          acc.name.toLowerCase().includes('qris') ||
+          acc.name.toLowerCase().includes('piutang') ||
+          acc.name.toLowerCase().includes('persediaan')
+        );
 
-        if (isCashOrBank || isReceivable || isInventory) {
+        if (isCurrentAsset) {
           currentAssets.push({ account: acc, balance: bal })
         } else {
           fixedAssets.push({ account: acc, balance: bal })

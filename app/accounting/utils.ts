@@ -5,6 +5,7 @@ export type Account = {
   code: string
   name: string
   type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE'
+  sub_type?: string | null
   created_at?: string
   business_id: string
 }

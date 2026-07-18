@@ -43,11 +43,42 @@ const CLASSIFICATION_MAP: Record<string, ClassificationDef[]> = {
 
 type AccountType = 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE'
 
+export const SUB_TYPES_MAP: Record<AccountType, { value: string; label: string }[]> = {
+  ASSET: [
+    { value: 'bank_cash', label: '🏦 Kas & Bank (Bank and Cash)' },
+    { value: 'receivable', label: '👤 Piutang Usaha (Receivable)' },
+    { value: 'current_assets', label: '📈 Aset Lancar Lainnya (Current Assets)' },
+    { value: 'prepayments', label: '💸 Beban Dibayar di Muka (Prepayments)' },
+    { value: 'fixed_assets', label: '💻 Aset Tetap (Fixed Assets)' },
+    { value: 'non_current_assets', label: '🏢 Aset Tidak Lancar Lainnya (Non-current Assets)' }
+  ],
+  LIABILITY: [
+    { value: 'payable', label: '🤝 Hutang Usaha (Payable)' },
+    { value: 'credit_card', label: '💳 Kartu Kredit (Credit Card)' },
+    { value: 'current_liabilities', label: '⏳ Kewajiban Lancar Lainnya (Current Liabilities)' },
+    { value: 'non_current_liabilities', label: '🛡️ Kewajiban Jangka Panjang (Non-current Liabilities)' }
+  ],
+  EQUITY: [
+    { value: 'equity', label: '⚖️ Ekuitas (Equity)' },
+    { value: 'current_year_earnings', label: '📊 Laba Tahun Berjalan (Current Year Earnings)' }
+  ],
+  REVENUE: [
+    { value: 'income', label: '💰 Pendapatan Usaha (Income)' },
+    { value: 'other_income', label: '💵 Pendapatan Lain-lain (Other Income)' }
+  ],
+  EXPENSE: [
+    { value: 'cogs', label: '🛒 Harga Pokok Penjualan (Cost of Goods Sold/HPP)' },
+    { value: 'expense', label: '💼 Beban Operasional (Expenses)' },
+    { value: 'depreciation', label: '📉 Penyusutan & Amortisasi (Depreciation)' }
+  ]
+}
+
 type Account = {
   id: string
   code: string
   name: string
   type: AccountType
+  sub_type?: string | null
   business_id: string
   created_at?: string
 }
@@ -98,6 +129,7 @@ export default function ChartOfAccountsPage() {
   const [formCode, setFormCode] = useState('')
   const [formName, setFormName] = useState('')
   const [formType, setFormType] = useState<AccountType>('ASSET')
+  const [formSubType, setFormSubType] = useState<string>('')
   const [submitLoading, setSubmitLoading] = useState(false)
   
   // Mounted Check
@@ -382,6 +414,7 @@ export default function ChartOfAccountsPage() {
     setFormCode('')
     setFormName('')
     setFormType(defaultType)
+    setFormSubType(SUB_TYPES_MAP[defaultType]?.[0]?.value || '')
     setIsModalOpen(true)
   }
 
@@ -390,6 +423,7 @@ export default function ChartOfAccountsPage() {
     setFormCode(acc.code)
     setFormName(acc.name)
     setFormType(acc.type)
+    setFormSubType(acc.sub_type || SUB_TYPES_MAP[acc.type]?.[0]?.value || '')
     setIsModalOpen(true)
   }
 
@@ -424,7 +458,8 @@ export default function ChartOfAccountsPage() {
           .update({
             code: trimmedCode,
             name: trimmedName,
-            type: formType
+            type: formType,
+            sub_type: formSubType
           })
           .eq('id', selectedAccount.id)
           .eq('business_id', activeBizId)
@@ -439,7 +474,8 @@ export default function ChartOfAccountsPage() {
             business_id: activeBizId,
             code: trimmedCode,
             name: trimmedName,
-            type: formType
+            type: formType,
+            sub_type: formSubType
           })
 
         if (error) throw error
@@ -772,7 +808,20 @@ export default function ChartOfAccountsPage() {
                                     acc.type === 'REVENUE' ? 'text-emerald-700 bg-emerald-50/70 border-emerald-100' :
                                     'text-rose-700 bg-rose-50/70 border-rose-100'
                                   }`}>
-                                    {acc.type}
+                                    {(() => {
+                                      if (!acc.sub_type) {
+                                        if (acc.type === 'EXPENSE') {
+                                          if (acc.code.startsWith('501') || acc.name.toLowerCase().includes('harga pokok') || acc.name.toLowerCase().includes('hpp')) {
+                                            return 'Harga Pokok Penjualan (HPP)'
+                                          }
+                                          return 'Beban Operasional'
+                                        }
+                                        return acc.type
+                                      }
+                                      const stList = SUB_TYPES_MAP[acc.type] || []
+                                      const found = stList.find(st => st.value === acc.sub_type)
+                                      return found ? found.label.replace(/^.*? /, '').split(' (')[0] : acc.sub_type
+                                    })()}
                                   </span>
                                 </td>
 
@@ -844,13 +893,35 @@ export default function ChartOfAccountsPage() {
                   required
                   className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
                   value={formType}
-                  onChange={e => setFormType(e.target.value as AccountType)}
+                  onChange={e => {
+                    const newType = e.target.value as AccountType
+                    setFormType(newType)
+                    setFormSubType(SUB_TYPES_MAP[newType]?.[0]?.value || '')
+                  }}
                 >
                   <option value="ASSET">📈 Aset (Asset)</option>
                   <option value="LIABILITY">💵 Kewajiban (Liability)</option>
                   <option value="EQUITY">⚖️ Ekuitas (Equity)</option>
                   <option value="REVENUE">💰 Pendapatan (Revenue)</option>
                   <option value="EXPENSE">🛒 Beban (Expense)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">
+                  Sub-Tipe Akun *
+                </label>
+                <select
+                  required
+                  className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
+                  value={formSubType}
+                  onChange={e => setFormSubType(e.target.value)}
+                >
+                  {(SUB_TYPES_MAP[formType] || []).map(st => (
+                    <option key={st.value} value={st.value}>
+                      {st.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 
