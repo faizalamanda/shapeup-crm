@@ -141,7 +141,7 @@ export async function POST(req: Request) {
 
     const updateResults = await Promise.all(updatePromises)
     const failedUpdate = updateResults.find(r => r.error)
-    if (failedUpdate) {
+    if (failedUpdate && failedUpdate.error) {
       throw new Error(`Gagal mengupdate status pengeluaran: ${failedUpdate.error.message}`)
     }
 

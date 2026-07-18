@@ -254,7 +254,7 @@ export default function ExpensesPage() {
   }
 
   const selectedOutstandingExpenses = useMemo(() => {
-    return expenses.filter(e => selectedIds.includes(e.id) && parseFloat(e.outstanding_amount || 0) > 0.01)
+    return expenses.filter(e => selectedIds.includes(e.id) && (e.outstanding_amount || 0) > 0.01)
   }, [expenses, selectedIds])
 
   const totalBulkPayAmount = useMemo(() => {
