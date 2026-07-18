@@ -1,0 +1,5 @@
+Tanggal,Keterangan,Pemasok,Jumlah Pembayaran,Jenis Pengeluaran,Kas atau Bank,Status Pembayaran,Jatuh Tempo,Dibayar
+18/07/2026,Beli Kertas ATK,Toko Buku ABC,150000,Beban Perlengkapan Kantor / ATK,Kas POS (Tunai),lunas,,
+19/07/2026,Biaya Iklan Facebook,Facebook Ads,250000,Beban Pemasaran & Promosi,Bank / QRIS POS,lunas,,
+20/07/2026,Tagihan Listrik Juli,PLN,500000,Beban Utilitas (Listrik/Air/Internet),Bank / QRIS POS,tempo,25/07/2026,
+21/07/2026,DP Renovasi Kantor,Tukang Sejahtera,1000000,Beban Pemeliharaan & Perbaikan,Bank / QRIS POS,cicil,30/07/2026,400000
