@@ -17,7 +17,8 @@ export default function StaffSettings() {
     { key: 'full_access', label: 'Akses Penuh', desc: 'Akses penuh ke seluruh modul (P&L, Neraca, detail Gaji karyawan)' },
     { key: 'view_financials_no_salary', label: 'Keuangan Tanpa Gaji', desc: 'Bisa melihat P&L dan Neraca, tapi TIDAK BISA melihat rincian gaji per individu' },
     { key: 'input_journal_expenses', label: 'Input Jurnal & Pengeluaran', desc: 'Hanya bisa input Jurnal harian dan pengeluaran operasional. Tidak punya akses ke dashboard P&L' },
-    { key: 'manage_invoices_bills', label: 'Kelola Invoice & Bills', desc: 'Hanya bisa mengelola Invoices (Piutang) dan Bills (Hutang)' },
+    { key: 'manage_invoices', label: 'Kelola Invoice (Piutang)', desc: 'Bisa mengelola Invoices (Piutang), Orders, POS, Customer, dan Produk' },
+    { key: 'manage_bills', label: 'Kelola Bills (Hutang)', desc: 'Bisa mengelola Bills (Hutang/Pembelian), Pengeluaran, dan Pemasok' },
     { key: 'manage_employees_salary', label: 'Kelola Karyawan & Gaji (HR)', desc: 'Hanya bisa mengelola dan menambah data karyawan dan rincian gaji. Tidak punya akses ke modul akuntansi' }
   ], [])
   

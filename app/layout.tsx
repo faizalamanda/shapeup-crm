@@ -370,31 +370,49 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     const allowed: MenuItem[] = []
 
     // 1. Overview
-    if (perms.includes('view_financials_no_salary') || perms.includes('input_journal_expenses') || perms.includes('manage_invoices_bills')) {
+    if (
+      perms.includes('view_financials_no_salary') ||
+      perms.includes('input_journal_expenses') ||
+      perms.includes('manage_invoices') ||
+      perms.includes('manage_bills')
+    ) {
       const overviewItem = menuItems.find(m => m.name === 'Overview')
       if (overviewItem) allowed.push(overviewItem)
     }
 
     // 2. Pemasukan (Orders, Invoices, POS)
-    if (perms.includes('view_financials_no_salary') || perms.includes('manage_invoices_bills')) {
+    if (
+      perms.includes('view_financials_no_salary') ||
+      perms.includes('manage_invoices')
+    ) {
       const pemasukanItem = menuItems.find(m => m.name === 'Pemasukan')
       if (pemasukanItem) allowed.push(pemasukanItem)
     }
 
     // 3. Customers
-    if (perms.includes('view_financials_no_salary') || perms.includes('manage_invoices_bills')) {
+    if (
+      perms.includes('view_financials_no_salary') ||
+      perms.includes('manage_invoices')
+    ) {
       const customersItem = menuItems.find(m => m.name === 'Customers')
       if (customersItem) allowed.push(customersItem)
     }
 
     // 4. Products
-    if (perms.includes('view_financials_no_salary') || perms.includes('manage_invoices_bills')) {
+    if (
+      perms.includes('view_financials_no_salary') ||
+      perms.includes('manage_invoices')
+    ) {
       const productsItem = menuItems.find(m => m.name === 'Products')
       if (productsItem) allowed.push(productsItem)
     }
 
     // 5. Pengeluaran (Expenses, Purchases, Suppliers)
-    if (perms.includes('view_financials_no_salary') || perms.includes('input_journal_expenses') || perms.includes('manage_invoices_bills')) {
+    if (
+      perms.includes('view_financials_no_salary') ||
+      perms.includes('input_journal_expenses') ||
+      perms.includes('manage_bills')
+    ) {
       const expensesItem = menuItems.find(m => m.name === 'Pengeluaran')
       if (expensesItem) allowed.push(expensesItem)
     }
@@ -448,7 +466,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       pathname.startsWith('/products') ||
       pathname.startsWith('/stock-opname')
     ) {
-      return perms.includes('view_financials_no_salary') || perms.includes('manage_invoices_bills')
+      return (
+        perms.includes('view_financials_no_salary') ||
+        perms.includes('manage_invoices')
+      )
     }
 
     if (
@@ -459,7 +480,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       return (
         perms.includes('view_financials_no_salary') ||
         perms.includes('input_journal_expenses') ||
-        perms.includes('manage_invoices_bills')
+        perms.includes('manage_bills')
       )
     }
 
@@ -467,7 +488,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       return (
         perms.includes('view_financials_no_salary') ||
         perms.includes('input_journal_expenses') ||
-        perms.includes('manage_invoices_bills')
+        perms.includes('manage_invoices') ||
+        perms.includes('manage_bills')
       )
     }
 
