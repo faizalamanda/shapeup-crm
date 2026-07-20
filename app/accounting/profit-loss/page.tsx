@@ -67,6 +67,12 @@ export default function ProfitLossPage() {
           const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
           setActiveBizName(biz?.name || 'Toko')
           setActiveBizTimezone(biz?.timezone || 'Asia/Jakarta')
+
+          // Load basis preference for this business
+          const savedBasis = localStorage.getItem(`su_pl_basis_${businessId}`)
+          if (savedBasis === 'accrual' || savedBasis === 'cash') {
+            setBasis(savedBasis)
+          }
         } else {
           setErrorMsg('No active business selected')
           setLoading(false)
@@ -290,7 +296,13 @@ export default function ProfitLossPage() {
           <select
             className="p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white min-w-40"
             value={basis}
-            onChange={e => setBasis(e.target.value as 'accrual' | 'cash')}
+            onChange={e => {
+              const val = e.target.value as 'accrual' | 'cash'
+              setBasis(val)
+              if (activeBizId) {
+                localStorage.setItem(`su_pl_basis_${activeBizId}`, val)
+              }
+            }}
           >
             <option value="accrual">Accrual Basis</option>
             <option value="cash">Cash Basis</option>

@@ -40,6 +40,25 @@ async function verifyAccess(supabase: any) {
   return { businessId, user }
 }
 
+function getPeriodLastDay(periodStr: string): string {
+  if (!periodStr) return new Date().toISOString().split('T')[0]
+  const parts = periodStr.split('-')
+  if (parts.length === 3) {
+    return periodStr
+  }
+  if (parts.length === 2) {
+    const year = parseInt(parts[0], 10)
+    const month = parseInt(parts[1], 10)
+    if (!isNaN(year) && !isNaN(month) && month >= 1 && month <= 12) {
+      const lastDay = new Date(year, month, 0).getDate()
+      const monthStr = String(month).padStart(2, '0')
+      const dayStr = String(lastDay).padStart(2, '0')
+      return `${year}-${monthStr}-${dayStr}`
+    }
+  }
+  return new Date().toISOString().split('T')[0]
+}
+
 export async function GET(req: Request) {
   const supabase = await createClient()
   const access = await verifyAccess(supabase)
@@ -125,15 +144,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Akun Hutang Gaji & Upah (201100) tidak ditemukan.' }, { status: 400 })
     }
 
-    // 2. Create a ledger transaction
-    const todayStr = new Date().toISOString().split('T')[0]
+    // 2. Create a ledger transaction using the last day of the salary period
+    const txDate = getPeriodLastDay(period)
     const description = `Pencatatan Gaji Karyawan: ${employee.name} (${period})`
 
     const { data: tx, error: txErr } = await supabase
       .from('transactions')
       .insert({
         business_id: businessId,
-        date: todayStr,
+        date: txDate,
         description
       })
       .select('*')
@@ -289,14 +308,14 @@ export async function PUT(req: Request) {
         return NextResponse.json({ error: 'Catatan gaji tidak dapat dibatalkan karena sudah memiliki riwayat pembayaran cicilan. Silakan hapus pembayaran cicilan terlebih dahulu.' }, { status: 400 })
       }
 
-      const todayStr = new Date().toISOString().split('T')[0]
+      const txDate = getPeriodLastDay(existing.period)
       const reversalDesc = `Pembatalan Gaji Karyawan: ${existing.employees.name} (${existing.period})`
 
       const { data: revTx, error: revTxErr } = await supabase
         .from('transactions')
         .insert({
           business_id: businessId,
-          date: todayStr,
+          date: txDate,
           description: reversalDesc
         })
         .select('*')
@@ -403,7 +422,7 @@ export async function PUT(req: Request) {
     }
 
     let transactionId = existing.transaction_id
-    const todayStr = new Date().toISOString().split('T')[0]
+    const txDate = getPeriodLastDay(newPeriod)
     const newDescription = `Pencatatan Gaji Karyawan: ${employeeName} (${newPeriod})`
 
     if (!transactionId) {
@@ -412,7 +431,7 @@ export async function PUT(req: Request) {
         .from('transactions')
         .insert({
           business_id: businessId,
-          date: todayStr,
+          date: txDate,
           description: newDescription
         })
         .select('*')
@@ -423,10 +442,11 @@ export async function PUT(req: Request) {
       }
       transactionId = tx.id
     } else {
-      // Update transaction description
+      // Update transaction description and date
       await supabase
         .from('transactions')
         .update({
+          date: txDate,
           description: newDescription
         })
         .eq('id', transactionId)

@@ -109,6 +109,8 @@ export default function BalanceSheetPage() {
         totalAssets: 0,
         currentLiabilities: [],
         totalCurrentLiabilities: 0,
+        longTermLiabilities: [],
+        totalLongTermLiabilities: 0,
         totalLiabilities: 0,
         equityList: [],
         retainedEarnings: 0,
@@ -141,6 +143,7 @@ export default function BalanceSheetPage() {
     const currentAssets: { account: Account; balance: number }[] = []
     const fixedAssets: { account: Account; balance: number }[] = []
     const currentLiabilities: { account: Account; balance: number }[] = []
+    const longTermLiabilities: { account: Account; balance: number }[] = []
     const equityList: { account: Account; balance: number }[] = []
 
     accounts.forEach(acc => {
@@ -170,7 +173,14 @@ export default function BalanceSheetPage() {
           fixedAssets.push({ account: acc, balance: bal })
         }
       } else if (acc.type === 'LIABILITY') {
-        currentLiabilities.push({ account: acc, balance: bal })
+        const isLongTerm = acc.sub_type === 'non_current_liabilities' || 
+                           acc.code.startsWith('21') || 
+                           acc.code.startsWith('22');
+        if (isLongTerm) {
+          longTermLiabilities.push({ account: acc, balance: bal })
+        } else {
+          currentLiabilities.push({ account: acc, balance: bal })
+        }
       } else if (acc.type === 'EQUITY') {
         equityList.push({ account: acc, balance: bal })
       }
@@ -181,7 +191,8 @@ export default function BalanceSheetPage() {
     const totalAssets = totalCurrentAssets + totalFixedAssets
 
     const totalCurrentLiabilities = currentLiabilities.reduce((sum, item) => sum + item.balance, 0)
-    const totalLiabilities = totalCurrentLiabilities // Can expand to long-term liabilities later
+    const totalLongTermLiabilities = longTermLiabilities.reduce((sum, item) => sum + item.balance, 0)
+    const totalLiabilities = totalCurrentLiabilities + totalLongTermLiabilities
 
     // Retained earnings = historical revenue - expense
     const retainedEarnings = historicalRevenue - historicalExpense
@@ -199,6 +210,8 @@ export default function BalanceSheetPage() {
       totalAssets,
       currentLiabilities: currentLiabilities.filter(item => item.balance !== 0),
       totalCurrentLiabilities,
+      longTermLiabilities: longTermLiabilities.filter(item => item.balance !== 0),
+      totalLongTermLiabilities,
       totalLiabilities,
       equityList: equityList.filter(item => item.balance !== 0),
       retainedEarnings,
@@ -440,6 +453,7 @@ export default function BalanceSheetPage() {
 
                   {showLiabilitiesDetail && (
                     <>
+                      {/* Kewajiban Lancar */}
                       <tr className="bg-gray-50/10">
                         <td className="p-3 pl-8 font-bold text-gray-700 uppercase tracking-wide text-[10px]">Kewajiban Lancar</td>
                         <td className="p-3 text-right font-bold text-rose-600">{formatCurrencyIDR(sheetData.totalCurrentLiabilities)}</td>
@@ -460,6 +474,26 @@ export default function BalanceSheetPage() {
                             </td>
                           </tr>
                         ))
+                      )}
+
+                      {/* Kewajiban Jangka Panjang */}
+                      {sheetData.totalLongTermLiabilities > 0 && (
+                        <>
+                          <tr className="bg-gray-50/10 border-t border-gray-100">
+                            <td className="p-3 pl-8 font-bold text-gray-700 uppercase tracking-wide text-[10px]">Kewajiban Jangka Panjang</td>
+                            <td className="p-3 text-right font-bold text-rose-600">{formatCurrencyIDR(sheetData.totalLongTermLiabilities)}</td>
+                          </tr>
+                          {sheetData.longTermLiabilities.map(item => (
+                            <tr key={item.account.id} className="hover:bg-gray-50/30 transition-colors">
+                              <td className="p-3 pl-12 text-gray-600 font-medium">
+                                ({item.account.code}) {item.account.name}
+                              </td>
+                              <td className="p-3 text-right font-semibold text-rose-650">
+                                {formatCurrencyIDR(item.balance)}
+                              </td>
+                            </tr>
+                          ))}
+                        </>
                       )}
                     </>
                   )}

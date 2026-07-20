@@ -8,17 +8,29 @@ import {
   getUtcTimestamp,
 } from '../utils'
 
+type CashFlowItem = {
+  account_id?: string
+  code: string
+  name: string
+  type?: string
+  sub_type?: string | null
+  amount: number
+}
+
 type CashFlowReport = {
   startingCash: number
   endingCash: number
   netChange: number
-  opsInflows: { name: string; amount: number }
-  opsOutflowsSuppliers: { name: string; amount: number }
-  opsOutflowsExpenses: { name: string; amount: number }
+  opsInflows: CashFlowItem[]
+  totalOpsInflow: number
+  opsOutflowsSuppliers: CashFlowItem[]
+  totalOpsOutflowSupplier: number
+  opsOutflowsExpenses: CashFlowItem[]
+  totalOpsOutflowExpense: number
   totalOps: number
-  invOutflows: { name: string; amount: number }
+  invOutflows: CashFlowItem[]
   totalInv: number
-  finFlows: { name: string; amount: number }
+  finFlows: CashFlowItem[]
   totalFin: number
 }
 
@@ -34,13 +46,18 @@ export default function CashFlowPage() {
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  // Aggregated state
+  // Aggregated report state
   const [report, setReport] = useState<CashFlowReport | null>(null)
 
   // Date range filters
   const [dateRangeType, setDateRangeType] = useState<DateRangeKey>('this-month')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+
+  // Collapsible UI sections
+  const [showOpsDetail, setShowOpsDetail] = useState(true)
+  const [showInvDetail, setShowInvDetail] = useState(true)
+  const [showFinDetail, setShowFinDetail] = useState(true)
 
   // Initialize dates
   useEffect(() => {
@@ -55,7 +72,7 @@ export default function CashFlowPage() {
       try {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) {
-          setErrorMsg('User session not found')
+          setErrorMsg('Sesi pengguna tidak ditemukan. Silakan login kembali.')
           setLoading(false)
           return
         }
@@ -72,22 +89,22 @@ export default function CashFlowPage() {
         if (businessId) {
           setActiveBizId(businessId)
           const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
-          setActiveBizName(biz?.name || 'Toko')
+          setActiveBizName(biz?.name || 'Bisnis Saya')
           setActiveBizTimezone(biz?.timezone || 'Asia/Jakarta')
         } else {
-          setErrorMsg('No active business selected')
+          setErrorMsg('Belum ada unit bisnis aktif yang dipilih.')
           setLoading(false)
         }
       } catch (err: any) {
         console.error('Error loading profile:', err)
-        setErrorMsg(err.message || 'Error loading profile')
+        setErrorMsg(err.message || 'Gagal memuat profil bisnis')
         setLoading(false)
       }
     }
     loadProfile()
   }, [supabase])
 
-  // Fetch server-side cash flow summary
+  // Fetch server-side cash flow summary based on local business timezone
   const loadData = useCallback(async (businessId: string, startD: string, endD: string, timezone: string) => {
     setLoading(true)
     try {
@@ -102,46 +119,60 @@ export default function CashFlowPage() {
 
       if (error) throw error
 
-      const totalOpsInflow = data.ops_inflows.reduce((sum: number, item: any) => sum + item.amount, 0)
-      const totalOpsOutflowSupplier = data.ops_outflows_suppliers.reduce((sum: number, item: any) => sum + item.amount, 0)
-      const totalOpsOutflowExpense = data.ops_outflows_expenses.reduce((sum: number, item: any) => sum + item.amount, 0)
+      const opsInflows: CashFlowItem[] = (data.ops_inflows || []).map((item: any) => ({
+        ...item,
+        amount: parseFloat(item.amount || 0)
+      }))
+
+      const opsOutflowsSuppliers: CashFlowItem[] = (data.ops_outflows_suppliers || []).map((item: any) => ({
+        ...item,
+        amount: parseFloat(item.amount || 0)
+      }))
+
+      const opsOutflowsExpenses: CashFlowItem[] = (data.ops_outflows_expenses || []).map((item: any) => ({
+        ...item,
+        amount: parseFloat(item.amount || 0)
+      }))
+
+      const invOutflows: CashFlowItem[] = (data.inv_outflows || []).map((item: any) => ({
+        ...item,
+        amount: parseFloat(item.amount || 0)
+      }))
+
+      const finFlows: CashFlowItem[] = (data.fin_flows || []).map((item: any) => ({
+        ...item,
+        amount: parseFloat(item.amount || 0)
+      }))
+
+      const totalOpsInflow = opsInflows.reduce((sum, item) => sum + item.amount, 0)
+      const totalOpsOutflowSupplier = opsOutflowsSuppliers.reduce((sum, item) => sum + item.amount, 0)
+      const totalOpsOutflowExpense = opsOutflowsExpenses.reduce((sum, item) => sum + item.amount, 0)
       const totalOps = totalOpsInflow - (totalOpsOutflowSupplier + totalOpsOutflowExpense)
       
-      const totalInv = -data.inv_outflows.reduce((sum: number, item: any) => sum + item.amount, 0)
-      const totalFin = data.fin_flows.reduce((sum: number, item: any) => sum + item.amount, 0)
+      const rawTotalInv = invOutflows.reduce((sum, item) => sum + item.amount, 0)
+      const totalInv = -rawTotalInv // Outflow is negative cash change
+      const totalFin = finFlows.reduce((sum, item) => sum + item.amount, 0)
 
       setReport({
-        startingCash: data.starting_cash,
-        endingCash: data.ending_cash,
-        netChange: data.net_change,
-        opsInflows: {
-          name: 'Penerimaan Kas dari Pelanggan',
-          amount: totalOpsInflow
-        },
-        opsOutflowsSuppliers: {
-          name: 'Pembayaran Kas kepada Pemasok/Pembelian',
-          amount: totalOpsOutflowSupplier
-        },
-        opsOutflowsExpenses: {
-          name: 'Pembayaran Kas untuk Beban Operasional',
-          amount: totalOpsOutflowExpense
-        },
+        startingCash: parseFloat(data.starting_cash || 0),
+        endingCash: parseFloat(data.ending_cash || 0),
+        netChange: parseFloat(data.net_change || 0),
+        opsInflows,
+        totalOpsInflow,
+        opsOutflowsSuppliers,
+        totalOpsOutflowSupplier,
+        opsOutflowsExpenses,
+        totalOpsOutflowExpense,
         totalOps,
-        invOutflows: {
-          name: 'Pembelian Peralatan / Aset Tetap (CAPEX)',
-          amount: Math.abs(totalInv)
-        },
+        invOutflows,
         totalInv,
-        finFlows: {
-          name: 'Setoran Modal / Penarikan / Pendanaan',
-          amount: totalFin
-        },
+        finFlows,
         totalFin
       })
       setErrorMsg(null)
     } catch (err: any) {
       console.error('Error loading cash flow data:', err)
-      setErrorMsg(err.message || 'Gagal memuat data Arus Kas')
+      setErrorMsg(err.message || 'Gagal memuat data Laporan Arus Kas')
     } finally {
       setLoading(false)
     }
@@ -159,7 +190,7 @@ export default function CashFlowPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-in fade-in duration-300">
       {/* CSS Print Styles */}
       <style jsx global>{`
         @media print {
@@ -206,19 +237,22 @@ export default function CashFlowPage() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[9px] font-black tracking-widest text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 uppercase">
-              Laporan Akuntansi
+              Laporan Arus Kas (Direct Method)
             </span>
             {activeBizName && (
               <span className="text-[9px] font-black tracking-widest text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 uppercase">
                 📍 {activeBizName}
               </span>
             )}
+            <span className="text-[9px] font-bold text-gray-500 bg-gray-50 px-2 py-0.5 rounded-full border border-gray-200 uppercase tracking-widest">
+              🕒 {activeBizTimezone}
+            </span>
           </div>
           <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight leading-none uppercase">
             Laporan Arus Kas (Cash Flow Statement)
           </h1>
           <p className="text-sm text-gray-500 mt-1.5 font-medium">
-            Laporan arus kas masuk dan kas keluar berdasarkan aktivitas operasional, investasi, dan pendanaan.
+            Laporan mutasi fisik uang kas & bank nyata berdasarkan data Bagan Akun (COA). <span className="font-bold text-gray-700">Berbeda dari Laba Rugi Cash Basis</span>, Laporan Arus Kas mencakup aktivitas Operasional, Investasi (Aset Tetap), dan Pendanaan (Modal/Hutang).
           </p>
         </div>
         <button
@@ -232,9 +266,9 @@ export default function CashFlowPage() {
       {/* Printed Brand Header (Only shown when printing) */}
       <div className="hidden print-header">
         <h1 className="text-xl font-bold uppercase tracking-wide">{activeBizName || 'ShapeUp CRM'}</h1>
-        <h2 className="text-lg font-black uppercase text-blue-600 mt-1">Laporan Arus Kas (Cash Flow)</h2>
+        <h2 className="text-lg font-black uppercase text-blue-600 mt-1">Laporan Arus Kas (Cash Flow Statement)</h2>
         <p className="text-xs text-gray-500 mt-1">
-          Periode: {startDate} s/d {endDate}
+          Periode: {startDate} s/d {endDate} (Zona Waktu: {activeBizTimezone})
         </p>
         <hr className="my-4 border-gray-300" />
       </div>
@@ -289,7 +323,7 @@ export default function CashFlowPage() {
       {/* Loading & Errors */}
       {loading ? (
         <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-xs font-bold text-gray-400 uppercase tracking-widest animate-pulse">
-          Memuat data laporan arus kas...
+          Memuat data laporan arus kas dari Bagan Akun (COA)...
         </div>
       ) : errorMsg ? (
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 text-xs font-semibold">
@@ -298,14 +332,14 @@ export default function CashFlowPage() {
       ) : report ? (
         <div className="print-container space-y-6">
 
-          {/* KPI Row (Waveapps style summary) */}
+          {/* KPI Row */}
           <div className="kpi-grid grid grid-cols-1 sm:grid-cols-3 gap-4">
             
             {/* Starting Cash */}
             <div className="kpi-card bg-white border border-gray-200 rounded-xl p-5 shadow-xs transition-all">
-              <div className="text-[9px] font-extrabold text-gray-400 uppercase tracking-widest">Kas & Bank Awal</div>
+              <div className="text-[9px] font-extrabold text-gray-400 uppercase tracking-widest">Saldo Kas & Bank Awal</div>
               <div className="text-xl font-black text-gray-900 mt-1">{formatCurrencyIDR(report.startingCash)}</div>
-              <div className="text-[9px] text-gray-500 font-bold mt-1.5 uppercase">Saldo sebelum {startDate}</div>
+              <div className="text-[9px] text-gray-500 font-bold mt-1.5 uppercase">Per awal tanggal {startDate}</div>
             </div>
 
             {/* Net Change */}
@@ -314,42 +348,50 @@ export default function CashFlowPage() {
                 ? 'bg-emerald-50/55 border-emerald-200' 
                 : 'bg-rose-50/55 border-rose-200'
             }`}>
-              <div className="text-[9px] font-extrabold text-gray-500 uppercase tracking-widest">Perubahan Bersih Kas</div>
+              <div className="text-[9px] font-extrabold text-gray-500 uppercase tracking-widest">Kenaikan / (Penurunan) Kas Bersih</div>
               <div className={`text-xl font-black mt-1 ${
                 report.netChange >= 0 ? 'text-emerald-700' : 'text-rose-700'
               }`}>
                 {report.netChange >= 0 ? '+' : ''}{formatCurrencyIDR(report.netChange)}
               </div>
               <div className="text-[9px] font-bold mt-1.5 uppercase">
-                {report.netChange >= 0 ? '🟢 Aliran kas masuk bersih' : '🔴 Aliran kas keluar bersih'}
+                {report.netChange >= 0 ? '🟢 Surplus aliran kas periode ini' : '🔴 Defisit aliran kas periode ini'}
               </div>
             </div>
 
             {/* Ending Cash */}
             <div className="kpi-card bg-white border border-gray-200 rounded-xl p-5 shadow-xs transition-all">
-              <div className="text-[9px] font-extrabold text-gray-400 uppercase tracking-widest">Kas & Bank Akhir</div>
+              <div className="text-[9px] font-extrabold text-gray-400 uppercase tracking-widest">Saldo Kas & Bank Akhir</div>
               <div className="text-xl font-black text-blue-600 mt-1">{formatCurrencyIDR(report.endingCash)}</div>
-              <div className="text-[9px] text-emerald-600 font-bold mt-1.5 uppercase">Saldo per {endDate}</div>
+              <div className="text-[9px] text-emerald-600 font-bold mt-1.5 uppercase">Per akhir tanggal {endDate}</div>
             </div>
             
           </div>
 
-          {/* Statement Report Table */}
+          {/* Dynamic COA Cash Flow Statement Table */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-xs overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200 uppercase text-[10px] text-gray-400 font-bold tracking-widest">
-                     <th className="p-4 w-2/3">Aktivitas Aliran Kas</th>
-                    <th className="p-4 text-right w-1/3">Jumlah</th>
+                    <th className="p-4 w-2/3">Aktivitas Arus Kas (Rincian Akun COA)</th>
+                    <th className="p-4 text-right w-1/3">Jumlah (IDR)</th>
                   </tr>
                 </thead>
                 <tbody className="text-xs font-semibold text-gray-700 divide-y divide-gray-100">
 
                   {/* ─── 1. OPERATING ACTIVITIES ─── */}
                   <tr className="bg-gray-50/40">
-                    <td className="p-4 pl-8">
-                      <span className="font-extrabold text-gray-800 uppercase tracking-wider text-[11px]">Aktivitas Operasional</span>
+                    <td className="p-4 pl-6 flex items-center gap-2">
+                      <button 
+                        onClick={() => setShowOpsDetail(!showOpsDetail)}
+                        className="no-print text-gray-400 hover:text-gray-600 font-bold text-xs cursor-pointer select-none"
+                      >
+                        {showOpsDetail ? '▼' : '▶'}
+                      </button>
+                      <span className="font-extrabold text-gray-800 uppercase tracking-wider text-[11px]">
+                        1. Aktivitas Operasional (Operating Activities)
+                      </span>
                     </td>
                     <td className={`p-4 text-right font-extrabold text-sm ${
                       report.totalOps >= 0 ? 'text-emerald-700' : 'text-rose-700'
@@ -358,28 +400,103 @@ export default function CashFlowPage() {
                     </td>
                   </tr>
 
-                  {/* Inflows */}
-                  <tr className="hover:bg-gray-50/20">
-                    <td className="p-3 pl-12 text-gray-700 font-bold">{report.opsInflows.name}</td>
-                    <td className="p-3 text-right text-emerald-700 font-semibold">{formatCurrencyIDR(report.opsInflows.amount)}</td>
-                  </tr>
+                  {showOpsDetail && (
+                    <>
+                      {/* Subhead: Operating Inflows */}
+                      <tr className="bg-gray-50/10">
+                        <td className="p-3 pl-10 text-emerald-800 font-bold uppercase tracking-wide text-[10px]">
+                          (+) Penerimaan Kas dari Pelanggan / Operasional
+                        </td>
+                        <td className="p-3 text-right font-bold text-emerald-700">
+                          {formatCurrencyIDR(report.totalOpsInflow)}
+                        </td>
+                      </tr>
+                      {report.opsInflows.length === 0 ? (
+                        <tr>
+                          <td className="p-3 pl-14 text-gray-400 italic font-normal">Tidak ada arus penerimaan operasional</td>
+                          <td className="p-3 text-right text-gray-400">-</td>
+                        </tr>
+                      ) : (
+                        report.opsInflows.map((item, idx) => (
+                          <tr key={item.account_id || idx} className="hover:bg-gray-50/30 transition-colors">
+                            <td className="p-3 pl-14 text-gray-600 font-medium">
+                              ({item.code}) {item.name}
+                            </td>
+                            <td className="p-3 text-right font-semibold text-emerald-700">
+                              {formatCurrencyIDR(item.amount)}
+                            </td>
+                          </tr>
+                        ))
+                      )}
 
-                  {/* Outflows: Suppliers */}
-                  <tr className="hover:bg-gray-50/20">
-                    <td className="p-3 pl-12 text-gray-700 font-bold">{report.opsOutflowsSuppliers.name}</td>
-                    <td className="p-3 text-right text-rose-600 font-semibold">({formatCurrencyIDR(report.opsOutflowsSuppliers.amount)})</td>
-                  </tr>
+                      {/* Subhead: Operating Outflows - Suppliers */}
+                      <tr className="bg-gray-50/10 border-t border-gray-100">
+                        <td className="p-3 pl-10 text-rose-800 font-bold uppercase tracking-wide text-[10px]">
+                          (-) Pembayaran Kas kepada Pemasok / Pembelian Persediaan
+                        </td>
+                        <td className="p-3 text-right font-bold text-rose-600">
+                          ({formatCurrencyIDR(report.totalOpsOutflowSupplier)})
+                        </td>
+                      </tr>
+                      {report.opsOutflowsSuppliers.length === 0 ? (
+                        <tr>
+                          <td className="p-3 pl-14 text-gray-400 italic font-normal">Tidak ada pembayaran pemasok</td>
+                          <td className="p-3 text-right text-gray-400">-</td>
+                        </tr>
+                      ) : (
+                        report.opsOutflowsSuppliers.map((item, idx) => (
+                          <tr key={item.account_id || idx} className="hover:bg-gray-50/30 transition-colors">
+                            <td className="p-3 pl-14 text-gray-600 font-medium">
+                              ({item.code}) {item.name}
+                            </td>
+                            <td className="p-3 text-right font-semibold text-rose-600">
+                              ({formatCurrencyIDR(item.amount)})
+                            </td>
+                          </tr>
+                        ))
+                      )}
 
-                  {/* Outflows: Expenses */}
-                  <tr className="hover:bg-gray-50/20">
-                    <td className="p-3 pl-12 text-gray-700 font-bold">{report.opsOutflowsExpenses.name}</td>
-                    <td className="p-3 text-right text-rose-600 font-semibold">({formatCurrencyIDR(report.opsOutflowsExpenses.amount)})</td>
-                  </tr>
+                      {/* Subhead: Operating Outflows - Expenses */}
+                      <tr className="bg-gray-50/10 border-t border-gray-100">
+                        <td className="p-3 pl-10 text-rose-800 font-bold uppercase tracking-wide text-[10px]">
+                          (-) Pembayaran Kas untuk Beban Operasional Usaha
+                        </td>
+                        <td className="p-3 text-right font-bold text-rose-600">
+                          ({formatCurrencyIDR(report.totalOpsOutflowExpense)})
+                        </td>
+                      </tr>
+                      {report.opsOutflowsExpenses.length === 0 ? (
+                        <tr>
+                          <td className="p-3 pl-14 text-gray-400 italic font-normal">Tidak ada pembayaran beban operasional</td>
+                          <td className="p-3 text-right text-gray-400">-</td>
+                        </tr>
+                      ) : (
+                        report.opsOutflowsExpenses.map((item, idx) => (
+                          <tr key={item.account_id || idx} className="hover:bg-gray-50/30 transition-colors">
+                            <td className="p-3 pl-14 text-gray-600 font-medium">
+                              ({item.code}) {item.name}
+                            </td>
+                            <td className="p-3 text-right font-semibold text-rose-600">
+                              ({formatCurrencyIDR(item.amount)})
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </>
+                  )}
 
                   {/* ─── 2. INVESTING ACTIVITIES ─── */}
                   <tr className="bg-gray-50/40 border-t border-gray-200">
-                    <td className="p-4 pl-8">
-                      <span className="font-extrabold text-gray-800 uppercase tracking-wider text-[11px]">Aktivitas Investasi</span>
+                    <td className="p-4 pl-6 flex items-center gap-2">
+                      <button 
+                        onClick={() => setShowInvDetail(!showInvDetail)}
+                        className="no-print text-gray-400 hover:text-gray-600 font-bold text-xs cursor-pointer select-none"
+                      >
+                        {showInvDetail ? '▼' : '▶'}
+                      </button>
+                      <span className="font-extrabold text-gray-800 uppercase tracking-wider text-[11px]">
+                        2. Aktivitas Investasi (Investing Activities)
+                      </span>
                     </td>
                     <td className={`p-4 text-right font-extrabold text-sm ${
                       report.totalInv >= 0 ? 'text-emerald-700' : 'text-rose-700'
@@ -388,15 +505,40 @@ export default function CashFlowPage() {
                     </td>
                   </tr>
 
-                  <tr className="hover:bg-gray-50/20">
-                    <td className="p-3 pl-12 text-gray-700 font-bold">{report.invOutflows.name}</td>
-                    <td className="p-3 text-right text-rose-600 font-semibold">({formatCurrencyIDR(report.invOutflows.amount)})</td>
-                  </tr>
+                  {showInvDetail && (
+                    <>
+                      {report.invOutflows.length === 0 ? (
+                        <tr>
+                          <td className="p-3 pl-10 text-gray-400 italic font-normal">Tidak ada transaksi investasi aset tetap (CAPEX)</td>
+                          <td className="p-3 text-right text-gray-400">-</td>
+                        </tr>
+                      ) : (
+                        report.invOutflows.map((item, idx) => (
+                          <tr key={item.account_id || idx} className="hover:bg-gray-50/30 transition-colors">
+                            <td className="p-3 pl-10 text-gray-600 font-medium">
+                              ({item.code}) {item.name} (Pembelian Aset Tetap)
+                            </td>
+                            <td className="p-3 text-right font-semibold text-rose-600">
+                              ({formatCurrencyIDR(item.amount)})
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </>
+                  )}
 
                   {/* ─── 3. FINANCING ACTIVITIES ─── */}
                   <tr className="bg-gray-50/40 border-t border-gray-200">
-                    <td className="p-4 pl-8">
-                      <span className="font-extrabold text-gray-800 uppercase tracking-wider text-[11px]">Aktivitas Pendanaan</span>
+                    <td className="p-4 pl-6 flex items-center gap-2">
+                      <button 
+                        onClick={() => setShowFinDetail(!showFinDetail)}
+                        className="no-print text-gray-400 hover:text-gray-600 font-bold text-xs cursor-pointer select-none"
+                      >
+                        {showFinDetail ? '▼' : '▶'}
+                      </button>
+                      <span className="font-extrabold text-gray-800 uppercase tracking-wider text-[11px]">
+                        3. Aktivitas Pendanaan (Financing Activities)
+                      </span>
                     </td>
                     <td className={`p-4 text-right font-extrabold text-sm ${
                       report.totalFin >= 0 ? 'text-emerald-700' : 'text-rose-700'
@@ -405,18 +547,35 @@ export default function CashFlowPage() {
                     </td>
                   </tr>
 
-                  <tr className="hover:bg-gray-50/20">
-                    <td className="p-3 pl-12 text-gray-700 font-bold">{report.finFlows.name}</td>
-                    <td className={`p-3 text-right font-semibold ${
-                      report.finFlows.amount >= 0 ? 'text-emerald-700' : 'text-rose-700'
-                    }`}>
-                      {formatCurrencyIDR(report.finFlows.amount)}
-                    </td>
-                  </tr>
+                  {showFinDetail && (
+                    <>
+                      {report.finFlows.length === 0 ? (
+                        <tr>
+                          <td className="p-3 pl-10 text-gray-400 italic font-normal">Tidak ada transaksi modal atau pendanaan pinjaman</td>
+                          <td className="p-3 text-right text-gray-400">-</td>
+                        </tr>
+                      ) : (
+                        report.finFlows.map((item, idx) => (
+                          <tr key={item.account_id || idx} className="hover:bg-gray-50/30 transition-colors">
+                            <td className="p-3 pl-10 text-gray-600 font-medium">
+                              ({item.code}) {item.name}
+                            </td>
+                            <td className={`p-3 text-right font-semibold ${
+                              item.amount >= 0 ? 'text-emerald-700' : 'text-rose-600'
+                            }`}>
+                              {item.amount >= 0 ? formatCurrencyIDR(item.amount) : `(${formatCurrencyIDR(Math.abs(item.amount))})`}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </>
+                  )}
 
-                  {/* ─── STATEMENT RECONCILIATION SUMMARY ─── */}
+                  {/* ─── RECONCILIATION SUMMARY ─── */}
                   <tr className="bg-gray-100/30 border-t-2 border-gray-300 font-bold text-gray-800">
-                    <td className="p-4 pl-6 uppercase tracking-wider text-[11px]">Kenaikan / (Penurunan) Kas Bersih</td>
+                    <td className="p-4 pl-6 uppercase tracking-wider text-[11px]">
+                      Perubahan Bersih Kas & Bank (Kenaikan / Penurunan)
+                    </td>
                     <td className={`p-4 text-right text-sm ${
                       report.netChange >= 0 ? 'text-emerald-700' : 'text-rose-700'
                     }`}>
@@ -425,12 +584,12 @@ export default function CashFlowPage() {
                   </tr>
 
                   <tr className="hover:bg-gray-50/10 font-bold text-gray-600">
-                    <td className="p-3 pl-8">Saldo Kas Awal Periode</td>
+                    <td className="p-3 pl-8">Saldo Kas & Bank Awal Periode</td>
                     <td className="p-3 text-right text-gray-800">{formatCurrencyIDR(report.startingCash)}</td>
                   </tr>
 
                   <tr className="bg-gray-100/40 border-t border-b border-gray-300 font-black text-sm">
-                    <td className="p-4 pl-6 uppercase tracking-wider text-gray-900">Saldo Kas Akhir Periode</td>
+                    <td className="p-4 pl-6 uppercase tracking-wider text-gray-900">Saldo Kas & Bank Akhir Periode</td>
                     <td className="p-4 text-right text-blue-600 text-base">{formatCurrencyIDR(report.endingCash)}</td>
                   </tr>
 
@@ -441,7 +600,7 @@ export default function CashFlowPage() {
 
           {/* Validation Alert */}
           <div className="bg-blue-50 border border-blue-100 text-blue-800 rounded-xl p-4 text-[10px] uppercase font-bold tracking-wider text-center no-print">
-            ✓ Rekonsiliasi: Saldo Kas Awal ({formatCurrencyIDR(report.startingCash)}) + Perubahan Kas ({formatCurrencyIDR(report.netChange)}) = Saldo Kas Akhir ({formatCurrencyIDR(report.endingCash)})
+            ✓ Rekonsiliasi Kas: Kas Awal ({formatCurrencyIDR(report.startingCash)}) + Perubahan Kas ({formatCurrencyIDR(report.netChange)}) = Kas Akhir ({formatCurrencyIDR(report.endingCash)})
           </div>
 
         </div>
