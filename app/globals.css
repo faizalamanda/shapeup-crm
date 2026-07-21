@@ -214,3 +214,9 @@ body {
   animation: su-pulse-bar 1.5s ease-in-out infinite;
   display: inline-block;
 }
+
+/* ─── Sortable Table Header ─────────────────────────────────────────────── */
+.su-sortable-header:hover {
+  color: var(--su-primary) !important;
+}
+

@@ -73,31 +73,31 @@ export function StatsPanel({ customers }: { customers: any[] }) {
       <StatCard
         label="Omset Segmen (LTV)"
         value={<span style={{ color: 'var(--su-primary)', fontSize: '16px' }} title={formatIDR(totalRevenue)}>{formatIDR(totalRevenue)}</span>}
-        sub="Akumulasi seluruh belanja"
+        sub="Akumulasi order selesai"
         accentColor="#6366F1"
       />
       <StatCard
         label="Rata-rata LTV"
         value={<span style={{ fontSize: '16px' }} title={formatIDR(avgLTV)}>{formatIDR(avgLTV)}</span>}
-        sub="Nilai per pelanggan"
+        sub="LTV dari order selesai"
         accentColor="var(--su-accent)"
       />
       <StatCard
         label="Rata-rata AOV"
         value={<span style={{ fontSize: '16px' }} title={formatIDR(avgAOV)}>{formatIDR(avgAOV)}</span>}
-        sub="Nilai per transaksi"
+        sub="AOV dari order selesai"
         accentColor="#F59E0B"
       />
       <StatCard
         label="Repeat Order Rate"
         value={<span style={{ color: 'var(--su-success)' }}>{repeatRate.toFixed(1)}%</span>}
-        sub="Membeli lebih dari sekali"
+        sub="Order selesai > 1 kali"
         accentColor="var(--su-success)"
       />
       <StatCard
         label="VIP (LTV ≥ 1jt)"
         value={<span style={{ color: '#7C3AED' }}>{vipCount.toLocaleString('id-ID')}</span>}
-        sub="Pelanggan bernilai tinggi"
+        sub="LTV selesai ≥ 1jt"
         accentColor="#7C3AED"
       />
     </div>

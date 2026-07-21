@@ -57,6 +57,8 @@ export default function CustomerPage() {
   const [searchQuery, setSearchQuery]     = useState('')
   const [rules, setRules]                 = useState<FilterRule[]>([])
   const [showCharts, setShowCharts]       = useState(true)
+  const [businessId, setBusinessId]       = useState<string>('')
+  const [userId, setUserId]               = useState<string>('')
 
   // ─── Batch Fetcher ────────────────────────────────────────────────────────
   const fetchAllBatches = useCallback(async (businessId: string, background = false) => {
@@ -126,17 +128,21 @@ export default function CustomerPage() {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
 
+        setUserId(user.id)
+
         const { data: profile } = await supabase
           .from('profiles')
           .select('active_business_id')
           .eq('id', user.id)
           .single()
 
-        const businessId = profile?.active_business_id
-        if (!businessId) return
+        const bid = profile?.active_business_id
+        if (!bid) return
+
+        setBusinessId(bid)
 
         // Cache-first strategy
-        const cached = readCache(businessId)
+        const cached = readCache(bid)
         if (cached) {
           // Show cached data immediately — perceived load = 0ms
           setCustomers(cached.data)
@@ -146,11 +152,11 @@ export default function CustomerPage() {
           // If cache is getting stale (>2min), revalidate in background
           const age = Date.now() - cached.ts
           if (age > STALE_RECHECK) {
-            fetchAllBatches(businessId, true) // background refresh
+            fetchAllBatches(bid, true) // background refresh
           }
         } else {
           // No cache — full fetch
-          await fetchAllBatches(businessId, false)
+          await fetchAllBatches(bid, false)
         }
       } catch (err) {
         console.error('[ShapeUp] Init error:', err)
@@ -168,14 +174,12 @@ export default function CustomerPage() {
       if (c.last_order_status) statuses.add(c.last_order_status.toLowerCase())
     })
     if (statuses.size === 0) {
-      return ['completed', 'processing', 'on-hold', 'pending', 'failed', 'cancelled']
+      return ['completed', 'on-hold', 'pending', 'shipped', 'cancelled', 'return-request']
     }
     return Array.from(statuses).sort()
   }, [customers])
 
   // ─── Filter Logic ─────────────────────────────────────────────────────────
-  const today = useMemo(() => new Date(), [])
-
   const filteredCustomers = useMemo(() => {
     return customers.filter(c => {
       const matchesSearch =
@@ -190,14 +194,23 @@ export default function CustomerPage() {
         const field    = rule.field
         const operator = rule.operator
 
-        if (field === 'ltv' || field === 'aov' || field === 'total_order_count') {
+        // Numeric fields
+        if (['ltv', 'aov', 'total_order_count', 'days_since_last_order'].includes(field)) {
           const cVal = Number(c[field]) || 0
           const rVal = Number(rule.value) || 0
           if (operator === 'greater_or_equal' && !(cVal >= rVal)) return false
           if (operator === 'less_or_equal'    && !(cVal <= rVal)) return false
           if (operator === 'equal'            && !(cVal === rVal)) return false
+          if (operator === 'greater'          && !(cVal > rVal))  return false
+          if (operator === 'less'             && !(cVal < rVal))  return false
+          if (operator === 'between') {
+            const [minV, maxV] = (rule.value || '').split(',').map(Number)
+            if (isNaN(minV) || isNaN(maxV)) return false
+            if (!(cVal >= minV && cVal <= maxV)) return false
+          }
         }
 
+        // Date fields
         if (field === 'last_order_date' || field === 'joined_at') {
           if (!c[field]) return false
           const cDate = new Date(c[field]).getTime()
@@ -205,13 +218,40 @@ export default function CustomerPage() {
           if (isNaN(cDate) || isNaN(rDate)) return false
           if (operator === 'after'  && !(cDate >= rDate)) return false
           if (operator === 'before' && !(cDate <= rDate)) return false
+          if (operator === 'between') {
+            const [minD, maxD] = (rule.value || '').split(',')
+            const minT = new Date(minD).getTime()
+            const maxT = new Date(maxD).getTime()
+            if (isNaN(minT) || isNaN(maxT)) return false
+            if (!(cDate >= minT && cDate <= maxT)) return false
+          }
         }
 
+        // Status field
         if (field === 'last_order_status') {
           const cStr = (c[field] || '').toLowerCase()
           const rStr = (rule.value || '').toLowerCase()
           if (operator === 'is'     && cStr !== rStr) return false
           if (operator === 'is_not' && cStr === rStr) return false
+        }
+
+        // RFM segment (computed client-side)
+        if (field === 'rfm_segment') {
+          const ltv   = Number(c.ltv) || 0
+          const freq  = Number(c.total_order_count) || 0
+          const days  = Number(c.days_since_last_order) ?? 999
+          let seg = 'regular'
+          if (ltv >= 1000000 && freq >= 2)          seg = 'vip'
+          else if (freq === 0)                       seg = 'lost'
+          else if (days > 90)                        seg = 'churned'
+          else if (days > 60)                        seg = 'at_risk'
+          else if (freq === 1 && days <= 30)         seg = 'new'
+          else if (freq >= 3 && days <= 30)          seg = 'loyal'
+          else if (freq === 1)                       seg = 'one_time'
+
+          const rSeg = (rule.value || '').toLowerCase()
+          if (operator === 'is'     && seg !== rSeg) return false
+          if (operator === 'is_not' && seg === rSeg) return false
         }
       }
 
@@ -274,7 +314,7 @@ export default function CustomerPage() {
               Analisa & Segmentasi Pelanggan
             </h1>
             <p style={{ fontSize: '13px', color: 'var(--su-text-muted)', marginTop: '4px', fontWeight: 400 }}>
-              Segmentasi, pantau LTV dan AOV secara komprehensif.
+              Segmentasi, pantau LTV dan AOV berdasarkan order <strong>completed</strong>.
             </p>
           </div>
 
@@ -330,6 +370,8 @@ export default function CustomerPage() {
         showCharts={showCharts}
         setShowCharts={setShowCharts}
         availableStatuses={availableStatuses}
+        businessId={businessId}
+        userId={userId}
       />
 
       {/* ── Charts ────────────────────────────────────────────────────────── */}

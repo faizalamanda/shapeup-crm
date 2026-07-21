@@ -1,9 +1,11 @@
-import { useState } from 'react'
+"use client"
+import { useState, useEffect, useCallback } from 'react'
+import { createBrowserClient } from '@supabase/ssr'
 
 export interface FilterRule {
   id: string
-  field: 'ltv' | 'aov' | 'total_order_count' | 'last_order_status' | 'last_order_date' | 'joined_at'
-  operator: 'greater_or_equal' | 'less_or_equal' | 'equal' | 'after' | 'before' | 'is' | 'is_not'
+  field: 'ltv' | 'aov' | 'total_order_count' | 'days_since_last_order' | 'last_order_status' | 'last_order_date' | 'joined_at' | 'rfm_segment'
+  operator: 'greater_or_equal' | 'less_or_equal' | 'equal' | 'greater' | 'less' | 'after' | 'before' | 'between' | 'is' | 'is_not'
   value: string
 }
 
@@ -15,15 +17,19 @@ interface FilterBarProps {
   showCharts: boolean
   setShowCharts: (show: boolean) => void
   availableStatuses: string[]
+  businessId: string
+  userId: string
 }
 
 const FIELD_OPTIONS = [
-  { value: 'ltv',               label: 'Total Belanja (LTV)',     type: 'number' },
-  { value: 'aov',               label: 'Rata-rata Order (AOV)',   type: 'number' },
-  { value: 'total_order_count', label: 'Jumlah Order',            type: 'number' },
-  { value: 'last_order_status', label: 'Status Order Terakhir',   type: 'select' },
-  { value: 'last_order_date',   label: 'Tanggal Order Terakhir',  type: 'date'   },
-  { value: 'joined_at',         label: 'Tanggal Bergabung',       type: 'date'   },
+  { value: 'ltv',                   label: 'Total Belanja (LTV)',         type: 'number' },
+  { value: 'aov',                   label: 'Rata-rata Order (AOV)',       type: 'number' },
+  { value: 'total_order_count',     label: 'Jumlah Order',                type: 'number' },
+  { value: 'days_since_last_order', label: 'Hari Sejak Order Terakhir',    type: 'number' },
+  { value: 'rfm_segment',           label: 'Segmen RFM',                  type: 'rfm_select' },
+  { value: 'last_order_status',     label: 'Status Order Terakhir',       type: 'select' },
+  { value: 'last_order_date',       label: 'Tanggal Order Terakhir',      type: 'date'   },
+  { value: 'joined_at',             label: 'Tanggal Bergabung',           type: 'date'   },
 ]
 
 const OPERATOR_OPTIONS: Record<string, { value: string; label: string }[]> = {
@@ -31,28 +37,48 @@ const OPERATOR_OPTIONS: Record<string, { value: string; label: string }[]> = {
     { value: 'greater_or_equal', label: '>= Lebih dari sama dengan' },
     { value: 'less_or_equal',    label: '<= Kurang dari sama dengan' },
     { value: 'equal',            label: '= Sama dengan' },
+    { value: 'greater',          label: '> Lebih besar dari' },
+    { value: 'less',             label: '< Lebih kecil dari' },
+    { value: 'between',          label: 'Di antara (min, max)' },
   ],
   date: [
-    { value: 'after',  label: 'Setelah tanggal' },
-    { value: 'before', label: 'Sebelum tanggal' },
+    { value: 'after',            label: 'Setelah tanggal' },
+    { value: 'before',           label: 'Sebelum tanggal' },
+    { value: 'between',          label: 'Di antara tanggal' },
   ],
   select: [
-    { value: 'is',     label: 'Sama dengan' },
-    { value: 'is_not', label: 'Tidak sama dengan' },
+    { value: 'is',               label: 'Sama dengan' },
+    { value: 'is_not',           label: 'Tidak sama dengan' },
+  ],
+  rfm_select: [
+    { value: 'is',               label: 'Sama dengan' },
+    { value: 'is_not',           label: 'Tidak sama dengan' },
   ],
 }
 
-const PRESETS = [
-  { key: 'all',      label: 'Semua',         emoji: '👥' },
-  { key: 'vip',      label: 'VIP ≥1jt',      emoji: '💎' },
-  { key: 'churn',    label: 'Churn Risk',     emoji: '⚠️' },
-  { key: 'high_aov', label: 'High AOV ≥500k', emoji: '💰' },
-  { key: 'one_time', label: 'One-Timer',      emoji: '👤' },
+const RFM_SEGMENTS = [
+  { value: 'vip',      label: 'VIP (LTV ≥ 1jt & Order ≥ 2)' },
+  { value: 'loyal',    label: 'Loyal (Order ≥ 3 & Aktif ≤ 30 hari)' },
+  { value: 'new',      label: 'Pelanggan Baru (1 Order & Aktif ≤ 30 hari)' },
+  { value: 'regular',  label: 'Regular Customer' },
+  { value: 'at_risk',  label: 'At Risk (Belum Order > 60 hari)' },
+  { value: 'churned',  label: 'Churned (Belum Order > 90 hari)' },
+  { value: 'one_time', label: 'One-Timer (1 Order & Belum Order > 30 hari)' },
+  { value: 'lost',     label: 'Lost (0 Order)' },
+]
+
+const DEFAULT_PRESETS = [
+  { key: 'all',      label: 'Semua Pelanggan', emoji: '👥', rules: [] },
+  { key: 'vip',      label: 'VIP Segment',      emoji: '💎', rules: [{ field: 'ltv', operator: 'greater_or_equal', value: '1000000' }] },
+  { key: 'loyal',    label: 'Loyal & Aktif',    emoji: '🔥', rules: [{ field: 'rfm_segment', operator: 'is', value: 'loyal' }] },
+  { key: 'new',      label: 'Baru Bergabung',   emoji: '🌱', rules: [{ field: 'rfm_segment', operator: 'is', value: 'new' }] },
+  { key: 'churn',    label: 'Churn Risk (60h)', emoji: '⚠️', rules: [{ field: 'days_since_last_order', operator: 'greater_or_equal', value: '60' }] },
+  { key: 'one_time', label: 'One-Timer',        emoji: '👤', rules: [{ field: 'total_order_count', operator: 'equal', value: '1' }] },
 ]
 
 const btnBase: React.CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', gap: '5px',
-  padding: '6px 12px', borderRadius: '7px', cursor: 'pointer',
+  display: 'inline-flex', alignItems: 'center', gap: '6px',
+  padding: '8px 14px', borderRadius: '8px', cursor: 'pointer',
   fontSize: '11px', fontWeight: 700, letterSpacing: '0.04em',
   textTransform: 'uppercase', transition: 'all 0.15s',
   border: '1px solid var(--su-border)', background: 'white',
@@ -64,49 +90,201 @@ export function FilterBar({
   rules, setRules,
   showCharts, setShowCharts,
   availableStatuses,
+  businessId,
+  userId,
 }: FilterBarProps) {
   const [showBuilder, setShowBuilder] = useState(false)
+  const [savedPresets, setSavedPresets] = useState<any[]>([])
+  const [activePresetKey, setActivePresetKey] = useState<string>('all')
 
-  const today = new Date()
+  // Save preset Modal & State
+  const [showSaveModal, setShowSaveModal] = useState(false)
+  const [presetName, setPresetName] = useState('')
+  const [presetEmoji, setPresetEmoji] = useState('🔖')
+  const [isSaving, setIsSaving] = useState(false)
 
-  const applyPreset = (key: string) => {
-    if (key === 'all') return setRules([])
-    if (key === 'vip') return setRules([{ id: uid(), field: 'ltv', operator: 'greater_or_equal', value: '1000000' }])
-    if (key === 'churn') {
-      const d = new Date(today.getTime() - 60 * 86400000).toISOString().split('T')[0]
-      return setRules([{ id: uid(), field: 'last_order_date', operator: 'before', value: d }])
+  // Notification Toast State
+  const [toast, setToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
+
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
+
+  const showToast = useCallback((text: string, type: 'success' | 'error' = 'success') => {
+    setToast({ text, type })
+    setTimeout(() => {
+      setToast(null)
+    }, 4000)
+  }, [])
+
+  // Fetch saved presets from Supabase
+  const fetchSavedPresets = useCallback(async () => {
+    if (!businessId || !userId) return
+    try {
+      const { data, error } = await supabase
+        .from('customer_segment_presets')
+        .select('*')
+        .eq('business_id', businessId)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+      setSavedPresets(data || [])
+    } catch (err: any) {
+      console.error('Error fetching presets:', err.message)
     }
-    if (key === 'high_aov') return setRules([{ id: uid(), field: 'aov', operator: 'greater_or_equal', value: '500000' }])
-    if (key === 'one_time') return setRules([{ id: uid(), field: 'total_order_count', operator: 'equal', value: '1' }])
+  }, [businessId, userId, supabase])
+
+  useEffect(() => {
+    fetchSavedPresets()
+  }, [fetchSavedPresets])
+
+  // Apply default or custom preset
+  const handleApplyPreset = (presetKey: string, presetRules: any[]) => {
+    setActivePresetKey(presetKey)
+    // Map rule inputs to have random IDs
+    const newRules = presetRules.map(r => ({
+      id: uid(),
+      field: r.field,
+      operator: r.operator,
+      value: r.value
+    }))
+    setRules(newRules)
+    showToast(`Segmen "${DEFAULT_PRESETS.find(p => p.key === presetKey)?.label || savedPresets.find(p => p.id === presetKey)?.name || 'Custom'}" diterapkan.`)
+  }
+
+  // Save current segmentation rule list
+  const handleSavePreset = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!presetName.trim()) {
+      showToast('Nama preset tidak boleh kosong!', 'error')
+      return
+    }
+    if (!businessId || !userId) {
+      showToast('Autentikasi tidak valid. Coba refresh halaman.', 'error')
+      return
+    }
+
+    setIsSaving(true)
+    try {
+      // Serialize rules without dynamic IDs
+      const serializedRules = rules.map(({ field, operator, value }) => ({ field, operator, value }))
+
+      const { data, error } = await supabase
+        .from('customer_segment_presets')
+        .insert({
+          business_id: businessId,
+          user_id: userId,
+          name: presetName,
+          emoji: presetEmoji,
+          rules: serializedRules
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      showToast(`Preset "${presetName}" berhasil disimpan!`, 'success')
+      setPresetName('')
+      setShowSaveModal(false)
+      fetchSavedPresets()
+      if (data) {
+        setActivePresetKey(data.id)
+      }
+    } catch (err: any) {
+      showToast(`Gagal menyimpan preset: ${err.message}`, 'error')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  // Delete custom preset
+  const handleDeletePreset = async (presetId: string, name: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!window.confirm(`Hapus preset "${name}"?`)) return
+
+    try {
+      const { error } = await supabase
+        .from('customer_segment_presets')
+        .delete()
+        .eq('id', presetId)
+
+      if (error) throw error
+
+      showToast(`Preset "${name}" berhasil dihapus.`, 'success')
+      if (activePresetKey === presetId) {
+        setActivePresetKey('all')
+        setRules([])
+      }
+      fetchSavedPresets()
+    } catch (err: any) {
+      showToast(`Gagal menghapus preset: ${err.message}`, 'error')
+    }
   }
 
   const addRule = () => {
     setRules([...rules, { id: uid(), field: 'ltv', operator: 'greater_or_equal', value: '' }])
     setShowBuilder(true)
+    setActivePresetKey('custom')
   }
 
-  const removeRule = (id: string) => setRules(rules.filter(r => r.id !== id))
+  const removeRule = (id: string) => {
+    const nextRules = rules.filter(r => r.id !== id)
+    setRules(nextRules)
+    setActivePresetKey('custom')
+  }
 
   const updateRule = (id: string, updates: Partial<FilterRule>) => {
+    setActivePresetKey('custom')
     setRules(rules.map(r => {
       if (r.id !== id) return r
       const next = { ...r, ...updates }
       if (updates.field) {
         const ft = FIELD_OPTIONS.find(f => f.value === updates.field)?.type || 'number'
         next.operator = OPERATOR_OPTIONS[ft][0].value as any
-        next.value    = ft === 'select' ? (availableStatuses[0] || '') : ''
+        if (ft === 'select') {
+          next.value = availableStatuses[0] || 'completed'
+        } else if (ft === 'rfm_select') {
+          next.value = 'vip'
+        } else {
+          next.value = ''
+        }
       }
       return next
     }))
   }
 
-  const activePreset = rules.length === 0 ? 'all' : null
-
   return (
-    <div style={{ marginBottom: '24px' }}>
+    <div style={{ marginBottom: '24px', position: 'relative' }}>
+
+      {/* ── Toast Notification ────────────────────────────────────────── */}
+      {toast && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          zIndex: 9999,
+          background: toast.type === 'success' ? 'var(--su-success-light)' : 'var(--su-danger-light)',
+          border: `1px solid ${toast.type === 'success' ? 'var(--su-success)' : 'var(--su-danger)'}`,
+          padding: '12px 20px',
+          borderRadius: '8px',
+          boxShadow: 'var(--su-shadow-lg)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+        }} className="su-fade-in">
+          <span style={{ fontSize: '16px' }}>{toast.type === 'success' ? '✨' : '❌'}</span>
+          <span style={{
+            fontSize: '12px',
+            fontWeight: 700,
+            color: toast.type === 'success' ? 'var(--su-success)' : 'var(--su-danger)'
+          }}>{toast.text}</span>
+        </div>
+      )}
 
       {/* ── Row 1: Search + Toggles ─────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
 
         {/* Search */}
         <div style={{ position: 'relative', flex: '1 1 220px' }}>
@@ -149,8 +327,23 @@ export function FilterBar({
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/>
           </svg>
-          Segmentasi {rules.length > 0 && <span style={{ background: 'var(--su-primary)', color: 'white', borderRadius: '99px', padding: '0 5px', fontSize: '9px' }}>{rules.length}</span>}
+          Filter Segmentasi {rules.length > 0 && <span style={{ background: 'var(--su-primary)', color: 'white', borderRadius: '99px', padding: '0 5px', fontSize: '9px' }}>{rules.length}</span>}
         </button>
+
+        {/* Save Segment Button */}
+        {rules.length > 0 && (
+          <button
+            onClick={() => setShowSaveModal(true)}
+            style={{
+              ...btnBase,
+              background: 'white',
+              borderColor: 'var(--su-success)',
+              color: 'var(--su-success)',
+            }}
+          >
+            💾 Simpan Segmen Ini
+          </button>
+        )}
 
         {/* Charts toggle */}
         <button
@@ -160,6 +353,7 @@ export function FilterBar({
             background: showCharts ? 'var(--su-accent-light)' : 'white',
             borderColor: showCharts ? 'rgba(245,158,11,0.3)' : 'var(--su-border)',
             color: showCharts ? 'var(--su-accent-dark)' : 'var(--su-text-muted)',
+            marginLeft: 'auto'
           }}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -169,32 +363,176 @@ export function FilterBar({
         </button>
       </div>
 
-      {/* ── Row 2: Preset Chips ──────────────────────────────────────────── */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+      {/* ── Row 2: Default Presets ──────────────────────────────────────────── */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', marginBottom: '10px' }}>
         <span style={{ fontSize: '9px', fontWeight: 800, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--su-text-faint)', marginRight: '4px' }}>
-          Preset:
+          Preset Sistem:
         </span>
-        {PRESETS.map(p => {
-          const isActive = p.key === 'all' ? rules.length === 0 : false
+        {DEFAULT_PRESETS.map(p => {
+          const isActive = activePresetKey === p.key
           return (
             <button
               key={p.key}
-              onClick={() => applyPreset(p.key)}
+              onClick={() => handleApplyPreset(p.key, p.rules)}
               style={{
                 ...btnBase,
                 padding: '5px 10px',
-                background: isActive ? 'var(--su-sidebar-bg)' : 'white',
-                borderColor: isActive ? 'var(--su-sidebar-bg)' : 'var(--su-border)',
-                color: isActive ? '#FFFEF9' : 'var(--su-text-muted)',
+                background: isActive ? 'var(--su-primary)' : 'white',
+                borderColor: isActive ? 'var(--su-primary)' : 'var(--su-border)',
+                color: isActive ? 'white' : 'var(--su-text-muted)',
               }}
-              onMouseEnter={e => { if (!isActive) { (e.currentTarget as HTMLElement).style.background = 'var(--su-bg)'; (e.currentTarget as HTMLElement).style.color = 'var(--su-text)' } }}
-              onMouseLeave={e => { if (!isActive) { (e.currentTarget as HTMLElement).style.background = 'white'; (e.currentTarget as HTMLElement).style.color = 'var(--su-text-muted)' } }}
             >
               {p.emoji} {p.label}
             </button>
           )
         })}
       </div>
+
+      {/* ── Row 3: Saved Custom Presets ──────────────────────────────────────── */}
+      {savedPresets.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', background: '#FAFAF8', padding: '6px 12px', borderRadius: '8px', border: '1px dashed var(--su-border)', marginBottom: '12px' }}>
+          <span style={{ fontSize: '9px', fontWeight: 800, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--su-text-faint)', marginRight: '4px' }}>
+            Segmen Tersimpan:
+          </span>
+          {savedPresets.map(p => {
+            const isActive = activePresetKey === p.id
+            return (
+              <div
+                key={p.id}
+                onClick={() => handleApplyPreset(p.id, p.rules)}
+                style={{
+                  ...btnBase,
+                  padding: '4px 8px 4px 10px',
+                  background: isActive ? 'var(--su-success)' : 'white',
+                  borderColor: isActive ? 'var(--su-success)' : 'var(--su-border)',
+                  color: isActive ? 'white' : 'var(--su-text-muted)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span>{p.emoji} {p.name}</span>
+                <button
+                  onClick={(e) => handleDeletePreset(p.id, p.name, e)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: isActive ? 'rgba(255,255,255,0.7)' : 'var(--su-text-faint)',
+                    cursor: 'pointer',
+                    fontSize: '11px',
+                    padding: '0 2px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    fontWeight: 700,
+                  }}
+                  title="Hapus Preset"
+                >
+                  ✕
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── Save Segment Modal ───────────────────────────────────────────── */}
+      {showSaveModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(28, 28, 26, 0.4)',
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          zIndex: 1000,
+          backdropFilter: 'blur(2px)'
+        }}>
+          <form onSubmit={handleSavePreset} style={{
+            background: 'white',
+            border: '1px solid var(--su-border)',
+            borderRadius: '12px',
+            padding: '24px',
+            width: '100%',
+            maxWidth: '380px',
+            boxShadow: 'var(--su-shadow-lg)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px'
+          }} className="su-fade-in">
+            <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--su-text)' }}>
+              Simpan Segmen Baru
+            </h3>
+            
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', width: '70px' }}>
+                <label style={{ fontSize: '9px', fontWeight: 800, color: 'var(--su-text-faint)' }}>EMOJI</label>
+                <select
+                  value={presetEmoji}
+                  onChange={e => setPresetEmoji(e.target.value)}
+                  style={{ padding: '8px', borderRadius: '8px', border: '1px solid var(--su-border)', background: '#FAFAF8', fontSize: '16px' }}
+                >
+                  <option value="🔖">🔖</option>
+                  <option value="💎">💎</option>
+                  <option value="🔥">🔥</option>
+                  <option value="⚡">⚡</option>
+                  <option value="⚠️">⚠️</option>
+                  <option value="💰">💰</option>
+                  <option value="👤">👤</option>
+                  <option value="🚀">🚀</option>
+                  <option value="📦">📦</option>
+                  <option value="🌟">🌟</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+                <label style={{ fontSize: '9px', fontWeight: 800, color: 'var(--su-text-faint)' }}>NAMA SEGMEN</label>
+                <input
+                  type="text"
+                  placeholder="Contoh: VIP High Spenders"
+                  value={presetName}
+                  onChange={e => setPresetName(e.target.value)}
+                  required
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--su-border)',
+                    background: '#FAFAF8',
+                    fontSize: '13px',
+                    color: 'var(--su-text)',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+            </div>
+
+            <div style={{ fontSize: '10px', color: 'var(--su-text-faint)', background: 'var(--su-bg)', padding: '8px 12px', borderRadius: '6px' }}>
+              Segmen akan menyimpan {rules.length} kriteria filter aktif saat ini.
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' }}>
+              <button
+                type="button"
+                onClick={() => setShowSaveModal(false)}
+                style={{ ...btnBase, textTransform: 'none', fontWeight: 600 }}
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={isSaving}
+                style={{
+                  ...btnBase,
+                  background: 'var(--su-primary)',
+                  color: 'white',
+                  borderColor: 'var(--su-primary)',
+                  textTransform: 'none',
+                  fontWeight: 700
+                }}
+              >
+                {isSaving ? 'Menyimpan...' : 'Simpan Segmen'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* ── Segment Builder Panel ────────────────────────────────────────── */}
       {(showBuilder || rules.length > 0) && (
@@ -210,12 +548,16 @@ export function FilterBar({
                 Segment Builder
               </h3>
               <p style={{ margin: '2px 0 0', fontSize: '10px', color: 'var(--su-text-faint)' }}>
-                Tampilkan pelanggan yang memenuhi semua kriteria
+                Tampilkan pelanggan yang memenuhi semua kriteria di bawah ini:
               </p>
             </div>
             {rules.length > 0 && (
               <button
-                onClick={() => setRules([])}
+                onClick={() => {
+                  setRules([])
+                  setActivePresetKey('all')
+                  showToast('Semua kriteria filter dibersihkan.')
+                }}
                 style={{ fontSize: '10px', fontWeight: 700, color: 'var(--su-danger)', background: 'none', border: 'none', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.08em' }}
               >
                 Hapus Semua
@@ -244,16 +586,65 @@ export function FilterBar({
                     background: 'var(--su-bg)', padding: '10px 12px', borderRadius: '8px',
                     border: '1px solid var(--su-border)',
                   }}>
-                    <select value={rule.field} onChange={e => updateRule(rule.id, { field: e.target.value as any })} style={{ ...selectStyle, minWidth: '180px' }}>
+                    {/* Field */}
+                    <select
+                      value={rule.field}
+                      onChange={e => updateRule(rule.id, { field: e.target.value as any })}
+                      style={{ ...selectStyle, minWidth: '180px' }}
+                    >
                       {FIELD_OPTIONS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                     </select>
-                    <select value={rule.operator} onChange={e => updateRule(rule.id, { operator: e.target.value as any })} style={{ ...selectStyle, minWidth: '180px' }}>
+
+                    {/* Operator */}
+                    <select
+                      value={rule.operator}
+                      onChange={e => updateRule(rule.id, { operator: e.target.value as any })}
+                      style={{ ...selectStyle, minWidth: '180px' }}
+                    >
                       {operators.map(op => <option key={op.value} value={op.value}>{op.label}</option>)}
                     </select>
+
+                    {/* Value Input */}
                     {ft === 'select' ? (
-                      <select value={rule.value} onChange={e => updateRule(rule.id, { value: e.target.value })} style={{ ...selectStyle, flex: 1 }}>
+                      <select
+                        value={rule.value}
+                        onChange={e => updateRule(rule.id, { value: e.target.value })}
+                        style={{ ...selectStyle, flex: 1 }}
+                      >
                         {availableStatuses.map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
                       </select>
+                    ) : ft === 'rfm_select' ? (
+                      <select
+                        value={rule.value}
+                        onChange={e => updateRule(rule.id, { value: e.target.value })}
+                        style={{ ...selectStyle, flex: 1 }}
+                      >
+                        {RFM_SEGMENTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                      </select>
+                    ) : rule.operator === 'between' ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: '160px' }}>
+                        <input
+                          type={ft}
+                          placeholder="Min"
+                          value={(rule.value || '').split(',')[0] || ''}
+                          onChange={e => {
+                            const max = (rule.value || '').split(',')[1] || ''
+                            updateRule(rule.id, { value: `${e.target.value},${max}` })
+                          }}
+                          style={{ ...selectStyle, width: '50%' }}
+                        />
+                        <span style={{ fontSize: '11px', color: 'var(--su-text-faint)' }}>s/d</span>
+                        <input
+                          type={ft}
+                          placeholder="Max"
+                          value={(rule.value || '').split(',')[1] || ''}
+                          onChange={e => {
+                            const min = (rule.value || '').split(',')[0] || ''
+                            updateRule(rule.id, { value: `${min},${e.target.value}` })
+                          }}
+                          style={{ ...selectStyle, width: '50%' }}
+                        />
+                      </div>
                     ) : (
                       <input
                         type={ft}
@@ -263,6 +654,8 @@ export function FilterBar({
                         style={{ ...selectStyle, flex: 1, minWidth: '140px' }}
                       />
                     )}
+
+                    {/* Delete Rule button */}
                     <button
                       onClick={() => removeRule(rule.id)}
                       title="Hapus rule ini"
@@ -306,7 +699,7 @@ export function FilterBar({
               onClick={() => setShowBuilder(false)}
               style={{ fontSize: '11px', fontWeight: 600, color: 'var(--su-text-faint)', background: 'none', border: 'none', cursor: 'pointer', letterSpacing: '0.06em', textTransform: 'uppercase' }}
             >
-              Tutup
+              Tutup Panel Builder
             </button>
           </div>
         </div>

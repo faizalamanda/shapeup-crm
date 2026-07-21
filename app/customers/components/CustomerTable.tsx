@@ -196,37 +196,120 @@ export function CustomerTable({ customers, onSelect }: { customers: any[]; onSel
   const containerRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
 
+  // Sort State
+  const [sortKey, setSortKey] = useState<string>('ltv')
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
+
   const handleScroll = useCallback(() => {
     if (containerRef.current) {
       setScrollTop(containerRef.current.scrollTop)
     }
   }, [])
 
-
-  // Reset scroll on data change
+  // Reset scroll on data change or sorting change
   useEffect(() => {
     if (containerRef.current) {
       containerRef.current.scrollTop = 0
       setScrollTop(0)
     }
-  }, [customers])
+  }, [customers, sortKey, sortDirection])
 
-  const totalHeight  = customers.length * ROW_HEIGHT
+  // Sorting Logic
+  const sortedCustomers = useMemo(() => {
+    const sorted = [...customers]
+    if (!sortKey) return sorted
+
+    sorted.sort((a, b) => {
+      let aVal = a[sortKey]
+      let bVal = b[sortKey]
+
+      // Handle null/undefined values
+      if (aVal === null || aVal === undefined) return sortDirection === 'asc' ? 1 : -1
+      if (bVal === null || bVal === undefined) return sortDirection === 'asc' ? -1 : 1
+
+      // Numeric comparison
+      if (typeof aVal === 'number' && typeof bVal === 'number') {
+        return sortDirection === 'asc' ? aVal - bVal : bVal - aVal
+      }
+
+      // Date comparison
+      if (sortKey === 'joined_at' || sortKey === 'last_order_date') {
+        const aTime = new Date(aVal).getTime()
+        const bTime = new Date(bVal).getTime()
+        const aValid = !isNaN(aTime)
+        const bValid = !isNaN(bTime)
+        if (!aValid) return sortDirection === 'asc' ? 1 : -1
+        if (!bValid) return sortDirection === 'asc' ? -1 : 1
+        return sortDirection === 'asc' ? aTime - bTime : bTime - aTime
+      }
+
+      // String comparison (case insensitive)
+      const aStr = String(aVal).toLowerCase()
+      const bStr = String(bVal).toLowerCase()
+      if (aStr < bStr) return sortDirection === 'asc' ? -1 : 1
+      if (aStr > bStr) return sortDirection === 'asc' ? 1 : -1
+      return 0
+    })
+
+    return sorted
+  }, [customers, sortKey, sortDirection])
+
+  const totalHeight  = sortedCustomers.length * ROW_HEIGHT
   const startIndex   = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
   const visibleCount = Math.ceil(CONTAINER_H / ROW_HEIGHT) + OVERSCAN * 2
-  const endIndex     = Math.min(customers.length - 1, startIndex + visibleCount)
+  const endIndex     = Math.min(sortedCustomers.length - 1, startIndex + visibleCount)
 
-  const visibleCustomers = customers.slice(startIndex, endIndex + 1)
+  const visibleCustomers = sortedCustomers.slice(startIndex, endIndex + 1)
   const offsetY          = startIndex * ROW_HEIGHT
 
-  const colHeader = (label: string, align: 'left' | 'center' | 'right' = 'left') => (
-    <div style={{
-      fontSize: '9px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.16em',
-      color: 'var(--su-text-faint)', textAlign: align, padding: '0 8px',
-    }}>
-      {label}
-    </div>
-  )
+  const handleSort = (key: string) => {
+    if (sortKey === key) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortKey(key)
+      setSortDirection('desc') // Default to desc for new keys
+    }
+  }
+
+  const colHeader = (
+    label: string, 
+    fieldKey?: string, 
+    align: 'left' | 'center' | 'right' = 'left'
+  ) => {
+    const isSorted = sortKey === fieldKey
+    const cursor = fieldKey ? 'pointer' : 'default'
+
+    return (
+      <div 
+        onClick={() => fieldKey && handleSort(fieldKey)}
+        style={{
+          fontSize: '9px', 
+          fontWeight: 800, 
+          textTransform: 'uppercase', 
+          letterSpacing: '0.16em',
+          color: isSorted ? 'var(--su-primary)' : 'var(--su-text-faint)', 
+          textAlign: align, 
+          padding: '0 8px',
+          cursor,
+          userSelect: 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start',
+          gap: '4px',
+          transition: 'color 0.12s',
+          width: '100%',
+        }}
+        className={fieldKey ? 'su-sortable-header' : ''}
+      >
+        <span>{label}</span>
+        {isSorted && (
+          <span style={{ fontSize: '8px', color: 'var(--su-primary)' }}>
+            {sortDirection === 'asc' ? '▲' : '▼'}
+          </span>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div style={{
@@ -248,18 +331,18 @@ export function CustomerTable({ customers, onSelect }: { customers: any[]; onSel
         top: 0,
         zIndex: 1,
       }}>
-        <div style={{ paddingLeft: '16px' }}>{colHeader('Nama Pelanggan')}</div>
+        <div style={{ paddingLeft: '8px' }}>{colHeader('Nama Pelanggan', 'name')}</div>
         {colHeader('Karakteristik')}
-        {colHeader('Bergabung', 'center')}
-        {colHeader('Orders', 'center')}
-        {colHeader('LTV Total', 'right')}
-        {colHeader('AOV', 'right')}
-        {colHeader('Terakhir', 'center')}
-        {colHeader('Aksi', 'center')}
+        {colHeader('Bergabung', 'joined_at', 'center')}
+        {colHeader('Orders', 'total_order_count', 'center')}
+        {colHeader('LTV Total', 'ltv', 'right')}
+        {colHeader('AOV', 'aov', 'right')}
+        {colHeader('Terakhir', 'last_order_date', 'center')}
+        {colHeader('Aksi', undefined, 'center')}
       </div>
 
       {/* Empty state */}
-      {customers.length === 0 ? (
+      {sortedCustomers.length === 0 ? (
         <div style={{
           padding: '48px', textAlign: 'center',
           color: 'var(--su-text-faint)', fontSize: '13px', fontStyle: 'italic',
@@ -292,7 +375,7 @@ export function CustomerTable({ customers, onSelect }: { customers: any[]; onSel
       )}
 
       {/* Footer count */}
-      {customers.length > 0 && (
+      {sortedCustomers.length > 0 && (
         <div style={{
           padding: '8px 16px',
           borderTop: '1px solid var(--su-border)',
@@ -302,7 +385,7 @@ export function CustomerTable({ customers, onSelect }: { customers: any[]; onSel
           display: 'flex', justifyContent: 'space-between',
         }}>
           <span>
-            Menampilkan {Math.min(endIndex - startIndex + 1, visibleCount)} baris dari {customers.length.toLocaleString('id-ID')}
+            Menampilkan {Math.min(endIndex - startIndex + 1, visibleCount)} baris dari {sortedCustomers.length.toLocaleString('id-ID')}
           </span>
           <span>Virtual Scroll aktif</span>
         </div>
