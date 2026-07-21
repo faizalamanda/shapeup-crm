@@ -298,7 +298,7 @@ export default function CustomerPage() {
     }))
 
     // 2. Update selected customer modal state
-    setSelectedCustomer(prev => {
+    setSelectedCustomer((prev: any) => {
       if (prev && prev.customer_id === updatedCustomer.id) {
         let newAddressString = ''
         if (updatedCustomer.address_data) {
