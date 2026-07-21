@@ -266,6 +266,68 @@ export default function CustomerPage() {
 
   const isLoadingFirst = isFetching && customers.length === 0
 
+  const handleCustomerUpdate = useCallback((updatedCustomer: any) => {
+    // 1. Update list state
+    setCustomers(prev => prev.map(c => {
+      if (c.customer_id === updatedCustomer.id) {
+        let newAddressString = ''
+        if (updatedCustomer.address_data) {
+          const ad = updatedCustomer.address_data
+          const parts = [
+            ad.address_line1,
+            ad.address_line2,
+            ad.subdistrict ? `Kec. ${ad.subdistrict}` : '',
+            ad.city,
+            ad.state,
+            ad.postcode,
+            ad.country
+          ].filter(Boolean)
+          newAddressString = parts.join(', ')
+        }
+
+        return {
+          ...c,
+          name: updatedCustomer.name,
+          phone: updatedCustomer.phone,
+          email: updatedCustomer.email,
+          category: updatedCustomer.category,
+          address: newAddressString || null
+        }
+      }
+      return c
+    }))
+
+    // 2. Update selected customer modal state
+    setSelectedCustomer(prev => {
+      if (prev && prev.customer_id === updatedCustomer.id) {
+        let newAddressString = ''
+        if (updatedCustomer.address_data) {
+          const ad = updatedCustomer.address_data
+          const parts = [
+            ad.address_line1,
+            ad.address_line2,
+            ad.subdistrict ? `Kec. ${ad.subdistrict}` : '',
+            ad.city,
+            ad.state,
+            ad.postcode,
+            ad.country
+          ].filter(Boolean)
+          newAddressString = parts.join(', ')
+        }
+
+        return {
+          ...prev,
+          name: updatedCustomer.name,
+          phone: updatedCustomer.phone,
+          email: updatedCustomer.email,
+          category: updatedCustomer.category,
+          address: newAddressString || null
+        }
+      }
+      return prev
+    })
+  }, [])
+
   // ─── Loading State (first load with no cache) ─────────────────────────────
   if (isLoadingFirst) {
     return (
@@ -399,6 +461,7 @@ export default function CustomerPage() {
       <CustomerDetail
         customer={selectedCustomer}
         onClose={() => setSelectedCustomer(null)}
+        onUpdate={handleCustomerUpdate}
       />
     </div>
   )
