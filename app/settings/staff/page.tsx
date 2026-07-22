@@ -19,7 +19,8 @@ export default function StaffSettings() {
     { key: 'input_journal_expenses', label: 'Input Jurnal & Pengeluaran', desc: 'Hanya bisa input Jurnal harian dan pengeluaran operasional. Tidak punya akses ke dashboard P&L' },
     { key: 'manage_invoices', label: 'Kelola Invoice (Piutang)', desc: 'Bisa mengelola Invoices (Piutang), Orders, POS, Customer, dan Produk' },
     { key: 'manage_bills', label: 'Kelola Bills (Hutang)', desc: 'Bisa mengelola Bills (Hutang/Pembelian), Pengeluaran, dan Pemasok' },
-    { key: 'manage_employees_salary', label: 'Kelola Karyawan & Gaji (HR)', desc: 'Hanya bisa mengelola dan menambah data karyawan dan rincian gaji. Tidak punya akses ke modul akuntansi' }
+    { key: 'manage_employees_salary', label: 'Kelola Karyawan & Gaji (HR)', desc: 'Hanya bisa mengelola dan menambah data karyawan dan rincian gaji. Tidak punya akses ke modul akuntansi' },
+    { key: 'manage_marketing', label: 'Kelola Marketing', desc: 'Bisa mengelola modul Marketing' }
   ], [])
   
   // Create Modal State

@@ -428,6 +428,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       allowed.push({ name: 'Karyawan & Gaji', href: '/employees', icon: Icons.employees })
     }
 
+    // 8. Marketing
+    if (perms.includes('manage_marketing')) {
+      const marketingItem = menuItems.find(m => m.name === 'Marketing')
+      if (marketingItem) allowed.push(marketingItem)
+    }
+
     // Business Settings (Viewable by anyone, but restricted at page-level if needed)
     const businessItem = menuItems.find(m => m.name === 'Business')
     if (businessItem) allowed.push(businessItem)
@@ -449,7 +455,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     }
 
     if (pathname.startsWith('/marketing')) {
-      return false
+      return perms.includes('manage_marketing')
     }
 
     if (pathname.startsWith('/employees')) {
