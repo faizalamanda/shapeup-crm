@@ -161,7 +161,6 @@ const menuItems: MenuItem[] = [
     ],
   },
   { name: 'Marketing',    href: '/marketing',         icon: Icons.marketing },
-  { name: 'Business',     href: '/settings/business', icon: Icons.business },
 ]
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -434,10 +433,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       if (marketingItem) allowed.push(marketingItem)
     }
 
-    // Business Settings (Viewable by anyone, but restricted at page-level if needed)
-    const businessItem = menuItems.find(m => m.name === 'Business')
-    if (businessItem) allowed.push(businessItem)
-
     return allowed
   }, [currentUserRole, currentUserPermissions, bizLoading])
 
@@ -450,7 +445,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
     if (role === 'admin' || perms.includes('full_access')) return true
 
-    if (pathname.startsWith('/settings/staff')) {
+    if (pathname.startsWith('/settings')) {
       return false
     }
 
@@ -762,23 +757,27 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     </Link>
                   </>
                 )}
-                <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '6px 0' }} />
-                <Link
-                  href="/settings/business"
-                  onClick={() => setIsDropdownOpen(false)}
-                  style={{
-                    display: 'block',
-                    padding: '8px 12px',
-                    color: 'rgba(255,254,249,0.5)',
-                    fontSize: '10px',
-                    fontWeight: 800,
-                    textDecoration: 'none',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                  }}
-                >
-                  ⚙️ Kelola Bisnis
-                </Link>
+                {currentUserRole === 'admin' && (
+                  <>
+                    <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '6px 0' }} />
+                    <Link
+                      href="/settings/business"
+                      onClick={() => setIsDropdownOpen(false)}
+                      style={{
+                        display: 'block',
+                        padding: '8px 12px',
+                        color: 'rgba(255,254,249,0.5)',
+                        fontSize: '10px',
+                        fontWeight: 800,
+                        textDecoration: 'none',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                      }}
+                    >
+                      ⚙️ Kelola Bisnis
+                    </Link>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -879,20 +878,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           {/* Bottom */}
           <div style={{ padding: '8px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-            <Link
-              href="/settings"
-              style={{
-                display: 'flex', alignItems: 'center', gap: '10px',
-                padding: '8px 12px', borderRadius: '7px',
-                fontSize: '11px', fontWeight: 500, textDecoration: 'none',
-                color: pathname.startsWith('/settings') ? '#FFFEF9' : 'rgba(255,254,249,0.4)',
-                background: pathname.startsWith('/settings') ? 'var(--su-sidebar-active)' : 'transparent',
-                textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '2px',
-              }}
-            >
-              <span style={{ opacity: 0.6 }}>{Icons.settings}</span>
-              Settings
-            </Link>
+            {currentUserRole === 'admin' && (
+              <Link
+                href="/settings/business"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  padding: '8px 12px', borderRadius: '7px',
+                  fontSize: '11px', fontWeight: 500, textDecoration: 'none',
+                  color: pathname.startsWith('/settings') ? '#FFFEF9' : 'rgba(255,254,249,0.4)',
+                  background: pathname.startsWith('/settings') ? 'var(--su-sidebar-active)' : 'transparent',
+                  textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '2px',
+                }}
+              >
+                <span style={{ opacity: 0.6 }}>{Icons.settings}</span>
+                Settings
+              </Link>
+            )}
             <button
               onClick={handleLogout}
               style={{

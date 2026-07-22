@@ -12,6 +12,19 @@ export async function POST(req: Request) {
 
     if (!businessId) return NextResponse.json({ error: 'Missing Business ID' }, { status: 400 })
 
+    // Check if integration is paused/disabled for this business
+    const { data: integConfig } = await supabaseAdmin
+      .from('integrations')
+      .select('is_active')
+      .eq('platform_name', 'woocommerce')
+      .filter('api_credentials->>business_id', 'eq', businessId)
+      .maybeSingle()
+
+    if (integConfig && integConfig.is_active === false) {
+      console.log(`[Webhook WooCommerce] Integrasi dinonaktifkan untuk bisnis ${businessId}. Pesanan diabaikan.`)
+      return NextResponse.json({ message: 'Integrasi WooCommerce dinonaktifkan untuk unit bisnis ini.' }, { status: 200 })
+    }
+
     const woo = await req.json()
     if (!woo.id) return NextResponse.json({ message: 'Not an order data' }, { status: 200 })
 

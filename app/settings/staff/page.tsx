@@ -1,9 +1,17 @@
 "use client"
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
 import Link from 'next/link'
+import SettingsLayout from '@/components/SettingsLayout'
 
 export default function StaffSettings() {
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
   const supabase = useMemo(() => createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -55,6 +63,18 @@ export default function StaffSettings() {
   const [deletingStaff, setDeletingStaff] = useState<any>(null)
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
   const [deleteMessage, setDeleteMessage] = useState({ text: '', type: '' })
+
+  // Prevent body scroll when any modal is open
+  useEffect(() => {
+    if (isModalOpen || isEditModalOpen || isDeleteModalOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [isModalOpen, isEditModalOpen, isDeleteModalOpen])
 
   // Self Password State
   const [myPassword, setMyPassword] = useState('')
@@ -192,7 +212,7 @@ export default function StaffSettings() {
     setEditEmail(staff.email || '')
     setEditRole(staff.role || 'staff')
     setEditPermissions(staff.permissions || [])
-    setEditPassword('') // Blank by default, only updated if entered
+    setEditPassword('')
     setIsEditModalOpen(true)
   }
 
@@ -310,307 +330,336 @@ export default function StaffSettings() {
 
   if (!loading && !currentUserProfile?.active_business_id) {
     return (
-      <div className="min-h-screen bg-[#f4f1ea] p-4 md:p-8 text-[#2e2e2e] flex items-center justify-center">
-        <div className="bg-white border-4 border-black p-10 text-center space-y-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-w-xl">
-          <div className="w-16 h-16 bg-red-100 border-4 border-black flex items-center justify-center text-3xl mx-auto rounded-full">
+      <SettingsLayout title="Staf & Hak Akses" subtitle="Kelola anggota tim, tambahkan akun staf, dan atur hak akses modul.">
+        <div className="bg-white border border-[#E2E2DC] rounded-xl p-8 text-center space-y-4 max-w-xl mx-auto shadow-sm">
+          <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center text-xl mx-auto">
             ⚠️
           </div>
-          <h2 className="text-3xl font-black uppercase italic tracking-tight text-slate-900 leading-none">
-            Bisnis Aktif Tidak Terdeteksi
-          </h2>
-          <p className="text-sm font-bold text-slate-600 uppercase tracking-widest leading-relaxed">
-            Anda harus memilih atau mengaktifkan salah satu unit bisnis terlebih dahulu untuk mengakses Manajemen Tim.
+          <h2 className="text-xl font-bold text-[#1C1C1A]">Unit Bisnis Aktif Belum Dipilih</h2>
+          <p className="text-xs text-[#6B6B63]">
+            Anda harus memilih atau mengaktifkan salah satu unit bisnis terlebih dahulu untuk mengelola anggota tim.
           </p>
-          <div className="pt-4">
+          <div className="pt-2">
             <Link 
               href="/settings/business" 
-              className="inline-block bg-black text-white font-black uppercase text-xs tracking-widest px-8 py-4 border-4 border-black hover:bg-yellow-200 hover:text-black transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-[4px] hover:translate-y-[4px]"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs"
             >
-              Pilih / Aktifkan Bisnis
+              Pilih Unit Bisnis &rarr;
             </Link>
           </div>
         </div>
-      </div>
+      </SettingsLayout>
     )
   }
 
   const isAdmin = currentUserProfile?.role === 'admin'
 
   return (
-    <div className="min-h-screen bg-[#f4f1ea] p-4 md:p-8 text-[#2e2e2e]">
-      <div className="max-w-5xl mx-auto space-y-12">
-        {/* Header */}
-        <header className="border-b-4 border-black pb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div>
-            <h1 className="text-4xl font-black uppercase italic tracking-tight text-slate-900 leading-none">Manajemen Tim</h1>
-            <p className="text-sm font-bold text-slate-600 uppercase tracking-widest mt-2">Kelola akses anggota tim ke dashboard bisnis.</p>
-          </div>
-          {isAdmin && (
-            <button 
-              onClick={() => {
-                setCreateMessage({ text: '', type: '' })
-                setEmail('')
-                setPassword('')
-                setName('')
-                setRole('staff')
-                setPermissions([])
-                setEmailExists(null)
-                setEmailAlreadyInBusiness(null)
-                setExistingUserName('')
-                setIsModalOpen(true)
-              }}
-              className="bg-black text-white font-black uppercase text-xs tracking-widest px-6 py-4 border-4 border-black hover:bg-yellow-200 hover:text-black transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-[4px] hover:translate-y-[4px] cursor-pointer"
-            >
-              + Tambah Anggota
-            </button>
-          )}
-        </header>
+    <SettingsLayout title="Staf & Hak Akses" subtitle="Kelola anggota tim, tambahkan akun staf, dan atur hak akses modul.">
+      
+      {/* Header Action Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-bold text-[#1C1C1A]">Manajemen Tim &amp; Peran</h2>
+          <p className="text-xs text-[#6B6B63]">Kelola anggota tim, tambahkan akun staf, dan atur hak akses modul.</p>
+        </div>
+        {isAdmin && (
+          <button 
+            onClick={() => {
+              setCreateMessage({ text: '', type: '' })
+              setEmail('')
+              setPassword('')
+              setName('')
+              setRole('staff')
+              setPermissions([])
+              setEmailExists(null)
+              setEmailAlreadyInBusiness(null)
+              setExistingUserName('')
+              setIsModalOpen(true)
+            }}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-2 self-start sm:self-auto cursor-pointer"
+          >
+            <span>+</span>
+            <span>Tambah Anggota Tim</span>
+          </button>
+        )}
+      </div>
 
-        {/* Tabel Staff */}
-        <div className="bg-white border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#fffdfa] border-b-4 border-black">
-                  <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-black border-r-4 border-black">Nama Lengkap</th>
-                  <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-black border-r-4 border-black">Email</th>
-                  <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-black border-r-4 border-black">Role</th>
-                  <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-black border-r-4 border-black text-center">Status</th>
-                  {isAdmin && (
-                    <th className="px-6 py-4 text-xs font-black uppercase tracking-widest text-black text-right">Aksi</th>
-                  )}
-                </tr>
-              </thead>
-              <tbody className="divide-y-2 divide-slate-200">
-                {loading ? (
-                  <tr>
-                    <td colSpan={isAdmin ? 5 : 4} className="px-6 py-12 text-center text-slate-400 font-bold uppercase tracking-widest animate-pulse">
-                      Menyinkronkan data tim...
-                    </td>
-                  </tr>
-                ) : staffList.length > 0 ? (
-                  staffList.map((s) => (
-                    <tr key={s.id} className="hover:bg-yellow-50/40 transition-colors">
-                      <td className="px-6 py-4 font-bold text-slate-800 border-r-4 border-black">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 border-2 border-black bg-yellow-200 text-black flex items-center justify-center text-xs font-black uppercase">
-                            {s.full_name?.charAt(0).toUpperCase() || 'S'}
-                          </div>
-                          <span className="truncate">{s.full_name || 'Staff Tanpa Nama'}</span>
-                          {s.id === currentUserProfile?.id && (
-                            <span className="text-[9px] font-black uppercase bg-black text-white px-1.5 py-0.5 border border-black">Anda</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-slate-600 font-bold border-r-4 border-black break-all">{s.email}</td>
-                      <td className="px-6 py-4 border-r-4 border-black">
-                        <div className="space-y-2">
-                          <div>
-                            {s.role === 'admin' ? (
-                              <span className="bg-black text-white text-[9px] font-black px-2 py-0.5 uppercase tracking-widest border-2 border-black">
-                                {s.role}
-                              </span>
-                            ) : (
-                              <span className="bg-white text-slate-700 text-[9px] font-black px-2 py-0.5 uppercase tracking-widest border-2 border-slate-400">
-                                {s.role || 'staff'}
-                              </span>
-                            )}
-                          </div>
-                          {s.role !== 'admin' && s.permissions && s.permissions.length > 0 && (
-                            <div className="flex flex-wrap gap-1 max-w-[200px]">
-                              {s.permissions.map((pKey: string) => {
-                                const pObj = PERMISSIONS_LIST.find(p => p.key === pKey)
-                                return (
-                                  <span key={pKey} className="bg-yellow-100 text-[#2e2e2e] text-[8px] font-black px-1.5 py-0.5 border border-black uppercase tracking-tight block">
-                                    {pObj ? pObj.label : pKey}
-                                  </span>
-                                )
-                              })}
-                            </div>
-                          )}
-                          {s.role !== 'admin' && (!s.permissions || s.permissions.length === 0) && (
-                            <span className="text-[9px] italic text-slate-400 font-bold block">TIDAK ADA AKSES</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-center border-r-4 border-black last:border-r-0">
-                        <span className="inline-flex items-center gap-1.5 bg-green-50 text-green-700 text-[9px] font-black px-2.5 py-0.5 uppercase tracking-widest border-2 border-green-600">
-                          <span className="w-1.5 h-1.5 rounded-full bg-green-600 animate-pulse"></span>
-                          Aktif
-                        </span>
-                      </td>
-                      {isAdmin && (
-                        <td className="px-6 py-4 text-right space-x-3">
-                          <button
-                            onClick={() => openEditModal(s)}
-                            className="text-xs font-black text-slate-900 uppercase tracking-widest border-b-2 border-slate-900 hover:bg-yellow-200 px-1 py-0.5 cursor-pointer"
-                          >
-                            Edit
-                          </button>
-                          {s.id !== currentUserProfile?.id && (
-                            <button
-                              onClick={() => handleRemoveStaff(s)}
-                              className="text-xs font-black text-red-600 uppercase tracking-widest border-b-2 border-red-600 hover:bg-red-50 px-1 py-0.5 cursor-pointer"
-                            >
-                              Hapus
-                            </button>
-                          )}
-                        </td>
-                      )}
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={isAdmin ? 5 : 4} className="px-6 py-12 text-center text-slate-400 font-bold uppercase">
-                      Belum ada staff yang terdaftar.
-                    </td>
-                  </tr>
+      {/* Tabel Staff */}
+      <div className="bg-white border border-[#E2E2DC] rounded-xl shadow-xs overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-[#F7F7F5] border-b border-[#E2E2DC]">
+                <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63]">Nama Lengkap</th>
+                <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63]">Email</th>
+                <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63]">Role &amp; Hak Akses</th>
+                <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63] text-center">Status</th>
+                {isAdmin && (
+                  <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63] text-right">Aksi</th>
                 )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Card Ubah Password Saya */}
-        <div className="bg-white border-4 border-black p-8 md:p-10 max-w-xl shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-          <h2 className="text-2xl font-black uppercase italic mb-6 border-b-4 border-black pb-3">Ubah Password Saya</h2>
-          
-          {myPasswordMessage.text && (
-            <div className={`p-4 mb-6 border-2 font-bold text-xs uppercase tracking-wider ${
-              myPasswordMessage.type === 'success' 
-                ? 'bg-green-50 border-green-600 text-green-700' 
-                : 'bg-red-50 border-red-600 text-red-700'
-            }`}>
-              {myPasswordMessage.text}
-            </div>
-          )}
-
-          <form onSubmit={handleSelfPasswordUpdate} className="space-y-5">
-            <div className="space-y-1.5">
-              <label className="block text-xs font-black uppercase tracking-widest">Password Baru</label>
-              <input 
-                type="password" placeholder="Min. 6 karakter" required
-                className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
-                value={myPassword} onChange={e => setMyPassword(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="block text-xs font-black uppercase tracking-widest">Konfirmasi Password Baru</label>
-              <input 
-                type="password" placeholder="Ulangi password baru" required
-                className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
-                value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
-              />
-            </div>
-            <button 
-              type="submit" 
-              disabled={myPasswordLoading}
-              className="bg-black text-white font-black uppercase text-xs tracking-widest py-4 px-6 border-4 border-black hover:bg-yellow-200 hover:text-black transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-[4px] hover:translate-y-[4px] disabled:opacity-50 cursor-pointer w-full md:w-auto"
-            >
-              {myPasswordLoading ? 'MEMPERBARUI...' : 'UPDATE PASSWORD'}
-            </button>
-          </form>
-        </div>
-
-        {/* MODAL CREATE (BRUTALIST STYLE) */}
-        {isModalOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-            <div className="bg-white border-4 border-black p-8 md:p-10 w-full max-w-md shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
-              <h2 className="text-3xl font-black uppercase italic mb-6 border-b-4 border-black pb-3 text-center">Tambah Tim</h2>
-              
-              {createMessage.text && (
-                <div className={`p-4 mb-5 border-4 font-bold text-xs uppercase tracking-wider ${
-                  createMessage.type === 'success' 
-                    ? 'bg-green-50 border-green-600 text-green-700' 
-                    : 'bg-red-50 border-red-600 text-red-700'
-                }`}>
-                  {createMessage.text}
-                </div>
-              )}
-
-              <form onSubmit={handleCreateStaff} className="space-y-5">
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-black uppercase tracking-widest">Email Kerja</label>
-                  <div className="relative">
-                    <input 
-                      type="email" placeholder="budi@shapeup.com" required
-                      className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
-                      value={email} onChange={e => setEmail(e.target.value)}
-                    />
-                    {checkingEmail && (
-                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500 uppercase animate-pulse">
-                        Memeriksa...
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#E2E2DC]">
+              {loading ? (
+                <tr>
+                  <td colSpan={isAdmin ? 5 : 4} className="px-6 py-12 text-center text-[#A8A89E] text-xs font-bold uppercase tracking-wider">
+                    Memuat Data Tim...
+                  </td>
+                </tr>
+              ) : staffList.length > 0 ? (
+                staffList.map((s) => (
+                  <tr key={s.id} className="hover:bg-[#F7F7F5] transition-colors">
+                    <td className="px-6 py-4 font-semibold text-sm text-[#1C1C1A]">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-blue-50 border border-blue-200 text-blue-600 font-extrabold flex items-center justify-center text-xs">
+                          {s.full_name?.charAt(0).toUpperCase() || 'S'}
+                        </div>
+                        <span className="truncate">{s.full_name || 'Staff Tanpa Nama'}</span>
+                        {s.id === currentUserProfile?.id && (
+                          <span className="text-[9px] font-bold uppercase bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full border border-blue-200">Anda</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-xs font-medium text-[#6B6B63] break-all">{s.email}</td>
+                    <td className="px-6 py-4">
+                      <div className="space-y-1.5">
+                        <div>
+                          {s.role === 'admin' ? (
+                            <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                              Admin
+                            </span>
+                          ) : (
+                            <span className="bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                              {s.role || 'Staff'}
+                            </span>
+                          )}
+                        </div>
+                        {s.role !== 'admin' && s.permissions && s.permissions.length > 0 && (
+                          <div className="flex flex-wrap gap-1 max-w-sm">
+                            {s.permissions.map((pKey: string) => {
+                              const pObj = PERMISSIONS_LIST.find(p => p.key === pKey)
+                              return (
+                                <span key={pKey} className="bg-amber-50 text-amber-800 border border-amber-200 text-[9px] font-semibold px-2 py-0.5 rounded-md">
+                                  {pObj ? pObj.label : pKey}
+                                </span>
+                              )
+                            })}
+                          </div>
+                        )}
+                        {s.role !== 'admin' && (!s.permissions || s.permissions.length === 0) && (
+                          <span className="text-[10px] italic text-[#A8A89E]">Tidak ada akses khusus</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <span className="inline-flex items-center gap-1.5 bg-green-50 text-green-700 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-green-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-600 animate-pulse"></span>
+                        Aktif
                       </span>
+                    </td>
+                    {isAdmin && (
+                      <td className="px-6 py-4 text-right space-x-3 text-xs font-bold">
+                        <button
+                          onClick={() => openEditModal(s)}
+                          className="text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
+                        >
+                          Edit
+                        </button>
+                        {s.id !== currentUserProfile?.id && (
+                          <button
+                            onClick={() => handleRemoveStaff(s)}
+                            className="text-red-600 hover:text-red-700 hover:underline cursor-pointer"
+                          >
+                            Hapus
+                          </button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={isAdmin ? 5 : 4} className="px-6 py-12 text-center text-[#A8A89E] text-xs font-semibold">
+                    Belum ada staff yang terdaftar pada unit bisnis ini.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Card Ubah Password Saya */}
+      <div className="bg-white border border-[#E2E2DC] rounded-xl p-6 shadow-xs max-w-xl space-y-4">
+        <h2 className="text-base font-bold text-[#1C1C1A] border-b border-[#E2E2DC] pb-3">Ubah Password Saya</h2>
+        
+        {myPasswordMessage.text && (
+          <div className={`p-3 rounded-lg text-xs font-semibold ${
+            myPasswordMessage.type === 'success' 
+              ? 'bg-green-50 border border-green-200 text-green-700' 
+              : 'bg-red-50 border border-red-200 text-red-700'
+          }`}>
+            {myPasswordMessage.text}
+          </div>
+        )}
+
+        <form onSubmit={handleSelfPasswordUpdate} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Password Baru</label>
+            <input 
+              type="password" placeholder="Minimal 6 karakter" required
+              className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              value={myPassword} onChange={e => setMyPassword(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Konfirmasi Password Baru</label>
+            <input 
+              type="password" placeholder="Ulangi password baru" required
+              className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+            />
+          </div>
+          <button 
+            type="submit" 
+            disabled={myPasswordLoading}
+            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+          >
+            {myPasswordLoading ? 'Memperbarui...' : 'Simpan Password Baru'}
+          </button>
+        </form>
+      </div>
+
+      {/* MODAL CREATE STAFF */}
+      {isModalOpen && mounted && createPortal(
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs z-[9999] flex items-center justify-center p-4 overflow-y-auto overscroll-contain">
+          <div className="bg-white border border-[#E2E2DC] rounded-2xl p-6 md:p-8 w-full max-w-3xl shadow-2xl max-h-[90vh] overflow-y-auto space-y-6 my-auto">
+            <div className="flex items-center justify-between border-b border-[#E2E2DC] pb-4">
+              <div>
+                <h2 className="text-lg font-bold text-[#1C1C1A]">Tambah Anggota Tim</h2>
+                <p className="text-xs text-[#6B6B63]">Isi informasi pengguna dan atur hak akses modul di sebelah kanan.</p>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsModalOpen(false)
+                  setCreateMessage({ text: '', type: '' })
+                  setEmailExists(null)
+                  setEmailAlreadyInBusiness(null)
+                  setExistingUserName('')
+                }}
+                className="text-[#A8A89E] hover:text-[#1C1C1A] text-lg font-bold cursor-pointer p-1"
+              >
+                ✕
+              </button>
+            </div>
+            
+            {createMessage.text && (
+              <div className={`p-3 rounded-lg text-xs font-semibold ${
+                createMessage.type === 'success' 
+                  ? 'bg-green-50 border border-green-200 text-green-700' 
+                  : 'bg-red-50 border border-red-200 text-red-700'
+              }`}>
+                {createMessage.text}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateStaff} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                {/* Left Column: Form Inputs */}
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Email Kerja</label>
+                    <div className="relative">
+                      <input 
+                        type="email" placeholder="budi@perusahaan.com" required
+                        className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                        value={email} onChange={e => setEmail(e.target.value)}
+                      />
+                      {checkingEmail && (
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#A8A89E] font-medium">
+                          Memeriksa...
+                        </span>
+                      )}
+                    </div>
+
+                    {emailExists === true && (
+                      <div className={`mt-2 p-2.5 rounded-lg text-xs font-medium ${
+                        emailAlreadyInBusiness
+                          ? 'bg-red-50 text-red-700 border border-red-200'
+                          : 'bg-green-50 text-green-700 border border-green-200'
+                      }`}>
+                        {emailAlreadyInBusiness ? (
+                          <span>⚠️ Email ini sudah terdaftar sebagai staf di bisnis ini.</span>
+                        ) : (
+                          <span>💡 Terdaftar sebagai "{existingUserName}". Staf akan ditambahkan ke unit ini.</span>
+                        )}
+                      </div>
+                    )}
+
+                    {emailExists === false && email && email.includes('@') && (
+                      <div className="mt-2 p-2.5 bg-green-50 text-green-700 border border-green-200 rounded-lg text-xs font-medium">
+                        ✨ Email baru siap didaftarkan.
+                      </div>
                     )}
                   </div>
 
-                  {/* Feedback based on email check */}
-                  {emailExists === true && (
-                    <div className={`p-3 border-2 font-bold text-[11px] uppercase tracking-wider ${
-                      emailAlreadyInBusiness
-                        ? 'bg-red-50 border-red-600 text-red-700'
-                        : 'bg-green-50 border-green-600 text-green-700'
-                    }`}>
-                      {emailAlreadyInBusiness ? (
-                        <span>⚠️ Email ini sudah terdaftar sebagai staf di bisnis ini.</span>
-                      ) : (
-                        <span>💡 Terdaftar sebagai "${existingUserName}". Staf ini akan ditambahkan ke bisnis ini (password tidak berubah).</span>
-                      )}
-                    </div>
-                  )}
-
-                  {emailExists === false && email && email.includes('@') && (
-                    <div className="p-3 bg-green-50 border-2 border-green-600 text-green-700 font-bold text-[11px] uppercase tracking-wider">
-                      ✨ Email baru siap didaftarkan.
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-black uppercase tracking-widest">Nama Lengkap</label>
-                  <input 
-                    type="text" placeholder="Contoh: Budi Santoso" required
-                    disabled={!!emailExists}
-                    className={`w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm ${
-                      emailExists ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''
-                    }`}
-                    value={name} onChange={e => setName(e.target.value)}
-                  />
-                </div>
-
-                {!emailExists && (
-                  <div className="space-y-1.5">
-                    <label className="block text-xs font-black uppercase tracking-widest">Password Awal</label>
+                  <div>
+                    <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Nama Lengkap</label>
                     <input 
-                      type="password" placeholder="Min. 6 karakter" required minLength={6}
-                      className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
-                      value={password} onChange={e => setPassword(e.target.value)}
+                      type="text" placeholder="Budi Santoso" required
+                      disabled={!!emailExists}
+                      className={`w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
+                        emailExists ? 'bg-[#F7F7F5] text-[#6B6B63] cursor-not-allowed' : ''
+                      }`}
+                      value={name} onChange={e => setName(e.target.value)}
                     />
                   </div>
-                )}
 
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-black uppercase tracking-widest">Role</label>
-                  <select 
-                    className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 bg-white text-slate-800 text-sm"
-                    value={role} onChange={e => setRole(e.target.value)}
-                  >
-                    <option value="staff">Staff</option>
-                    <option value="admin">Admin</option>
-                  </select>
+                  {!emailExists && (
+                    <div>
+                      <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Password Awal</label>
+                      <input 
+                        type="password" placeholder="Minimal 6 karakter" required minLength={6}
+                        className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                        value={password} onChange={e => setPassword(e.target.value)}
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Role Peran</label>
+                    <select 
+                      className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      value={role} onChange={e => setRole(e.target.value)}
+                    >
+                      <option value="staff">Staff</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
                 </div>
 
-                {role === 'staff' && (
-                  <div className="space-y-3 mt-4 border-t-4 border-black pt-4">
-                    <label className="block text-xs font-black uppercase tracking-widest">Hak Akses Modul (Pilih lebih dari satu)</label>
-                    <div className="space-y-2.5">
+                {/* Right Column: Hak Akses Modul */}
+                <div className="space-y-3 md:border-l md:border-[#E2E2DC] md:pl-6 pt-2 md:pt-0">
+                  <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider">
+                    Hak Akses Modul
+                  </label>
+                  {role === 'staff' ? (
+                    <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
                       {PERMISSIONS_LIST.map((p) => {
                         const checked = permissions.includes(p.key)
                         return (
-                          <label key={p.key} className="flex items-start gap-3 cursor-pointer p-2 border-2 border-black hover:bg-yellow-50/50">
+                          <label 
+                            key={p.key} 
+                            className={`p-3 border rounded-xl flex items-start gap-3 cursor-pointer transition-all ${
+                              checked 
+                                ? 'border-blue-500 bg-blue-50/50 shadow-2xs' 
+                                : 'border-[#E2E2DC] bg-white hover:border-[#C8C8C0] hover:bg-[#F9F9F8]'
+                            }`}
+                          >
                             <input 
                               type="checkbox"
-                              className="mt-1 accent-black cursor-pointer"
+                              className="mt-0.5 w-4 h-4 accent-blue-600 cursor-pointer flex-shrink-0"
                               checked={checked}
                               onChange={(e) => {
                                 if (e.target.checked) {
@@ -620,109 +669,153 @@ export default function StaffSettings() {
                                 }
                               }}
                             />
-                            <div>
-                              <div className="text-xs font-black uppercase tracking-wide">{p.label}</div>
-                              <div className="text-[10px] text-slate-500 font-bold leading-tight mt-0.5">{p.desc}</div>
+                            <div className="flex-1 min-w-0">
+                              <div className={`text-xs font-bold ${checked ? 'text-blue-900' : 'text-[#1C1C1A]'}`}>
+                                {p.label}
+                              </div>
+                              <div className="text-[11px] text-[#6B6B63] leading-relaxed mt-0.5">
+                                {p.desc}
+                              </div>
                             </div>
                           </label>
                         )
                       })}
                     </div>
-                  </div>
-                )}
-
-                <div className="flex gap-4 pt-6 border-t-4 border-black mt-8">
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      setIsModalOpen(false)
-                      setCreateMessage({ text: '', type: '' })
-                      setEmailExists(null)
-                      setEmailAlreadyInBusiness(null)
-                      setExistingUserName('')
-                    }} 
-                    className="flex-1 font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-slate-100 transition-all cursor-pointer"
-                  >
-                    Batal
-                  </button>
-                  <button 
-                    type="submit" 
-                    disabled={submitting || checkingEmail || (!!emailExists && !!emailAlreadyInBusiness)} 
-                    className="flex-[1.5] bg-black text-white font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-[#2e8540] hover:text-white transition-all disabled:opacity-50 cursor-pointer"
-                  >
-                    {submitting 
-                      ? (emailExists ? 'MENAMBAHKAN...' : 'MEMBUAT...') 
-                      : (emailExists ? 'TAMBAHKAN KE BISNIS' : 'BUAT AKUN')}
-                  </button>
+                  ) : (
+                    <div className="p-4 bg-blue-50/70 border border-blue-200 rounded-xl space-y-2 text-xs text-blue-900">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <span>👑</span> Peran Admin
+                      </div>
+                      <p className="text-[11px] text-blue-800 leading-relaxed">
+                        Admin memiliki akses penuh ke seluruh fitur dan modul bisnis tanpa batas.
+                      </p>
+                    </div>
+                  )}
                 </div>
-              </form>
-            </div>
+              </div>
+
+              <div className="flex gap-3 pt-4 border-t border-[#E2E2DC]">
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setIsModalOpen(false)
+                    setCreateMessage({ text: '', type: '' })
+                    setEmailExists(null)
+                    setEmailAlreadyInBusiness(null)
+                    setExistingUserName('')
+                  }} 
+                  className="flex-1 px-4 py-2.5 border border-[#E2E2DC] rounded-lg text-xs font-bold text-[#6B6B63] hover:bg-[#F7F7F5] transition-all cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={submitting || checkingEmail || (!!emailExists && !!emailAlreadyInBusiness)} 
+                  className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  {submitting 
+                    ? (emailExists ? 'Menambahkan...' : 'Membuat...') 
+                    : (emailExists ? 'Tambahkan Ke Unit' : 'Buat Akun Staf')}
+                </button>
+              </div>
+            </form>
           </div>
-        )}
+        </div>,
+        document.body
+      )}
 
-        {/* MODAL EDIT (BRUTALIST STYLE) */}
-        {isEditModalOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-            <div className="bg-white border-4 border-black p-8 md:p-10 w-full max-w-md shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
-              <h2 className="text-3xl font-black uppercase italic mb-6 border-b-4 border-black pb-3 text-center">Edit Tim</h2>
-              
-              {editMessage.text && (
-                <div className={`p-4 mb-5 border-4 font-bold text-xs uppercase tracking-wider ${
-                  editMessage.type === 'success' 
-                    ? 'bg-green-50 border-green-600 text-green-700' 
-                    : 'bg-red-50 border-red-600 text-red-700'
-                }`}>
-                  {editMessage.text}
-                </div>
-              )}
+      {/* MODAL EDIT STAFF */}
+      {isEditModalOpen && mounted && createPortal(
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs z-[9999] flex items-center justify-center p-4 overflow-y-auto overscroll-contain">
+          <div className="bg-white border border-[#E2E2DC] rounded-2xl p-6 md:p-8 w-full max-w-3xl shadow-2xl max-h-[90vh] overflow-y-auto space-y-6 my-auto">
+            <div className="flex items-center justify-between border-b border-[#E2E2DC] pb-4">
+              <div>
+                <h2 className="text-lg font-bold text-[#1C1C1A]">Edit Data Tim</h2>
+                <p className="text-xs text-[#6B6B63]">Perbarui data pengguna dan atur hak akses modul di sebelah kanan.</p>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsEditModalOpen(false)
+                  setEditingStaff(null)
+                  setEditMessage({ text: '', type: '' })
+                }}
+                className="text-[#A8A89E] hover:text-[#1C1C1A] text-lg font-bold cursor-pointer p-1"
+              >
+                ✕
+              </button>
+            </div>
 
-              <form onSubmit={handleEditStaff} className="space-y-5">
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-black uppercase tracking-widest">Nama Lengkap</label>
-                  <input 
-                    type="text" required
-                    className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
-                    value={editName} onChange={e => setEditName(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-black uppercase tracking-widest text-slate-500">Email Kerja (Tidak Dapat Diubah)</label>
-                  <input 
-                    type="email" required disabled readOnly
-                    className="w-full p-4 border-4 border-black font-bold outline-none bg-slate-100 text-slate-500 cursor-not-allowed text-sm"
-                    value={editEmail}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-black uppercase tracking-widest">Ubah Password (Opsional)</label>
-                  <input 
-                    type="password" placeholder="Kosongkan jika tidak ingin diubah" minLength={6}
-                    className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 text-slate-800 text-sm"
-                    value={editPassword} onChange={e => setEditPassword(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-black uppercase tracking-widest">Role</label>
-                  <select 
-                    className="w-full p-4 border-4 border-black font-bold outline-none focus:bg-yellow-50 bg-white text-slate-800 text-sm"
-                    value={editRole} onChange={e => setEditRole(e.target.value)}
-                  >
-                    <option value="staff">Staff</option>
-                    <option value="admin">Admin</option>
-                  </select>
+            {editMessage.text && (
+              <div className={`p-3 rounded-lg text-xs font-semibold ${
+                editMessage.type === 'success' 
+                  ? 'bg-green-50 border border-green-200 text-green-700' 
+                  : 'bg-red-50 border border-red-200 text-red-700'
+              }`}>
+                {editMessage.text}
+              </div>
+            )}
+
+            <form onSubmit={handleEditStaff} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                {/* Left Column: Info Inputs */}
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Nama Lengkap</label>
+                    <input 
+                      type="text" required
+                      className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      value={editName} onChange={e => setEditName(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#6B6B63] uppercase tracking-wider mb-1.5">Email (Tercatat)</label>
+                    <input 
+                      type="email" required disabled readOnly
+                      className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm bg-[#F7F7F5] text-[#6B6B63] cursor-not-allowed"
+                      value={editEmail}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Ubah Password (Opsional)</label>
+                    <input 
+                      type="password" placeholder="Kosongkan jika tidak diubah" minLength={6}
+                      className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      value={editPassword} onChange={e => setEditPassword(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Role Peran</label>
+                    <select 
+                      className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      value={editRole} onChange={e => setEditRole(e.target.value)}
+                    >
+                      <option value="staff">Staff</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
                 </div>
 
-                {editRole === 'staff' && (
-                  <div className="space-y-3 mt-4 border-t-4 border-black pt-4">
-                    <label className="block text-xs font-black uppercase tracking-widest">Hak Akses Modul (Pilih lebih dari satu)</label>
-                    <div className="space-y-2.5">
+                {/* Right Column: Hak Akses Modul */}
+                <div className="space-y-3 md:border-l md:border-[#E2E2DC] md:pl-6 pt-2 md:pt-0">
+                  <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider">
+                    Hak Akses Modul
+                  </label>
+                  {editRole === 'staff' ? (
+                    <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
                       {PERMISSIONS_LIST.map((p) => {
                         const checked = editPermissions.includes(p.key)
                         return (
-                          <label key={p.key} className="flex items-start gap-3 cursor-pointer p-2 border-2 border-black hover:bg-yellow-50/50">
+                          <label 
+                            key={p.key} 
+                            className={`p-3 border rounded-xl flex items-start gap-3 cursor-pointer transition-all ${
+                              checked 
+                                ? 'border-blue-500 bg-blue-50/50 shadow-2xs' 
+                                : 'border-[#E2E2DC] bg-white hover:border-[#C8C8C0] hover:bg-[#F9F9F8]'
+                            }`}
+                          >
                             <input 
                               type="checkbox"
-                              className="mt-1 accent-black cursor-pointer"
+                              className="mt-0.5 w-4 h-4 accent-blue-600 cursor-pointer flex-shrink-0"
                               checked={checked}
                               onChange={(e) => {
                                 if (e.target.checked) {
@@ -732,91 +825,119 @@ export default function StaffSettings() {
                                 }
                               }}
                             />
-                            <div>
-                              <div className="text-xs font-black uppercase tracking-wide">{p.label}</div>
-                              <div className="text-[10px] text-slate-500 font-bold leading-tight mt-0.5">{p.desc}</div>
+                            <div className="flex-1 min-w-0">
+                              <div className={`text-xs font-bold ${checked ? 'text-blue-900' : 'text-[#1C1C1A]'}`}>
+                                {p.label}
+                              </div>
+                              <div className="text-[11px] text-[#6B6B63] leading-relaxed mt-0.5">
+                                {p.desc}
+                              </div>
                             </div>
                           </label>
                         )
                       })}
                     </div>
-                  </div>
-                )}
-
-                <div className="flex gap-4 pt-6 border-t-4 border-black mt-8">
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      setIsEditModalOpen(false)
-                      setEditingStaff(null)
-                      setEditMessage({ text: '', type: '' })
-                    }} 
-                    className="flex-1 font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-slate-100 transition-all cursor-pointer"
-                  >
-                    Batal
-                  </button>
-                  <button 
-                    type="submit" 
-                    disabled={editSubmitting} 
-                    className="flex-[1.5] bg-black text-white font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-[#2e8540] hover:text-white transition-all disabled:opacity-50 cursor-pointer"
-                  >
-                    {editSubmitting ? 'MENYIMPAN...' : 'SIMPAN'}
-                  </button>
+                  ) : (
+                    <div className="p-4 bg-blue-50/70 border border-blue-200 rounded-xl space-y-2 text-xs text-blue-900">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <span>👑</span> Peran Admin
+                      </div>
+                      <p className="text-[11px] text-blue-800 leading-relaxed">
+                        Admin memiliki akses penuh ke seluruh fitur dan modul bisnis tanpa batas.
+                      </p>
+                    </div>
+                  )}
                 </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* MODAL DELETE CONFIRMATION (BRUTALIST STYLE) */}
-        {isDeleteModalOpen && deletingStaff && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-            <div className="bg-white border-4 border-black p-8 md:p-10 w-full max-w-md shadow-[16px_16px_0px_0px_rgba(0,0,0,1)]">
-              <h2 className="text-3xl font-black uppercase italic mb-6 border-b-4 border-black pb-3 text-center text-red-600">Konfirmasi</h2>
-              
-              {deleteMessage.text && (
-                <div className={`p-4 mb-5 border-4 font-bold text-xs uppercase tracking-wider ${
-                  deleteMessage.type === 'success' 
-                    ? 'bg-green-50 border-green-600 text-green-700' 
-                    : 'bg-red-50 border-red-600 text-red-700'
-                }`}>
-                  {deleteMessage.text}
-                </div>
-              )}
-
-              <div className="space-y-4 text-center">
-                <p className="font-bold text-slate-800">
-                  Apakah Anda yakin ingin mengeluarkan <span className="font-black underline text-red-600">{deletingStaff.full_name || deletingStaff.email}</span> dari unit bisnis ini?
-                </p>
-                <p className="text-xs text-slate-500 uppercase tracking-wider font-bold">
-                  Akun mereka tidak akan dihapus secara permanen, hanya penugasan ke bisnis ini yang akan dicabut.
-                </p>
               </div>
-              <div className="flex gap-4 pt-6 border-t-4 border-black mt-8">
+
+              <div className="flex gap-3 pt-4 border-t border-[#E2E2DC]">
                 <button 
                   type="button" 
                   onClick={() => {
-                    setIsDeleteModalOpen(false)
-                    setDeletingStaff(null)
-                    setDeleteMessage({ text: '', type: '' })
+                    setIsEditModalOpen(false)
+                    setEditingStaff(null)
+                    setEditMessage({ text: '', type: '' })
                   }} 
-                  className="flex-1 font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-slate-100 transition-all cursor-pointer"
+                  className="flex-1 px-4 py-2.5 border border-[#E2E2DC] rounded-lg text-xs font-bold text-[#6B6B63] hover:bg-[#F7F7F5] transition-all cursor-pointer"
                 >
                   Batal
                 </button>
                 <button 
-                  type="button"
-                  disabled={deleteSubmitting} 
-                  onClick={executeRemoveStaff}
-                  className="flex-[1.5] bg-red-600 text-white font-black uppercase text-xs tracking-widest py-4 border-4 border-black hover:bg-red-700 hover:text-white transition-all disabled:opacity-50 cursor-pointer"
+                  type="submit" 
+                  disabled={editSubmitting} 
+                  className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
                 >
-                  {deleteSubmitting ? 'MENGELUARKAN...' : 'YA, KELUARKAN'}
+                  {editSubmitting ? 'Menyimpan...' : 'Simpan Perubahan'}
                 </button>
               </div>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* MODAL DELETE CONFIRMATION */}
+      {isDeleteModalOpen && deletingStaff && mounted && createPortal(
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs z-[9999] flex items-center justify-center p-4 overflow-y-auto overscroll-contain">
+          <div className="bg-white border border-[#E2E2DC] rounded-2xl p-6 md:p-8 w-full max-w-md shadow-2xl space-y-6 my-auto">
+            <div className="flex items-center justify-between border-b border-[#E2E2DC] pb-4">
+              <h2 className="text-lg font-bold text-red-600">Keluarkan Staf</h2>
+              <button 
+                onClick={() => {
+                  setIsDeleteModalOpen(false)
+                  setDeletingStaff(null)
+                  setDeleteMessage({ text: '', type: '' })
+                }}
+                className="text-[#A8A89E] hover:text-[#1C1C1A] text-lg font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {deleteMessage.text && (
+              <div className={`p-3 rounded-lg text-xs font-semibold ${
+                deleteMessage.type === 'success' 
+                  ? 'bg-green-50 border border-green-200 text-green-700' 
+                  : 'bg-red-50 border border-red-200 text-red-700'
+              }`}>
+                {deleteMessage.text}
+              </div>
+            )}
+
+            <div className="space-y-2 text-sm text-[#1C1C1A]">
+              <p>
+                Apakah Anda yakin ingin mengeluarkan <span className="font-bold text-red-600">{deletingStaff.full_name || deletingStaff.email}</span> dari unit bisnis ini?
+              </p>
+              <p className="text-xs text-[#6B6B63]">
+                Akun staf tidak akan dihapus secara permanen, hanya hak akses penugasan ke bisnis ini yang akan dicabut.
+              </p>
+            </div>
+
+            <div className="flex gap-3 pt-4 border-t border-[#E2E2DC]">
+              <button 
+                type="button" 
+                onClick={() => {
+                  setIsDeleteModalOpen(false)
+                  setDeletingStaff(null)
+                  setDeleteMessage({ text: '', type: '' })
+                }} 
+                className="flex-1 px-4 py-2.5 border border-[#E2E2DC] rounded-lg text-xs font-bold text-[#6B6B63] hover:bg-[#F7F7F5] transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button 
+                type="button"
+                disabled={deleteSubmitting} 
+                onClick={executeRemoveStaff}
+                className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+              >
+                {deleteSubmitting ? 'Mengeluarkan...' : 'Ya, Keluarkan'}
+              </button>
             </div>
           </div>
-        )}
-      </div>
-    </div>
+        </div>,
+        document.body
+      )}
+    </SettingsLayout>
   )
 }
