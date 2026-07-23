@@ -68,7 +68,7 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json()
-    const { provider, store_url, consumer_key, consumer_secret, is_active = true } = body
+    const { provider, store_url, consumer_key, consumer_secret, api_key, whatsapp_number, is_active = true, ...extraFields } = body
 
     if (!provider) {
       return NextResponse.json({ error: 'Provider wajib ditentukan.' }, { status: 400 })
@@ -86,14 +86,19 @@ export async function POST(req: Request) {
 
     const existing = existingRows && existingRows.length > 0 ? existingRows[0] : null
 
-    const apiCredentials = {
+    const apiCredentials: Record<string, any> = {
       ...(existing?.api_credentials || {}),
       business_id: activeBid,
-      consumer_key: consumer_key || '',
-      consumer_secret: consumer_secret || '',
-      auto_sync_orders: true,
       updated_at: new Date().toISOString()
     }
+
+    if (consumer_key !== undefined) apiCredentials.consumer_key = consumer_key
+    if (consumer_secret !== undefined) apiCredentials.consumer_secret = consumer_secret
+    if (api_key !== undefined) apiCredentials.api_key = api_key
+    if (whatsapp_number !== undefined) apiCredentials.whatsapp_number = whatsapp_number
+
+    // Merge any additional fields
+    Object.assign(apiCredentials, extraFields)
 
     let resultData = null
 

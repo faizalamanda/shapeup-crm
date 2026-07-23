@@ -65,6 +65,37 @@ export const INTEGRATION_PLUGINS: IntegrationPlugin[] = [
     ],
   },
   {
+    id: 'ycloud',
+    name: 'YCloud (WhatsApp)',
+    description: 'Hubungkan YCloud WhatsApp Business API untuk pengiriman pesan otomatis, notifikasi pesanan, dan automation.',
+    icon: '💬',
+    category: 'messaging',
+    status: 'available',
+    badge: 'Aktif',
+    getWebhookUrl: (businessId: string, origin: string) => {
+      const baseUrl = origin || (typeof window !== 'undefined' ? window.location.origin : '')
+      return `${baseUrl}/api/webhook/ycloud?bid=${businessId}`
+    },
+    fields: [
+      {
+        key: 'api_key',
+        label: 'YCloud API Key',
+        type: 'password',
+        placeholder: 'yc_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+        description: 'Dapatkan API Key dari dashboard YCloud > Settings > API Keys.',
+        required: true,
+      },
+      {
+        key: 'whatsapp_number',
+        label: 'Nomor WhatsApp Pengirim (Opsional)',
+        type: 'text',
+        placeholder: '628xxxxxxxxxx',
+        description: 'Nomor WhatsApp terverifikasi di YCloud yang digunakan sebagai pengirim utama.',
+        required: false,
+      },
+    ],
+  },
+  {
     id: 'shopify',
     name: 'Shopify',
     description: 'Integrasi otomatis produk dan pesanan dari toko Shopify Anda ke ShapeUp CRM.',

@@ -37,6 +37,20 @@ export default function NewScenarioPage() {
     
     setLoading(true)
 
+    // AMBIL ACTIVE BUSINESS ID UNTUK MULTI-TENANT
+    let activeBusinessId: string | null = null
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('active_business_id')
+        .eq('id', user.id)
+        .single()
+      if (profile?.active_business_id) {
+        activeBusinessId = profile.active_business_id
+      }
+    }
+
     // PROSES GENERATE: Mengubah array filter menjadi kalimat SQL
     const sqlFilter = generateSQLFilter(filters);
     const schedulingLogic = generateScheduling(
@@ -50,21 +64,25 @@ export default function NewScenarioPage() {
 
     const mappedTemplateVars = formatTemplateVarsForSupabase(templateVars)
 
-    const payload = {
+    const payload: Record<string, any> = {
       name: name,
       trigger_type: triggerType,
       trigger_config: { timeType, schedule, oneTime },
       
-      // KOLOM UNTUK SI PENJALA DI SUPABASE
+      // KOLOM UNTUK SI PENJALA DI SUPABASE (MULTI-TENANT)
       sql_filter: sqlFilter,
       scheduling_logic: schedulingLogic,
-      channel_type: 'whatsapp', // Default Toko Alamanda saat ini
+      channel_type: 'whatsapp',
       
       filters: filters, // Array asli tetap disimpan untuk keperluan edit UI
       template_name: templateName,
       template_vars: mappedTemplateVars,
       platform: 'YCLOUD',
       is_active: true
+    }
+
+    if (activeBusinessId) {
+      payload.business_id = activeBusinessId
     }
 
     const { error } = await supabase
