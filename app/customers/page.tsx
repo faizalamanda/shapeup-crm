@@ -382,7 +382,14 @@ export default function CustomerPage() {
           </div>
 
           {/* Live data counter & Action */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+            <Link
+              href="/customers/import"
+              className="px-3.5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1.5 border border-gray-300"
+            >
+              <span>📤</span> Import Customer
+            </Link>
+
             <Link
               href="/customers/new"
               className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5"
