@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import { createPortal } from 'react-dom'
+
 import { createBrowserClient } from '@supabase/ssr'
 import { CustomerAddressForm, AddressData, EMPTY_ADDRESS } from '@/components/CustomerAddressForm'
 
@@ -301,28 +303,25 @@ export function CustomerDetail({ customer, onClose, onUpdate }: CustomerDetailPr
               </div>
             )}
 
-            {!isEditing && (
-              <div className="flex items-center gap-3 mt-3 text-slate-500 text-xs font-semibold">
-                <span>+{fullCustomer?.phone || customer.phone}</span>
-                {(fullCustomer?.email || customer.email) && (
-                  <>
-                    <span className="text-slate-300">|</span>
-                    <span>{fullCustomer?.email || customer.email}</span>
-                  </>
-                )}
-              </div>
-            )}
+            <div className="flex items-center gap-3 mt-3 text-slate-500 text-xs font-semibold">
+              <span>+{fullCustomer?.phone || customer.phone}</span>
+              {(fullCustomer?.email || customer.email) && (
+                <>
+                  <span className="text-slate-300">|</span>
+                  <span>{fullCustomer?.email || customer.email}</span>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {!isEditing && (
-              <button 
-                onClick={handleEnterEditMode}
-                className="text-white hover:bg-blue-700 font-bold text-[10px] tracking-wider uppercase bg-blue-600 border border-blue-700 px-4 py-2.5 rounded-xl shadow-sm transition-all"
-              >
-                ✏️ Edit Profil
-              </button>
-            )}
+            <Link
+              href={`/customers/${customer.customer_id}/edit`}
+              onClick={onClose}
+              className="text-white hover:bg-blue-700 font-bold text-[10px] tracking-wider uppercase bg-blue-600 border border-blue-700 px-4 py-2.5 rounded-xl shadow-sm transition-all flex items-center gap-1.5"
+            >
+              ✏️ Edit Profil
+            </Link>
             <button 
               onClick={onClose} 
               className="text-slate-400 hover:text-slate-600 font-bold text-[10px] tracking-wider uppercase bg-white border border-slate-200 px-4 py-2.5 rounded-xl shadow-sm transition-all"
@@ -330,14 +329,15 @@ export function CustomerDetail({ customer, onClose, onUpdate }: CustomerDetailPr
               Tutup
             </button>
           </div>
+
         </div>
 
         {/* ── VIEW MODE ──────────────────────────────────────────────────────── */}
-        {!isEditing && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-0">
-            
-            {/* Main Area */}
-            <div className="md:col-span-2 p-8 border-r border-slate-100 min-h-[450px]">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-0">
+          
+          {/* Main Area */}
+          <div className="md:col-span-2 p-8 border-r border-slate-100 min-h-[450px]">
+
               
               {/* Tabs */}
               <div className="flex gap-6 border-b border-slate-200 mb-6 font-black text-[10px] uppercase tracking-widest">
@@ -516,273 +516,8 @@ export function CustomerDetail({ customer, onClose, onUpdate }: CustomerDetailPr
               </a>
             </div>
           </div>
-        )}
-
-        {/* ── EDIT MODE ──────────────────────────────────────────────────────── */}
-        {isEditing && (
-          <form onSubmit={handleSave}>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-0">
-              
-              {/* Left Column (Fields) */}
-              <div className="md:col-span-2 p-8 border-r border-slate-100 space-y-6 max-h-[550px] overflow-y-auto">
-                
-                {/* Save status message */}
-                {saveStatus === 'success' && (
-                  <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold rounded-xl flex items-center gap-2">
-                    ✅ Perubahan berhasil disimpan!
-                  </div>
-                )}
-                {saveStatus === 'error' && (
-                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold rounded-xl flex items-center gap-2">
-                    ❌ {errorMessage || 'Gagal menyimpan perubahan'}
-                  </div>
-                )}
-
-                {/* Section 1: Identitas */}
-                <div className="space-y-4">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 pb-2 border-b border-slate-100">
-                    👤 Informasi Identitas
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Nama Lengkap *</label>
-                      <input 
-                        type="text"
-                        value={editName}
-                        onChange={e => setEditName(e.target.value)}
-                        className="w-full p-2.5 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:outline-none bg-white font-medium"
-                        placeholder="Contoh: Frida Ayu Meryana"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Nomor HP / WhatsApp *</label>
-                      <input 
-                        type="text"
-                        value={editPhone}
-                        onChange={e => setEditPhone(e.target.value)}
-                        className="w-full p-2.5 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:outline-none bg-white font-medium"
-                        placeholder="Contoh: 08123456789"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Email</label>
-                      <input 
-                        type="email"
-                        value={editEmail}
-                        onChange={e => setEditEmail(e.target.value)}
-                        className="w-full p-2.5 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:outline-none bg-white font-medium"
-                        placeholder="Contoh: frida@email.com"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Kategori Pelanggan</label>
-                      <select
-                        value={editCategory}
-                        onChange={e => setEditCategory(e.target.value)}
-                        className="w-full p-2.5 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:outline-none bg-white font-medium"
-                      >
-                        <option value="General">General</option>
-                        <option value="VIP">VIP</option>
-                        <option value="Reseller">Reseller</option>
-                        <option value="Dropshipper">Dropshipper</option>
-                        <option value="Wholesale">Wholesale</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Section 2: CRM & Kontak Tambahan */}
-                <div className="space-y-4">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 pb-2 border-b border-slate-100">
-                    🏢 Profil CRM & Kontak Tambahan
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Nama Perusahaan</label>
-                      <input 
-                        type="text"
-                        value={editCompany}
-                        onChange={e => setEditCompany(e.target.value)}
-                        className="w-full p-2.5 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:outline-none bg-white"
-                        placeholder="Nama Perusahaan / Organisasi"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Jabatan / Pekerjaan</label>
-                      <input 
-                        type="text"
-                        value={editJobTitle}
-                        onChange={e => setEditJobTitle(e.target.value)}
-                        className="w-full p-2.5 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:outline-none bg-white"
-                        placeholder="Contoh: Owner, Purchasing Manager"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Instagram Handle</label>
-                      <div className="relative">
-                        <span className="absolute left-3 top-3 text-slate-400 text-sm font-semibold">@</span>
-                        <input 
-                          type="text"
-                          value={editInstagram.replace(/^@/, '')}
-                          onChange={e => setEditInstagram(e.target.value)}
-                          className="w-full pl-8 pr-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:outline-none bg-white"
-                          placeholder="username"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">No HP Alternatif</label>
-                      <input 
-                        type="text"
-                        value={editAltPhone}
-                        onChange={e => setEditAltPhone(e.target.value)}
-                        className="w-full p-2.5 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:outline-none bg-white"
-                        placeholder="Contoh: 08129999999"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Sumber Kontak (Lead Source)</label>
-                      <select
-                        value={editLeadSource}
-                        onChange={e => setEditLeadSource(e.target.value)}
-                        className="w-full p-2.5 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:outline-none bg-white"
-                      >
-                        <option value="">-- Pilih Sumber Kontak --</option>
-                        <option value="WooCommerce">WooCommerce Store</option>
-                        <option value="Manual Invoice">Manual Invoice</option>
-                        <option value="WhatsApp">WhatsApp Chat</option>
-                        <option value="Instagram DM">Instagram DM</option>
-                        <option value="Facebook Ads">Facebook Ads</option>
-                        <option value="Google Search">Google Organic</option>
-                        <option value="POS">Point of Sale (POS)</option>
-                        <option value="Referral">Rekomendasi / Referral</option>
-                        <option value="Offline Event">Event / Bazaar</option>
-                        <option value="Lainnya">Lainnya</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Section 3: CRM Label / Tags */}
-                <div className="space-y-3">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 pb-2 border-b border-slate-100">
-                    🏷️ Label / Tag Pelanggan
-                  </h3>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Tambahkan Tag Baru</label>
-                    <div className="flex gap-2">
-                      <input 
-                        type="text"
-                        value={newTagInput}
-                        onChange={e => setNewTagInput(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            handleAddTag()
-                          }
-                        }}
-                        className="flex-1 p-2 text-xs rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:outline-none bg-white"
-                        placeholder="Ketik tag (contoh: WHOLESALE, REAPEATBUYER) lalu tekan Enter"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAddTag}
-                        className="px-4 py-2 border border-slate-200 hover:border-blue-500 hover:text-blue-600 bg-white rounded-xl text-xs font-bold text-slate-600 transition-all"
-                      >
-                        Tambah
-                      </button>
-                    </div>
-                  </div>
-
-                  {editTags.length > 0 ? (
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {editTags.map(tag => {
-                        const tagColors = getTagColors(tag)
-                        return (
-                          <span 
-                            key={tag}
-                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${tagColors.bg}`}
-                          >
-                            {tag}
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveTag(tag)}
-                              className="text-slate-400 hover:text-slate-600 font-bold ml-0.5 focus:outline-none"
-                              title="Hapus tag"
-                            >
-                              ✕
-                            </button>
-                          </span>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-slate-400 italic">Belum ada label/tag yang diberikan ke pelanggan ini.</p>
-                  )}
-                </div>
-
-                {/* Section 4: Catatan */}
-                <div className="space-y-3">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 pb-2 border-b border-slate-100">
-                    ✍️ Catatan CRM (CRM Notes)
-                  </h3>
-                  <textarea 
-                    value={editNotes}
-                    onChange={e => setEditNotes(e.target.value)}
-                    rows={4}
-                    className="w-full p-3 text-xs rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:outline-none bg-white"
-                    placeholder="Tulis riwayat negoisasi, preferensi ukuran, komplain, atau keterangan spesifik customer di sini..."
-                  />
-                </div>
-
-              </div>
-
-              {/* Right Column (Address Form) */}
-              <div className="p-8 bg-slate-50/50 rounded-br-2xl space-y-6 max-h-[550px] overflow-y-auto border-t md:border-t-0 md:border-l border-slate-100">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 pb-2 border-b border-slate-100">
-                  📍 Alamat Pengiriman
-                </h3>
-                <CustomerAddressForm 
-                  value={editAddress}
-                  onChange={setEditAddress}
-                  compact={true}
-                />
-              </div>
-
-            </div>
-
-            {/* Edit Footer (Simpan / Batal) */}
-            <div className="px-8 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3 rounded-b-2xl">
-              <button
-                type="button"
-                onClick={() => setIsEditing(false)}
-                disabled={saving}
-                className="px-5 py-2.5 border border-slate-200 rounded-xl text-xs font-bold text-slate-550 hover:bg-slate-100 transition-all disabled:opacity-50"
-              >
-                Batal
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-blue-700 disabled:bg-blue-400 transition-all flex items-center gap-2"
-              >
-                {saving ? (
-                  <>
-                    <span className="w-3.5 h-3.5 border-2 border-white/50 border-t-white rounded-full animate-spin" />
-                    Menyimpan...
-                  </>
-                ) : (
-                  'Simpan Perubahan'
-                )}
-              </button>
-            </div>
-          </form>
-        )}
-
-      </div>
-    </div>,
+        </div>
+      </div>,
     document.body
   )
 }

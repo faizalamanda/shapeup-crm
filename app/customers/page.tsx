@@ -1,5 +1,6 @@
 "use client"
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
 import { StatsPanel } from './components/StatsPanel'
 import { FilterBar, FilterRule } from './components/FilterBar'
@@ -380,15 +381,25 @@ export default function CustomerPage() {
             </p>
           </div>
 
-          {/* Live data counter */}
-          <div style={{ textAlign: 'right', flexShrink: 0 }}>
-            <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--su-text)', lineHeight: 1.1 }}>
-              {customers.length.toLocaleString('id-ID')}
-            </div>
-            <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--su-text-faint)', textTransform: 'uppercase', letterSpacing: '0.14em' }}>
-              Total Pelanggan
+          {/* Live data counter & Action */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
+            <Link
+              href="/customers/new"
+              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5"
+            >
+              <span>+</span> Tambah Customer
+            </Link>
+
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--su-text)', lineHeight: 1.1 }}>
+                {customers.length.toLocaleString('id-ID')}
+              </div>
+              <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--su-text-faint)', textTransform: 'uppercase', letterSpacing: '0.14em' }}>
+                Total Pelanggan
+              </div>
             </div>
           </div>
+
         </div>
 
         {/* Fetch progress bar (visible during multi-batch fetch) */}
