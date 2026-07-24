@@ -37,6 +37,9 @@ export default function BalanceSheetPage() {
   const [showLiabilitiesDetail, setShowLiabilitiesDetail] = useState(true)
   const [showEquityDetail, setShowEquityDetail] = useState(true)
 
+  // Toggle for showing zero balance accounts
+  const [showZeroBalances, setShowZeroBalances] = useState(false)
+
   // Load Active Business Profile
   useEffect(() => {
     async function loadProfile() {
@@ -202,24 +205,26 @@ export default function BalanceSheetPage() {
     const difference = Math.abs(totalAssets - (totalLiabilities + totalEquity))
     const isBalanced = difference < 0.05 // Float accuracy threshold
 
+    const filterFn = (item: { balance: number }) => showZeroBalances || item.balance !== 0
+
     return {
-      currentAssets: currentAssets.filter(item => item.balance !== 0),
+      currentAssets: currentAssets.filter(filterFn),
       totalCurrentAssets,
-      fixedAssets: fixedAssets.filter(item => item.balance !== 0),
+      fixedAssets: fixedAssets.filter(filterFn),
       totalFixedAssets,
       totalAssets,
-      currentLiabilities: currentLiabilities.filter(item => item.balance !== 0),
+      currentLiabilities: currentLiabilities.filter(filterFn),
       totalCurrentLiabilities,
-      longTermLiabilities: longTermLiabilities.filter(item => item.balance !== 0),
+      longTermLiabilities: longTermLiabilities.filter(filterFn),
       totalLongTermLiabilities,
       totalLiabilities,
-      equityList: equityList.filter(item => item.balance !== 0),
+      equityList: equityList.filter(filterFn),
       retainedEarnings,
       totalEquity,
       isBalanced,
       difference
     }
-  }, [accounts, balances])
+  }, [accounts, balances, showZeroBalances])
 
   const handlePrint = () => {
     window.print()
@@ -308,14 +313,30 @@ export default function BalanceSheetPage() {
 
       {/* Filter Bar */}
       <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-xs flex flex-wrap items-center justify-between gap-4 no-print">
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Per Tanggal (As of Date)</label>
-          <input
-            type="date"
-            className="p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
-            value={asOfDate}
-            onChange={e => setAsOfDate(e.target.value)}
-          />
+        <div className="flex flex-wrap items-center gap-6">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Per Tanggal (As of Date)</label>
+            <input
+              type="date"
+              className="p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
+              value={asOfDate}
+              onChange={e => setAsOfDate(e.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Tampilan Akun</label>
+            <button
+              type="button"
+              onClick={() => setShowZeroBalances(!showZeroBalances)}
+              className="flex items-center gap-2.5 px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 hover:bg-gray-100 text-xs font-semibold text-gray-700 transition-all cursor-pointer select-none"
+            >
+              <div className={`w-8 h-4.5 flex items-center rounded-full p-0.5 transition-colors duration-200 ${showZeroBalances ? 'bg-blue-600' : 'bg-gray-300'}`}>
+                <div className={`bg-white w-3.5 h-3.5 rounded-full shadow-sm transform transition-transform duration-200 ${showZeroBalances ? 'translate-x-3.5' : 'translate-x-0'}`} />
+              </div>
+              <span>{showZeroBalances ? 'Tampilkan Semua Akun (Termasuk Rp 0)' : 'Hanya Akun Aktif (Tidak Nol)'}</span>
+            </button>
+          </div>
         </div>
 
         {sheetData.isBalanced ? (

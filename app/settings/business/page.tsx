@@ -6,6 +6,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import SettingsLayout from '@/components/SettingsLayout'
+import { seedDefaultCOA } from '@/lib/coa'
 
 const TIMEZONE_OPTIONS = [
   { value: 'Asia/Jakarta', label: 'Indonesia Barat (WIB)' },
@@ -353,6 +354,9 @@ function BusinessSettingsInner() {
           .update({ active_business_id: newBiz.id })
           .eq('id', user.id)
       }
+
+      // Seed default Chart of Accounts (COA)
+      await seedDefaultCOA(newBiz.id, supabase)
 
       setIsCreating(false)
       setFormData({ name: '', phone: '', timezone: 'Asia/Jakarta' })

@@ -1,6 +1,7 @@
 "use client"
 import { useState, useMemo } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
+import { seedDefaultCOA } from '@/lib/coa'
 
 const TIMEZONE_OPTIONS = [
   { value: 'Asia/Jakarta', label: 'Indonesia Barat (WIB)' },
@@ -99,6 +100,12 @@ export default function BusinessOnboarding({ onLogout }: OnboardingProps) {
         .eq('id', user.id)
       if (profileError) throw profileError
       setInitProgress(prev => [...prev, 'profile'])
+
+      // Step 3-5: Seed Default Chart of Accounts (COA)
+      setCurrentProgressText("Membuat Chart of Accounts (COA) default...")
+      await delay(800)
+      await seedDefaultCOA(newBiz.id, supabase)
+      setInitProgress(prev => [...prev, 'coa'])
 
       setCurrentProgressText("Semua siap! Mengalihkan ke dashboard...")
       await delay(1200)
@@ -336,6 +343,15 @@ export default function BusinessOnboarding({ onLogout }: OnboardingProps) {
                 </span>
                 <span className={initProgress.includes('profile') ? 'line-through text-slate-400 font-semibold' : 'text-slate-800'}>
                   Menyinkronkan data profil
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3 font-bold text-sm">
+                <span className={initProgress.includes('coa') ? 'text-green-600' : 'text-slate-400'}>
+                  {initProgress.includes('coa') ? '✓' : '●'}
+                </span>
+                <span className={initProgress.includes('coa') ? 'line-through text-slate-400 font-semibold' : 'text-slate-800'}>
+                  Membuat Chart of Accounts (COA) default
                 </span>
               </div>
             </div>

@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
+import { seedDefaultCOA } from '@/lib/coa'
 
 export async function POST(req: Request) {
   const cookieStore = await cookies()
@@ -80,6 +81,9 @@ export async function POST(req: Request) {
       console.error("Business Staff Assignment Error:", bsError)
       return NextResponse.json({ error: `Gagal mendaftarkan hak akses bisnis: ${bsError.message}` }, { status: 400 })
     }
+
+    // 5. Seed Default Chart of Accounts (COA)
+    await seedDefaultCOA(biz.id, supabase)
 
     return NextResponse.json({ success: true, business: biz })
   } catch (err: unknown) {
