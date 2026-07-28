@@ -174,23 +174,113 @@ async function sendYcloud(queue: any) {
   const apiKey = bizConfig.apiKey.trim()
   const channelId = bizConfig.whatsappNumber ? bizConfig.whatsappNumber.trim() : ""
 
+  const templateObj = (typeof payload.template_vars === 'object' && payload.template_vars !== null && !Array.isArray(payload.template_vars))
+    ? payload.template_vars
+    : {}
+
+  const components: any[] = []
+
+  // Check header format from payload or template_vars object
+  const rawHeaderFormat = payload.header_format || templateObj.header_format || ''
+  const headerFormat = String(rawHeaderFormat).toUpperCase()
+
+  if (headerFormat && headerFormat !== 'NONE') {
+    if (headerFormat === 'TEXT') {
+      const headerParams = payload.header_params || payload.header_vars || templateObj.header_vars || []
+      if (Array.isArray(headerParams) && headerParams.length > 0) {
+        components.push({
+          type: "header",
+          parameters: headerParams.map((value: any) => ({
+            type: "text",
+            text: String(typeof value === 'object' && value !== null ? value.value || '' : value),
+          })),
+        })
+      } else if (payload.header_text || templateObj.header_text) {
+        components.push({
+          type: "header",
+          parameters: [
+            {
+              type: "text",
+              text: String(payload.header_text || templateObj.header_text),
+            },
+          ],
+        })
+      }
+    } else if (headerFormat === 'IMAGE') {
+      const mediaUrl = payload.header_media_url || payload.header_url || payload.header_image_url || templateObj.header_media_url || templateObj.header_url
+      if (mediaUrl) {
+        components.push({
+          type: "header",
+          parameters: [
+            {
+              type: "image",
+              image: {
+                link: String(mediaUrl).trim(),
+              },
+            },
+          ],
+        })
+      }
+    } else if (headerFormat === 'DOCUMENT') {
+      const mediaUrl = payload.header_media_url || payload.header_url || payload.header_document_url || templateObj.header_media_url || templateObj.header_url
+      const filename = payload.header_filename || templateObj.header_filename
+      if (mediaUrl) {
+        const docObj: Record<string, string> = {
+          link: String(mediaUrl).trim(),
+        }
+        if (filename) {
+          docObj.filename = String(filename).trim()
+        }
+        components.push({
+          type: "header",
+          parameters: [
+            {
+              type: "document",
+              document: docObj,
+            },
+          ],
+        })
+      }
+    } else if (headerFormat === 'VIDEO') {
+      const mediaUrl = payload.header_media_url || payload.header_url || payload.header_video_url || templateObj.header_media_url || templateObj.header_url
+      if (mediaUrl) {
+        components.push({
+          type: "header",
+          parameters: [
+            {
+              type: "video",
+              video: {
+                link: String(mediaUrl).trim(),
+              },
+            },
+          ],
+        })
+      }
+    }
+  }
+
+  // Extract body parameters
+  const rawBodyParams = payload.template_params || (Array.isArray(payload.template_vars) ? payload.template_vars : templateObj.body_vars || templateObj.vars) || []
+  const bodyParams = Array.isArray(rawBodyParams) ? rawBodyParams : []
+
+  // Always include body component
+  components.push({
+    type: "body",
+    parameters: bodyParams.map((value: any) => ({
+      type: "text",
+      text: String(typeof value === 'object' && value !== null ? value.value || '' : value),
+    })),
+  })
+
   const reqBody: Record<string, any> = {
     to: queue.recipient,
     type: "template",
     template: {
       name: payload.template_name,
       language: {
-        code: "id",
+        code: payload.language_code || "id",
       },
-      components: [
-        {
-          type: "body",
-          parameters: (payload.template_params || []).map((value: string) => ({
-            type: "text",
-            text: String(value),
-          })),
-        },
-      ],
+      components: components,
     },
   }
 

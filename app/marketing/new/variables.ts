@@ -1,5 +1,6 @@
 export type TemplateVarSource = 'TAG' | 'MANUAL'
 export type TemplateTagKey = 'customer_name' | 'ordered_products'
+export type HeaderFormat = 'NONE' | 'TEXT' | 'IMAGE' | 'DOCUMENT' | 'VIDEO'
 
 type OrderItem = {
   name?: string
@@ -39,6 +40,22 @@ export type TemplateVarPayload = {
   parameter: string
   source: TemplateVarSource
   value: string
+}
+
+export type TemplateDataPayload = {
+  header_format: HeaderFormat
+  header_vars: TemplateVarPayload[]
+  header_media_url: string
+  header_filename: string
+  body_vars: TemplateVarPayload[]
+}
+
+export type HydratedTemplateData = {
+  headerFormat: HeaderFormat
+  headerVars: TemplateVarDraft[]
+  headerMediaUrl: string
+  headerFilename: string
+  bodyVars: TemplateVarDraft[]
 }
 
 export const TEMPLATE_TAGS: TemplateTag[] = [
@@ -107,6 +124,54 @@ export const hydrateTemplateVarsForEditor = (vars: unknown): TemplateVarDraft[] 
   })
 }
 
+export const hydrateTemplateDataForEditor = (data: unknown): HydratedTemplateData => {
+  if (!data) {
+    return {
+      headerFormat: 'NONE',
+      headerVars: [],
+      headerMediaUrl: '',
+      headerFilename: '',
+      bodyVars: [],
+    }
+  }
+
+  // Backward compatibility: if template_vars is a simple array
+  if (Array.isArray(data)) {
+    return {
+      headerFormat: 'NONE',
+      headerVars: [],
+      headerMediaUrl: '',
+      headerFilename: '',
+      bodyVars: hydrateTemplateVarsForEditor(data),
+    }
+  }
+
+  if (typeof data === 'object' && data !== null) {
+    const record = data as Record<string, unknown>
+    const headerFormat = (record.header_format as HeaderFormat) || 'NONE'
+    const headerVars = hydrateTemplateVarsForEditor(record.header_vars)
+    const headerMediaUrl = typeof record.header_media_url === 'string' ? record.header_media_url : ''
+    const headerFilename = typeof record.header_filename === 'string' ? record.header_filename : ''
+    const bodyVars = hydrateTemplateVarsForEditor(record.body_vars || record.vars || record.template_vars)
+
+    return {
+      headerFormat,
+      headerVars,
+      headerMediaUrl,
+      headerFilename,
+      bodyVars,
+    }
+  }
+
+  return {
+    headerFormat: 'NONE',
+    headerVars: [],
+    headerMediaUrl: '',
+    headerFilename: '',
+    bodyVars: [],
+  }
+}
+
 export const formatTemplateVarsForSupabase = (vars: TemplateVarDraft[]): TemplateVarPayload[] => {
   return vars.map((item, index) => ({
     position: index + 1,
@@ -116,6 +181,28 @@ export const formatTemplateVarsForSupabase = (vars: TemplateVarDraft[]): Templat
       ? TEMPLATE_TAGS[0]?.key || ''
       : item.value.trim(),
   }))
+}
+
+export const formatTemplateDataForSupabase = ({
+  headerFormat,
+  headerVars,
+  headerMediaUrl,
+  headerFilename,
+  bodyVars,
+}: {
+  headerFormat: HeaderFormat
+  headerVars: TemplateVarDraft[]
+  headerMediaUrl: string
+  headerFilename: string
+  bodyVars: TemplateVarDraft[]
+}): TemplateDataPayload => {
+  return {
+    header_format: headerFormat,
+    header_vars: formatTemplateVarsForSupabase(headerVars),
+    header_media_url: headerMediaUrl.trim(),
+    header_filename: headerFilename.trim(),
+    body_vars: formatTemplateVarsForSupabase(bodyVars),
+  }
 }
 
 export const resolveTemplateVarValue = (templateVar: TemplateVarPayload, order: OrderTemplateData): string => {

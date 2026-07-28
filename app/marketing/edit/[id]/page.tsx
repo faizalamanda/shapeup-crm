@@ -9,7 +9,7 @@ import MarketingTrigger from '../../new/MarketingTrigger'
 import YCloudMessageEditor from '../../new/YCloudMessageEditor'
 // IMPORT GENERATOR (Pastikan path-nya benar sesuai struktur folder Mas)
 import { DEFAULT_ONE_TIME, DEFAULT_SCHEDULE, generateSQLFilter, generateScheduling, type AudienceFilter, type OneTimeConfig, type ScheduleConfig } from '../../new/AudienceSegmentBuilder'
-import { formatTemplateVarsForSupabase, hydrateTemplateVarsForEditor, type TemplateVarDraft } from '../../new/variables'
+import { formatTemplateDataForSupabase, hydrateTemplateDataForEditor, type HeaderFormat, type TemplateVarDraft } from '../../new/variables'
 
 export default function EditScenarioPage() {
   const params = useParams()
@@ -26,6 +26,10 @@ export default function EditScenarioPage() {
   const [schedule, setSchedule] = useState<ScheduleConfig>(DEFAULT_SCHEDULE)
   const [oneTime, setOneTime] = useState<OneTimeConfig>(DEFAULT_ONE_TIME)
   const [templateName, setTemplateName] = useState('')
+  const [headerFormat, setHeaderFormat] = useState<HeaderFormat>('NONE')
+  const [headerVars, setHeaderVars] = useState<TemplateVarDraft[]>([])
+  const [headerMediaUrl, setHeaderMediaUrl] = useState('')
+  const [headerFilename, setHeaderFilename] = useState('')
   const [templateVars, setTemplateVars] = useState<TemplateVarDraft[]>([])
 
   // LOAD DATA LAMA
@@ -47,7 +51,13 @@ export default function EditScenarioPage() {
         setOneTime({ ...DEFAULT_ONE_TIME, ...(data.trigger_config?.oneTime || {}) })
         setFilters(data.filters || [])
         setTemplateName(data.template_name || '')
-        setTemplateVars(hydrateTemplateVarsForEditor(data.template_vars))
+
+        const hydrated = hydrateTemplateDataForEditor(data.template_vars)
+        setHeaderFormat(hydrated.headerFormat)
+        setHeaderVars(hydrated.headerVars)
+        setHeaderMediaUrl(hydrated.headerMediaUrl)
+        setHeaderFilename(hydrated.headerFilename)
+        setTemplateVars(hydrated.bodyVars)
       }
       setLoading(false)
     }
@@ -66,7 +76,14 @@ export default function EditScenarioPage() {
       triggerType === 'TIME' && timeType === 'SCHEDULED' ? schedule : undefined,
       triggerType === 'TIME' && timeType === 'SPECIFIC' ? oneTime : undefined
     );
-    const mappedTemplateVars = formatTemplateVarsForSupabase(templateVars);
+
+    const templateDataPayload = formatTemplateDataForSupabase({
+      headerFormat,
+      headerVars,
+      headerMediaUrl,
+      headerFilename,
+      bodyVars: templateVars,
+    });
 
     const { error } = await supabase
       .from('marketing_scenarios')
@@ -79,7 +96,7 @@ export default function EditScenarioPage() {
         scheduling_logic: schedulingLogic,
         filters, // Tetap simpan array filter untuk UI
         template_name: templateName,
-        template_vars: mappedTemplateVars
+        template_vars: templateDataPayload,
       })
       .eq('id', id)
 
@@ -131,6 +148,10 @@ export default function EditScenarioPage() {
       {/* STEP 3: MESSAGE CONFIGURATION */}
       <YCloudMessageEditor 
         templateName={templateName} setTemplateName={setTemplateName}
+        headerFormat={headerFormat} setHeaderFormat={setHeaderFormat}
+        headerVars={headerVars} setHeaderVars={setHeaderVars}
+        headerMediaUrl={headerMediaUrl} setHeaderMediaUrl={setHeaderMediaUrl}
+        headerFilename={headerFilename} setHeaderFilename={setHeaderFilename}
         templateVars={templateVars} setTemplateVars={setTemplateVars}
       />
 

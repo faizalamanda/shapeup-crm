@@ -10,7 +10,7 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 // IMPORT GENERATOR DARI KOMPONEN BUILDER
 import { DEFAULT_ONE_TIME, DEFAULT_SCHEDULE, generateSQLFilter, generateScheduling, type AudienceFilter, type OneTimeConfig, type ScheduleConfig } from './AudienceSegmentBuilder'
-import { formatTemplateVarsForSupabase, type TemplateVarDraft } from './variables'
+import { formatTemplateDataForSupabase, type HeaderFormat, type TemplateVarDraft } from './variables'
 
 export default function NewScenarioPage() {
   const router = useRouter()
@@ -24,6 +24,10 @@ export default function NewScenarioPage() {
   const [schedule, setSchedule] = useState<ScheduleConfig>(DEFAULT_SCHEDULE)
   const [oneTime, setOneTime] = useState<OneTimeConfig>(DEFAULT_ONE_TIME)
   const [templateName, setTemplateName] = useState('') 
+  const [headerFormat, setHeaderFormat] = useState<HeaderFormat>('NONE')
+  const [headerVars, setHeaderVars] = useState<TemplateVarDraft[]>([])
+  const [headerMediaUrl, setHeaderMediaUrl] = useState('')
+  const [headerFilename, setHeaderFilename] = useState('')
   const [templateVars, setTemplateVars] = useState<TemplateVarDraft[]>([]) 
 
   // -- LOGIC SIMPAN KE DATABASE --
@@ -62,7 +66,13 @@ export default function NewScenarioPage() {
     console.log("DEBUG: SQL Filter dihasilkan:", sqlFilter);
     console.log("DEBUG: Scheduling Logic dihasilkan:", schedulingLogic);
 
-    const mappedTemplateVars = formatTemplateVarsForSupabase(templateVars)
+    const templateDataPayload = formatTemplateDataForSupabase({
+      headerFormat,
+      headerVars,
+      headerMediaUrl,
+      headerFilename,
+      bodyVars: templateVars,
+    })
 
     const payload: Record<string, any> = {
       name: name,
@@ -76,7 +86,7 @@ export default function NewScenarioPage() {
       
       filters: filters, // Array asli tetap disimpan untuk keperluan edit UI
       template_name: templateName,
-      template_vars: mappedTemplateVars,
+      template_vars: templateDataPayload,
       platform: 'YCLOUD',
       is_active: true
     }
@@ -161,6 +171,14 @@ export default function NewScenarioPage() {
       <YCloudMessageEditor 
         templateName={templateName} 
         setTemplateName={setTemplateName}
+        headerFormat={headerFormat}
+        setHeaderFormat={setHeaderFormat}
+        headerVars={headerVars}
+        setHeaderVars={setHeaderVars}
+        headerMediaUrl={headerMediaUrl}
+        setHeaderMediaUrl={setHeaderMediaUrl}
+        headerFilename={headerFilename}
+        setHeaderFilename={setHeaderFilename}
         templateVars={templateVars} 
         setTemplateVars={setTemplateVars}
       />
