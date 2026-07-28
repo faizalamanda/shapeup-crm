@@ -200,109 +200,110 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   // Load profile and businesses — onAuthStateChange as single source of truth
   const loadIdRef = useRef(0)
+  const loadedUserIdRef = useRef<string | null>(null)
 
   const loadProfileAndBusinesses = useCallback(async (userId: string) => {
     const loadId = ++loadIdRef.current
-    setBizLoading(true)
 
     console.log('[Layout] loadProfileAndBusinesses called, userId:', userId)
 
-    const [profileResult, bsResult, ownedResult] = await Promise.all([
-      supabase.from('profiles').select('*').eq('id', userId).single(),
-      supabase.from('business_staff').select('role, permissions, businesses (*)').eq('profile_id', userId),
-      supabase.from('businesses').select('*').eq('owner_id', userId),
-    ])
+    try {
+      const [profileResult, bsResult, ownedResult] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', userId).single(),
+        supabase.from('business_staff').select('role, permissions, businesses (*)').eq('profile_id', userId),
+        supabase.from('businesses').select('*').eq('owner_id', userId),
+      ])
 
-    console.log('[Layout] profileResult:', profileResult.data, profileResult.error)
-    console.log('[Layout] bsResult:', bsResult.data, bsResult.error)
-    console.log('[Layout] ownedResult:', ownedResult.data, ownedResult.error)
+      console.log('[Layout] profileResult:', profileResult.data, profileResult.error)
+      console.log('[Layout] bsResult:', bsResult.data, bsResult.error)
+      console.log('[Layout] ownedResult:', ownedResult.data, ownedResult.error)
 
-    // If a newer load has started, discard this result
-    if (loadId !== loadIdRef.current) return
+      // If a newer load has started, discard this result
+      if (loadId !== loadIdRef.current) return
 
-    const profile = profileResult.data
-    setUserProfile(profile || null)
-
-    // Combine and deduplicate businesses
-    const bizMap = new Map<string, any>()
-    bsResult.data?.forEach((item: any) => {
-      if (item.businesses) {
-        bizMap.set(item.businesses.id, item.businesses)
+      const profile = profileResult.data
+      setUserProfile(profile || null)
+      if (profile) {
+        loadedUserIdRef.current = userId
       }
-    })
-    ownedResult.data?.forEach((biz: any) => {
-      bizMap.set(biz.id, biz)
-    })
 
-    const combined = Array.from(bizMap.values())
-    console.log('[Layout] combined businesses:', combined)
-    setBusinesses(combined)
-
-    // Find and set the active business
-    const activeBizId = profile?.active_business_id || combined[0]?.id
-    if (profile?.active_business_id) {
-      const active = combined.find(b => b.id === profile.active_business_id)
-      if (active) {
-        console.log('[Layout] active business found:', active.name)
-        setActiveBusiness(active)
-      } else {
-        // Fallback: direct lookup (edge case)
-        const { data: fallbackBiz } = await supabase
-          .from('businesses')
-          .select('*')
-          .eq('id', profile.active_business_id)
-          .single()
-        if (loadId === loadIdRef.current && fallbackBiz) {
-          console.log('[Layout] fallback business:', fallbackBiz.name)
-          setActiveBusiness(fallbackBiz)
+      // Combine and deduplicate businesses
+      const bizMap = new Map<string, any>()
+      bsResult.data?.forEach((item: any) => {
+        if (item.businesses) {
+          bizMap.set(item.businesses.id, item.businesses)
         }
+      })
+      ownedResult.data?.forEach((biz: any) => {
+        bizMap.set(biz.id, biz)
+      })
+
+      const combined = Array.from(bizMap.values())
+      console.log('[Layout] combined businesses:', combined)
+      setBusinesses(combined)
+
+      // Find and set the active business
+      const activeBizId = profile?.active_business_id || combined[0]?.id
+      if (activeBizId) {
+        const active = combined.find(b => b.id === activeBizId)
+        if (active) {
+          console.log('[Layout] active business found:', active.name)
+          setActiveBusiness(active)
+        } else {
+          // Fallback: direct lookup (edge case)
+          const { data: fallbackBiz } = await supabase
+            .from('businesses')
+            .select('*')
+            .eq('id', activeBizId)
+            .single()
+          if (loadId === loadIdRef.current && fallbackBiz) {
+            console.log('[Layout] fallback business:', fallbackBiz.name)
+            setActiveBusiness(fallbackBiz)
+          } else if (combined.length > 0) {
+            setActiveBusiness(combined[0])
+          }
+        }
+      } else if (combined.length > 0) {
+        console.log('[Layout] no active_business_id, auto-selecting first:', combined[0].name)
+        setActiveBusiness(combined[0])
+      } else {
+        console.log('[Layout] no businesses found at all')
+        setActiveBusiness(null)
       }
-    } else if (combined.length > 0) {
-      console.log('[Layout] no active_business_id, auto-selecting first:', combined[0].name)
-      setActiveBusiness(combined[0])
-    } else {
-      console.log('[Layout] no businesses found at all')
-    }
 
-    // Resolve role and permissions
-    const activeBs = bsResult.data?.find((item: any) => item.businesses?.id === activeBizId)
-    const isUserAdmin = profile?.role === 'admin' || activeBs?.role === 'admin' || ownedResult.data?.some((biz: any) => biz.id === activeBizId)
-    
-    if (isUserAdmin) {
-      setCurrentUserRole('admin')
-      setCurrentUserPermissions(['full_access'])
-    } else if (activeBs) {
-      setCurrentUserRole(activeBs.role)
-      setCurrentUserPermissions(activeBs.permissions || [])
-    } else {
-      setCurrentUserRole('staff')
-      setCurrentUserPermissions([])
+      // Resolve role and permissions
+      const activeBs = bsResult.data?.find((item: any) => item.businesses?.id === activeBizId)
+      const isUserAdmin = profile?.role === 'admin' || activeBs?.role === 'admin' || ownedResult.data?.some((biz: any) => biz.id === activeBizId)
+      
+      if (isUserAdmin) {
+        setCurrentUserRole('admin')
+        setCurrentUserPermissions(['full_access'])
+      } else if (activeBs) {
+        setCurrentUserRole(activeBs.role)
+        setCurrentUserPermissions(activeBs.permissions || [])
+      } else {
+        setCurrentUserRole('staff')
+        setCurrentUserPermissions([])
+      }
+    } catch (err) {
+      console.error('[Layout] Error loading profile and businesses:', err)
+    } finally {
+      if (loadId === loadIdRef.current) {
+        setBizLoading(false)
+      }
     }
-
-    if (loadId === loadIdRef.current) setBizLoading(false)
   }, [supabase])
 
   // Load profile and businesses — onAuthStateChange as single source of truth
   useEffect(() => {
     // onAuthStateChange is the single source of truth.
-    // It fires INITIAL_SESSION immediately on mount with the current session,
-    // then SIGNED_IN / SIGNED_OUT on subsequent auth changes.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         console.log('[Layout] onAuthStateChange event:', event, 'user:', session?.user?.id)
-        if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-          if (session?.user?.id) {
-            loadProfileAndBusinesses(session.user.id)
-          } else {
-            // No session — clear state
-            setUserProfile(null)
-            setBusinesses([])
-            setActiveBusiness(null)
-            setCurrentUserRole(null)
-            setCurrentUserPermissions([])
-            setBizLoading(false)
-          }
-        } else if (event === 'SIGNED_OUT') {
+        if (session?.user?.id) {
+          loadProfileAndBusinesses(session.user.id)
+        } else if (event === 'SIGNED_OUT' || (event === 'INITIAL_SESSION' && !session)) {
+          loadedUserIdRef.current = null
           setUserProfile(null)
           setBusinesses([])
           setActiveBusiness(null)
@@ -321,39 +322,34 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   // Sync session on navigation/pathname change when we are on a page with sidebar
   useEffect(() => {
     if (!noSidebar) {
-      console.log('[Layout] Pathname changed to sidebar page. Re-checking session...')
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        const sessionUserId = session?.user?.id
-        const currentProfileId = userProfile?.id
+      if (!loadedUserIdRef.current) {
+        console.log('[Layout] Pathname changed to sidebar page without loaded profile. Re-checking session...')
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          const sessionUserId = session?.user?.id
 
-        if (sessionUserId !== currentProfileId) {
-          console.log('[Layout] Session user ID changed or profile mismatch:', sessionUserId, 'vs', currentProfileId)
           if (sessionUserId) {
+            console.log('[Layout] Loading profile for session user ID:', sessionUserId)
             loadProfileAndBusinesses(sessionUserId)
           } else {
-            // No session — clear state
-            setUserProfile(null)
-            setBusinesses([])
-            setActiveBusiness(null)
-            setCurrentUserRole(null)
-            setCurrentUserPermissions([])
             setBizLoading(false)
           }
-        }
-      })
+        })
+      }
     } else {
       // Clear profile state when transitioning to public pages (login, register, home) to ensure a clean state
+      loadedUserIdRef.current = null
       setUserProfile(null)
       setBusinesses([])
       setActiveBusiness(null)
       setCurrentUserRole(null)
       setCurrentUserPermissions([])
+      setBizLoading(false)
     }
-  }, [pathname, noSidebar, userProfile?.id, supabase, loadProfileAndBusinesses])
+  }, [pathname, noSidebar, supabase, loadProfileAndBusinesses])
 
   // Dynamic menu filtering based on permissions
   const allowedMenuItems = useMemo(() => {
-    if (bizLoading) return []
+    if (bizLoading && !userProfile) return []
     
     const role = currentUserRole
     const perms = currentUserPermissions
