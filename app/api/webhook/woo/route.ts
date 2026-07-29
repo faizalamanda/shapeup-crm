@@ -1,16 +1,32 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse, after } from 'next/server'
 
+export async function GET() {
+  return NextResponse.json({ status: 'ok', message: 'WooCommerce webhook endpoint is active.' }, { status: 200 })
+}
+
+export async function HEAD() {
+  return new Response(null, { status: 200 })
+}
+
+export async function OPTIONS() {
+  return new Response(null, { status: 200 })
+}
+
 export async function POST(req: Request) {
   const supabaseAdmin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
+
   try {
     const { searchParams } = new URL(req.url)
     const businessId = searchParams.get('bid')
 
-    if (!businessId) return NextResponse.json({ error: 'Missing Business ID' }, { status: 400 })
+    if (!businessId) {
+      console.warn('[Webhook WooCommerce Warning] Received webhook without bid param.')
+      return NextResponse.json({ message: 'Missing business ID param, skipped.' }, { status: 200 })
+    }
 
     // Quick handle for WooCommerce Webhook Ping test
     const topic = req.headers.get('x-wc-webhook-topic')
@@ -18,22 +34,37 @@ export async function POST(req: Request) {
       return NextResponse.json({ message: 'Ping received successfully' }, { status: 200 })
     }
 
-    const woo = await req.json()
-    if (!woo || !woo.id) {
-      return NextResponse.json({ message: 'Payload received (not an order)' }, { status: 200 })
+    // Safely parse JSON body
+    let woo: any = null
+    try {
+      const rawText = await req.text()
+      if (rawText && rawText.trim().length > 0) {
+        woo = JSON.parse(rawText)
+      }
+    } catch (parseErr: any) {
+      console.warn('[Webhook WooCommerce Warning] Failed to parse JSON payload:', parseErr.message)
+      return NextResponse.json({ message: 'Payload received (invalid JSON format ignored)' }, { status: 200 })
+    }
+
+    if (!woo || typeof woo !== 'object' || !woo.id) {
+      return NextResponse.json({ message: 'Payload received (not a valid order object)' }, { status: 200 })
     }
 
     // Check if integration is paused/disabled for this business
-    const { data: integConfig } = await supabaseAdmin
-      .from('integrations')
-      .select('is_active')
-      .eq('platform_name', 'woocommerce')
-      .filter('api_credentials->>business_id', 'eq', businessId)
-      .maybeSingle()
+    try {
+      const { data: integConfig } = await supabaseAdmin
+        .from('integrations')
+        .select('is_active')
+        .eq('platform_name', 'woocommerce')
+        .filter('api_credentials->>business_id', 'eq', businessId)
+        .maybeSingle()
 
-    if (integConfig && integConfig.is_active === false) {
-      console.log(`[Webhook WooCommerce] Integrasi dinonaktifkan untuk bisnis ${businessId}. Pesanan diabaikan.`)
-      return NextResponse.json({ message: 'Integrasi WooCommerce dinonaktifkan untuk unit bisnis ini.' }, { status: 200 })
+      if (integConfig && integConfig.is_active === false) {
+        console.log(`[Webhook WooCommerce] Integrasi dinonaktifkan untuk bisnis ${businessId}. Pesanan diabaikan.`)
+        return NextResponse.json({ message: 'Integrasi WooCommerce dinonaktifkan untuk unit bisnis ini.' }, { status: 200 })
+      }
+    } catch (configErr: any) {
+      console.warn('[Webhook WooCommerce Warning] Failed to check integration config status:', configErr.message)
     }
 
     // Use Next.js after() to process heavy database tasks (Customer upsert, Order upsert, Ledger sync)
@@ -171,7 +202,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true, message: 'Webhook queued and processing in background.' }, { status: 200 })
 
   } catch (err: any) {
-    console.error("Webhook Error:", err.message);
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    console.error("Webhook Unexpected Error:", err?.message || err);
+    // CRITICAL: Always return 200 OK to WooCommerce so WooCommerce never auto-disables the webhook!
+    return NextResponse.json({ success: true, warning: 'Processed with unhandled exception' }, { status: 200 })
   }
 }
