@@ -29,6 +29,12 @@ export async function middleware(request: NextRequest) {
     }
   )
 
+  // Check if any Supabase auth cookies are present in the request
+  const allCookies = request.cookies.getAll()
+  const hasAuthCookie = allCookies.some(
+    (c) => c.name.startsWith('sb-') || c.name.includes('auth-token') || c.name.includes('supabase')
+  )
+
   // Call getUser() with a safety timeout (4 seconds) to prevent Vercel Middleware
   // GATEWAY_TIMEOUT (MIDDLEWARE_INVOCATION_TIMEOUT) if Supabase is slow.
   const getUserWithTimeout = async () => {
@@ -38,14 +44,19 @@ export async function middleware(request: NextRequest) {
         setTimeout(() => resolve({ data: { user: null }, error: new Error('Auth timeout') }), 4000)
       )
       return await Promise.race([authPromise, timeoutPromise])
-    } catch {
-      return { data: { user: null }, error: null }
+    } catch (err: any) {
+      return { data: { user: null }, error: err }
     }
   }
 
   const {
     data: { user },
+    error: authError,
   } = await getUserWithTimeout()
+
+  const isTimeoutOrNetworkError =
+    authError?.message === 'Auth timeout' ||
+    (authError && (authError as any).status !== 401 && (authError as any).status !== 403)
 
   const pathname = request.nextUrl.pathname
 
@@ -61,7 +72,13 @@ export async function middleware(request: NextRequest) {
     pathname === '/login' || pathname === '/register'
 
   // Not logged in + trying to access protected route → redirect to login
+  // NOTE: If Supabase auth timed out or had a network error BUT the user has an auth cookie,
+  // DO NOT force redirect to /login so the user isn't logged out during temporary network lag.
   if (!user && isProtectedRoute) {
+    if (isTimeoutOrNetworkError && hasAuthCookie) {
+      console.warn('[Middleware] Supabase auth network timeout, but session cookie exists. Allowing request.')
+      return supabaseResponse
+    }
     const redirectUrl = request.nextUrl.clone()
     redirectUrl.pathname = '/login'
     // Preserve the original URL so we can redirect back after login
@@ -80,7 +97,7 @@ export async function middleware(request: NextRequest) {
   // Root path → redirect based on auth state
   if (pathname === '/') {
     const redirectUrl = request.nextUrl.clone()
-    redirectUrl.pathname = user ? '/dashboard' : '/login'
+    redirectUrl.pathname = (user || hasAuthCookie) ? '/dashboard' : '/login'
     redirectUrl.search = ''
     return NextResponse.redirect(redirectUrl)
   }
