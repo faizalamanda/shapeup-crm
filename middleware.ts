@@ -29,11 +29,23 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // IMPORTANT: Always call getUser() to refresh the session token.
-  // This also validates the session on every request.
+  // Call getUser() with a safety timeout (4 seconds) to prevent Vercel Middleware
+  // GATEWAY_TIMEOUT (MIDDLEWARE_INVOCATION_TIMEOUT) if Supabase is slow.
+  const getUserWithTimeout = async () => {
+    try {
+      const authPromise = supabase.auth.getUser()
+      const timeoutPromise = new Promise<{ data: { user: null }; error: any }>((resolve) =>
+        setTimeout(() => resolve({ data: { user: null }, error: new Error('Auth timeout') }), 4000)
+      )
+      return await Promise.race([authPromise, timeoutPromise])
+    } catch {
+      return { data: { user: null }, error: null }
+    }
+  }
+
   const {
     data: { user },
-  } = await supabase.auth.getUser()
+  } = await getUserWithTimeout()
 
   const pathname = request.nextUrl.pathname
 
@@ -82,12 +94,12 @@ export const config = {
   matcher: [
     /*
      * Match all request paths EXCEPT:
+     * - api/ (API routes handled by their own auth)
      * - _next/static (static files)
      * - _next/image (image optimization)
      * - favicon.ico, sitemap.xml, robots.txt
      * - public assets (svg, png, jpg, jpeg, gif, webp)
-     * - API routes (handled by their own auth)
      */
-    '/((?!_next/static|_next/image|favicon\\.ico|sitemap\\.xml|robots\\.txt|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!api/|_next/static|_next/image|favicon\\.ico|sitemap\\.xml|robots\\.txt|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
