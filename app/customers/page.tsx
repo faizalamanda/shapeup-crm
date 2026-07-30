@@ -7,13 +7,15 @@ import { FilterBar, FilterRule } from './components/FilterBar'
 import { AnalyticsCharts } from './components/AnalyticsCharts'
 import { CustomerTable } from './components/CustomerTable'
 import { CustomerDetail } from './components/CustomerDetail'
+import { Pagination } from '../components/Pagination'
 
 const CACHE_TTL_MS   = 5 * 60 * 1000  // 5 menit
-const BATCH_SIZE     = 1000            // Supabase max per request
 const STALE_RECHECK  = 2 * 60 * 1000  // Background refresh setelah 2 menit
 
 type CachePayload = {
   data: any[]
+  statsData: any[]
+  total: number
   ts: number
   businessId: string
 }
@@ -34,13 +36,61 @@ function readCache(bid: string): CachePayload | null {
   }
 }
 
-function writeCache(bid: string, data: any[]) {
+function writeCache(bid: string, payloadData: { data: any[]; statsData: any[]; total: number }) {
   try {
-    const payload: CachePayload = { data, ts: Date.now(), businessId: bid }
+    const payload: CachePayload = {
+      ...payloadData,
+      ts: Date.now(),
+      businessId: bid
+    }
     sessionStorage.setItem(getCacheKey(bid), JSON.stringify(payload))
   } catch {
     // sessionStorage might be full — silently ignore
   }
+}
+
+function applyCustomerFilters(query: any, search: string, rules: FilterRule[]) {
+  if (search) {
+    const s = search.trim()
+    query = query.or(`name.ilike.%${s}%,phone.ilike.%${s}%`)
+  }
+
+  for (const rule of rules) {
+    if (!rule.value) continue
+    const { field, operator, value } = rule
+
+    if (['ltv', 'aov', 'total_order_count', 'days_since_last_order'].includes(field)) {
+      const v = Number(value)
+      if (isNaN(v) && operator !== 'between') continue
+      if (operator === 'greater_or_equal') query = query.gte(field, v)
+      else if (operator === 'less_or_equal') query = query.lte(field, v)
+      else if (operator === 'equal') query = query.eq(field, v)
+      else if (operator === 'greater') query = query.gt(field, v)
+      else if (operator === 'less') query = query.lt(field, v)
+      else if (operator === 'between') {
+        const [minV, maxV] = value.split(',').map(Number)
+        if (!isNaN(minV) && !isNaN(maxV)) {
+          query = query.gte(field, minV).lte(field, maxV)
+        }
+      }
+    }
+
+    if (field === 'last_order_status') {
+      if (operator === 'is') query = query.ilike(field, value)
+      else if (operator === 'is_not') query = query.neq(field, value)
+    }
+
+    if (field === 'last_order_date' || field === 'joined_at') {
+      if (operator === 'after') query = query.gte(field, value)
+      else if (operator === 'before') query = query.lte(field, value)
+      else if (operator === 'between') {
+        const [minD, maxD] = value.split(',')
+        if (minD && maxD) query = query.gte(field, minD).lte(field, maxD)
+      }
+    }
+  }
+
+  return query
 }
 
 export default function CustomerPage() {
@@ -50,79 +100,96 @@ export default function CustomerPage() {
   )
 
   const [customers, setCustomers]         = useState<any[]>([])
+  const [statsCustomers, setStatsCustomers] = useState<any[]>([])
   const [totalCount, setTotalCount]       = useState<number>(0)
-  const [fetchedCount, setFetchedCount]   = useState<number>(0)
   const [isFetching, setIsFetching]       = useState(false)
   const [isBackground, setIsBackground]   = useState(false)
+  const [currentPage, setCurrentPage]     = useState<number>(1)
+  const [pageSize, setPageSize]           = useState<number>(25)
+
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null)
   const [searchQuery, setSearchQuery]     = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [rules, setRules]                 = useState<FilterRule[]>([])
   const [showCharts, setShowCharts]       = useState(true)
   const [businessId, setBusinessId]       = useState<string>('')
   const [userId, setUserId]               = useState<string>('')
 
-  // ─── Batch Fetcher ────────────────────────────────────────────────────────
-  const fetchAllBatches = useCallback(async (businessId: string, background = false) => {
+  // ─── Search Debounce ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchQuery)
+    }, 400)
+    return () => clearTimeout(handler)
+  }, [searchQuery])
+
+  const serializedRules = JSON.stringify(rules)
+
+  // Reset to page 1 when search or rules change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [debouncedSearch, serializedRules])
+
+  // ─── Fetcher for Page Data & Lightweight Full Stats ────────────────────────
+  const fetchCustomerData = useCallback(async (
+    bid: string,
+    search: string,
+    rulesArray: FilterRule[],
+    page: number,
+    limit: number,
+    background = false
+  ) => {
     if (!background) setIsFetching(true)
     else setIsBackground(true)
 
-    const allData: any[] = []
-    let from = 0
-    let total = 0
+    const from = (page - 1) * limit
+    const to = page * limit - 1
 
     try {
-      // First batch — also get total count
-      const { data: firstBatch, error, count } = await supabase
+      // 1. Fetch Paginated Customer Table Data
+      let pageQuery = supabase
         .from('customer_metrics')
         .select('*', { count: 'exact' })
-        .eq('business_id', businessId)
-        .order('ltv', { ascending: false })
-        .range(from, from + BATCH_SIZE - 1)
+        .eq('business_id', bid)
 
-      if (error) throw error
+      pageQuery = applyCustomerFilters(pageQuery, search, rulesArray)
+      pageQuery = pageQuery.order('ltv', { ascending: false }).range(from, to)
 
-      total = count ?? 0
+      const { data: pageData, count, error: pageErr } = await pageQuery
+      if (pageErr) throw pageErr
+
+      const total = count ?? 0
       setTotalCount(total)
+      setCustomers(pageData || [])
 
-      const batch1 = firstBatch || []
-      allData.push(...batch1)
-      from += BATCH_SIZE
+      // 2. Fetch Lightweight Summary Metrics for ALL Matching Customers (for 100% accurate Stats & Charts)
+      let statsQuery = supabase
+        .from('customer_metrics')
+        .select('ltv, aov, total_order_count, days_since_last_order, last_order_date, joined_at, last_order_status')
+        .eq('business_id', bid)
 
-      // Show first batch immediately — user sees data fast
-      setCustomers([...allData])
-      setFetchedCount(allData.length)
-
-      // Fetch remaining batches
-      while (from < total) {
-        const { data: nextBatch, error: bErr } = await supabase
-          .from('customer_metrics')
-          .select('*')
-          .eq('business_id', businessId)
-          .order('ltv', { ascending: false })
-          .range(from, from + BATCH_SIZE - 1)
-
-        if (bErr) break
-
-        allData.push(...(nextBatch || []))
-        from += BATCH_SIZE
-
-        // Update state after each batch — live progress
-        setCustomers([...allData])
-        setFetchedCount(allData.length)
+      statsQuery = applyCustomerFilters(statsQuery, search, rulesArray)
+      const { data: statsData, error: statsErr } = await statsQuery
+      if (!statsErr && statsData) {
+        setStatsCustomers(statsData)
+      } else {
+        setStatsCustomers(pageData || [])
       }
 
-      // Write full dataset to cache
-      writeCache(businessId, allData)
+      // Write cache only for default initial page
+      if (!search && rulesArray.length === 0 && page === 1 && limit === 25) {
+        writeCache(bid, { data: pageData || [], statsData: statsData || [], total })
+      }
 
     } catch (err) {
-      console.error('[ShapeUp] Error fetching customers:', err)
+      console.error('[ShapeUp] Error fetching customer page:', err)
     } finally {
       setIsFetching(false)
       setIsBackground(false)
     }
   }, [supabase])
 
-  // ─── Initial Load + Cache Strategy ───────────────────────────────────────
+  // ─── Initial Load & Business Profile ──────────────────────────────────────
   useEffect(() => {
     async function init() {
       try {
@@ -141,24 +208,6 @@ export default function CustomerPage() {
         if (!bid) return
 
         setBusinessId(bid)
-
-        // Cache-first strategy
-        const cached = readCache(bid)
-        if (cached) {
-          // Show cached data immediately — perceived load = 0ms
-          setCustomers(cached.data)
-          setFetchedCount(cached.data.length)
-          setTotalCount(cached.data.length)
-
-          // If cache is getting stale (>2min), revalidate in background
-          const age = Date.now() - cached.ts
-          if (age > STALE_RECHECK) {
-            fetchAllBatches(bid, true) // background refresh
-          }
-        } else {
-          // No cache — full fetch
-          await fetchAllBatches(bid, false)
-        }
       } catch (err) {
         console.error('[ShapeUp] Init error:', err)
         setIsFetching(false)
@@ -166,109 +215,46 @@ export default function CustomerPage() {
     }
 
     init()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [supabase])
 
-  // ─── Derived unique statuses ──────────────────────────────────────────────
+  // ─── Fetch data on businessId, search, rules, or page change ─────────────
+  useEffect(() => {
+    if (!businessId) return
+
+    const rulesArray = JSON.parse(serializedRules)
+    const isDefaultFilters = !debouncedSearch && rulesArray.length === 0 && currentPage === 1 && pageSize === 25
+
+    if (isDefaultFilters) {
+      const cached = readCache(businessId)
+      if (cached) {
+        setCustomers(cached.data)
+        setStatsCustomers(cached.statsData)
+        setTotalCount(cached.total)
+
+        const age = Date.now() - cached.ts
+        if (age > STALE_RECHECK) {
+          fetchCustomerData(businessId, debouncedSearch, rulesArray, currentPage, pageSize, true)
+        }
+        return
+      }
+    }
+
+    fetchCustomerData(businessId, debouncedSearch, rulesArray, currentPage, pageSize, false)
+  }, [businessId, debouncedSearch, serializedRules, currentPage, pageSize, fetchCustomerData])
+
+  // ─── Derived unique statuses for filter options ───────────────────────────
   const availableStatuses = useMemo(() => {
-    const statuses = new Set<string>()
-    customers.forEach(c => {
+    const defaultStatuses = ['completed', 'on-hold', 'pending', 'shipped', 'cancelled', 'return-request']
+    const statuses = new Set<string>(defaultStatuses)
+    statsCustomers.forEach(c => {
       if (c.last_order_status) statuses.add(c.last_order_status.toLowerCase())
     })
-    if (statuses.size === 0) {
-      return ['completed', 'on-hold', 'pending', 'shipped', 'cancelled', 'return-request']
-    }
     return Array.from(statuses).sort()
-  }, [customers])
-
-  // ─── Filter Logic ─────────────────────────────────────────────────────────
-  const filteredCustomers = useMemo(() => {
-    return customers.filter(c => {
-      const matchesSearch =
-        (c.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (c.phone || '').includes(searchQuery)
-
-      if (!matchesSearch) return false
-
-      for (const rule of rules) {
-        if (!rule.value) continue
-
-        const field    = rule.field
-        const operator = rule.operator
-
-        // Numeric fields
-        if (['ltv', 'aov', 'total_order_count', 'days_since_last_order'].includes(field)) {
-          const cVal = Number(c[field]) || 0
-          const rVal = Number(rule.value) || 0
-          if (operator === 'greater_or_equal' && !(cVal >= rVal)) return false
-          if (operator === 'less_or_equal'    && !(cVal <= rVal)) return false
-          if (operator === 'equal'            && !(cVal === rVal)) return false
-          if (operator === 'greater'          && !(cVal > rVal))  return false
-          if (operator === 'less'             && !(cVal < rVal))  return false
-          if (operator === 'between') {
-            const [minV, maxV] = (rule.value || '').split(',').map(Number)
-            if (isNaN(minV) || isNaN(maxV)) return false
-            if (!(cVal >= minV && cVal <= maxV)) return false
-          }
-        }
-
-        // Date fields
-        if (field === 'last_order_date' || field === 'joined_at') {
-          if (!c[field]) return false
-          const cDate = new Date(c[field]).getTime()
-          const rDate = new Date(rule.value).getTime()
-          if (isNaN(cDate) || isNaN(rDate)) return false
-          if (operator === 'after'  && !(cDate >= rDate)) return false
-          if (operator === 'before' && !(cDate <= rDate)) return false
-          if (operator === 'between') {
-            const [minD, maxD] = (rule.value || '').split(',')
-            const minT = new Date(minD).getTime()
-            const maxT = new Date(maxD).getTime()
-            if (isNaN(minT) || isNaN(maxT)) return false
-            if (!(cDate >= minT && cDate <= maxT)) return false
-          }
-        }
-
-        // Status field
-        if (field === 'last_order_status') {
-          const cStr = (c[field] || '').toLowerCase()
-          const rStr = (rule.value || '').toLowerCase()
-          if (operator === 'is'     && cStr !== rStr) return false
-          if (operator === 'is_not' && cStr === rStr) return false
-        }
-
-        // RFM segment (computed client-side)
-        if (field === 'rfm_segment') {
-          const ltv   = Number(c.ltv) || 0
-          const freq  = Number(c.total_order_count) || 0
-          const days  = Number(c.days_since_last_order) ?? 999
-          let seg = 'regular'
-          if (ltv >= 1000000 && freq >= 2)          seg = 'vip'
-          else if (freq === 0)                       seg = 'lost'
-          else if (days > 90)                        seg = 'churned'
-          else if (days > 60)                        seg = 'at_risk'
-          else if (freq === 1 && days <= 30)         seg = 'new'
-          else if (freq >= 3 && days <= 30)          seg = 'loyal'
-          else if (freq === 1)                       seg = 'one_time'
-
-          const rSeg = (rule.value || '').toLowerCase()
-          if (operator === 'is'     && seg !== rSeg) return false
-          if (operator === 'is_not' && seg === rSeg) return false
-        }
-      }
-
-      return true
-    })
-  }, [customers, searchQuery, rules])
-
-  // ─── Loading Progress ─────────────────────────────────────────────────────
-  const progressPct = totalCount > 0
-    ? Math.min(Math.round((fetchedCount / totalCount) * 100), 100)
-    : 0
+  }, [statsCustomers])
 
   const isLoadingFirst = isFetching && customers.length === 0
 
   const handleCustomerUpdate = useCallback((updatedCustomer: any) => {
-    // 1. Update list state
     setCustomers(prev => prev.map(c => {
       if (c.customer_id === updatedCustomer.id) {
         let newAddressString = ''
@@ -298,7 +284,6 @@ export default function CustomerPage() {
       return c
     }))
 
-    // 2. Update selected customer modal state
     setSelectedCustomer((prev: any) => {
       if (prev && prev.customer_id === updatedCustomer.id) {
         let newAddressString = ''
@@ -329,7 +314,6 @@ export default function CustomerPage() {
     })
   }, [])
 
-  // ─── Loading State (first load with no cache) ─────────────────────────────
   if (isLoadingFirst) {
     return (
       <div style={{
@@ -344,11 +328,6 @@ export default function CustomerPage() {
           <p style={{ fontSize: '11px', fontWeight: 700, color: 'var(--su-text-faint)', textTransform: 'uppercase', letterSpacing: '0.18em' }}>
             Memuat Data Pelanggan
           </p>
-          {totalCount > 0 && (
-            <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--su-text-muted)', marginTop: '4px' }}>
-              {fetchedCount.toLocaleString('id-ID')} / {totalCount.toLocaleString('id-ID')} pelanggan
-            </p>
-          )}
         </div>
       </div>
     )
@@ -399,7 +378,7 @@ export default function CustomerPage() {
 
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--su-text)', lineHeight: 1.1 }}>
-                {customers.length.toLocaleString('id-ID')}
+                {totalCount.toLocaleString('id-ID')}
               </div>
               <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--su-text-faint)', textTransform: 'uppercase', letterSpacing: '0.14em' }}>
                 Total Pelanggan
@@ -408,23 +387,6 @@ export default function CustomerPage() {
           </div>
 
         </div>
-
-        {/* Fetch progress bar (visible during multi-batch fetch) */}
-        {isFetching && customers.length > 0 && (
-          <div style={{ marginTop: '12px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-              <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--su-text-faint)', textTransform: 'uppercase', letterSpacing: '0.14em' }}>
-                Mengambil data...
-              </span>
-              <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--su-text-muted)' }}>
-                {fetchedCount.toLocaleString('id-ID')} / {totalCount.toLocaleString('id-ID')}
-              </span>
-            </div>
-            <div className="su-progress-track">
-              <div className="su-progress-fill" style={{ width: `${progressPct}%` }} />
-            </div>
-          </div>
-        )}
 
         {/* Background revalidation indicator */}
         {isBackground && (
@@ -439,7 +401,7 @@ export default function CustomerPage() {
       </div>
 
       {/* ── KPI Stats ─────────────────────────────────────────────────────── */}
-      <StatsPanel customers={filteredCustomers} />
+      <StatsPanel customers={statsCustomers} />
 
       {/* ── Filter Bar ────────────────────────────────────────────────────── */}
       <FilterBar
@@ -455,23 +417,34 @@ export default function CustomerPage() {
       />
 
       {/* ── Charts ────────────────────────────────────────────────────────── */}
-      {showCharts && <AnalyticsCharts customers={filteredCustomers} />}
+      {showCharts && <AnalyticsCharts customers={statsCustomers} />}
 
       {/* ── Customer Table ────────────────────────────────────────────────── */}
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', padding: '0 2px' }}>
           <p style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--su-text-faint)' }}>
-            {filteredCustomers.length.toLocaleString('id-ID')} dari {customers.length.toLocaleString('id-ID')} pelanggan
+            Halaman {currentPage} dari {Math.max(1, Math.ceil(totalCount / pageSize))} ({totalCount.toLocaleString('id-ID')} total pelanggan)
           </p>
-          {isFetching && (
+          {isFetching && customers.length > 0 && (
             <span style={{ fontSize: '10px', color: 'var(--su-accent)', fontWeight: 600 }}>
-              • Live updating
+              • Memperbarui...
             </span>
           )}
         </div>
         <CustomerTable
-          customers={filteredCustomers}
+          customers={customers}
           onSelect={(customer) => setSelectedCustomer(customer)}
+        />
+        <Pagination
+          currentPage={currentPage}
+          totalCount={totalCount}
+          pageSize={pageSize}
+          onPageChange={(page) => setCurrentPage(page)}
+          onPageSizeChange={(newSize) => {
+            setPageSize(newSize)
+            setCurrentPage(1)
+          }}
+          isLoading={isFetching}
         />
       </div>
 

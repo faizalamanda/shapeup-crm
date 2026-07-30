@@ -350,44 +350,18 @@ export function CustomerTable({ customers, onSelect }: { customers: any[]; onSel
           Tidak ada pelanggan yang cocok dengan kriteria segmentasi.
         </div>
       ) : (
-        /* Virtual scroll container */
         <div
           ref={containerRef}
-          className="su-vscroll-container"
-          style={{ height: `${CONTAINER_H}px`, overflowY: 'auto' }}
-          onScroll={handleScroll}
+          style={{ maxHeight: `${CONTAINER_H}px`, overflowY: 'auto' }}
         >
-          {/* Total height spacer */}
-          <div style={{ height: `${totalHeight}px`, position: 'relative' }}>
-            {/* Offset wrapper for visible rows */}
-            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, transform: `translateY(${offsetY}px)` }}>
-              {visibleCustomers.map((c, i) => (
-                <CustomerRow
-                  key={c.customer_id || startIndex + i}
-                  c={c}
-                  onSelect={onSelect}
-                  style={{ height: `${ROW_HEIGHT}px` }}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Footer count */}
-      {sortedCustomers.length > 0 && (
-        <div style={{
-          padding: '8px 16px',
-          borderTop: '1px solid var(--su-border)',
-          background: '#FAFAF8',
-          fontSize: '10px', fontWeight: 600,
-          color: 'var(--su-text-faint)',
-          display: 'flex', justifyContent: 'space-between',
-        }}>
-          <span>
-            Menampilkan {Math.min(endIndex - startIndex + 1, visibleCount)} baris dari {sortedCustomers.length.toLocaleString('id-ID')}
-          </span>
-          <span>Virtual Scroll aktif</span>
+          {sortedCustomers.map((c, i) => (
+            <CustomerRow
+              key={c.customer_id || i}
+              c={c}
+              onSelect={onSelect}
+              style={{ minHeight: `${ROW_HEIGHT}px` }}
+            />
+          ))}
         </div>
       )}
     </div>

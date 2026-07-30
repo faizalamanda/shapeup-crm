@@ -7,6 +7,7 @@ import { OrderCharts } from './components/OrderCharts'
 import { FilterBar, OrderFilterRule } from './components/FilterBar'
 import { OrderDetailModal } from './components/OrderDetailModal'
 import { OrderStatsSkeleton, OrderChartsSkeleton, OrderTableSkeleton } from './components/Skeletons'
+import { Pagination } from '../components/Pagination'
 
 const CACHE_TTL_MS   = 5 * 60 * 1000  // 5 minutes
 const STALE_RECHECK  = 2 * 60 * 1000  // Background refresh after 2 minutes
@@ -59,9 +60,8 @@ export default function OrderPage() {
   const [metrics, setMetrics]                   = useState<any>(null)
   const [isFetching, setIsFetching]             = useState(false)
   const [isBackground, setIsBackground]         = useState(false)
-  const [isLoadingMore, setIsLoadingMore]       = useState(false)
-  const [hasMore, setHasMore]                   = useState(false)
-  const [offset, setOffset]                     = useState(0)
+  const [currentPage, setCurrentPage]           = useState<number>(1)
+  const [pageSize, setPageSize]                 = useState<number>(25)
 
   const [selectedOrder, setSelectedOrder]       = useState<any>(null)
   const [searchQuery, setSearchQuery]           = useState('')
@@ -82,11 +82,18 @@ export default function OrderPage() {
   // Serialize rules to use in useEffect dependency
   const serializedRules = JSON.stringify(rules)
 
-  // ─── Fetcher function for metrics and initial orders page ──────────────────
+  // Reset to page 1 when search or rules change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [debouncedSearch, serializedRules])
+
+  // ─── Fetcher function for metrics and orders page ──────────────────
   const fetchMetricsAndOrders = useCallback(async (
     businessId: string,
     search: string,
     rulesArray: OrderFilterRule[],
+    page: number,
+    limit: number,
     isBg = false
   ) => {
     if (!isBg) {
@@ -94,10 +101,11 @@ export default function OrderPage() {
     } else {
       setIsBackground(true)
     }
-    setOffset(0)
+
+    const offset = (page - 1) * limit
 
     try {
-      // 1. Fetch metrics
+      // 1. Fetch metrics (aggregated over all filtered data)
       const { data: metricsData, error: metricsErr } = await supabase
         .rpc('get_order_analytics_metrics', {
           p_business_id: businessId,
@@ -110,24 +118,23 @@ export default function OrderPage() {
       const total = metricsData?.stats?.total_orders ?? 0
       setTotalCount(total)
 
-      // 2. Fetch first page of orders
+      // 2. Fetch target page of orders
       const { data: ordersData, error: ordersErr } = await supabase
         .rpc('get_order_list', {
           p_business_id: businessId,
           p_search: search,
           p_rules: rulesArray,
-          p_limit: 50,
-          p_offset: 0
+          p_limit: limit,
+          p_offset: offset
         })
 
       if (ordersErr) throw ordersErr
-      const page1Orders = ordersData || []
-      setOrders(page1Orders)
-      setHasMore(page1Orders.length === 50 && page1Orders.length < total)
+      const pageOrders = ordersData || []
+      setOrders(pageOrders)
 
-      // Write to cache only for empty filters
-      if (!search && rulesArray.length === 0) {
-        writeCache(businessId, { metrics: metricsData, orders: page1Orders, total })
+      // Write to cache only for empty filters on page 1
+      if (!search && rulesArray.length === 0 && page === 1 && limit === 25) {
+        writeCache(businessId, { metrics: metricsData, orders: pageOrders, total })
       }
     } catch (err) {
       console.error('[ShapeUp] Error fetching orders & metrics:', err)
@@ -162,65 +169,33 @@ export default function OrderPage() {
     loadProfile()
   }, [supabase])
 
-  // ─── Refresh when active business or filters change ────────────────────────
+  // ─── Refresh when active business, filters, or page change ───────────────
   useEffect(() => {
     if (!activeBizId) return
 
     const rulesArray = JSON.parse(serializedRules)
 
-    // Check if we can use cache (only for empty filters on initial load of this business)
-    const isDefaultFilters = !debouncedSearch && rulesArray.length === 0
+    // Check if we can use cache (only for empty filters on page 1)
+    const isDefaultFilters = !debouncedSearch && rulesArray.length === 0 && currentPage === 1 && pageSize === 25
     if (isDefaultFilters) {
       const cached = readCache(activeBizId)
       if (cached) {
         setMetrics(cached.metrics)
         setOrders(cached.orders)
         setTotalCount(cached.total)
-        setHasMore(cached.orders.length === 50 && cached.orders.length < cached.total)
 
         // Background revalidation
         const age = Date.now() - cached.ts
         if (age > STALE_RECHECK) {
-          fetchMetricsAndOrders(activeBizId, debouncedSearch, rulesArray, true)
+          fetchMetricsAndOrders(activeBizId, debouncedSearch, rulesArray, currentPage, pageSize, true)
         }
         return
       }
     }
 
-    // Otherwise, fetch fresh data
-    fetchMetricsAndOrders(activeBizId, debouncedSearch, rulesArray, false)
-  }, [activeBizId, debouncedSearch, serializedRules, fetchMetricsAndOrders])
-
-  // ─── Load More (Pagination) ────────────────────────────────────────────────
-  const loadMoreOrders = useCallback(async () => {
-    if (isLoadingMore || !hasMore || !activeBizId) return
-    setIsLoadingMore(true)
-
-    const nextOffset = offset + 50
-    const rulesArray = JSON.parse(serializedRules)
-
-    try {
-      const { data: ordersData, error: ordersErr } = await supabase
-        .rpc('get_order_list', {
-          p_business_id: activeBizId,
-          p_search: debouncedSearch,
-          p_rules: rulesArray,
-          p_limit: 50,
-          p_offset: nextOffset
-        })
-
-      if (ordersErr) throw ordersErr
-
-      const newOrders = ordersData || []
-      setOrders(prev => [...prev, ...newOrders])
-      setOffset(nextOffset)
-      setHasMore(newOrders.length === 50 && (nextOffset + newOrders.length) < totalCount)
-    } catch (err) {
-      console.error('[ShapeUp] Error loading more orders:', err)
-    } finally {
-      setIsLoadingMore(false)
-    }
-  }, [activeBizId, debouncedSearch, serializedRules, offset, hasMore, isLoadingMore, totalCount, supabase])
+    // Otherwise, fetch fresh data for selected page
+    fetchMetricsAndOrders(activeBizId, debouncedSearch, rulesArray, currentPage, pageSize, false)
+  }, [activeBizId, debouncedSearch, serializedRules, currentPage, pageSize, fetchMetricsAndOrders])
 
   // ─── Derived Dropdown Data for Filters ────────────────────────────────────
   const availableStatuses = useMemo(() => {
@@ -323,7 +298,7 @@ export default function OrderPage() {
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', padding: '0 2px' }}>
           <p style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--su-text-faint)' }}>
-            {isLoadingFirst ? 'Memuat data...' : `Menampilkan ${orders.length.toLocaleString('id-ID')} dari ${totalCount.toLocaleString('id-ID')} pesanan`}
+            {isLoadingFirst ? 'Memuat data...' : `Halaman ${currentPage} dari ${Math.max(1, Math.ceil(totalCount / pageSize))} (${totalCount.toLocaleString('id-ID')} total pesanan)`}
           </p>
           {isFetching && orders.length > 0 && (
             <span style={{ fontSize: '10px', color: 'var(--su-accent)', fontWeight: 600 }}>
@@ -332,13 +307,23 @@ export default function OrderPage() {
           )}
         </div>
         {isLoadingFirst ? <OrderTableSkeleton /> : (
-          <OrderTable
-            orders={orders}
-            onSelectOrder={(order) => setSelectedOrder(order)}
-            onLoadMore={loadMoreOrders}
-            hasMore={hasMore}
-            isLoadingMore={isLoadingMore}
-          />
+          <>
+            <OrderTable
+              orders={orders}
+              onSelectOrder={(order) => setSelectedOrder(order)}
+            />
+            <Pagination
+              currentPage={currentPage}
+              totalCount={totalCount}
+              pageSize={pageSize}
+              onPageChange={(page) => setCurrentPage(page)}
+              onPageSizeChange={(newSize) => {
+                setPageSize(newSize)
+                setCurrentPage(1)
+              }}
+              isLoading={isFetching}
+            />
+          </>
         )}
       </div>
 

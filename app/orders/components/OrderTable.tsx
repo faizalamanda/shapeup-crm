@@ -174,53 +174,18 @@ function OrderRow({ o, onSelect, style }: { o: any; onSelect: (o: any) => void; 
 export function OrderTable({
   orders,
   onSelectOrder,
-  onLoadMore,
-  hasMore = false,
-  isLoadingMore = false,
 }: {
   orders: any[]
   onSelectOrder: (o: any) => void
-  onLoadMore?: () => void
-  hasMore?: boolean
-  isLoadingMore?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [scrollTop, setScrollTop] = useState(0)
 
-  const handleScroll = useCallback(() => {
+  // Reset scroll on data (page) change
+  useEffect(() => {
     if (containerRef.current) {
-      const { scrollTop, scrollHeight, clientHeight } = containerRef.current
-      setScrollTop(scrollTop)
-      
-      // If we scroll close to bottom, trigger load more
-      if (hasMore && !isLoadingMore && onLoadMore && (scrollHeight - scrollTop - clientHeight < 150)) {
-        onLoadMore()
-      }
-    }
-  }, [hasMore, isLoadingMore, onLoadMore])
-
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    el.addEventListener('scroll', handleScroll, { passive: true })
-    return () => el.removeEventListener('scroll', handleScroll)
-  }, [handleScroll])
-
-  // Reset scroll on data change (only when order list is cleared/first page loaded)
-  useEffect(() => {
-    if (containerRef.current && orders.length <= 50) {
       containerRef.current.scrollTop = 0
-      setScrollTop(0)
     }
   }, [orders])
-
-  const totalHeight  = orders.length * ROW_HEIGHT
-  const startIndex   = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
-  const visibleCount = Math.ceil(CONTAINER_H / ROW_HEIGHT) + OVERSCAN * 2
-  const endIndex     = Math.min(orders.length - 1, startIndex + visibleCount)
-
-  const visibleOrders = orders.slice(startIndex, endIndex + 1)
-  const offsetY       = startIndex * ROW_HEIGHT
 
   const colHeader = (label: string, align: 'left' | 'center' | 'right' = 'left', extraStyles?: React.CSSProperties) => (
     <div style={{
@@ -276,59 +241,18 @@ export function OrderTable({
             Tidak ada pesanan yang cocok dengan kriteria segmentasi.
           </div>
         ) : (
-          /* Virtual scroll container */
           <div
             ref={containerRef}
-            className="su-vscroll-container"
-            style={{ height: `${CONTAINER_H}px`, overflowY: 'auto' }}
+            style={{ maxHeight: `${CONTAINER_H}px`, overflowY: 'auto' }}
           >
-            {/* Total height spacer */}
-            <div style={{ height: `${totalHeight}px`, position: 'relative' }}>
-              {/* Offset wrapper for visible rows */}
-              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, transform: `translateY(${offsetY}px)` }}>
-                {visibleOrders.map((o, i) => (
-                  <OrderRow
-                    key={o.id || startIndex + i}
-                    o={o}
-                    onSelect={onSelectOrder}
-                    style={{ height: `${ROW_HEIGHT}px` }}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Footer count */}
-        {orders.length > 0 && (
-          <div style={{
-            padding: '8px 16px',
-            borderTop: '1px solid var(--su-border)',
-            background: '#FAFAF8',
-            fontSize: '10px', fontWeight: 600,
-            color: 'var(--su-text-faint)',
-            display: 'flex', justifyContent: 'space-between',
-            alignItems: 'center',
-          }}>
-            <span>
-              Menampilkan {orders.length.toLocaleString('id-ID')} baris
-            </span>
-            {isLoadingMore ? (
-              <span style={{ color: 'var(--su-accent)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                <span className="su-spinner" style={{
-                  width: '10px', height: '10px',
-                  border: '1.5px solid var(--su-border)',
-                  borderTopColor: 'var(--su-accent)',
-                  borderRadius: '50%',
-                  display: 'inline-block',
-                }} />
-                Memuat data lainnya...
-              </span>
-            ) : hasMore ? (
-              <span>Scroll ke bawah untuk memuat lebih banyak</span>
-            ) : (
-              <span>Semua data telah dimuat</span>
-            )}
+            {orders.map((o, i) => (
+              <OrderRow
+                key={o.id || i}
+                o={o}
+                onSelect={onSelectOrder}
+                style={{ minHeight: `${ROW_HEIGHT}px` }}
+              />
+            ))}
           </div>
         )}
       </div>
