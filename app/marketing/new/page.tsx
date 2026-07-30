@@ -10,7 +10,7 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 // IMPORT GENERATOR DARI KOMPONEN BUILDER
 import { DEFAULT_ONE_TIME, DEFAULT_SCHEDULE, generateSQLFilter, generateScheduling, type AudienceFilter, type OneTimeConfig, type ScheduleConfig } from './AudienceSegmentBuilder'
-import { formatTemplateDataForSupabase, type HeaderFormat, type TemplateVarDraft } from './variables'
+import { formatTemplateDataForSupabase, formatTemplateVarsForSupabase, type HeaderFormat, type TemplateVarDraft } from './variables'
 
 export default function NewScenarioPage() {
   const router = useRouter()
@@ -66,18 +66,21 @@ export default function NewScenarioPage() {
     console.log("DEBUG: SQL Filter dihasilkan:", sqlFilter);
     console.log("DEBUG: Scheduling Logic dihasilkan:", schedulingLogic);
 
-    const templateDataPayload = formatTemplateDataForSupabase({
-      headerFormat,
-      headerVars,
-      headerMediaUrl,
-      headerFilename,
-      bodyVars: templateVars,
-    })
+    const formattedBodyVars = formatTemplateVarsForSupabase(templateVars)
+    const formattedHeaderVars = formatTemplateVarsForSupabase(headerVars)
 
     const payload: Record<string, any> = {
       name: name,
       trigger_type: triggerType,
-      trigger_config: { timeType, schedule, oneTime },
+      trigger_config: { 
+        timeType, 
+        schedule, 
+        oneTime,
+        header_format: headerFormat,
+        header_vars: formattedHeaderVars,
+        header_media_url: headerMediaUrl.trim(),
+        header_filename: headerFilename.trim()
+      },
       
       // KOLOM UNTUK SI PENJALA DI SUPABASE (MULTI-TENANT)
       sql_filter: sqlFilter,
@@ -86,7 +89,7 @@ export default function NewScenarioPage() {
       
       filters: filters, // Array asli tetap disimpan untuk keperluan edit UI
       template_name: templateName,
-      template_vars: templateDataPayload,
+      template_vars: formattedBodyVars,
       platform: 'YCLOUD',
       is_active: true
     }

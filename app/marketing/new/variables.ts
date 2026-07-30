@@ -124,34 +124,38 @@ export const hydrateTemplateVarsForEditor = (vars: unknown): TemplateVarDraft[] 
   })
 }
 
-export const hydrateTemplateDataForEditor = (data: unknown): HydratedTemplateData => {
+export const hydrateTemplateDataForEditor = (data: unknown, triggerConfig?: unknown): HydratedTemplateData => {
+  const cfg = (triggerConfig && typeof triggerConfig === 'object' && !Array.isArray(triggerConfig))
+    ? (triggerConfig as Record<string, unknown>)
+    : {}
+
   if (!data) {
     return {
-      headerFormat: 'NONE',
-      headerVars: [],
-      headerMediaUrl: '',
-      headerFilename: '',
+      headerFormat: (cfg.header_format as HeaderFormat) || 'NONE',
+      headerVars: hydrateTemplateVarsForEditor(cfg.header_vars),
+      headerMediaUrl: typeof cfg.header_media_url === 'string' ? cfg.header_media_url : '',
+      headerFilename: typeof cfg.header_filename === 'string' ? cfg.header_filename : '',
       bodyVars: [],
     }
   }
 
-  // Backward compatibility: if template_vars is a simple array
+  // Backward compatibility: if template_vars is a simple array (standard PostgreSQL format)
   if (Array.isArray(data)) {
     return {
-      headerFormat: 'NONE',
-      headerVars: [],
-      headerMediaUrl: '',
-      headerFilename: '',
+      headerFormat: (cfg.header_format as HeaderFormat) || 'NONE',
+      headerVars: hydrateTemplateVarsForEditor(cfg.header_vars),
+      headerMediaUrl: typeof cfg.header_media_url === 'string' ? cfg.header_media_url : '',
+      headerFilename: typeof cfg.header_filename === 'string' ? cfg.header_filename : '',
       bodyVars: hydrateTemplateVarsForEditor(data),
     }
   }
 
   if (typeof data === 'object' && data !== null) {
     const record = data as Record<string, unknown>
-    const headerFormat = (record.header_format as HeaderFormat) || 'NONE'
-    const headerVars = hydrateTemplateVarsForEditor(record.header_vars)
-    const headerMediaUrl = typeof record.header_media_url === 'string' ? record.header_media_url : ''
-    const headerFilename = typeof record.header_filename === 'string' ? record.header_filename : ''
+    const headerFormat = (record.header_format as HeaderFormat) || (cfg.header_format as HeaderFormat) || 'NONE'
+    const headerVars = hydrateTemplateVarsForEditor(record.header_vars || cfg.header_vars)
+    const headerMediaUrl = typeof record.header_media_url === 'string' ? record.header_media_url : (typeof cfg.header_media_url === 'string' ? cfg.header_media_url : '')
+    const headerFilename = typeof record.header_filename === 'string' ? record.header_filename : (typeof cfg.header_filename === 'string' ? cfg.header_filename : '')
     const bodyVars = hydrateTemplateVarsForEditor(record.body_vars || record.vars || record.template_vars)
 
     return {

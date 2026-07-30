@@ -174,19 +174,39 @@ async function sendYcloud(queue: any) {
   const apiKey = bizConfig.apiKey.trim()
   const channelId = bizConfig.whatsappNumber ? bizConfig.whatsappNumber.trim() : ""
 
+  // Fallback: Fetch scenario config if queue payload lacks header format
+  let scenarioConfig: any = null
+  if (queue.scenario_id) {
+    try {
+      const { data: scData } = await supabase
+        .from("marketing_scenarios")
+        .select("trigger_config, template_vars")
+        .eq("id", queue.scenario_id)
+        .maybeSingle()
+      if (scData) {
+        scenarioConfig = {
+          ...(scData.trigger_config || {}),
+          ...(typeof scData.template_vars === 'object' && scData.template_vars !== null && !Array.isArray(scData.template_vars) ? scData.template_vars : {})
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to fetch scenario config for queue ${queue.id}:`, err)
+    }
+  }
+
   const templateObj = (typeof payload.template_vars === 'object' && payload.template_vars !== null && !Array.isArray(payload.template_vars))
     ? payload.template_vars
-    : {}
+    : (scenarioConfig || {})
 
   const components: any[] = []
 
-  // Check header format from payload or template_vars object
-  const rawHeaderFormat = payload.header_format || templateObj.header_format || ''
+  // Check header format from payload, template_vars object, or scenarioConfig
+  const rawHeaderFormat = payload.header_format || templateObj.header_format || (scenarioConfig && scenarioConfig.header_format) || ''
   const headerFormat = String(rawHeaderFormat).toUpperCase()
 
   if (headerFormat && headerFormat !== 'NONE') {
     if (headerFormat === 'TEXT') {
-      const headerParams = payload.header_params || payload.header_vars || templateObj.header_vars || []
+      const headerParams = payload.header_params || payload.header_vars || templateObj.header_vars || (scenarioConfig && scenarioConfig.header_vars) || []
       if (Array.isArray(headerParams) && headerParams.length > 0) {
         components.push({
           type: "header",
@@ -195,19 +215,19 @@ async function sendYcloud(queue: any) {
             text: String(typeof value === 'object' && value !== null ? value.value || '' : value),
           })),
         })
-      } else if (payload.header_text || templateObj.header_text) {
+      } else if (payload.header_text || templateObj.header_text || (scenarioConfig && scenarioConfig.header_text)) {
         components.push({
           type: "header",
           parameters: [
             {
               type: "text",
-              text: String(payload.header_text || templateObj.header_text),
+              text: String(payload.header_text || templateObj.header_text || scenarioConfig.header_text),
             },
           ],
         })
       }
     } else if (headerFormat === 'IMAGE') {
-      const mediaUrl = payload.header_media_url || payload.header_url || payload.header_image_url || templateObj.header_media_url || templateObj.header_url
+      const mediaUrl = payload.header_media_url || payload.header_url || payload.header_image_url || templateObj.header_media_url || templateObj.header_url || (scenarioConfig && scenarioConfig.header_media_url)
       if (mediaUrl) {
         components.push({
           type: "header",
@@ -222,8 +242,8 @@ async function sendYcloud(queue: any) {
         })
       }
     } else if (headerFormat === 'DOCUMENT') {
-      const mediaUrl = payload.header_media_url || payload.header_url || payload.header_document_url || templateObj.header_media_url || templateObj.header_url
-      const filename = payload.header_filename || templateObj.header_filename
+      const mediaUrl = payload.header_media_url || payload.header_url || payload.header_document_url || templateObj.header_media_url || templateObj.header_url || (scenarioConfig && scenarioConfig.header_media_url)
+      const filename = payload.header_filename || templateObj.header_filename || (scenarioConfig && scenarioConfig.header_filename)
       if (mediaUrl) {
         const docObj: Record<string, string> = {
           link: String(mediaUrl).trim(),
@@ -242,7 +262,7 @@ async function sendYcloud(queue: any) {
         })
       }
     } else if (headerFormat === 'VIDEO') {
-      const mediaUrl = payload.header_media_url || payload.header_url || payload.header_video_url || templateObj.header_media_url || templateObj.header_url
+      const mediaUrl = payload.header_media_url || payload.header_url || payload.header_video_url || templateObj.header_media_url || templateObj.header_url || (scenarioConfig && scenarioConfig.header_media_url)
       if (mediaUrl) {
         components.push({
           type: "header",

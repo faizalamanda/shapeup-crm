@@ -9,7 +9,7 @@ import MarketingTrigger from '../../new/MarketingTrigger'
 import YCloudMessageEditor from '../../new/YCloudMessageEditor'
 // IMPORT GENERATOR (Pastikan path-nya benar sesuai struktur folder Mas)
 import { DEFAULT_ONE_TIME, DEFAULT_SCHEDULE, generateSQLFilter, generateScheduling, type AudienceFilter, type OneTimeConfig, type ScheduleConfig } from '../../new/AudienceSegmentBuilder'
-import { formatTemplateDataForSupabase, hydrateTemplateDataForEditor, type HeaderFormat, type TemplateVarDraft } from '../../new/variables'
+import { formatTemplateDataForSupabase, formatTemplateVarsForSupabase, hydrateTemplateDataForEditor, type HeaderFormat, type TemplateVarDraft } from '../../new/variables'
 
 export default function EditScenarioPage() {
   const params = useParams()
@@ -52,7 +52,7 @@ export default function EditScenarioPage() {
         setFilters(data.filters || [])
         setTemplateName(data.template_name || '')
 
-        const hydrated = hydrateTemplateDataForEditor(data.template_vars)
+        const hydrated = hydrateTemplateDataForEditor(data.template_vars, data.trigger_config)
         setHeaderFormat(hydrated.headerFormat)
         setHeaderVars(hydrated.headerVars)
         setHeaderMediaUrl(hydrated.headerMediaUrl)
@@ -77,26 +77,29 @@ export default function EditScenarioPage() {
       triggerType === 'TIME' && timeType === 'SPECIFIC' ? oneTime : undefined
     );
 
-    const templateDataPayload = formatTemplateDataForSupabase({
-      headerFormat,
-      headerVars,
-      headerMediaUrl,
-      headerFilename,
-      bodyVars: templateVars,
-    });
+    const formattedBodyVars = formatTemplateVarsForSupabase(templateVars)
+    const formattedHeaderVars = formatTemplateVarsForSupabase(headerVars)
 
     const { error } = await supabase
       .from('marketing_scenarios')
       .update({
         name,
         trigger_type: triggerType,
-        trigger_config: { timeType, schedule, oneTime },
+        trigger_config: { 
+          timeType, 
+          schedule, 
+          oneTime,
+          header_format: headerFormat,
+          header_vars: formattedHeaderVars,
+          header_media_url: headerMediaUrl.trim(),
+          header_filename: headerFilename.trim()
+        },
         // UPDATE KOLOM LOGIKANYA JUGA
         sql_filter: sqlFilter,
         scheduling_logic: schedulingLogic,
         filters, // Tetap simpan array filter untuk UI
         template_name: templateName,
-        template_vars: templateDataPayload,
+        template_vars: formattedBodyVars,
       })
       .eq('id', id)
 
