@@ -308,6 +308,18 @@ export default function OrderPage() {
         </div>
         {isLoadingFirst ? <OrderTableSkeleton /> : (
           <>
+            <Pagination
+              currentPage={currentPage}
+              totalCount={totalCount}
+              pageSize={pageSize}
+              onPageChange={(page) => setCurrentPage(page)}
+              onPageSizeChange={(newSize) => {
+                setPageSize(newSize)
+                setCurrentPage(1)
+              }}
+              isLoading={isFetching}
+              position="top"
+            />
             <OrderTable
               orders={orders}
               onSelectOrder={(order) => setSelectedOrder(order)}
@@ -322,6 +334,7 @@ export default function OrderPage() {
                 setCurrentPage(1)
               }}
               isLoading={isFetching}
+              position="bottom"
             />
           </>
         )}

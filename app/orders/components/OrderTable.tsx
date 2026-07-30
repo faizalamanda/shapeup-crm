@@ -241,10 +241,7 @@ export function OrderTable({
             Tidak ada pesanan yang cocok dengan kriteria segmentasi.
           </div>
         ) : (
-          <div
-            ref={containerRef}
-            style={{ maxHeight: `${CONTAINER_H}px`, overflowY: 'auto' }}
-          >
+          <div ref={containerRef}>
             {orders.map((o, i) => (
               <OrderRow
                 key={o.id || i}

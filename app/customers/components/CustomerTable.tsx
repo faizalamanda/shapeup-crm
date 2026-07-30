@@ -350,10 +350,7 @@ export function CustomerTable({ customers, onSelect }: { customers: any[]; onSel
           Tidak ada pelanggan yang cocok dengan kriteria segmentasi.
         </div>
       ) : (
-        <div
-          ref={containerRef}
-          style={{ maxHeight: `${CONTAINER_H}px`, overflowY: 'auto' }}
-        >
+        <div ref={containerRef}>
           {sortedCustomers.map((c, i) => (
             <CustomerRow
               key={c.customer_id || i}

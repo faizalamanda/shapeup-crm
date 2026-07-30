@@ -9,6 +9,7 @@ interface PaginationProps {
   onPageSizeChange?: (pageSize: number) => void
   pageSizeOptions?: number[]
   isLoading?: boolean
+  position?: 'top' | 'bottom'
 }
 
 export function Pagination({
@@ -19,6 +20,7 @@ export function Pagination({
   onPageSizeChange,
   pageSizeOptions = [10, 25, 50, 100],
   isLoading = false,
+  position = 'bottom',
 }: PaginationProps) {
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const startItem = totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1
@@ -48,6 +50,8 @@ export function Pagination({
     return pages
   }
 
+  const isTop = position === 'top'
+
   return (
     <div
       style={{
@@ -56,9 +60,11 @@ export function Pagination({
         justifyContent: 'space-between',
         flexWrap: 'wrap',
         gap: '12px',
-        padding: '16px 4px',
-        marginTop: '16px',
-        borderTop: '1px solid var(--su-border)',
+        padding: '12px 4px',
+        marginTop: isTop ? '0px' : '16px',
+        marginBottom: isTop ? '12px' : '0px',
+        borderTop: isTop ? 'none' : '1px solid var(--su-border)',
+        borderBottom: isTop ? '1px solid var(--su-border)' : 'none',
         fontSize: '12px',
         color: 'var(--su-text-muted)',
       }}

@@ -431,6 +431,18 @@ export default function CustomerPage() {
             </span>
           )}
         </div>
+        <Pagination
+          currentPage={currentPage}
+          totalCount={totalCount}
+          pageSize={pageSize}
+          onPageChange={(page) => setCurrentPage(page)}
+          onPageSizeChange={(newSize) => {
+            setPageSize(newSize)
+            setCurrentPage(1)
+          }}
+          isLoading={isFetching}
+          position="top"
+        />
         <CustomerTable
           customers={customers}
           onSelect={(customer) => setSelectedCustomer(customer)}
@@ -445,6 +457,7 @@ export default function CustomerPage() {
             setCurrentPage(1)
           }}
           isLoading={isFetching}
+          position="bottom"
         />
       </div>
 
