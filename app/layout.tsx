@@ -203,7 +203,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const loadIdRef = useRef(0)
   const loadedUserIdRef = useRef<string | null>(null)
 
-  const loadProfileAndBusinesses = useCallback(async (userId: string) => {
+  const loadProfileAndBusinesses = useCallback(async (userId: string, forceRefresh = false) => {
+    if (!forceRefresh && loadedUserIdRef.current === userId) {
+      console.log('[Layout] Profile already loaded for userId:', userId, '- skipping DB fetch')
+      setBizLoading(false)
+      return
+    }
+
     const loadId = ++loadIdRef.current
 
     console.log('[Layout] loadProfileAndBusinesses called, userId:', userId)
@@ -302,7 +308,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       (event, session) => {
         console.log('[Layout] onAuthStateChange event:', event, 'user:', session?.user?.id)
         if (session?.user?.id) {
-          loadProfileAndBusinesses(session.user.id)
+          const force = event === 'SIGNED_IN' || event === 'USER_UPDATED'
+          loadProfileAndBusinesses(session.user.id, force)
         } else if (event === 'SIGNED_OUT' || (event === 'INITIAL_SESSION' && !session)) {
           loadedUserIdRef.current = null
           setUserProfile(null)
@@ -336,15 +343,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }
         })
       }
-    } else {
-      // Clear profile state when transitioning to public pages (login, register, home) to ensure a clean state
-      loadedUserIdRef.current = null
-      setUserProfile(null)
-      setBusinesses([])
-      setActiveBusiness(null)
-      setCurrentUserRole(null)
-      setCurrentUserPermissions([])
-      setBizLoading(false)
     }
   }, [pathname, noSidebar, supabase, loadProfileAndBusinesses])
 
