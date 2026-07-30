@@ -16,6 +16,7 @@ type CachePayload = {
   data: any[]
   statsData: any[]
   total: number
+  overallTotal?: number
   ts: number
   businessId: string
 }
@@ -36,7 +37,7 @@ function readCache(bid: string): CachePayload | null {
   }
 }
 
-function writeCache(bid: string, payloadData: { data: any[]; statsData: any[]; total: number }) {
+function writeCache(bid: string, payloadData: { data: any[]; statsData: any[]; total: number; overallTotal?: number }) {
   try {
     const payload: CachePayload = {
       ...payloadData,
@@ -88,6 +89,37 @@ function applyCustomerFilters(query: any, search: string, rules: FilterRule[]) {
         if (minD && maxD) query = query.gte(field, minD).lte(field, maxD)
       }
     }
+
+    if (field === 'rfm_segment') {
+      const d30 = new Date(Date.now() - 30 * 86400000).toISOString()
+      const isEq = operator === 'is'
+
+      if (value === 'vip') {
+        if (isEq) query = query.gte('ltv', 1000000).gte('total_order_count', 2)
+        else query = query.or('ltv.lt.1000000,total_order_count.lt.2')
+      } else if (value === 'loyal') {
+        if (isEq) query = query.gte('total_order_count', 3).lte('days_since_last_order', 30)
+        else query = query.or('total_order_count.lt.3,days_since_last_order.gt.30')
+      } else if (value === 'new') {
+        if (isEq) query = query.lte('total_order_count', 1).or(`days_since_last_order.lte.30,joined_at.gte.${d30}`)
+        else query = query.gt('total_order_count', 1)
+      } else if (value === 'regular') {
+        if (isEq) query = query.gte('total_order_count', 2).lte('days_since_last_order', 60)
+        else query = query.or('total_order_count.lt.2,days_since_last_order.gt.60')
+      } else if (value === 'at_risk') {
+        if (isEq) query = query.gte('total_order_count', 1).gt('days_since_last_order', 60)
+        else query = query.or('total_order_count.eq.0,days_since_last_order.lte.60')
+      } else if (value === 'churned') {
+        if (isEq) query = query.gte('total_order_count', 1).gt('days_since_last_order', 90)
+        else query = query.or('total_order_count.eq.0,days_since_last_order.lte.90')
+      } else if (value === 'one_time') {
+        if (isEq) query = query.eq('total_order_count', 1).gt('days_since_last_order', 30)
+        else query = query.or('total_order_count.neq.1,days_since_last_order.lte.30')
+      } else if (value === 'lost') {
+        if (isEq) query = query.eq('total_order_count', 0)
+        else query = query.gt('total_order_count', 0)
+      }
+    }
   }
 
   return query
@@ -102,6 +134,7 @@ export default function CustomerPage() {
   const [customers, setCustomers]         = useState<any[]>([])
   const [statsCustomers, setStatsCustomers] = useState<any[]>([])
   const [totalCount, setTotalCount]       = useState<number>(0)
+  const [overallTotalCount, setOverallTotalCount] = useState<number>(0)
   const [isFetching, setIsFetching]       = useState(false)
   const [isBackground, setIsBackground]   = useState(false)
   const [currentPage, setCurrentPage]     = useState<number>(1)
@@ -163,22 +196,56 @@ export default function CustomerPage() {
       setCustomers(pageData || [])
 
       // 2. Fetch Lightweight Summary Metrics for ALL Matching Customers (for 100% accurate Stats & Charts)
-      let statsQuery = supabase
-        .from('customer_metrics')
-        .select('ltv, aov, total_order_count, days_since_last_order, last_order_date, joined_at, last_order_status')
-        .eq('business_id', bid)
+      const STATS_CHUNK = 1000
+      let allStatsData: any[] = []
 
-      statsQuery = applyCustomerFilters(statsQuery, search, rulesArray)
-      const { data: statsData, error: statsErr } = await statsQuery
-      if (!statsErr && statsData) {
-        setStatsCustomers(statsData)
+      if (total > 0) {
+        const numChunks = Math.ceil(total / STATS_CHUNK)
+        const chunkPromises = []
+
+        for (let i = 0; i < numChunks; i++) {
+          const chunkFrom = i * STATS_CHUNK
+          const chunkTo = Math.min((i + 1) * STATS_CHUNK - 1, total - 1)
+
+          let statsQuery = supabase
+            .from('customer_metrics')
+            .select('ltv, aov, total_order_count, days_since_last_order, last_order_date, joined_at, last_order_status')
+            .eq('business_id', bid)
+
+          statsQuery = applyCustomerFilters(statsQuery, search, rulesArray)
+          statsQuery = statsQuery.range(chunkFrom, chunkTo)
+
+          chunkPromises.push(statsQuery)
+        }
+
+        const results = await Promise.all(chunkPromises)
+        for (const res of results) {
+          if (res.data) {
+            allStatsData.push(...res.data)
+          }
+        }
+      }
+
+      const finalStatsData = allStatsData.length > 0 ? allStatsData : (pageData || [])
+      setStatsCustomers(finalStatsData)
+
+      // Set overall business customer count (unfiltered)
+      if (!search && rulesArray.length === 0) {
+        setOverallTotalCount(total)
       } else {
-        setStatsCustomers(pageData || [])
+        // Fetch unfiltered total count if currently overallTotalCount is not set or filtering is active
+        const { count: oCount } = await supabase
+          .from('customer_metrics')
+          .select('*', { count: 'exact', head: true })
+          .eq('business_id', bid)
+        if (oCount !== null && oCount !== undefined) {
+          setOverallTotalCount(oCount)
+        }
       }
 
       // Write cache only for default initial page
       if (!search && rulesArray.length === 0 && page === 1 && limit === 25) {
-        writeCache(bid, { data: pageData || [], statsData: statsData || [], total })
+        writeCache(bid, { data: pageData || [], statsData: finalStatsData, total, overallTotal: total })
       }
 
     } catch (err) {
@@ -230,6 +297,7 @@ export default function CustomerPage() {
         setCustomers(cached.data)
         setStatsCustomers(cached.statsData)
         setTotalCount(cached.total)
+        setOverallTotalCount(cached.overallTotal || cached.total)
 
         const age = Date.now() - cached.ts
         if (age > STALE_RECHECK) {
@@ -378,7 +446,7 @@ export default function CustomerPage() {
 
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--su-text)', lineHeight: 1.1 }}>
-                {totalCount.toLocaleString('id-ID')}
+                {(overallTotalCount || totalCount).toLocaleString('id-ID')}
               </div>
               <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--su-text-faint)', textTransform: 'uppercase', letterSpacing: '0.14em' }}>
                 Total Pelanggan
