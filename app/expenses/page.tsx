@@ -86,6 +86,11 @@ export default function ExpensesPage() {
   const [selectedCategoryAcc, setSelectedCategoryAcc] = useState('')
   const [selectedPaymentStatus, setSelectedPaymentStatus] = useState('')
 
+  // Date Filter State
+  const [datePreset, setDatePreset] = useState<string>('all')
+  const [startDate, setStartDate] = useState<string>('')
+  const [endDate, setEndDate] = useState<string>('')
+
   // Grouping & Pagination State (default collapsed)
   const [groupBy, setGroupBy] = useState<'none' | 'date' | 'vendor' | 'category'>('none')
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
@@ -114,12 +119,63 @@ export default function ExpensesPage() {
     setMounted(true)
   }, [])
 
+  // Date preset calculator
+  const handleDatePresetChange = (preset: string) => {
+    setDatePreset(preset)
+    const now = new Date()
+    const formatDateStr = (d: Date) => {
+      const year = d.getFullYear()
+      const month = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      return `${year}-${month}-${day}`
+    }
+
+    if (preset === 'today') {
+      const todayStr = formatDateStr(now)
+      setStartDate(todayStr)
+      setEndDate(todayStr)
+    } else if (preset === 'yesterday') {
+      const yest = new Date(now)
+      yest.setDate(now.getDate() - 1)
+      const yestStr = formatDateStr(yest)
+      setStartDate(yestStr)
+      setEndDate(yestStr)
+    } else if (preset === 'this_week') {
+      const dayOfWeek = now.getDay()
+      const distToMon = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+      const mon = new Date(now)
+      mon.setDate(now.getDate() - distToMon)
+      const sun = new Date(mon)
+      sun.setDate(mon.getDate() + 6)
+      setStartDate(formatDateStr(mon))
+      setEndDate(formatDateStr(sun))
+    } else if (preset === 'this_month') {
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
+      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+      setStartDate(formatDateStr(firstDay))
+      setEndDate(formatDateStr(lastDay))
+    } else if (preset === 'last_month') {
+      const firstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const lastDay = new Date(now.getFullYear(), now.getMonth(), 0)
+      setStartDate(formatDateStr(firstDay))
+      setEndDate(formatDateStr(lastDay))
+    } else if (preset === 'this_year') {
+      const firstDay = new Date(now.getFullYear(), 0, 1)
+      const lastDay = new Date(now.getFullYear(), 11, 31)
+      setStartDate(formatDateStr(firstDay))
+      setEndDate(formatDateStr(lastDay))
+    } else if (preset === 'all') {
+      setStartDate('')
+      setEndDate('')
+    }
+  }
+
   // Reset pagination & group expanded/limit states on filter or grouping changes
   useEffect(() => {
     setCurrentPage(1)
     setExpandedGroups({})
     setGroupItemLimits({})
-  }, [searchQuery, selectedCategoryAcc, selectedPaymentStatus, groupBy])
+  }, [searchQuery, selectedCategoryAcc, selectedPaymentStatus, groupBy, startDate, endDate])
 
   // Fetch Page Data
   const fetchData = useCallback(async (businessId: string, isSilent = false) => {
@@ -234,7 +290,7 @@ export default function ExpensesPage() {
     }
   }
 
-  // Filtered Expenses
+  // Filtered Expenses (Search, Category, Payment Status, & Date Range)
   const filteredExpenses = useMemo(() => {
     return expenses.filter(e => {
       const matchesSearch = 
@@ -245,11 +301,15 @@ export default function ExpensesPage() {
       const matchesCat = selectedCategoryAcc ? e.category_account_id === selectedCategoryAcc : true
       const matchesStatus = selectedPaymentStatus ? e.payment_status === selectedPaymentStatus : true
 
-      return matchesSearch && matchesCat && matchesStatus
-    })
-  }, [expenses, searchQuery, selectedCategoryAcc, selectedPaymentStatus])
+      let matchesDate = true
+      if (startDate && e.date < startDate) matchesDate = false
+      if (endDate && e.date > endDate) matchesDate = false
 
-  // Summary Metrics across all filtered records
+      return matchesSearch && matchesCat && matchesStatus && matchesDate
+    })
+  }, [expenses, searchQuery, selectedCategoryAcc, selectedPaymentStatus, startDate, endDate])
+
+  // Summary Metrics dynamically calculated from filteredExpenses
   const summaryMetrics = useMemo(() => {
     const totalAmount = filteredExpenses.reduce((sum, e) => sum + (e.amount || 0), 0)
     const totalOutstanding = filteredExpenses.reduce((sum, e) => sum + (e.outstanding_amount || 0), 0)
@@ -343,7 +403,7 @@ export default function ExpensesPage() {
     return groupedExpenses.slice(startIdx, startIdx + pageSize)
   }, [groupedExpenses, groupBy, currentPage, pageSize])
 
-  // Total count for Pagination component: items count in flat mode, groups count in grouped mode
+  // Total count for Pagination component
   const totalPaginationCount = groupBy === 'none' ? filteredExpenses.length : groupedExpenses.length
 
   const toggleGroupExpand = (key: string) => {
@@ -737,7 +797,10 @@ export default function ExpensesPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="bg-white border border-gray-200 rounded-xl p-3.5 shadow-xs flex items-center justify-between">
           <div>
-            <div className="text-[10px] font-extrabold uppercase text-gray-400 tracking-wider">Total Transaksi</div>
+            <div className="text-[10px] font-extrabold uppercase text-gray-400 tracking-wider flex items-center gap-1">
+              <span>Total Transaksi</span>
+              {(startDate || endDate) && <span className="text-blue-600 font-bold">(Tersaring)</span>}
+            </div>
             <div className="text-lg font-black text-gray-800">{summaryMetrics.count.toLocaleString('id-ID')} item</div>
           </div>
           <span className="text-2xl">📋</span>
@@ -745,7 +808,10 @@ export default function ExpensesPage() {
 
         <div className="bg-white border border-blue-100 rounded-xl p-3.5 shadow-xs flex items-center justify-between bg-gradient-to-br from-white to-blue-50/40">
           <div>
-            <div className="text-[10px] font-extrabold uppercase text-blue-600 tracking-wider">Total Pengeluaran</div>
+            <div className="text-[10px] font-extrabold uppercase text-blue-600 tracking-wider flex items-center gap-1">
+              <span>Total Pengeluaran</span>
+              {(startDate || endDate) && <span className="text-blue-700 font-bold">(Tersaring)</span>}
+            </div>
             <div className="text-lg font-black text-blue-900">{formatPrice(summaryMetrics.totalAmount)}</div>
           </div>
           <span className="text-2xl">💸</span>
@@ -753,7 +819,10 @@ export default function ExpensesPage() {
 
         <div className="bg-white border border-rose-100 rounded-xl p-3.5 shadow-xs flex items-center justify-between bg-gradient-to-br from-white to-rose-50/40">
           <div>
-            <div className="text-[10px] font-extrabold uppercase text-rose-600 tracking-wider">Total Sisa Hutang</div>
+            <div className="text-[10px] font-extrabold uppercase text-rose-600 tracking-wider flex items-center gap-1">
+              <span>Total Sisa Hutang</span>
+              {(startDate || endDate) && <span className="text-rose-700 font-bold">(Tersaring)</span>}
+            </div>
             <div className="text-lg font-black text-rose-900">{formatPrice(summaryMetrics.totalOutstanding)}</div>
           </div>
           <span className="text-2xl">⏳</span>
@@ -761,8 +830,9 @@ export default function ExpensesPage() {
       </div>
 
       {/* Filters & Grouping Bar */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-xs flex flex-col md:flex-row gap-3">
-        <div className="relative flex-1">
+      <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-xs flex flex-col md:flex-row flex-wrap gap-3">
+        {/* Search Input */}
+        <div className="relative flex-1 min-w-[200px]">
           <input
             type="text"
             placeholder="Cari deskripsi, vendor, atau kategori pengeluaran..."
@@ -773,8 +843,61 @@ export default function ExpensesPage() {
           <span className="absolute left-3 top-3.5 text-gray-400 text-xs">🔍</span>
         </div>
 
+        {/* Date Preset Selector */}
+        <div className="w-full md:w-44">
+          <select
+            className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
+            value={datePreset}
+            onChange={e => handleDatePresetChange(e.target.value)}
+          >
+            <option value="all">📅 Semua Tanggal</option>
+            <option value="today">Hari Ini</option>
+            <option value="yesterday">Kemarin</option>
+            <option value="this_week">Minggu Ini</option>
+            <option value="this_month">Bulan Ini</option>
+            <option value="last_month">Bulan Lalu</option>
+            <option value="this_year">Tahun Ini</option>
+            <option value="custom">🛠️ Rentang Kustom</option>
+          </select>
+        </div>
+
+        {/* Custom Date Pickers */}
+        {datePreset === 'custom' && (
+          <div className="flex flex-col sm:flex-row gap-2 items-center">
+            <input
+              type="date"
+              className="p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
+              value={startDate}
+              onChange={e => setStartDate(e.target.value)}
+              title="Tanggal Mulai"
+            />
+            <span className="text-gray-400 text-xs hidden sm:inline">-</span>
+            <input
+              type="date"
+              className="p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
+              value={endDate}
+              onChange={e => setEndDate(e.target.value)}
+              title="Tanggal Sampai"
+            />
+            {(startDate || endDate) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDatePreset('all')
+                  setStartDate('')
+                  setEndDate('')
+                }}
+                className="px-2.5 py-2 text-[10px] font-bold uppercase text-gray-500 hover:text-red-600 bg-gray-100 rounded-lg cursor-pointer"
+                title="Reset Tanggal"
+              >
+                ✕ Reset
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Grouping Selector */}
-        <div className="w-full md:w-56">
+        <div className="w-full md:w-52">
           <select
             className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
             value={groupBy}
@@ -787,7 +910,8 @@ export default function ExpensesPage() {
           </select>
         </div>
 
-        <div className="w-full md:w-48">
+        {/* Status Selector */}
+        <div className="w-full md:w-44">
           <select
             className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
             value={selectedPaymentStatus}
@@ -800,7 +924,8 @@ export default function ExpensesPage() {
           </select>
         </div>
 
-        <div className="w-full md:w-60">
+        {/* Category Selector */}
+        <div className="w-full md:w-56">
           <select
             className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
             value={selectedCategoryAcc}
@@ -896,7 +1021,7 @@ export default function ExpensesPage() {
         <div className="bg-white border border-gray-200 rounded-xl p-12 text-center shadow-xs">
           <span className="text-3xl">🔍</span>
           <h3 className="text-sm font-extrabold text-gray-800 mt-2 uppercase tracking-wide">Pengeluaran Tidak Ditemukan</h3>
-          <p className="text-xs text-gray-400 mt-1">Tidak ada transaksi yang cocok dengan kata kunci atau filter yang dipilih.</p>
+          <p className="text-xs text-gray-400 mt-1">Tidak ada transaksi yang cocok dengan kata kunci, rentang tanggal, atau filter yang dipilih.</p>
         </div>
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl shadow-xs overflow-hidden">
