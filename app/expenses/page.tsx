@@ -1,9 +1,10 @@
 "use client"
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
 import Link from 'next/link'
 import { ExpenseDetailModal } from './components/ExpenseDetailModal'
+import { Pagination } from '../components/Pagination'
 
 const STANDARD_CATEGORIES = [
   { key: 'marketing', name: 'Pemasaran & Promosi', code: '503100', icon: '📢', desc: 'Biaya iklan, sosmed, brosur, promo' },
@@ -85,6 +86,13 @@ export default function ExpensesPage() {
   const [selectedCategoryAcc, setSelectedCategoryAcc] = useState('')
   const [selectedPaymentStatus, setSelectedPaymentStatus] = useState('')
 
+  // Grouping & Pagination State (default collapsed)
+  const [groupBy, setGroupBy] = useState<'none' | 'date' | 'vendor' | 'category'>('none')
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
+  const [groupItemLimits, setGroupItemLimits] = useState<Record<string, number>>({})
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+
   // Outstanding Payment Modal State
   const [isPayModalOpen, setIsPayModalOpen] = useState(false)
   const [payExpense, setPayExpense] = useState<Expense | null>(null)
@@ -102,18 +110,22 @@ export default function ExpensesPage() {
   const [bulkPayNotes, setBulkPayNotes] = useState('')
   const [bulkPaySubmitLoading, setBulkPaySubmitLoading] = useState(false)
 
-
-
   useEffect(() => {
     setMounted(true)
   }, [])
+
+  // Reset pagination & group expanded/limit states on filter or grouping changes
+  useEffect(() => {
+    setCurrentPage(1)
+    setExpandedGroups({})
+    setGroupItemLimits({})
+  }, [searchQuery, selectedCategoryAcc, selectedPaymentStatus, groupBy])
 
   // Fetch Page Data
   const fetchData = useCallback(async (businessId: string, isSilent = false) => {
     if (!isSilent) setLoading(true)
     setBgUpdating(true)
     try {
-      // Parallelize fetches of expenses list and accounts for speed
       const [expRes, accRes] = await Promise.all([
         fetch('/api/expenses'),
         supabase
@@ -140,7 +152,6 @@ export default function ExpensesPage() {
         throw accRes.error
       }
 
-      // Save to cache for instant load next time
       localStorage.setItem(`cache_expenses_${businessId}`, JSON.stringify(freshExpenses))
       localStorage.setItem(`cache_accounts_${businessId}`, JSON.stringify(freshAccounts))
     } catch (err) {
@@ -172,8 +183,6 @@ export default function ExpensesPage() {
           const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
           setActiveBizName(biz?.name || 'Bisnis Saya')
 
-          // ── STALE-WHILE-REVALIDATE PATTERN ──
-          // 1. Immediately read from localStorage cache to present data instantly
           const cachedExpenses = localStorage.getItem(`cache_expenses_${businessId}`)
           const cachedAccounts = localStorage.getItem(`cache_accounts_${businessId}`)
 
@@ -195,12 +204,10 @@ export default function ExpensesPage() {
             }
           }
 
-          // If we had cached data, stop showing the full page loading spinner
           if (hasCache) {
             setLoading(false)
           }
 
-          // 2. Fetch fresh data in the background and update the state/cache silently
           await fetchData(businessId, hasCache)
         }
       } catch (err) {
@@ -214,6 +221,18 @@ export default function ExpensesPage() {
   const paymentAccounts = useMemo(() => {
     return accounts.filter(a => a.type === 'ASSET' && a.code.startsWith('101'))
   }, [accounts])
+
+  const formatDateDisplay = (dateStr: string) => {
+    if (!dateStr) return '-'
+    try {
+      const parts = dateStr.split('-')
+      if (parts.length !== 3) return dateStr
+      const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]))
+      return d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+    } catch {
+      return dateStr
+    }
+  }
 
   // Filtered Expenses
   const filteredExpenses = useMemo(() => {
@@ -230,7 +249,121 @@ export default function ExpensesPage() {
     })
   }, [expenses, searchQuery, selectedCategoryAcc, selectedPaymentStatus])
 
-  const selectableExpenses = filteredExpenses
+  // Summary Metrics across all filtered records
+  const summaryMetrics = useMemo(() => {
+    const totalAmount = filteredExpenses.reduce((sum, e) => sum + (e.amount || 0), 0)
+    const totalOutstanding = filteredExpenses.reduce((sum, e) => sum + (e.outstanding_amount || 0), 0)
+    return {
+      count: filteredExpenses.length,
+      totalAmount,
+      totalOutstanding
+    }
+  }, [filteredExpenses])
+
+  // Paginated Expenses (for flat list mode)
+  const paginatedExpenses = useMemo(() => {
+    const startIdx = (currentPage - 1) * pageSize
+    return filteredExpenses.slice(startIdx, startIdx + pageSize)
+  }, [filteredExpenses, currentPage, pageSize])
+
+  // Grouped Expenses Structure (all groups across filtered dataset)
+  type ExpenseGroup = {
+    key: string
+    title: string
+    subTitle?: string
+    icon: string
+    items: Expense[]
+    totalAmount: number
+    totalOutstanding: number
+  }
+
+  const groupedExpenses = useMemo(() => {
+    if (groupBy === 'none') return []
+
+    const groupMap = new Map<string, { key: string; title: string; subTitle?: string; icon: string; items: Expense[] }>()
+
+    filteredExpenses.forEach(e => {
+      let groupKey = 'Lainnya'
+      let title = 'Lainnya'
+      let subTitle = ''
+      let icon = '📁'
+
+      if (groupBy === 'date') {
+        groupKey = e.date || 'Tanpa Tanggal'
+        title = formatDateDisplay(e.date)
+        subTitle = e.date
+        icon = '📅'
+      } else if (groupBy === 'vendor') {
+        const vName = (e.vendor_name || '').trim()
+        groupKey = vName ? vName.toLowerCase() : '__no_vendor__'
+        title = vName || 'Tanpa Vendor'
+        icon = '🏢'
+      } else if (groupBy === 'category') {
+        const cat = getCategoryDisplay(e.category_account)
+        groupKey = e.category_account_id || 'uncategorized'
+        title = cat.name
+        icon = cat.icon
+      }
+
+      if (!groupMap.has(groupKey)) {
+        groupMap.set(groupKey, {
+          key: groupKey,
+          title,
+          subTitle,
+          icon,
+          items: []
+        })
+      }
+      groupMap.get(groupKey)!.items.push(e)
+    })
+
+    const groups: ExpenseGroup[] = Array.from(groupMap.values()).map(g => {
+      const totalAmount = g.items.reduce((acc, item) => acc + (item.amount || 0), 0)
+      const totalOutstanding = g.items.reduce((acc, item) => acc + (item.outstanding_amount || 0), 0)
+      return {
+        ...g,
+        totalAmount,
+        totalOutstanding
+      }
+    })
+
+    if (groupBy === 'date') {
+      groups.sort((a, b) => b.key.localeCompare(a.key))
+    } else if (groupBy === 'vendor' || groupBy === 'category') {
+      groups.sort((a, b) => b.totalAmount - a.totalAmount)
+    }
+
+    return groups
+  }, [filteredExpenses, groupBy])
+
+  // Paginated Groups (Group-level pagination!)
+  const paginatedGroupedExpenses = useMemo(() => {
+    if (groupBy === 'none') return []
+    const startIdx = (currentPage - 1) * pageSize
+    return groupedExpenses.slice(startIdx, startIdx + pageSize)
+  }, [groupedExpenses, groupBy, currentPage, pageSize])
+
+  // Total count for Pagination component: items count in flat mode, groups count in grouped mode
+  const totalPaginationCount = groupBy === 'none' ? filteredExpenses.length : groupedExpenses.length
+
+  const toggleGroupExpand = (key: string) => {
+    setExpandedGroups(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }))
+  }
+
+  const handleLoadMoreGroupItems = (groupKey: string, step = 5) => {
+    setGroupItemLimits(prev => ({
+      ...prev,
+      [groupKey]: (prev[groupKey] || 5) + step
+    }))
+  }
+
+  const selectableExpenses = useMemo(() => {
+    if (groupBy === 'none') return paginatedExpenses
+    return paginatedGroupedExpenses.flatMap(g => g.items)
+  }, [groupBy, paginatedExpenses, paginatedGroupedExpenses])
 
   const isAllSelected = useMemo(() => {
     if (selectableExpenses.length === 0) return false
@@ -244,6 +377,18 @@ export default function ExpensesPage() {
     } else {
       const selectableIds = selectableExpenses.map(e => e.id)
       setSelectedIds(prev => Array.from(new Set([...prev, ...selectableIds])))
+    }
+  }
+
+  const handleSelectGroup = (groupItems: Expense[], ev: React.ChangeEvent<HTMLInputElement> | React.MouseEvent) => {
+    ev.stopPropagation()
+    const groupItemIds = groupItems.map(item => item.id)
+    const isAllGroupSelected = groupItemIds.length > 0 && groupItemIds.every(id => selectedIds.includes(id))
+
+    if (isAllGroupSelected) {
+      setSelectedIds(prev => prev.filter(id => !groupItemIds.includes(id)))
+    } else {
+      setSelectedIds(prev => Array.from(new Set([...prev, ...groupItemIds])))
     }
   }
 
@@ -314,7 +459,6 @@ export default function ExpensesPage() {
     }
   }
 
-  // Open outstanding payment modal
   const openPayModal = (expense: Expense) => {
     setPayExpense(expense)
     setPayAmount(expense.outstanding_amount?.toString() || '')
@@ -324,7 +468,6 @@ export default function ExpensesPage() {
     setIsPayModalOpen(true)
   }
 
-  // Handle Outstanding Payment Submission
   const handlePaySubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!payExpense || !payPaymentAccountId || !payAmount || !payDate) {
@@ -373,7 +516,6 @@ export default function ExpensesPage() {
     }
   }
 
-  // Handle Delete
   const handleDelete = async (id: string) => {
     const exp = expenses.find(e => e.id === id)
     if (exp && exp.expense_payments && exp.expense_payments.length > 0) {
@@ -414,6 +556,138 @@ export default function ExpensesPage() {
       minimumFractionDigits: 0
     }).format(val)
   }
+
+  // Row Renderer
+  const renderExpenseRow = (e: Expense) => (
+    <tr 
+      key={e.id} 
+      className={`hover:bg-gray-50/50 transition-colors cursor-pointer ${selectedIds.includes(e.id) ? 'bg-blue-50/30' : ''}`}
+      onClick={() => setSelectedExpenseForDetail(e)}
+    >
+      <td className="p-4 w-10" onClick={ev => ev.stopPropagation()}>
+        <input 
+          type="checkbox"
+          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+          checked={selectedIds.includes(e.id)}
+          onChange={() => handleSelectRow(e.id)}
+        />
+      </td>
+      <td className="p-4 space-y-0.5">
+        <div className="text-gray-900 font-bold">{e.date}</div>
+        <div className="text-gray-500 text-[10px] uppercase font-black">{e.vendor_name || 'Tanpa Vendor'}</div>
+      </td>
+      <td className="p-4 text-gray-600 max-w-xs break-words">{e.description || '-'}</td>
+      <td className="p-4">
+        {e.category_account ? (
+          (() => {
+            const display = getCategoryDisplay(e.category_account)
+            return (
+              <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold ${display.color} px-2 py-0.5 rounded border uppercase`}>
+                <span>{display.icon}</span>
+                <span>{display.name}</span>
+              </span>
+            )
+          })()
+        ) : (
+          <span className="text-gray-400">-</span>
+        )}
+      </td>
+      <td className="p-4">
+        {e.payment_status === 'unpaid' ? (
+          <span className="text-red-600 font-bold uppercase text-[10px]">Hutang Usaha</span>
+        ) : e.payment_account ? (
+          <span className="text-gray-600 font-medium">{e.payment_account.name}</span>
+        ) : (
+          <span className="text-gray-450">-</span>
+        )}
+      </td>
+      <td className="p-4 space-y-1">
+        {e.payment_status === 'paid' && (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 uppercase">
+            🟢 Lunas
+          </span>
+        )}
+        {e.payment_status === 'unpaid' && (
+          <div className="space-y-0.5">
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-100 uppercase">
+              🔴 Tempo
+            </span>
+            {e.due_date && (
+              <div className="text-[9px] text-rose-600 font-bold">J.T: {e.due_date}</div>
+            )}
+          </div>
+        )}
+        {e.payment_status === 'partial' && (
+          <div className="space-y-0.5">
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-100 uppercase">
+              🟡 DP
+            </span>
+            {e.due_date && (
+              <div className="text-[9px] text-amber-600 font-bold">J.T: {e.due_date}</div>
+            )}
+          </div>
+        )}
+      </td>
+      <td className="p-4 space-y-0.5">
+        <div className="text-gray-900 font-black text-sm">{formatPrice(e.amount)}</div>
+        {e.payment_status !== 'paid' && (
+          <div className="text-[9px] text-gray-500 space-y-0.5">
+            <div>Bayar: {formatPrice(e.amount_paid || 0)}</div>
+            <div className="text-rose-600 font-bold">Sisa: {formatPrice(e.outstanding_amount || 0)}</div>
+          </div>
+        )}
+      </td>
+      <td className="p-4">
+        {e.attachment_url ? (
+          <a
+            href={e.attachment_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 px-2 py-1 rounded border border-amber-200 uppercase transition-colors"
+            onClick={ev => ev.stopPropagation()}
+          >
+            📄 Lihat Nota
+          </a>
+        ) : (
+          <span className="text-gray-400 italic font-normal text-[10px]">Tidak ada</span>
+        )}
+      </td>
+      <td className="p-4 text-right" onClick={ev => ev.stopPropagation()}>
+        <div className="flex justify-end gap-1.5">
+          {e.payment_status !== 'paid' && (
+            <button
+              onClick={() => openPayModal(e)}
+              className="px-2.5 py-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded border border-emerald-100 transition-colors uppercase font-bold text-[10px] tracking-wider cursor-pointer"
+            >
+              💵 Bayar
+            </button>
+          )}
+          {e.payment_status === 'paid' ? (
+            <span className="px-2.5 py-1.5 text-gray-400 bg-gray-50 rounded border border-gray-150 uppercase font-bold text-[10px] tracking-wider cursor-not-allowed select-none">
+              🔒 Terkunci
+            </span>
+          ) : (
+            <Link
+              href={`/expenses/edit/${e.id}`}
+              className="px-2.5 py-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded border border-blue-100 transition-colors uppercase font-bold text-[10px] tracking-wider cursor-pointer"
+            >
+              ✏️ Edit
+            </Link>
+          )}
+          <button
+            onClick={() => handleDelete(e.id)}
+            className={`px-2.5 py-1.5 rounded border transition-colors uppercase font-bold text-[10px] tracking-wider cursor-pointer ${
+              e.payment_status === 'paid'
+                ? 'text-rose-600 bg-rose-50 border-rose-100 hover:bg-rose-100'
+                : 'text-red-600 bg-red-50 border-red-100 hover:bg-red-100'
+            }`}
+          >
+            {e.payment_status === 'paid' ? '🚫 Batalkan' : '🗑️ Hapus'}
+          </button>
+        </div>
+      </td>
+    </tr>
+  )
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -459,7 +733,34 @@ export default function ExpensesPage() {
         </div>
       </div>
 
-      {/* Filters Bar */}
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-white border border-gray-200 rounded-xl p-3.5 shadow-xs flex items-center justify-between">
+          <div>
+            <div className="text-[10px] font-extrabold uppercase text-gray-400 tracking-wider">Total Transaksi</div>
+            <div className="text-lg font-black text-gray-800">{summaryMetrics.count.toLocaleString('id-ID')} item</div>
+          </div>
+          <span className="text-2xl">📋</span>
+        </div>
+
+        <div className="bg-white border border-blue-100 rounded-xl p-3.5 shadow-xs flex items-center justify-between bg-gradient-to-br from-white to-blue-50/40">
+          <div>
+            <div className="text-[10px] font-extrabold uppercase text-blue-600 tracking-wider">Total Pengeluaran</div>
+            <div className="text-lg font-black text-blue-900">{formatPrice(summaryMetrics.totalAmount)}</div>
+          </div>
+          <span className="text-2xl">💸</span>
+        </div>
+
+        <div className="bg-white border border-rose-100 rounded-xl p-3.5 shadow-xs flex items-center justify-between bg-gradient-to-br from-white to-rose-50/40">
+          <div>
+            <div className="text-[10px] font-extrabold uppercase text-rose-600 tracking-wider">Total Sisa Hutang</div>
+            <div className="text-lg font-black text-rose-900">{formatPrice(summaryMetrics.totalOutstanding)}</div>
+          </div>
+          <span className="text-2xl">⏳</span>
+        </div>
+      </div>
+
+      {/* Filters & Grouping Bar */}
       <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-xs flex flex-col md:flex-row gap-3">
         <div className="relative flex-1">
           <input
@@ -470,6 +771,20 @@ export default function ExpensesPage() {
             onChange={e => setSearchQuery(e.target.value)}
           />
           <span className="absolute left-3 top-3.5 text-gray-400 text-xs">🔍</span>
+        </div>
+
+        {/* Grouping Selector */}
+        <div className="w-full md:w-56">
+          <select
+            className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
+            value={groupBy}
+            onChange={e => setGroupBy(e.target.value as any)}
+          >
+            <option value="none">📋 Tanpa Grouping (List)</option>
+            <option value="date">📅 Grouping Tanggal</option>
+            <option value="vendor">🏢 Grouping Vendor</option>
+            <option value="category">🏷️ Grouping Kategori</option>
+          </select>
         </div>
 
         <div className="w-full md:w-48">
@@ -485,7 +800,7 @@ export default function ExpensesPage() {
           </select>
         </div>
 
-        <div className="w-full md:w-64">
+        <div className="w-full md:w-60">
           <select
             className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
             value={selectedCategoryAcc}
@@ -551,6 +866,21 @@ export default function ExpensesPage() {
         </div>
       )}
 
+      {/* Top Pagination */}
+      {!loading && totalPaginationCount > 0 && (
+        <Pagination
+          currentPage={currentPage}
+          totalCount={totalPaginationCount}
+          pageSize={pageSize}
+          onPageChange={page => setCurrentPage(page)}
+          onPageSizeChange={newSize => {
+            setPageSize(newSize)
+            setCurrentPage(1)
+          }}
+          position="top"
+        />
+      )}
+
       {/* Expenses Table */}
       {loading ? (
         <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-xs font-bold text-gray-400 uppercase tracking-widest animate-pulse">
@@ -561,6 +891,12 @@ export default function ExpensesPage() {
           <span className="text-3xl">💸</span>
           <h3 className="text-sm font-extrabold text-gray-800 mt-2 uppercase tracking-wide">Belum ada pengeluaran</h3>
           <p className="text-xs text-gray-400 mt-1">Catat biaya operasional atau utilitas bisnis pertama Anda di sini.</p>
+        </div>
+      ) : filteredExpenses.length === 0 ? (
+        <div className="bg-white border border-gray-200 rounded-xl p-12 text-center shadow-xs">
+          <span className="text-3xl">🔍</span>
+          <h3 className="text-sm font-extrabold text-gray-800 mt-2 uppercase tracking-wide">Pengeluaran Tidak Ditemukan</h3>
+          <p className="text-xs text-gray-400 mt-1">Tidak ada transaksi yang cocok dengan kata kunci atau filter yang dipilih.</p>
         </div>
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl shadow-xs overflow-hidden">
@@ -587,140 +923,114 @@ export default function ExpensesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 text-xs font-semibold text-gray-700">
-                {filteredExpenses.map(e => (
-                  <tr 
-                    key={e.id} 
-                    className={`hover:bg-gray-50/50 transition-colors cursor-pointer ${selectedIds.includes(e.id) ? 'bg-blue-50/30' : ''}`}
-                    onClick={() => setSelectedExpenseForDetail(e)}
-                  >
-                    <td className="p-4 w-10" onClick={e => e.stopPropagation()}>
-                      <input 
-                        type="checkbox"
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                        checked={selectedIds.includes(e.id)}
-                        onChange={() => handleSelectRow(e.id)}
-                      />
-                    </td>
-                    <td className="p-4 space-y-0.5">
-                      <div className="text-gray-900 font-bold">{e.date}</div>
-                      <div className="text-gray-500 text-[10px] uppercase font-black">{e.vendor_name || 'Tanpa Vendor'}</div>
-                    </td>
-                    <td className="p-4 text-gray-600 max-w-xs break-words">{e.description || '-'}</td>
-                    <td className="p-4">
-                      {e.category_account ? (
-                        (() => {
-                          const display = getCategoryDisplay(e.category_account)
-                          return (
-                            <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold ${display.color} px-2 py-0.5 rounded border uppercase`}>
-                              <span>{display.icon}</span>
-                              <span>{display.name}</span>
-                            </span>
-                          )
-                        })()
-                      ) : (
-                        <span className="text-gray-400">-</span>
-                      )}
-                    </td>
-                    <td className="p-4">
-                      {e.payment_status === 'unpaid' ? (
-                        <span className="text-red-600 font-bold uppercase text-[10px]">Hutang Usaha</span>
-                      ) : e.payment_account ? (
-                        <span className="text-gray-600 font-medium">{e.payment_account.name}</span>
-                      ) : (
-                        <span className="text-gray-450">-</span>
-                      )}
-                    </td>
-                    <td className="p-4 space-y-1">
-                      {e.payment_status === 'paid' && (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 uppercase">
-                          🟢 Lunas
-                        </span>
-                      )}
-                      {e.payment_status === 'unpaid' && (
-                        <div className="space-y-0.5">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-100 uppercase">
-                            🔴 Tempo
-                          </span>
-                          {e.due_date && (
-                            <div className="text-[9px] text-rose-600 font-bold">J.T: {e.due_date}</div>
-                          )}
-                        </div>
-                      )}
-                      {e.payment_status === 'partial' && (
-                        <div className="space-y-0.5">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-100 uppercase">
-                            🟡 DP
-                          </span>
-                          {e.due_date && (
-                            <div className="text-[9px] text-amber-600 font-bold">J.T: {e.due_date}</div>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-4 space-y-0.5">
-                      <div className="text-gray-900 font-black text-sm">{formatPrice(e.amount)}</div>
-                      {e.payment_status !== 'paid' && (
-                        <div className="text-[9px] text-gray-500 space-y-0.5">
-                          <div>Bayar: {formatPrice(e.amount_paid || 0)}</div>
-                          <div className="text-rose-600 font-bold">Sisa: {formatPrice(e.outstanding_amount || 0)}</div>
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-4">
-                      {e.attachment_url ? (
-                        <a
-                          href={e.attachment_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 px-2 py-1 rounded border border-amber-200 uppercase transition-colors"
-                          onClick={e => e.stopPropagation()}
+                {groupBy === 'none' ? (
+                  paginatedExpenses.map(e => renderExpenseRow(e))
+                ) : (
+                  paginatedGroupedExpenses.map(group => {
+                    const isExpanded = !!expandedGroups[group.key]
+                    const groupItemIds = group.items.map(item => item.id)
+                    const isGroupSelected = groupItemIds.length > 0 && groupItemIds.every(id => selectedIds.includes(id))
+                    const isGroupSomeSelected = groupItemIds.some(id => selectedIds.includes(id)) && !isGroupSelected
+
+                    const currentLimit = groupItemLimits[group.key] || 5
+                    const visibleItems = group.items.slice(0, currentLimit)
+                    const remainingCount = group.items.length - visibleItems.length
+
+                    return (
+                      <React.Fragment key={group.key}>
+                        <tr 
+                          className="bg-slate-100/90 hover:bg-slate-200/90 cursor-pointer border-t border-b border-slate-200 transition-colors select-none"
+                          onClick={() => toggleGroupExpand(group.key)}
                         >
-                          📄 Lihat Nota
-                        </a>
-                      ) : (
-                        <span className="text-gray-400 italic font-normal text-[10px]">Tidak ada</span>
-                      )}
-                    </td>
-                    <td className="p-4 text-right" onClick={e => e.stopPropagation()}>
-                      <div className="flex justify-end gap-1.5">
-                        {e.payment_status !== 'paid' && (
-                          <button
-                            onClick={() => openPayModal(e)}
-                            className="px-2.5 py-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded border border-emerald-100 transition-colors uppercase font-bold text-[10px] tracking-wider cursor-pointer"
-                          >
-                            💵 Bayar
-                          </button>
+                          <td className="p-3 w-10" onClick={ev => ev.stopPropagation()}>
+                            <input 
+                              type="checkbox"
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                              checked={isGroupSelected}
+                              ref={el => {
+                                if (el) el.indeterminate = isGroupSomeSelected
+                              }}
+                              onChange={ev => handleSelectGroup(group.items, ev)}
+                            />
+                          </td>
+                          <td colSpan={8} className="p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-gray-500 font-bold text-xs w-4 text-center">
+                                  {isExpanded ? '▼' : '▶'}
+                                </span>
+                                <span className="text-sm font-extrabold text-slate-800 flex items-center gap-1.5">
+                                  <span>{group.icon}</span>
+                                  <span>{group.title}</span>
+                                  {group.subTitle && group.title !== group.subTitle && (
+                                    <span className="text-xs font-normal text-slate-500">({group.subTitle})</span>
+                                  )}
+                                </span>
+                                <span className="text-[10px] font-bold text-slate-600 bg-slate-200 px-2 py-0.5 rounded-full">
+                                  {group.items.length} item
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-3 text-xs">
+                                <div className="font-bold text-slate-700">
+                                  Subtotal: <span className="font-black text-slate-900">{formatPrice(group.totalAmount)}</span>
+                                </div>
+                                {group.totalOutstanding > 0 && (
+                                  <div className="font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md">
+                                    Sisa Hutang: <span className="font-black">{formatPrice(group.totalOutstanding)}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <>
+                            {visibleItems.map(e => renderExpenseRow(e))}
+                            {remainingCount > 0 && (
+                              <tr className="bg-slate-50/70 border-b border-slate-200">
+                                <td colSpan={9} className="p-2.5 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={ev => {
+                                      ev.stopPropagation()
+                                      handleLoadMoreGroupItems(group.key, 5)
+                                    }}
+                                    className="px-3.5 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-2xs active:scale-98"
+                                  >
+                                    <span>➕ Tampilkan 5 Item Lagi</span>
+                                    <span className="text-[10px] text-blue-500 font-semibold">
+                                      (Tampil {visibleItems.length} dari {group.items.length} item • Sisa {remainingCount})
+                                    </span>
+                                  </button>
+                                </td>
+                              </tr>
+                            )}
+                          </>
                         )}
-                        {e.payment_status === 'paid' ? (
-                          <span className="px-2.5 py-1.5 text-gray-400 bg-gray-50 rounded border border-gray-150 uppercase font-bold text-[10px] tracking-wider cursor-not-allowed select-none">
-                            🔒 Terkunci
-                          </span>
-                        ) : (
-                          <Link
-                            href={`/expenses/edit/${e.id}`}
-                            className="px-2.5 py-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded border border-blue-100 transition-colors uppercase font-bold text-[10px] tracking-wider cursor-pointer"
-                          >
-                            ✏️ Edit
-                          </Link>
-                        )}
-                        <button
-                          onClick={() => handleDelete(e.id)}
-                          className={`px-2.5 py-1.5 rounded border transition-colors uppercase font-bold text-[10px] tracking-wider cursor-pointer ${
-                            e.payment_status === 'paid'
-                              ? 'text-rose-600 bg-rose-50 border-rose-100 hover:bg-rose-100'
-                              : 'text-red-600 bg-red-50 border-red-100 hover:bg-red-100'
-                          }`}
-                        >
-                          {e.payment_status === 'paid' ? '🚫 Batalkan' : '🗑️ Hapus'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </React.Fragment>
+                    )
+                  })
+                )}
               </tbody>
             </table>
           </div>
         </div>
+      )}
+
+      {/* Bottom Pagination */}
+      {!loading && totalPaginationCount > 0 && (
+        <Pagination
+          currentPage={currentPage}
+          totalCount={totalPaginationCount}
+          pageSize={pageSize}
+          onPageChange={page => setCurrentPage(page)}
+          onPageSizeChange={newSize => {
+            setPageSize(newSize)
+            setCurrentPage(1)
+          }}
+          position="bottom"
+        />
       )}
 
       {/* Pay Outstanding Expense Modal */}
@@ -950,8 +1260,6 @@ export default function ExpensesPage() {
           onClose={() => setSelectedExpenseForDetail(null)}
         />
       )}
-
-
 
     </div>
   )

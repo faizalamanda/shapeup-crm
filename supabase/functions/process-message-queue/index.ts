@@ -158,7 +158,7 @@ async function getBusinessYcloudConfig(businessId?: string) {
 // YCLOUD SEND TEMPLATE (STRICT MULTI-TENANT)
 // ====================================
 async function sendYcloud(queue: any) {
-  const payload = queue.payload
+  const payload = queue.payload || {}
 
   if (!queue.business_id) {
     throw new Error("YCLOUD_BUSINESS_ID_MISSING_IN_QUEUE_ITEM")
@@ -174,19 +174,20 @@ async function sendYcloud(queue: any) {
   const apiKey = bizConfig.apiKey.trim()
   const channelId = bizConfig.whatsappNumber ? bizConfig.whatsappNumber.trim() : ""
 
-  // Fallback: Fetch scenario config if queue payload lacks header format
+  // Fallback / Supplementary: Fetch scenario config if queue payload lacks details
   let scenarioConfig: any = null
   if (queue.scenario_id) {
     try {
       const { data: scData } = await supabase
         .from("marketing_scenarios")
-        .select("trigger_config, template_vars")
+        .select("trigger_config, template_vars, template_name")
         .eq("id", queue.scenario_id)
         .maybeSingle()
       if (scData) {
         scenarioConfig = {
           ...(scData.trigger_config || {}),
-          ...(typeof scData.template_vars === 'object' && scData.template_vars !== null && !Array.isArray(scData.template_vars) ? scData.template_vars : {})
+          ...(typeof scData.template_vars === 'object' && scData.template_vars !== null && !Array.isArray(scData.template_vars) ? scData.template_vars : {}),
+          template_name: scData.template_name
         }
       }
     } catch (err) {
@@ -198,11 +199,59 @@ async function sendYcloud(queue: any) {
     ? payload.template_vars
     : (scenarioConfig || {})
 
-  const components: any[] = []
+  // Helper to safely extract string media URL (avoiding [object Object])
+  function extractMediaUrl(candidates: any[]): string {
+    for (const item of candidates) {
+      if (!item) continue
+      if (typeof item === 'string' && item.trim()) {
+        return item.trim()
+      }
+      if (typeof item === 'object') {
+        const link = item.link || item.url || item.media_url || item.header_media_url || item.header_url || item.header_image_url || item.value
+        if (typeof link === 'string' && link.trim()) {
+          return link.trim()
+        }
+      }
+    }
+    return ''
+  }
 
-  // Check header format from payload, template_vars object, or scenarioConfig
-  const rawHeaderFormat = payload.header_format || templateObj.header_format || (scenarioConfig && scenarioConfig.header_format) || ''
-  const headerFormat = String(rawHeaderFormat).toUpperCase()
+  // 1. Resolve raw header format
+  const rawHeaderFormat = 
+    payload.header_format ||
+    payload.headerFormat ||
+    payload.header_type ||
+    payload.headerType ||
+    (payload.header && (payload.header.format || payload.header.type)) ||
+    (payload.trigger_config && payload.trigger_config.header_format) ||
+    templateObj.header_format ||
+    (scenarioConfig && scenarioConfig.header_format) ||
+    (scenarioConfig && scenarioConfig.trigger_config && scenarioConfig.trigger_config.header_format) ||
+    ''
+
+  let headerFormat = String(rawHeaderFormat).toUpperCase().trim()
+
+  // 2. Resolve media URL
+  const mediaUrl = extractMediaUrl([
+    payload.header_media_url,
+    payload.header_url,
+    payload.header_image_url,
+    payload.media_url,
+    payload.header && (payload.header.media_url || payload.header.url || payload.header.link),
+    payload.trigger_config && payload.trigger_config.header_media_url,
+    templateObj.header_media_url,
+    templateObj.header_url,
+    scenarioConfig && scenarioConfig.header_media_url,
+    scenarioConfig && scenarioConfig.header_url,
+    scenarioConfig && scenarioConfig.trigger_config && scenarioConfig.trigger_config.header_media_url
+  ])
+
+  // If headerFormat is empty or NONE but mediaUrl exists, infer IMAGE header
+  if ((!headerFormat || headerFormat === 'NONE') && mediaUrl) {
+    headerFormat = 'IMAGE'
+  }
+
+  const components: any[] = []
 
   if (headerFormat && headerFormat !== 'NONE') {
     if (headerFormat === 'TEXT') {
@@ -227,55 +276,53 @@ async function sendYcloud(queue: any) {
         })
       }
     } else if (headerFormat === 'IMAGE') {
-      const mediaUrl = payload.header_media_url || payload.header_url || payload.header_image_url || templateObj.header_media_url || templateObj.header_url || (scenarioConfig && scenarioConfig.header_media_url)
-      if (mediaUrl) {
-        components.push({
-          type: "header",
-          parameters: [
-            {
-              type: "image",
-              image: {
-                link: String(mediaUrl).trim(),
-              },
-            },
-          ],
-        })
+      if (!mediaUrl) {
+        throw new Error(`HEADER_IMAGE_URL_MISSING: Template expects IMAGE header but image URL is missing in queue ${queue.id}`)
       }
+      components.push({
+        type: "header",
+        parameters: [
+          {
+            type: "image",
+            image: {
+              link: mediaUrl,
+            },
+          },
+        ],
+      })
     } else if (headerFormat === 'DOCUMENT') {
-      const mediaUrl = payload.header_media_url || payload.header_url || payload.header_document_url || templateObj.header_media_url || templateObj.header_url || (scenarioConfig && scenarioConfig.header_media_url)
+      if (!mediaUrl) {
+        throw new Error(`HEADER_DOCUMENT_URL_MISSING: Template expects DOCUMENT header but document URL is missing in queue ${queue.id}`)
+      }
+      const docObj: Record<string, string> = { link: mediaUrl }
       const filename = payload.header_filename || templateObj.header_filename || (scenarioConfig && scenarioConfig.header_filename)
-      if (mediaUrl) {
-        const docObj: Record<string, string> = {
-          link: String(mediaUrl).trim(),
-        }
-        if (filename) {
-          docObj.filename = String(filename).trim()
-        }
-        components.push({
-          type: "header",
-          parameters: [
-            {
-              type: "document",
-              document: docObj,
-            },
-          ],
-        })
+      if (filename && typeof filename === 'string' && filename.trim()) {
+        docObj.filename = filename.trim()
       }
+      components.push({
+        type: "header",
+        parameters: [
+          {
+            type: "document",
+            document: docObj,
+          },
+        ],
+      })
     } else if (headerFormat === 'VIDEO') {
-      const mediaUrl = payload.header_media_url || payload.header_url || payload.header_video_url || templateObj.header_media_url || templateObj.header_url || (scenarioConfig && scenarioConfig.header_media_url)
-      if (mediaUrl) {
-        components.push({
-          type: "header",
-          parameters: [
-            {
-              type: "video",
-              video: {
-                link: String(mediaUrl).trim(),
-              },
-            },
-          ],
-        })
+      if (!mediaUrl) {
+        throw new Error(`HEADER_VIDEO_URL_MISSING: Template expects VIDEO header but video URL is missing in queue ${queue.id}`)
       }
+      components.push({
+        type: "header",
+        parameters: [
+          {
+            type: "video",
+            video: {
+              link: mediaUrl,
+            },
+          },
+        ],
+      })
     }
   }
 
@@ -292,11 +339,30 @@ async function sendYcloud(queue: any) {
     })),
   })
 
+  // Format recipient and sender in E.164 format (+62...)
+  function formatE164(phone: string): string {
+    let cleaned = String(phone || '').replace(/[^\d+]/g, '')
+    if (cleaned.startsWith('0')) {
+      cleaned = '62' + cleaned.slice(1)
+    }
+    if (!cleaned.startsWith('+') && cleaned.length > 0) {
+      cleaned = '+' + cleaned
+    }
+    return cleaned
+  }
+
+  const recipientPhone = formatE164(queue.recipient)
+  const templateName = payload.template_name || (scenarioConfig && scenarioConfig.template_name)
+
+  if (!templateName) {
+    throw new Error("TEMPLATE_NAME_MISSING_IN_QUEUE_ITEM")
+  }
+
   const reqBody: Record<string, any> = {
-    to: queue.recipient,
+    to: recipientPhone,
     type: "template",
     template: {
-      name: payload.template_name,
+      name: templateName,
       language: {
         code: payload.language_code || "id",
       },
@@ -304,9 +370,8 @@ async function sendYcloud(queue: any) {
     },
   }
 
-  // Gunakan nomor WhatsApp pengirim yang disetting di pengaturann integrasi unit bisnis tersebut
   if (channelId) {
-    reqBody.from = channelId
+    reqBody.from = formatE164(channelId)
   }
 
   const response = await fetch("https://api.ycloud.com/v2/whatsapp/messages", {
@@ -324,7 +389,7 @@ async function sendYcloud(queue: any) {
     const errorMessage =
       result?.error?.message ||
       result?.message ||
-      `YCLOUD_ERROR_${response.status}`
+      (result?.error ? JSON.stringify(result.error) : `YCLOUD_ERROR_${response.status}`)
 
     throw new Error(errorMessage)
   }

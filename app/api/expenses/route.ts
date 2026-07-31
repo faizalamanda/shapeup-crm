@@ -28,6 +28,8 @@ export async function GET(req: Request) {
 
     const url = new URL(req.url)
     const id = url.searchParams.get('id')
+    const pageParam = url.searchParams.get('page')
+    const limitParam = url.searchParams.get('limit')
 
     if (id) {
       const { data: expense, error: fetchErr } = await supabase
@@ -46,6 +48,38 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: fetchErr.message }, { status: 500 })
       }
       return NextResponse.json(expense)
+    }
+
+    if (pageParam || limitParam) {
+      const page = Math.max(1, parseInt(pageParam || '1', 10))
+      const limit = Math.max(1, parseInt(limitParam || '25', 10))
+      const from = (page - 1) * limit
+      const to = from + limit - 1
+
+      const { data: expenses, count, error: fetchErr } = await supabase
+        .from('expenses')
+        .select(`
+          *,
+          category_account:accounts!expenses_category_account_id_fkey(id, code, name),
+          payment_account:accounts!expenses_payment_account_id_fkey(id, code, name),
+          expense_payments(id)
+        `, { count: 'exact' })
+        .eq('business_id', businessId)
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .range(from, to)
+
+      if (fetchErr) {
+        return NextResponse.json({ error: fetchErr.message }, { status: 500 })
+      }
+
+      return NextResponse.json({
+        data: expenses || [],
+        totalCount: count || 0,
+        page,
+        limit,
+        totalPages: Math.ceil((count || 0) / limit)
+      })
     }
 
     const { data: expenses, error: fetchErr } = await supabase
