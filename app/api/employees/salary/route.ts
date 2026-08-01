@@ -93,7 +93,7 @@ export async function POST(req: Request) {
 
   const { businessId } = access
   const body = await req.json()
-  const { employee_id, amount, period, payment_status, payment_account_id, amount_paid } = body
+  const { employee_id, amount, period, payment_status, payment_account_id, amount_paid, payment_date } = body
 
   if (!employee_id || !amount || !period) {
     return NextResponse.json({ error: 'Data employee_id, nominal amount, dan periode wajib diisi.' }, { status: 400 })
@@ -203,6 +203,8 @@ export async function POST(req: Request) {
     }
 
     // 3. Insert salary payroll record
+    const actualPaidAt = numAmountPaid > 0 ? (payment_date ? payment_date : new Date().toISOString().split('T')[0]) : null
+
     const { data: salaryRecord, error: insErr } = await supabase
       .from('employee_salaries')
       .insert({
@@ -212,7 +214,7 @@ export async function POST(req: Request) {
         period,
         payment_status: status,
         payment_account_id: numAmountPaid > 0 ? payment_account_id : null,
-        paid_at: numAmountPaid > 0 ? new Date().toISOString() : null,
+        paid_at: actualPaidAt,
         transaction_id: transactionId,
         amount_paid: numAmountPaid,
         outstanding_amount: numOutstanding
@@ -224,6 +226,19 @@ export async function POST(req: Request) {
       // Rollback transaction & journal lines (cascades)
       await supabase.from('transactions').delete().eq('id', transactionId)
       throw insErr
+    }
+
+    // 4. Log initial payment in salary_payments if paid portion > 0
+    if (numAmountPaid > 0 && payment_account_id && salaryRecord) {
+      await supabase.from('salary_payments').insert({
+        business_id: businessId,
+        salary_id: salaryRecord.id,
+        transaction_id: transactionId,
+        date: payment_date || new Date().toISOString().split('T')[0],
+        amount: numAmountPaid,
+        payment_method_account_id: payment_account_id,
+        notes: status === 'paid' ? 'Pelunasan Gaji Saat Pencatatan' : 'Pembayaran Sebagian Saat Pencatatan'
+      })
     }
 
     return NextResponse.json(salaryRecord)
@@ -248,7 +263,7 @@ export async function PUT(req: Request) {
   }
 
   const body = await req.json()
-  const { employee_id, amount, period, payment_status, payment_account_id, amount_paid } = body
+  const { employee_id, amount, period, payment_status, payment_account_id, amount_paid, payment_date } = body
 
   try {
     // Get existing record
@@ -492,6 +507,8 @@ export async function PUT(req: Request) {
     }
 
     // Update existing salary record
+    const updatedPaidAt = newAmountPaid > 0 ? (payment_date || existing.paid_at || new Date().toISOString().split('T')[0]) : null
+
     const { data: updatedRecord, error: updErr } = await supabase
       .from('employee_salaries')
       .update({
@@ -500,7 +517,7 @@ export async function PUT(req: Request) {
         period: newPeriod,
         payment_status: newPaymentStatus,
         payment_account_id: newPaymentAccountId,
-        paid_at: newAmountPaid > 0 ? (existing.paid_at || new Date().toISOString()) : null,
+        paid_at: updatedPaidAt,
         transaction_id: transactionId,
         amount_paid: newAmountPaid,
         outstanding_amount: newOutstanding

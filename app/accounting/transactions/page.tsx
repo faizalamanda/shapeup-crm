@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
 import { formatCurrencyIDR, getDateRangeLimits, DateRangeKey } from '../utils'
@@ -31,6 +31,214 @@ type Transaction = {
   order_id?: string | null
   business_id: string
   journal_lines: JournalLine[]
+}
+
+
+type SearchableAccountSelectProps = {
+  accounts: Account[]
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+  filterTypes?: ('ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE')[]
+  className?: string
+  required?: boolean
+  disabled?: boolean
+}
+
+const COA_CATEGORIES_CONFIG: { type: Account['type']; label: string; icon: string }[] = [
+  { type: 'ASSET', label: 'ASET (ASSETS)', icon: '🏦' },
+  { type: 'LIABILITY', label: 'KEWAJIBAN (LIABILITIES)', icon: '🤝' },
+  { type: 'EQUITY', label: 'EKUITAS (EQUITY)', icon: '⚖️' },
+  { type: 'REVENUE', label: 'PENDAPATAN (REVENUE)', icon: '💰' },
+  { type: 'EXPENSE', label: 'BEBAN (EXPENSE)', icon: '🛒' },
+]
+
+function SearchableAccountSelect({
+  accounts,
+  value,
+  onChange,
+  placeholder = '-- Pilih Akun --',
+  filterTypes,
+  className = '',
+  required = false,
+  disabled = false
+}: SearchableAccountSelectProps) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [searchTerm, setSearchTerm] = useState('')
+  const containerRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  const allowedAccounts = useMemo(() => {
+    if (!filterTypes || filterTypes.length === 0) return accounts
+    return accounts.filter(a => filterTypes.includes(a.type))
+  }, [accounts, filterTypes])
+
+  const filteredAccounts = useMemo(() => {
+    if (!searchTerm.trim()) return allowedAccounts
+    const q = searchTerm.toLowerCase().trim()
+    return allowedAccounts.filter(a =>
+      a.code.toLowerCase().includes(q) ||
+      a.name.toLowerCase().includes(q) ||
+      (a.sub_type && a.sub_type.toLowerCase().includes(q))
+    )
+  }, [allowedAccounts, searchTerm])
+
+  const selectedAccount = useMemo(() => {
+    return accounts.find(a => a.id === value)
+  }, [accounts, value])
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  useEffect(() => {
+    if (isOpen && searchInputRef.current) {
+      searchInputRef.current.focus()
+    }
+  }, [isOpen])
+
+  const handleSelect = (accId: string) => {
+    onChange(accId)
+    setIsOpen(false)
+    setSearchTerm('')
+  }
+
+  const totalMatches = filteredAccounts.length
+
+  return (
+    <div ref={containerRef} className={`relative ${className}`}>
+      {required && (
+        <input
+          type="text"
+          value={value}
+          onChange={() => {}}
+          required
+          tabIndex={-1}
+          className="sr-only opacity-0 w-0 h-0 pointer-events-none absolute"
+        />
+      )}
+
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full text-left px-3 py-2 text-sm border rounded-lg bg-white flex items-center justify-between gap-2 transition-all cursor-pointer ${isOpen ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-gray-300 hover:border-gray-400'} ${disabled ? 'opacity-50 cursor-not-allowed bg-gray-50' : ''}`}
+      >
+        <span className="truncate">
+          {selectedAccount ? (
+            <span className="flex items-center gap-1.5">
+              <span className="font-mono font-bold text-gray-900">[{selectedAccount.code}]</span>
+              <span className="text-gray-800 font-medium">{selectedAccount.name}</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded font-semibold bg-gray-100 text-gray-600 border border-gray-200">
+                {selectedAccount.type}
+              </span>
+            </span>
+          ) : (
+            <span className="text-gray-400 font-normal">{placeholder}</span>
+          )}
+        </span>
+        <svg
+          className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${isOpen ? 'rotate-180 text-blue-600' : ''}`}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+
+      {isOpen && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden min-w-[280px]">
+          <div className="p-2 border-b border-gray-100 bg-gray-50/90">
+            <div className="relative">
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                placeholder="Cari kode atau nama akun..."
+                className="w-full pl-8 pr-7 py-1.5 text-xs border border-gray-300 rounded-md bg-white focus:outline-none focus:border-blue-500"
+              />
+              <svg className="absolute left-2.5 top-2 text-gray-400" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2 top-1.5 text-gray-400 hover:text-gray-600 text-xs font-bold"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="max-h-60 overflow-y-auto divide-y divide-gray-100 text-xs">
+            {(!required || !value) && (
+              <div
+                onClick={() => handleSelect('')}
+                className={`p-2.5 hover:bg-gray-100 cursor-pointer font-medium text-gray-500 italic ${!value ? 'bg-blue-50/60 font-semibold' : ''}`}
+              >
+                {placeholder}
+              </div>
+            )}
+
+            {totalMatches === 0 ? (
+              <div className="p-4 text-center text-gray-400 font-medium">
+                🔍 Tidak ada akun ditemukan &quot;{searchTerm}&quot;
+              </div>
+            ) : (
+              COA_CATEGORIES_CONFIG.map(cat => {
+                const catAccounts = filteredAccounts.filter(a => a.type === cat.type)
+                if (catAccounts.length === 0) return null
+
+                return (
+                  <div key={cat.type} className="py-1">
+                    <div className="px-3 py-1 bg-gray-100/90 text-[11px] font-bold text-gray-700 flex items-center justify-between sticky top-0 backdrop-blur-xs">
+                      <span className="flex items-center gap-1.5">
+                        <span>{cat.icon}</span>
+                        <span>{cat.label}</span>
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono bg-gray-200 text-gray-700 font-semibold">
+                        {catAccounts.length}
+                      </span>
+                    </div>
+
+                    <div className="divide-y divide-gray-50">
+                      {catAccounts.map(acc => {
+                        const isSelected = acc.id === value
+                        return (
+                          <div
+                            key={acc.id}
+                            onClick={() => handleSelect(acc.id)}
+                            className={`px-3 py-2 flex items-center justify-between hover:bg-blue-50 cursor-pointer transition-colors ${isSelected ? 'bg-blue-50 font-bold text-blue-900' : 'text-gray-800'}`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-gray-900 font-bold min-w-[55px]">[{acc.code}]</span>
+                              <span>{acc.name}</span>
+                            </div>
+                            {isSelected && (
+                              <span className="text-blue-600 font-bold">✓</span>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function TransactionsPage() {
@@ -104,6 +312,113 @@ export default function TransactionsPage() {
   const [editDescription, setEditDescription] = useState<string>('')
   const [editJnlLines, setEditJnlLines] = useState<JournalLine[]>([])
   const [editSubmitting, setEditSubmitting] = useState<boolean>(false)
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState<number>(1)
+  const [itemsPerPage, setItemsPerPage] = useState<number>(15)
+
+  // Reset to page 1 on filter changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [datePreset, customStartDate, customEndDate, selectedAccountId, searchTerm, transactionTypeFilter])
+
+  // Prevent background body scroll when any modal is open
+  useEffect(() => {
+    if (isCreateModalOpen || editingTransaction || detailTransaction) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [isCreateModalOpen, editingTransaction, detailTransaction])
+
+  // Calculate paginated transactions
+  const totalItems = transactions.length
+  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage))
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = Math.min(totalItems, startIndex + itemsPerPage)
+  const paginatedTransactions = useMemo(() => {
+    return transactions.slice(startIndex, endIndex)
+  }, [transactions, startIndex, endIndex])
+
+  const renderPaginationControls = () => {
+    if (totalItems === 0) return null
+
+    return (
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 bg-gray-50/80 border-t border-[var(--su-border)] text-xs font-medium text-gray-700">
+        <div className="flex items-center gap-3">
+          <span>
+            Menampilkan <strong className="text-gray-900 font-mono">{startIndex + 1}</strong> - <strong className="text-gray-900 font-mono">{endIndex}</strong> dari <strong className="text-gray-900 font-mono">{totalItems}</strong> transaksi
+          </span>
+          <div className="flex items-center gap-1.5 ml-2">
+            <span className="text-gray-500">Tampilkan:</span>
+            <select
+              value={itemsPerPage}
+              onChange={e => {
+                setItemsPerPage(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="px-2 py-1 bg-white border border-gray-300 rounded-md text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            disabled={currentPage === 1}
+            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+            className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+          >
+            ‹ Sebelumnya
+          </button>
+
+          <div className="flex items-center gap-1">
+            {Array.from({ length: totalPages }, (_, i) => i + 1)
+              .filter(page => page === 1 || page === totalPages || Math.abs(page - currentPage) <= 1)
+              .reduce<(number | string)[]>((acc, page, idx, src) => {
+                if (idx > 0 && (page as number) - (src[idx - 1] as number) > 1) {
+                  acc.push('...')
+                }
+                acc.push(page)
+                return acc
+              }, [])
+              .map((item, idx) => (
+                typeof item === 'number' ? (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setCurrentPage(item)}
+                    className={`min-w-[30px] h-7 px-2 flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${currentPage === item ? 'bg-blue-600 text-white shadow-xs' : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-100'}`}
+                  >
+                    {item}
+                  </button>
+                ) : (
+                  <span key={idx} className="px-1 text-gray-400 font-bold">...</span>
+                )
+              ))}
+          </div>
+
+          <button
+            type="button"
+            disabled={currentPage === totalPages}
+            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+            className="px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-xs flex items-center gap-1 cursor-pointer"
+          >
+            Selanjutnya ›
+          </button>
+        </div>
+      </div>
+    )
+  }
 
 
   // Resolve Business & Accounts
@@ -816,31 +1131,6 @@ export default function TransactionsPage() {
         </div>
       )}
 
-      {/* ─── Summary Cards ───────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-4 bg-white rounded-xl border border-[var(--su-border)] shadow-xs">
-          <div className="text-xs font-medium text-[var(--su-text-muted)] uppercase tracking-wider mb-1">Total Pemasukan (Revenue)</div>
-          <div className="text-2xl font-bold text-green-600">{formatCurrencyIDR(summary.totalIncome)}</div>
-          <div className="text-xs text-[var(--su-text-faint)] mt-1">Dalam periode terpilih</div>
-        </div>
-        <div className="p-4 bg-white rounded-xl border border-[var(--su-border)] shadow-xs">
-          <div className="text-xs font-medium text-[var(--su-text-muted)] uppercase tracking-wider mb-1">Total Pengeluaran (Expense)</div>
-          <div className="text-2xl font-bold text-amber-600">{formatCurrencyIDR(summary.totalExpense)}</div>
-          <div className="text-xs text-[var(--su-text-faint)] mt-1">Dalam periode terpilih</div>
-        </div>
-        <div className="p-4 bg-white rounded-xl border border-[var(--su-border)] shadow-xs">
-          <div className="text-xs font-medium text-[var(--su-text-muted)] uppercase tracking-wider mb-1">Total Debet / Kredit Ledger</div>
-          <div className="text-2xl font-bold text-blue-600">{formatCurrencyIDR(summary.totalDebit)}</div>
-          <div className="text-xs text-[var(--su-text-faint)] mt-1">Mutasi seimbang double-entry</div>
-        </div>
-        <div className="p-4 bg-white rounded-xl border border-[var(--su-border)] shadow-xs">
-          <div className="text-xs font-medium text-[var(--su-text-muted)] uppercase tracking-wider mb-1">Status Keseimbangan Buku</div>
-          <div className="text-2xl font-bold text-emerald-600 flex items-center gap-2">
-            <span>100% Seimbang</span>
-          </div>
-          <div className="text-xs text-emerald-700 mt-1">Debet = Kredit (PSAK Compliant)</div>
-        </div>
-      </div>
 
       {/* ─── Filter Bar Controls ─────────────────────────────────────────── */}
       <div className="p-4 bg-white rounded-xl border border-[var(--su-border)] shadow-xs space-y-4">
@@ -886,18 +1176,14 @@ export default function TransactionsPage() {
             <svg className="absolute left-3 top-2.5 text-gray-400" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           </div>
 
-          <select
-            value={selectedAccountId}
-            onChange={e => setSelectedAccountId(e.target.value)}
-            className="px-3 py-1.5 text-sm border border-[var(--su-border)] rounded-lg focus:outline-none focus:border-[var(--su-primary)] bg-white"
-          >
-            <option value="">Semua Akun (COA)</option>
-            {accounts.map(acc => (
-              <option key={acc.id} value={acc.id}>
-                {acc.code} - {acc.name} ({acc.type})
-              </option>
-            ))}
-          </select>
+          <div className="w-64">
+            <SearchableAccountSelect
+              accounts={accounts}
+              value={selectedAccountId}
+              onChange={setSelectedAccountId}
+              placeholder="Semua Akun (COA)"
+            />
+          </div>
 
           <select
             value={transactionTypeFilter}
@@ -927,7 +1213,9 @@ export default function TransactionsPage() {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div>
+            {renderPaginationControls()}
+            <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-[var(--su-border)] text-[var(--su-text-muted)] text-xs uppercase font-semibold">
@@ -941,7 +1229,7 @@ export default function TransactionsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--su-border)]">
-                {transactions.map(tx => {
+                {paginatedTransactions.map(tx => {
                   const isVoid = tx.description?.includes('[VOID') || tx.description?.includes('REVERSAL')
                   const totalAmount = (tx.journal_lines || []).reduce((sum, l) => sum + (parseFloat(String(l.debit)) || 0), 0)
 
@@ -1048,6 +1336,8 @@ export default function TransactionsPage() {
 
             </table>
           </div>
+          {renderPaginationControls()}
+        </div>
         )}
       </div>
 
@@ -1137,19 +1427,14 @@ export default function TransactionsPage() {
                       <label className="block text-xs font-bold text-gray-700 mb-1.5">
                         {catType === 'transfer' ? 'Dari Akun (Kas Asal)' : 'Akun Kas / Bank (Pembayaran)'}
                       </label>
-                      <select
-                        required
+                      <SearchableAccountSelect
+                        accounts={accounts}
                         value={catPayAccount}
-                        onChange={e => setCatPayAccount(e.target.value)}
-                        className="w-full px-3.5 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white font-medium"
-                      >
-                        <option value="">-- Pilih Akun Kas/Bank --</option>
-                        {assetBankAccounts.map(acc => (
-                          <option key={acc.id} value={acc.id}>
-                            {acc.code} - {acc.name}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setCatPayAccount}
+                        filterTypes={['ASSET']}
+                        placeholder="-- Pilih Akun Kas/Bank --"
+                        required
+                      />
                     </div>
                   </div>
 
@@ -1158,19 +1443,14 @@ export default function TransactionsPage() {
                       <label className="block text-xs font-bold text-gray-700 mb-1.5">
                         {catType === 'income' ? 'Kategori Pendapatan (Revenue)' : catType === 'expense' ? 'Kategori Beban (Expense)' : 'Ke Akun (Kas Tujuan)'}
                       </label>
-                      <select
-                        required
+                      <SearchableAccountSelect
+                        accounts={accounts}
                         value={catCategoryAccount}
-                        onChange={e => setCatCategoryAccount(e.target.value)}
-                        className="w-full px-3.5 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white font-medium"
-                      >
-                        <option value="">-- Pilih Kategori Utama --</option>
-                        {(catType === 'income' ? revenueAccounts : catType === 'expense' ? expenseAccounts : assetBankAccounts).map(acc => (
-                          <option key={acc.id} value={acc.id}>
-                            {acc.code} - {acc.name}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setCatCategoryAccount}
+                        filterTypes={catType === 'income' ? ['REVENUE'] : catType === 'expense' ? ['EXPENSE'] : ['ASSET']}
+                        placeholder="-- Pilih Kategori Utama --"
+                        required
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-gray-700 mb-1.5">Nominal (Rp)</label>
@@ -1372,23 +1652,13 @@ export default function TransactionsPage() {
                       {jnlLines.map((line, idx) => (
                         <div key={idx} className="p-3 grid grid-cols-12 gap-3 items-center text-xs">
                           <div className="col-span-5">
-                            <select
-                              required
+                            <SearchableAccountSelect
+                              accounts={accounts}
                               value={line.account_id}
-                              onChange={e => updateJournalLine(idx, 'account_id', e.target.value)}
-                              className="w-full p-2.5 border border-gray-300 rounded-lg bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            >
-                              <option value="">-- Pilih Akun --</option>
-                              {['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'].map(type => (
-                                <optgroup key={type} label={type === 'ASSET' ? 'ASET (ASSETS)' : type === 'LIABILITY' ? 'KEWAJIBAN (LIABILITIES)' : type === 'EQUITY' ? 'EKUITAS (EQUITY)' : type === 'REVENUE' ? 'PENDAPATAN (REVENUE)' : 'BEBAN (EXPENSE)'}>
-                                  {accounts.filter(a => a.type === type).map(acc => (
-                                    <option key={acc.id} value={acc.id}>
-                                      {acc.code} - {acc.name}
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              ))}
-                            </select>
+                              onChange={val => updateJournalLine(idx, 'account_id', val)}
+                              placeholder="-- Pilih Akun --"
+                              required
+                            />
                           </div>
                           <div className="col-span-3">
                             <input
@@ -1540,23 +1810,13 @@ export default function TransactionsPage() {
                     {editJnlLines.map((line, idx) => (
                       <div key={idx} className="p-3 grid grid-cols-12 gap-3 items-center text-xs">
                         <div className="col-span-5">
-                          <select
-                            required
+                          <SearchableAccountSelect
+                            accounts={accounts}
                             value={line.account_id}
-                            onChange={e => updateEditJournalLine(idx, 'account_id', e.target.value)}
-                            className="w-full p-2.5 border border-gray-300 rounded-lg bg-white font-medium focus:outline-none focus:ring-2 focus:ring-amber-500"
-                          >
-                            <option value="">-- Pilih Akun --</option>
-                            {['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'].map(type => (
-                              <optgroup key={type} label={type === 'ASSET' ? 'ASET (ASSETS)' : type === 'LIABILITY' ? 'KEWAJIBAN (LIABILITIES)' : type === 'EQUITY' ? 'EKUITAS (EQUITY)' : type === 'REVENUE' ? 'PENDAPATAN (REVENUE)' : 'BEBAN (EXPENSE)'}>
-                                {accounts.filter(a => a.type === type).map(acc => (
-                                  <option key={acc.id} value={acc.id}>
-                                    {acc.code} - {acc.name}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            ))}
-                          </select>
+                            onChange={val => updateEditJournalLine(idx, 'account_id', val)}
+                            placeholder="-- Pilih Akun --"
+                            required
+                          />
                         </div>
                         <div className="col-span-3">
                           <input

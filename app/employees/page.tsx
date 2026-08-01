@@ -88,6 +88,7 @@ export default function EmployeesPage() {
   const [salStatus, setSalStatus] = useState<'paid' | 'pending' | 'partial' | 'cancelled'>('paid')
   const [salAmountPaid, setSalAmountPaid] = useState('')
   const [salAccountId, setSalAccountId] = useState('')
+  const [salPaymentDate, setSalPaymentDate] = useState(() => new Date().toISOString().split('T')[0])
   const [salSubmitting, setSalSubmitting] = useState(false)
 
   // Quick Pay States
@@ -95,6 +96,8 @@ export default function EmployeesPage() {
   const [quickPayRecord, setQuickPayRecord] = useState<SalaryRecord | null>(null)
   const [quickPayAmount, setQuickPayAmount] = useState('')
   const [quickPayAccountId, setQuickPayAccountId] = useState('')
+  const [quickPayDate, setQuickPayDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [quickPayNotes, setQuickPayNotes] = useState('Cicilan/Pelunasan Gaji')
   const [quickPaySubmitting, setQuickPaySubmitting] = useState(false)
 
   // Delete Employee States
@@ -360,6 +363,7 @@ export default function EmployeesPage() {
     setSalAmountPaid('')
     setSalStatus('paid')
     setSalAccountId(paymentAccounts[0]?.id || '')
+    setSalPaymentDate(new Date().toISOString().split('T')[0])
     setIsSalaryModalOpen(true)
   }
 
@@ -371,6 +375,7 @@ export default function EmployeesPage() {
     setSalStatus(sal.payment_status)
     setSalAmountPaid(String(sal.amount_paid || ''))
     setSalAccountId(sal.payment_account_id || paymentAccounts[0]?.id || '')
+    setSalPaymentDate(sal.paid_at ? sal.paid_at.split('T')[0] : new Date().toISOString().split('T')[0])
     setIsSalaryModalOpen(true)
   }
 
@@ -419,7 +424,8 @@ export default function EmployeesPage() {
           period: salPeriod,
           payment_status: salStatus,
           payment_account_id: (salStatus === 'paid' || salStatus === 'partial') ? salAccountId : null,
-          amount_paid: numAmountPaid
+          amount_paid: numAmountPaid,
+          payment_date: (salStatus === 'paid' || salStatus === 'partial') ? salPaymentDate : null
         })
       })
 
@@ -443,12 +449,14 @@ export default function EmployeesPage() {
     setQuickPayRecord(record)
     setQuickPayAmount(String(record.outstanding_amount ?? record.amount))
     setQuickPayAccountId(paymentAccounts[0]?.id || '')
+    setQuickPayDate(new Date().toISOString().split('T')[0])
+    setQuickPayNotes('Cicilan/Pelunasan Gaji')
     setIsQuickPayModalOpen(true)
   }
 
   const handleSaveQuickPay = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!quickPayRecord || !quickPayAccountId) return
+    if (!quickPayRecord || !quickPayAccountId || !quickPayDate) return
 
     const numPayAmount = parseFloat(quickPayAmount)
     const maxPayable = quickPayRecord.outstanding_amount ?? quickPayRecord.amount
@@ -466,8 +474,8 @@ export default function EmployeesPage() {
         body: JSON.stringify({
           amount: numPayAmount,
           payment_method_account_id: quickPayAccountId,
-          date: new Date().toISOString().split('T')[0],
-          notes: 'Cicilan/Pelunasan Gaji'
+          date: quickPayDate,
+          notes: quickPayNotes || 'Cicilan/Pelunasan Gaji'
         })
       })
 
@@ -1181,23 +1189,36 @@ export default function EmployeesPage() {
               )}
 
               {(salStatus === 'paid' || salStatus === 'partial') && (
-                <div className="space-y-1.5 animate-in slide-in-from-top-2 duration-150">
-                  <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-400">Sumber Dana (Kas/Bank) *</label>
-                  <select
-                    required
-                    className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white outline-none"
-                    value={salAccountId}
-                    onChange={e => setSalAccountId(e.target.value)}
-                  >
-                    <option value="">-- Pilih Rekening Pembayaran --</option>
-                    {paymentAccounts.map(acc => (
-                      <option key={acc.id} value={acc.id}>🏦 {acc.name} ({acc.code})</option>
-                    ))}
-                  </select>
-                  <p className="text-[10px] text-gray-400 font-medium italic mt-1.5">
-                    * Transaksi jurnal penyeimbang (debit beban gaji, kredit kas/bank) akan dibuat/diperbarui otomatis.
-                  </p>
-                </div>
+                <>
+                  <div className="space-y-1.5 animate-in slide-in-from-top-2 duration-150">
+                    <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-400">Tanggal Pembayaran *</label>
+                    <input 
+                      type="date"
+                      required
+                      className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white outline-none"
+                      value={salPaymentDate}
+                      onChange={e => setSalPaymentDate(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5 animate-in slide-in-from-top-2 duration-150">
+                    <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-400">Sumber Dana (Kas/Bank) *</label>
+                    <select
+                      required
+                      className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white outline-none"
+                      value={salAccountId}
+                      onChange={e => setSalAccountId(e.target.value)}
+                    >
+                      <option value="">-- Pilih Rekening Pembayaran --</option>
+                      {paymentAccounts.map(acc => (
+                        <option key={acc.id} value={acc.id}>🏦 {acc.name} ({acc.code})</option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-gray-400 font-medium italic mt-1.5">
+                      * Transaksi jurnal penyeimbang (debit beban gaji, kredit kas/bank) akan dibuat/diperbarui otomatis.
+                    </p>
+                  </div>
+                </>
               )}
 
               {salStatus === 'pending' && (
@@ -1271,6 +1292,17 @@ export default function EmployeesPage() {
               </div>
 
               <div className="space-y-1.5">
+                <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-400">Tanggal Pembayaran *</label>
+                <input 
+                  type="date"
+                  required
+                  className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white outline-none"
+                  value={quickPayDate}
+                  onChange={e => setQuickPayDate(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-1.5">
                 <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-400">Nominal yang Dibayar *</label>
                 <input 
                   type="number"
@@ -1295,6 +1327,17 @@ export default function EmployeesPage() {
                     <option key={acc.id} value={acc.id}>🏦 {acc.name} ({acc.code})</option>
                   ))}
                 </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-extrabold uppercase tracking-wider text-gray-400">Catatan / Keterangan Pembayaran</label>
+                <input 
+                  type="text"
+                  placeholder="Contoh: Cicilan gaji ke-1"
+                  className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white outline-none"
+                  value={quickPayNotes}
+                  onChange={e => setQuickPayNotes(e.target.value)}
+                />
                 <p className="text-[10px] text-gray-400 font-medium italic mt-1.5">
                   * Transaksi jurnal penyeimbang (debit hutang gaji, kredit kas/bank) akan dibuat otomatis.
                 </p>
