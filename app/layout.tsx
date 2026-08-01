@@ -140,6 +140,7 @@ const menuItems: MenuItem[] = [
     name: 'Products', href: '#', icon: Icons.products,
     children: [
       { name: 'Daftar Produk', href: '/products' },
+      { name: 'Pembelian',     href: '/purchases' },
       { name: 'Stock Opname',  href: '/stock-opname' },
     ],
   },
@@ -147,7 +148,6 @@ const menuItems: MenuItem[] = [
     name: 'Pengeluaran', href: '#', icon: Icons.expenses,
     children: [
       { name: 'Daftar Pengeluaran', href: '/expenses' },
-      { name: 'Pembelian (Bills)',  href: '/purchases' },
       { name: 'Pemasok (Suppliers)', href: '/suppliers' },
     ],
   },
@@ -183,6 +183,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const [currentUserRole, setCurrentUserRole] = useState<string | null>(null)
   const [currentUserPermissions, setCurrentUserPermissions] = useState<string[]>([])
   const [bizLoading, setBizLoading] = useState(true)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
 
   useEffect(() => {
     const updated: Record<string, boolean> = {}
@@ -204,6 +205,33 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const loadedUserIdRef = useRef<string | null>(null)
 
   const loadProfileAndBusinesses = useCallback(async (userId: string, forceRefresh = false) => {
+    // Check if the active user changed from the previous session
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const lastUserId = localStorage.getItem('su_last_logged_in_user_id')
+        if (lastUserId && lastUserId !== userId) {
+          console.log('[Layout] Active user changed from', lastUserId, 'to', userId, '- clearing local storage cache')
+          const keysToRemove: string[] = []
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i)
+            if (
+              key && (
+                key.startsWith('su_') ||
+                key.startsWith('cache_') ||
+                key.startsWith('shapeup_')
+              )
+            ) {
+              keysToRemove.push(key)
+            }
+          }
+          keysToRemove.forEach(k => localStorage.removeItem(k))
+        }
+        localStorage.setItem('su_last_logged_in_user_id', userId)
+      }
+    } catch (e) {
+      console.error('[Layout] Error checking user localStorage cache:', e)
+    }
+
     if (!forceRefresh && loadedUserIdRef.current === userId) {
       console.log('[Layout] Profile already loaded for userId:', userId, '- skipping DB fetch')
       setBizLoading(false)
@@ -308,7 +336,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       (event, session) => {
         console.log('[Layout] onAuthStateChange event:', event, 'user:', session?.user?.id)
         if (session?.user?.id) {
-          const force = event === 'SIGNED_IN' || event === 'USER_UPDATED'
+          const force = event === 'SIGNED_IN' || event === 'USER_UPDATED' || session.user.id !== loadedUserIdRef.current
           loadProfileAndBusinesses(session.user.id, force)
         } else if (event === 'SIGNED_OUT' || (event === 'INITIAL_SESSION' && !session)) {
           loadedUserIdRef.current = null
@@ -368,7 +396,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       perms.includes('view_financials_no_salary') ||
       perms.includes('input_journal_expenses') ||
       perms.includes('manage_invoices') ||
-      perms.includes('manage_bills')
+      perms.includes('manage_bills') ||
+      perms.includes('manage_products') ||
+      perms.includes('manage_purchases')
     ) {
       const overviewItem = menuItems.find(m => m.name === 'Overview')
       if (overviewItem) allowed.push(overviewItem)
@@ -395,20 +425,70 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // 4. Products
     if (
       perms.includes('view_financials_no_salary') ||
-      perms.includes('manage_invoices')
+      perms.includes('manage_invoices') ||
+      perms.includes('manage_bills') ||
+      perms.includes('manage_products') ||
+      perms.includes('manage_purchases')
     ) {
       const productsItem = menuItems.find(m => m.name === 'Products')
-      if (productsItem) allowed.push(productsItem)
+      if (productsItem) {
+        // Dynamically filter children submenus based on specific permissions
+        const filteredChildren = productsItem.children?.filter(child => {
+          if (child.href === '/products' || child.href === '/stock-opname') {
+            return (
+              perms.includes('view_financials_no_salary') ||
+              perms.includes('manage_invoices') ||
+              perms.includes('manage_products')
+            )
+          }
+          if (child.href === '/purchases') {
+            return (
+              perms.includes('view_financials_no_salary') ||
+              perms.includes('manage_bills') ||
+              perms.includes('manage_purchases')
+            )
+          }
+          return true
+        })
+
+        if (filteredChildren && filteredChildren.length > 0) {
+          allowed.push({ ...productsItem, children: filteredChildren })
+        }
+      }
     }
 
     // 5. Pengeluaran (Expenses, Purchases, Suppliers)
     if (
       perms.includes('view_financials_no_salary') ||
       perms.includes('input_journal_expenses') ||
-      perms.includes('manage_bills')
+      perms.includes('manage_bills') ||
+      perms.includes('manage_purchases')
     ) {
       const expensesItem = menuItems.find(m => m.name === 'Pengeluaran')
-      if (expensesItem) allowed.push(expensesItem)
+      if (expensesItem) {
+        const filteredChildren = expensesItem.children?.filter(child => {
+          if (child.href === '/expenses') {
+            return (
+              perms.includes('view_financials_no_salary') ||
+              perms.includes('input_journal_expenses') ||
+              perms.includes('manage_bills')
+            )
+          }
+          if (child.href === '/suppliers') {
+            return (
+              perms.includes('view_financials_no_salary') ||
+              perms.includes('input_journal_expenses') ||
+              perms.includes('manage_bills') ||
+              perms.includes('manage_purchases')
+            )
+          }
+          return true
+        })
+
+        if (filteredChildren && filteredChildren.length > 0) {
+          allowed.push({ ...expensesItem, children: filteredChildren })
+        }
+      }
     }
 
     // 6. Akuntansi (Cash Flow, P&L, Balance Sheet)
@@ -433,7 +513,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   // Route protection path check
   const isAllowedPath = useMemo(() => {
-    if (noSidebar || bizLoading) return true
+    if (noSidebar || bizLoading || isLoggingOut) return true
     
     const role = currentUserRole
     const perms = currentUserPermissions
@@ -458,9 +538,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
     if (
       pathname.startsWith('/orders') ||
-      pathname.startsWith('/customers') ||
-      pathname.startsWith('/products') ||
-      pathname.startsWith('/stock-opname')
+      pathname.startsWith('/customers')
     ) {
       return (
         perms.includes('view_financials_no_salary') ||
@@ -469,10 +547,34 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     }
 
     if (
-      pathname.startsWith('/expenses') ||
-      pathname.startsWith('/purchases') ||
-      pathname.startsWith('/suppliers')
+      pathname.startsWith('/products') ||
+      pathname.startsWith('/stock-opname')
     ) {
+      return (
+        perms.includes('view_financials_no_salary') ||
+        perms.includes('manage_invoices') ||
+        perms.includes('manage_products')
+      )
+    }
+
+    if (pathname.startsWith('/purchases')) {
+      return (
+        perms.includes('view_financials_no_salary') ||
+        perms.includes('manage_bills') ||
+        perms.includes('manage_purchases')
+      )
+    }
+
+    if (pathname.startsWith('/suppliers')) {
+      return (
+        perms.includes('view_financials_no_salary') ||
+        perms.includes('input_journal_expenses') ||
+        perms.includes('manage_bills') ||
+        perms.includes('manage_purchases')
+      )
+    }
+
+    if (pathname.startsWith('/expenses')) {
       return (
         perms.includes('view_financials_no_salary') ||
         perms.includes('input_journal_expenses') ||
@@ -485,12 +587,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         perms.includes('view_financials_no_salary') ||
         perms.includes('input_journal_expenses') ||
         perms.includes('manage_invoices') ||
-        perms.includes('manage_bills')
+        perms.includes('manage_bills') ||
+        perms.includes('manage_products') ||
+        perms.includes('manage_purchases')
       )
     }
 
     return true
-  }, [pathname, currentUserRole, currentUserPermissions, noSidebar, bizLoading])
+  }, [pathname, currentUserRole, currentUserPermissions, noSidebar, bizLoading, isLoggingOut])
 
   const accessDeniedScreen = (
     <div className="min-h-[70vh] bg-[#f4f1ea] p-4 md:p-8 text-[#2e2e2e] flex items-center justify-center">
@@ -550,10 +654,44 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   }
 
   const handleLogout = async () => {
+    setIsLoggingOut(true)
+    try {
+      await supabase.auth.signOut()
+    } catch (e) {
+      console.error('[Layout] Client signOut error:', e)
+    }
+
+    loadedUserIdRef.current = null
     setUserProfile(null)
     setBusinesses([])
     setActiveBusiness(null)
+    setCurrentUserRole(null)
+    setCurrentUserPermissions([])
+    setBizLoading(false)
+
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const keysToRemove: string[] = []
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i)
+          if (
+            key && (
+              key.startsWith('su_') ||
+              key.startsWith('cache_') ||
+              key.startsWith('shapeup_')
+            )
+          ) {
+            keysToRemove.push(key)
+          }
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k))
+      }
+    } catch (e) {
+      console.error('[Layout] LocalStorage clear error:', e)
+    }
+
     await logoutAction()
+    window.location.href = '/login'
   }
 
   if (noSidebar) {

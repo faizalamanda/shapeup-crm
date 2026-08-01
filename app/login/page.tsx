@@ -31,6 +31,8 @@ function LoginForm() {
     if (res?.error) {
       setErrorMsg(res.error)
       setLoading(false)
+    } else {
+      window.location.href = '/dashboard'
     }
   }
 

@@ -503,7 +503,7 @@ export default function PurchasesPage() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[9px] font-black tracking-widest text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 uppercase">
-              Pembelian & Pengeluaran
+              Produk & Inventori
             </span>
             {activeBizName && (
               <span className="text-[9px] font-black tracking-widest text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 uppercase">
@@ -512,7 +512,7 @@ export default function PurchasesPage() {
             )}
           </div>
           <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight leading-none uppercase">
-            Pembelian (Bills)
+            Pembelian
           </h1>
           <p className="text-sm text-gray-500 mt-1.5 font-medium">
             Catat tagihan pembelian barang/jasa dari pemasok, perbarui persediaan produk (WAC), serta cicil pembayaran hutang.

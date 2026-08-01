@@ -21,7 +21,7 @@ export async function loginAction(formData: FormData) {
     return { error: error.message }
   }
 
-  redirect('/dashboard')
+  return { success: true }
 }
 
 export async function registerAction(formData: FormData) {
@@ -55,5 +55,5 @@ export async function registerAction(formData: FormData) {
 export async function logoutAction() {
   const supabase = await createClient()
   await supabase.auth.signOut()
-  redirect('/login')
+  return { success: true }
 }
