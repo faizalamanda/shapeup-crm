@@ -35,12 +35,6 @@ export async function middleware(request: NextRequest) {
       redirectUrl.searchParams.set('next', pathname)
       return NextResponse.redirect(redirectUrl)
     }
-    if (isRoot) {
-      const redirectUrl = request.nextUrl.clone()
-      redirectUrl.pathname = '/login'
-      redirectUrl.search = ''
-      return NextResponse.redirect(redirectUrl)
-    }
     return NextResponse.next()
   }
 
@@ -114,14 +108,6 @@ export async function middleware(request: NextRequest) {
   if (user && isAuthRoute) {
     const redirectUrl = request.nextUrl.clone()
     redirectUrl.pathname = '/dashboard'
-    redirectUrl.search = ''
-    return NextResponse.redirect(redirectUrl)
-  }
-
-  // Root path → redirect based on auth state
-  if (isRoot) {
-    const redirectUrl = request.nextUrl.clone()
-    redirectUrl.pathname = (user || hasAuthCookie) ? '/dashboard' : '/login'
     redirectUrl.search = ''
     return NextResponse.redirect(redirectUrl)
   }

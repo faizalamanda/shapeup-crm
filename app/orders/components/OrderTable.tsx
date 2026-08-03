@@ -1,9 +1,7 @@
 "use client"
-import { useRef, useState, useEffect, useCallback, useMemo } from 'react'
+import { useRef, useState, useEffect } from 'react'
 
 const ROW_HEIGHT    = 68   // px per row
-const OVERSCAN      = 8    // extra rows to render above/below viewport
-const CONTAINER_H   = 600  // visible table height in px
 
 const formatIDR = (val: any) => {
   const num = Number(val) || 0
@@ -13,7 +11,7 @@ const formatIDR = (val: any) => {
 function OrderRow({ o, onSelect, style }: { o: any; onSelect: (o: any) => void; style: React.CSSProperties }) {
   const [hovered, setHovered] = useState(false)
 
-  // Determinisitc status badge colors
+  // Status badge colors
   const statusColor = (status: string) => {
     const s = (status || '').toLowerCase()
     if (['completed', 'selesai'].includes(s)) {
@@ -53,7 +51,7 @@ function OrderRow({ o, onSelect, style }: { o: any; onSelect: (o: any) => void; 
     >
       {/* Order Number */}
       <div style={{ padding: '0 8px 0 16px', fontWeight: 800, color: 'var(--su-text-muted)', fontSize: '11px' }}>
-        #{o.order_number || o.id.toString().substring(0, 6)}
+        #{o.order_number || (o.id ? o.id.toString().substring(0, 6) : '—')}
       </div>
 
       {/* Customer Name */}

@@ -1,4 +1,5 @@
-import { useState } from 'react'
+"use client"
+import { useState, useEffect, useRef } from 'react'
 
 export interface OrderFilterRule {
   id: string
@@ -9,606 +10,1026 @@ export interface OrderFilterRule {
 
 interface FilterBarProps {
   searchQuery: string
-  setSearchQuery: (query: string) => void
   rules: OrderFilterRule[]
-  setRules: (rules: OrderFilterRule[]) => void
+  onApplyFilters: (query: string, rules: OrderFilterRule[]) => void
   showCharts: boolean
   setShowCharts: (show: boolean) => void
   availableStatuses: string[]
   availablePaymentMethods: string[]
   availableOrderSources: string[]
   availableProducts: string[]
-}
-
-const FIELD_OPTIONS = [
-  { value: 'grand_total',     label: 'Total Belanja (Rp)',   type: 'number' },
-  { value: 'total_qty',       label: 'Jumlah Item (Qty)',    type: 'number' },
-  { value: 'status',          label: 'Status Pesanan',       type: 'select-status' },
-  { value: 'payment_method',  label: 'Metode Pembayaran',    type: 'select-payment' },
-  { value: 'order_date',      label: 'Tanggal Pesanan',      type: 'date'   },
-  { value: 'product_name',    label: 'Nama / Segmen Produk', type: 'select-product' },
-  { value: 'source_platform', label: 'Sumber Order',         type: 'select-source' },
-]
-
-const OPERATOR_OPTIONS: Record<string, { value: string; label: string }[]> = {
-  number: [
-    { value: 'greater_or_equal', label: '>= Lebih dari atau sama dengan' },
-    { value: 'less_or_equal',    label: '<= Kurang dari atau sama dengan' },
-    { value: 'equal',            label: '= Sama dengan' },
-  ],
-  date: [
-    { value: 'between', label: '↔️ Rentang tanggal (s/d)' },
-    { value: 'equal',   label: '= Pada tanggal' },
-    { value: 'after',   label: '>= Pada / setelah tanggal' },
-    { value: 'before',  label: '<= Pada / sebelum tanggal' },
-  ],
-  'select-status': [
-    { value: 'is',     label: 'Adalah salah satu dari' },
-    { value: 'is_not', label: 'Bukan salah satu dari' },
-  ],
-  'select-payment': [
-    { value: 'is',     label: 'Adalah salah satu dari' },
-    { value: 'is_not', label: 'Bukan salah satu dari' },
-  ],
-  'select-product': [
-    { value: 'contains', label: 'Mengandung nama / kata' },
-    { value: 'is',       label: 'Sama persis dengan' },
-    { value: 'is_not',   label: 'Tidak mengandung' },
-  ],
-  'select-source': [
-    { value: 'is',     label: 'Adalah salah satu dari' },
-    { value: 'is_not', label: 'Bukan salah satu dari' },
-  ],
-}
-
-const PRESETS = [
-  { key: 'all',        label: 'Semua',                     emoji: '📦' },
-  { key: 'this_month', label: 'Bulan Ini',                 emoji: '📅' },
-  { key: 'last_month', label: 'Bulan Lalu',                emoji: '⏪' },
-  { key: 'high_val',   label: 'High Value ≥500k',          emoji: '💰' },
-  { key: 'cod',        label: 'Bayar COD',                 emoji: '🚚' },
-  { key: 'completed',  label: 'Selesai / Completed',       emoji: '✅' },
-  { key: 'pending',    label: 'Pending / Processing',      emoji: '⏳' },
-  { key: 'woocommerce',label: 'WooCommerce',               emoji: '🌐' },
-  { key: 'pos',        label: 'POS / Toko',                emoji: '🏪' },
-]
-
-function getDatePresetRange(preset: 'today' | 'this_month' | 'last_month' | 'last_7' | 'last_30' | 'this_year'): { op: string; val: string } {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = now.getMonth()
-
-  const formatDate = (d: Date) => {
-    const y = d.getFullYear()
-    const m = String(d.getMonth() + 1).padStart(2, '0')
-    const day = String(d.getDate()).padStart(2, '0')
-    return `${y}-${m}-${day}`
-  }
-
-  if (preset === 'today') {
-    const todayStr = formatDate(now)
-    return { op: 'equal', val: todayStr }
-  }
-
-  if (preset === 'this_month') {
-    const start = new Date(year, month, 1)
-    const end = new Date(year, month + 1, 0)
-    return { op: 'between', val: `${formatDate(start)},${formatDate(end)}` }
-  }
-
-  if (preset === 'last_month') {
-    const start = new Date(year, month - 1, 1)
-    const end = new Date(year, month, 0)
-    return { op: 'between', val: `${formatDate(start)},${formatDate(end)}` }
-  }
-
-  if (preset === 'last_7') {
-    const start = new Date(now)
-    start.setDate(now.getDate() - 6)
-    return { op: 'between', val: `${formatDate(start)},${formatDate(now)}` }
-  }
-
-  if (preset === 'last_30') {
-    const start = new Date(now)
-    start.setDate(now.getDate() - 29)
-    return { op: 'between', val: `${formatDate(start)},${formatDate(now)}` }
-  }
-
-  if (preset === 'this_year') {
-    const start = new Date(year, 0, 1)
-    const end = new Date(year, 11, 31)
-    return { op: 'between', val: `${formatDate(start)},${formatDate(end)}` }
-  }
-
-  return { op: 'between', val: '' }
-}
-
-const btnBase: React.CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', gap: '5px',
-  padding: '6px 12px', borderRadius: '7px', cursor: 'pointer',
-  fontSize: '11px', fontWeight: 700, letterSpacing: '0.04em',
-  textTransform: 'uppercase', transition: 'all 0.15s',
-  border: '1px solid var(--su-border)', background: 'white',
-  color: 'var(--su-text-muted)',
-}
-
-export function FilterBar({
-  searchQuery, setSearchQuery,
-  rules, setRules,
-  showCharts, setShowCharts,
-  availableStatuses,
-  availablePaymentMethods,
-  availableOrderSources,
-  availableProducts,
-}: FilterBarProps) {
-  const [showBuilder, setShowBuilder] = useState(false)
-
-  const applyPreset = (key: string) => {
-    if (key === 'all') return setRules([])
-    if (key === 'this_month') {
-      const p = getDatePresetRange('this_month')
-      return setRules([{ id: uid(), field: 'order_date', operator: p.op as any, value: p.val }])
-    }
-    if (key === 'last_month') {
-      const p = getDatePresetRange('last_month')
-      return setRules([{ id: uid(), field: 'order_date', operator: p.op as any, value: p.val }])
-    }
-    if (key === 'high_val') return setRules([{ id: uid(), field: 'grand_total', operator: 'greater_or_equal', value: '500000' }])
-    if (key === 'cod') return setRules([{ id: uid(), field: 'payment_method', operator: 'is', value: 'cod' }])
-    if (key === 'completed') return setRules([{ id: uid(), field: 'status', operator: 'is', value: 'completed' }])
-    if (key === 'pending') return setRules([{ id: uid(), field: 'status', operator: 'is', value: 'pending,processing' }])
-    if (key === 'woocommerce') return setRules([{ id: uid(), field: 'source_platform', operator: 'is', value: 'WooCommerce' }])
-    if (key === 'pos') return setRules([{ id: uid(), field: 'source_platform', operator: 'is', value: 'POS' }])
-  }
-
-  const addRule = () => {
-    setRules([...rules, { id: uid(), field: 'grand_total', operator: 'greater_or_equal', value: '' }])
-    setShowBuilder(true)
-  }
-
-  const removeRule = (id: string) => setRules(rules.filter(r => r.id !== id))
-
-  const updateRule = (id: string, updates: Partial<OrderFilterRule>) => {
-    setRules(rules.map(r => {
-      if (r.id !== id) return r
-      const next = { ...r, ...updates }
-      if (updates.field) {
-        const fieldOpt = FIELD_OPTIONS.find(f => f.value === updates.field)
-        const ft = fieldOpt?.type || 'number'
-        next.operator = OPERATOR_OPTIONS[ft][0].value as any
-        
-        if (ft === 'select-status') {
-          next.value = availableStatuses[0] || 'completed'
-        } else if (ft === 'select-payment') {
-          next.value = availablePaymentMethods[0] || 'cod'
-        } else if (ft === 'select-source') {
-          next.value = availableOrderSources[0] || 'WooCommerce'
-        } else if (ft === 'date') {
-          const res = getDatePresetRange('this_month')
-          next.operator = res.op as any
-          next.value = res.val
-        } else {
-          next.value = ''
-        }
-      }
-      return next
-    }))
-  }
-
-  return (
-    <div style={{ marginBottom: '24px' }}>
-
-      {/* ── Row 1: Search + Toggles ─────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
-
-        {/* Search */}
-        <div style={{ position: 'relative', flex: '1 1 220px' }}>
-          <input
-            type="text"
-            placeholder="Cari pelanggan, nomor HP, nomor order (#)..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            style={{
-              width: '100%', height: '38px',
-              paddingLeft: '36px', paddingRight: '12px',
-              background: 'white', border: '1px solid var(--su-border)',
-              borderRadius: '8px', outline: 'none',
-              fontSize: '13px', fontWeight: 400, color: 'var(--su-text)',
-              transition: 'border-color 0.15s',
-              boxSizing: 'border-box',
-            }}
-            onFocus={e => { (e.currentTarget).style.borderColor = 'var(--su-primary)' }}
-            onBlur={e => { (e.currentTarget).style.borderColor = 'var(--su-border)' }}
-          />
-          <svg
-            style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--su-text-faint)' }}
-            width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-            strokeLinecap="round" strokeLinejoin="round"
-          >
-            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-        </div>
-
-        {/* Segment builder toggle */}
-        <button
-          onClick={() => setShowBuilder(!showBuilder)}
-          style={{
-            ...btnBase,
-            background: showBuilder || rules.length > 0 ? 'var(--su-primary-light)' : 'white',
-            borderColor: showBuilder || rules.length > 0 ? 'rgba(37,99,235,0.25)' : 'var(--su-border)',
-            color: showBuilder || rules.length > 0 ? 'var(--su-primary)' : 'var(--su-text-muted)',
-          }}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/>
-          </svg>
-          Segmentasi {rules.length > 0 && <span style={{ background: 'var(--su-primary)', color: 'white', borderRadius: '99px', padding: '0 5px', fontSize: '9px' }}>{rules.length}</span>}
-        </button>
-
-        {/* Charts toggle */}
-        <button
-          onClick={() => setShowCharts(!showCharts)}
-          style={{
-            ...btnBase,
-            background: showCharts ? 'var(--su-accent-light)' : 'white',
-            borderColor: showCharts ? 'rgba(245,158,11,0.3)' : 'var(--su-border)',
-            color: showCharts ? 'var(--su-accent-dark)' : 'var(--su-text-muted)',
-          }}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
-          </svg>
-          {showCharts ? 'Sembunyikan Grafik' : 'Lihat Grafik'}
-        </button>
-      </div>
-
-      {/* ── Row 2: Preset Chips ──────────────────────────────────────────── */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
-        <span style={{ fontSize: '9px', fontWeight: 800, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--su-text-faint)', marginRight: '4px' }}>
-          Preset:
-        </span>
-        {PRESETS.map(p => {
-          return (
-            <button
-              key={p.key}
-              onClick={() => applyPreset(p.key)}
-              style={{
-                ...btnBase,
-                padding: '5px 10px',
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--su-bg)'; (e.currentTarget as HTMLElement).style.color = 'var(--su-text)' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'white'; (e.currentTarget as HTMLElement).style.color = 'var(--su-text-muted)' }}
-            >
-              {p.emoji} {p.label}
-            </button>
-          )
-        })}
-      </div>
-
-      {/* ── Segment Builder Panel ────────────────────────────────────────── */}
-      {(showBuilder || rules.length > 0) && (
-        <div style={{
-          marginTop: '12px', padding: '16px 20px',
-          background: 'white', border: '1px solid var(--su-border)',
-          borderRadius: '10px', boxShadow: 'var(--su-shadow-sm)',
-        }} className="su-fade-in">
-
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <div>
-              <h3 style={{ margin: 0, fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--su-text)' }}>
-                Order Segment Builder
-              </h3>
-              <p style={{ margin: '2px 0 0', fontSize: '10px', color: 'var(--su-text-faint)' }}>
-                Tampilkan pesanan yang memenuhi seluruh kriteria
-              </p>
-            </div>
-            {rules.length > 0 && (
-              <button
-                onClick={() => setRules([])}
-                style={{ fontSize: '10px', fontWeight: 700, color: 'var(--su-danger)', background: 'none', border: 'none', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.08em' }}
-              >
-                Hapus Semua
-              </button>
-            )}
-          </div>
-
-          {rules.length === 0 ? (
-            <p style={{ textAlign: 'center', color: 'var(--su-text-faint)', fontSize: '12px', fontStyle: 'italic', padding: '12px 0' }}>
-              Belum ada kriteria. Klik "Tambah Kriteria" untuk mulai menyaring pesanan.
-            </p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {rules.map(rule => {
-                const fieldOpt = FIELD_OPTIONS.find(f => f.value === rule.field)
-                const ft = fieldOpt?.type || 'number'
-                const operators = OPERATOR_OPTIONS[ft] || []
-                
-                const selectStyle: React.CSSProperties = {
-                  padding: '7px 10px', borderRadius: '7px',
-                  border: '1px solid var(--su-border)', background: 'white',
-                  fontSize: '12px', color: 'var(--su-text)', outline: 'none',
-                  fontWeight: 500,
-                }
-
-                const currentVals = rule.value ? rule.value.split(',').map(s => s.trim()) : []
-
-                const togglePill = (valToToggle: string) => {
-                  let next: string[]
-                  const exists = currentVals.some(v => v.toLowerCase() === valToToggle.toLowerCase())
-                  if (exists) {
-                    next = currentVals.filter(v => v.toLowerCase() !== valToToggle.toLowerCase())
-                  } else {
-                    next = [...currentVals, valToToggle]
-                  }
-                  updateRule(rule.id, { value: next.join(',') })
-                }
-                
-                return (
-                  <div key={rule.id} style={{
-                    display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'flex-start',
-                    background: 'var(--su-bg)', padding: '10px 12px', borderRadius: '8px',
-                    border: '1px solid var(--su-border)',
-                  }}>
-                    <select value={rule.field} onChange={e => updateRule(rule.id, { field: e.target.value as any })} style={{ ...selectStyle, minWidth: '180px' }}>
-                      {FIELD_OPTIONS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-                    </select>
-                    
-                    <select value={rule.operator} onChange={e => updateRule(rule.id, { operator: e.target.value as any })} style={{ ...selectStyle, minWidth: '190px' }}>
-                      {operators.map(op => <option key={op.value} value={op.value}>{op.label}</option>)}
-                    </select>
-                    
-                    {/* Value Field Component */}
-                    {ft === 'select-status' ? (
-                      <div style={{ flex: 1, minWidth: '220px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
-                          {availableStatuses.map(s => {
-                            const isSelected = currentVals.some(v => v.toLowerCase() === s.toLowerCase())
-                            return (
-                              <button
-                                key={s}
-                                type="button"
-                                onClick={() => togglePill(s)}
-                                style={{
-                                  padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
-                                  fontSize: '11px', fontWeight: 700,
-                                  border: isSelected ? '1px solid var(--su-primary)' : '1px solid var(--su-border)',
-                                  background: isSelected ? 'var(--su-primary)' : 'white',
-                                  color: isSelected ? 'white' : 'var(--su-text-muted)',
-                                  transition: 'all 0.15s',
-                                  boxShadow: isSelected ? '0 1px 2px rgba(37,99,235,0.2)' : 'none',
-                                }}
-                              >
-                                {isSelected ? '✓ ' : '+ '}{s.toUpperCase()}
-                              </button>
-                            )
-                          })}
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px', fontSize: '10px' }}>
-                          <button
-                            type="button"
-                            onClick={() => updateRule(rule.id, { value: availableStatuses.join(',') })}
-                            style={{ border: 'none', background: 'none', color: 'var(--su-primary)', cursor: 'pointer', padding: 0, fontWeight: 700 }}
-                          >
-                            Pilih Semua
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => updateRule(rule.id, { value: '' })}
-                            style={{ border: 'none', background: 'none', color: 'var(--su-text-faint)', cursor: 'pointer', padding: 0, fontWeight: 600 }}
-                          >
-                            Hapus Pilihan
-                          </button>
-                        </div>
-                      </div>
-                    ) : ft === 'select-source' ? (
-                      <div style={{ flex: 1, minWidth: '220px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
-                          {availableOrderSources.map(src => {
-                            const isSelected = currentVals.some(v => v.toLowerCase() === src.toLowerCase())
-                            return (
-                              <button
-                                key={src}
-                                type="button"
-                                onClick={() => togglePill(src)}
-                                style={{
-                                  padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
-                                  fontSize: '11px', fontWeight: 700,
-                                  border: isSelected ? '1px solid var(--su-accent-dark)' : '1px solid var(--su-border)',
-                                  background: isSelected ? 'var(--su-accent-light)' : 'white',
-                                  color: isSelected ? 'var(--su-accent-dark)' : 'var(--su-text-muted)',
-                                  transition: 'all 0.15s',
-                                }}
-                              >
-                                {isSelected ? '✓ ' : '+ '}{src}
-                              </button>
-                            )
-                          })}
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px', fontSize: '10px' }}>
-                          <button
-                            type="button"
-                            onClick={() => updateRule(rule.id, { value: availableOrderSources.join(',') })}
-                            style={{ border: 'none', background: 'none', color: 'var(--su-primary)', cursor: 'pointer', padding: 0, fontWeight: 700 }}
-                          >
-                            Pilih Semua
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => updateRule(rule.id, { value: '' })}
-                            style={{ border: 'none', background: 'none', color: 'var(--su-text-faint)', cursor: 'pointer', padding: 0, fontWeight: 600 }}
-                          >
-                            Hapus Pilihan
-                          </button>
-                        </div>
-                      </div>
-                    ) : ft === 'select-payment' ? (
-                      <div style={{ flex: 1, minWidth: '220px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
-                          {availablePaymentMethods.map(p => {
-                            const isSelected = currentVals.some(v => v.toLowerCase() === p.toLowerCase())
-                            return (
-                              <button
-                                key={p}
-                                type="button"
-                                onClick={() => togglePill(p)}
-                                style={{
-                                  padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
-                                  fontSize: '11px', fontWeight: 700,
-                                  border: isSelected ? '1px solid #16A34A' : '1px solid var(--su-border)',
-                                  background: isSelected ? '#F0FDF4' : 'white',
-                                  color: isSelected ? '#16A34A' : 'var(--su-text-muted)',
-                                  transition: 'all 0.15s',
-                                }}
-                              >
-                                {isSelected ? '✓ ' : '+ '}{p.toUpperCase()}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    ) : ft === 'select-product' ? (
-                      <div style={{ flex: 1, minWidth: '180px' }}>
-                        <input
-                          type="text"
-                          list="product-name-list"
-                          placeholder="Ketik kata / pilih nama produk..."
-                          value={rule.value}
-                          onChange={e => updateRule(rule.id, { value: e.target.value })}
-                          style={{ ...selectStyle, width: '100%' }}
-                        />
-                        <datalist id="product-name-list">
-                          {availableProducts.map(p => <option key={p} value={p} />)}
-                        </datalist>
-                      </div>
-                    ) : ft === 'date' ? (
-                      <div style={{ flex: 1, minWidth: '260px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        {rule.operator === 'between' ? (
-                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                            <input
-                              type="date"
-                              value={rule.value.split(',')[0] || ''}
-                              onChange={e => {
-                                const parts = rule.value.split(',')
-                                updateRule(rule.id, { value: `${e.target.value},${parts[1] || ''}` })
-                              }}
-                              style={{ ...selectStyle, flex: 1 }}
-                            />
-                            <span style={{ fontSize: '11px', color: 'var(--su-text-muted)', fontWeight: 600 }}>s/d</span>
-                            <input
-                              type="date"
-                              value={rule.value.split(',')[1] || ''}
-                              onChange={e => {
-                                const parts = rule.value.split(',')
-                                updateRule(rule.id, { value: `${parts[0] || ''},${e.target.value}` })
-                              }}
-                              style={{ ...selectStyle, flex: 1 }}
-                            />
-                          </div>
-                        ) : (
-                          <input
-                            type="date"
-                            value={rule.value.split(',')[0] || ''}
-                            onChange={e => updateRule(rule.id, { value: e.target.value })}
-                            style={{ ...selectStyle, width: '100%' }}
-                          />
-                        )}
-
-                        {/* Quick Date Presets */}
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
-                          <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--su-text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: '2px' }}>
-                            Pintas:
-                          </span>
-                          {[
-                            { label: '📅 Bulan Ini', preset: 'this_month' },
-                            { label: '⏪ Bulan Lalu', preset: 'last_month' },
-                            { label: '⚡ 7 Hari', preset: 'last_7' },
-                            { label: '📊 30 Hari', preset: 'last_30' },
-                            { label: '🎯 Hari Ini', preset: 'today' },
-                            { label: '🗓️ Tahun Ini', preset: 'this_year' },
-                          ].map(p => (
-                            <button
-                              key={p.preset}
-                              type="button"
-                              onClick={() => {
-                                const res = getDatePresetRange(p.preset as any)
-                                updateRule(rule.id, { operator: res.op as any, value: res.val })
-                              }}
-                              style={{
-                                padding: '3px 8px', borderRadius: '5px', cursor: 'pointer',
-                                fontSize: '10px', fontWeight: 700,
-                                border: '1px solid var(--su-border)', background: 'white',
-                                color: 'var(--su-text-muted)', transition: 'all 0.15s',
-                              }}
-                              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--su-primary)'; (e.currentTarget as HTMLElement).style.color = 'var(--su-primary)' }}
-                              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--su-border)'; (e.currentTarget as HTMLElement).style.color = 'var(--su-text-muted)' }}
-                            >
-                              {p.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <input
-                        type="number"
-                        placeholder="Contoh: 150000"
-                        value={rule.value}
-                        onChange={e => updateRule(rule.id, { value: e.target.value })}
-                        style={{ ...selectStyle, flex: 1, minWidth: '140px' }}
-                      />
-                    )}
-                    
-                    <button
-                      onClick={() => removeRule(rule.id)}
-                      title="Hapus kriteria ini"
-                      style={{
-                        padding: '7px', borderRadius: '7px', cursor: 'pointer',
-                        background: 'none', border: '1px solid var(--su-border)',
-                        color: 'var(--su-text-faint)', transition: 'all 0.15s',
-                        alignSelf: 'center',
-                      }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--su-danger)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--su-danger)' }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--su-text-faint)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--su-border)' }}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
-                      </svg>
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--su-border)' }}>
-            <button
-              onClick={addRule}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '6px',
-                padding: '8px 16px', borderRadius: '8px', cursor: 'pointer',
-                background: 'var(--su-primary)', color: 'white', border: 'none',
-                fontSize: '11px', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-                transition: 'all 0.15s',
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--su-primary-dark)' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'var(--su-primary)' }}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-              </svg>
-              Tambah Kriteria
-            </button>
-            <button
-              onClick={() => setShowBuilder(false)}
-              style={{ fontSize: '11px', fontWeight: 600, color: 'var(--su-text-faint)', background: 'none', border: 'none', cursor: 'pointer', letterSpacing: '0.06em', textTransform: 'uppercase' }}
-            >
-              Tutup
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  )
+  isFetching?: boolean
 }
 
 function uid() { return Math.random().toString(36).slice(2) }
 
+export function FilterBar({
+  searchQuery,
+  rules,
+  onApplyFilters,
+  showCharts,
+  setShowCharts,
+  availableStatuses,
+  availablePaymentMethods,
+  availableOrderSources,
+  availableProducts,
+  isFetching = false,
+}: FilterBarProps) {
+  // Staged / Pending State
+  const [pendingQuery, setPendingQuery] = useState(searchQuery)
+  const [pendingRules, setPendingRules] = useState<OrderFilterRule[]>(rules)
+
+  // FB Ads Unified Filter Popover State
+  const [popoverOpen, setPopoverOpen] = useState(false)
+  const [activeCategory, setActiveCategory] = useState<'main' | 'product' | 'status' | 'source' | 'payment' | 'total' | 'date'>('main')
+
+  // FB Ads Product Filter Form State
+  const existingProductRule = pendingRules.find(r => r.field === 'product_name')
+  const [productOperator, setProductOperator] = useState<'contains' | 'is_not' | 'is'>(
+    (existingProductRule?.operator as any) || 'contains'
+  )
+  const [productSearchInput, setProductSearchInput] = useState(existingProductRule?.value || '')
+
+  // Total amount state
+  const existingTotalRule = pendingRules.find(r => r.field === 'grand_total')
+  const [minTotalInput, setMinTotalInput] = useState(existingTotalRule?.value || '')
+
+  // Date range state
+  const existingDateRule = pendingRules.find(r => r.field === 'order_date')
+  const initialDates = existingDateRule?.value ? existingDateRule.value.split(',') : ['', '']
+  const [startDateInput, setStartDateInput] = useState(initialDates[0] || '')
+  const [endDateInput, setEndDateInput]     = useState(initialDates[1] || '')
+
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Sync state if props change from outside
+  useEffect(() => {
+    setPendingQuery(searchQuery)
+  }, [searchQuery])
+
+  useEffect(() => {
+    setPendingRules(rules)
+    const pr = rules.find(r => r.field === 'product_name')
+    if (pr) {
+      setProductOperator((pr.operator as any) || 'contains')
+      setProductSearchInput(pr.value || '')
+    }
+  }, [rules])
+
+  // Close popover on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setPopoverOpen(false)
+        setActiveCategory('main')
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // Check if there are unapplied changes
+  const isDirty = pendingQuery !== searchQuery || JSON.stringify(pendingRules) !== JSON.stringify(rules)
+
+  // Execute Search
+  const handleSearchSubmit = () => {
+    setPopoverOpen(false)
+    setActiveCategory('main')
+    onApplyFilters(pendingQuery, pendingRules)
+  }
+
+  // Handle FB Ads Product Filter Apply
+  const handleApplyProductFilter = (valToApply?: string, opToApply?: 'contains' | 'is_not' | 'is') => {
+    const val = valToApply !== undefined ? valToApply : productSearchInput
+    const op = opToApply !== undefined ? opToApply : productOperator
+
+    const existingWithoutProduct = pendingRules.filter(r => r.field !== 'product_name')
+    if (!val.trim()) {
+      setPendingRules(existingWithoutProduct)
+    } else {
+      setPendingRules([...existingWithoutProduct, {
+        id: uid(),
+        field: 'product_name',
+        operator: op,
+        value: val.trim()
+      }])
+    }
+    setPopoverOpen(false)
+    setActiveCategory('main')
+  }
+
+  // Handle Total Filter Apply
+  const handleApplyTotalFilter = () => {
+    const existing = pendingRules.filter(r => r.field !== 'grand_total')
+    if (!minTotalInput.trim()) {
+      setPendingRules(existing)
+    } else {
+      setPendingRules([...existing, {
+        id: uid(),
+        field: 'grand_total',
+        operator: 'greater_or_equal',
+        value: minTotalInput.trim()
+      }])
+    }
+    setPopoverOpen(false)
+    setActiveCategory('main')
+  }
+
+  // Handle Date Filter Apply
+  const handleApplyDateFilter = () => {
+    const existing = pendingRules.filter(r => r.field !== 'order_date')
+    if (!startDateInput && !endDateInput) {
+      setPendingRules(existing)
+    } else {
+      setPendingRules([...existing, {
+        id: uid(),
+        field: 'order_date',
+        operator: 'between',
+        value: `${startDateInput},${endDateInput}`
+      }])
+    }
+    setPopoverOpen(false)
+    setActiveCategory('main')
+  }
+
+  const removeRule = (id: string) => {
+    setPendingRules(pendingRules.filter(r => r.id !== id))
+    const removedRule = pendingRules.find(r => r.id === id)
+    if (removedRule?.field === 'product_name') setProductSearchInput('')
+    if (removedRule?.field === 'grand_total') setMinTotalInput('')
+    if (removedRule?.field === 'order_date') {
+      setStartDateInput('')
+      setEndDateInput('')
+    }
+  }
+
+  // Quick Multi-select Helper for Status, Source, Payment Method
+  const getFieldValues = (fieldName: 'status' | 'source_platform' | 'payment_method'): string[] => {
+    const rule = pendingRules.find(r => r.field === fieldName)
+    if (!rule || !rule.value) return []
+    return rule.value.split(',').map(s => s.trim()).filter(Boolean)
+  }
+
+  const toggleFieldValue = (fieldName: 'status' | 'source_platform' | 'payment_method', valueToToggle: string) => {
+    const current = getFieldValues(fieldName)
+    const exists = current.some(v => v.toLowerCase() === valueToToggle.toLowerCase())
+    let updated: string[]
+    if (exists) {
+      updated = current.filter(v => v.toLowerCase() !== valueToToggle.toLowerCase())
+    } else {
+      updated = [...current, valueToToggle]
+    }
+
+    const existingRule = pendingRules.find(r => r.field === fieldName)
+    if (updated.length === 0) {
+      setPendingRules(pendingRules.filter(r => r.field !== fieldName))
+    } else if (existingRule) {
+      setPendingRules(pendingRules.map(r => r.field === fieldName ? { ...r, value: updated.join(',') } : r))
+    } else {
+      setPendingRules([...pendingRules, {
+        id: uid(),
+        field: fieldName,
+        operator: 'is',
+        value: updated.join(',')
+      }])
+    }
+  }
+
+  // Format Chip Text for FB Ads Search Container
+  const getRuleChipLabel = (rule: OrderFilterRule): { fieldLabel: string; valueLabel: string; category: 'product' | 'status' | 'source' | 'payment' | 'total' | 'date' } => {
+    if (rule.field === 'status') return { fieldLabel: 'Status', valueLabel: rule.value.toUpperCase(), category: 'status' }
+    if (rule.field === 'source_platform') return { fieldLabel: 'Sumber', valueLabel: rule.value, category: 'source' }
+    if (rule.field === 'payment_method') {
+      const pmLabel = rule.value.toLowerCase().includes('bacs') ? 'BANK TRANSFER' : rule.value.toUpperCase()
+      return { fieldLabel: 'Pembayaran', valueLabel: pmLabel, category: 'payment' }
+    }
+    if (rule.field === 'grand_total') return { fieldLabel: 'Total', valueLabel: `>= Rp ${Number(rule.value || 0).toLocaleString('id-ID')}`, category: 'total' }
+    if (rule.field === 'product_name') {
+      const opLabel = rule.operator === 'contains' ? 'berisi' : rule.operator === 'is_not' ? 'tidak berisi' : '='
+      return { fieldLabel: 'Produk', valueLabel: `${opLabel} "${rule.value}"`, category: 'product' }
+    }
+    if (rule.field === 'order_date') return { fieldLabel: 'Tanggal', valueLabel: rule.value.replace(',', ' s/d '), category: 'date' }
+    
+    return { fieldLabel: rule.field, valueLabel: rule.value, category: 'product' }
+  }
+
+  const selectedStatuses = getFieldValues('status')
+  const selectedSources  = getFieldValues('source_platform')
+  const selectedPayments = getFieldValues('payment_method')
+
+  // Catalog filtering by typing
+  const filteredCatalogProducts = availableProducts.filter(p =>
+    !productSearchInput || p.toLowerCase().includes(productSearchInput.toLowerCase())
+  )
+
+  return (
+    <div style={{ marginBottom: '24px' }}>
+
+      {/* ── Single Unified FB Ads Search & Filter Container ───────────────── */}
+      <div ref={containerRef} style={{ position: 'relative' }}>
+        
+        <div style={{
+          background: 'white',
+          border: isDirty ? '1.5px solid var(--su-primary)' : popoverOpen ? '1.5px solid #2563EB' : '1px solid var(--su-border)',
+          borderRadius: '12px',
+          padding: '8px 12px',
+          boxShadow: popoverOpen || isDirty ? '0 0 0 3px rgba(37,99,235,0.12)' : 'var(--su-shadow-sm)',
+          transition: 'all 0.2s',
+        }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+
+            {/* Search Icon */}
+            <div style={{ color: 'var(--su-text-faint)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+            </div>
+
+            {/* Active Filter Chips & Inline Inputs (FB Ads Manager Style) */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', flex: '1 1 340px' }}>
+              
+              {/* Search Query Chip */}
+              {pendingQuery && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  padding: '4px 9px', borderRadius: '7px',
+                  background: 'var(--su-bg)', border: '1px solid var(--su-border)',
+                  fontSize: '12px', fontWeight: 600, color: 'var(--su-text)',
+                }}>
+                  <span style={{ color: 'var(--su-text-faint)' }}>Cari:</span> "{pendingQuery}"
+                  <button
+                    onClick={() => setPendingQuery('')}
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0, color: 'var(--su-text-faint)', display: 'flex', alignItems: 'center' }}
+                    title="Hapus kata kunci"
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+
+              {/* Rule Chips (FB Ads Manager Badges) */}
+              {pendingRules.map(rule => {
+                const { fieldLabel, valueLabel, category } = getRuleChipLabel(rule)
+                return (
+                  <span
+                    key={rule.id}
+                    onClick={() => {
+                      setActiveCategory(category)
+                      setPopoverOpen(true)
+                    }}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '6px',
+                      padding: '4px 10px', borderRadius: '7px', cursor: 'pointer',
+                      background: rule.field === 'product_name' ? '#FEF3C7' : 'var(--su-primary-light)',
+                      border: rule.field === 'product_name' ? '1px solid rgba(245,158,11,0.35)' : '1px solid rgba(37,99,235,0.25)',
+                      fontSize: '12px', fontWeight: 700,
+                      color: rule.field === 'product_name' ? '#B45309' : 'var(--su-primary)',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                      transition: 'transform 0.1s',
+                    }}
+                    title="Klik untuk ubah filter ini"
+                  >
+                    <span>{fieldLabel}:</span>
+                    <span style={{ color: 'var(--su-text)' }}>{valueLabel}</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeRule(rule.id)
+                      }}
+                      style={{
+                        border: 'none', background: 'none', cursor: 'pointer', padding: 0,
+                        color: 'inherit', fontWeight: 800, fontSize: '11px',
+                        display: 'flex', alignItems: 'center', opacity: 0.8,
+                      }}
+                      onMouseEnter={ev => (ev.currentTarget.style.opacity = '1')}
+                      onMouseLeave={ev => (ev.currentTarget.style.opacity = '0.8')}
+                      title="Hapus filter ini"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                )
+              })}
+
+              {/* "+ Filter" Category Trigger Button (FB Ads Style) */}
+              <button
+                onClick={() => {
+                  setActiveCategory('main')
+                  setPopoverOpen(!popoverOpen)
+                }}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '4px',
+                  padding: '4px 10px', borderRadius: '7px', border: '1px dashed var(--su-border)',
+                  background: popoverOpen ? 'var(--su-primary-light)' : 'transparent',
+                  color: popoverOpen ? 'var(--su-primary)' : 'var(--su-text-muted)',
+                  fontSize: '12px', fontWeight: 700, cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <span>+ Filter</span>
+                <span style={{ fontSize: '10px' }}>▾</span>
+              </button>
+
+              {/* Inline Search Input */}
+              <input
+                type="text"
+                placeholder={pendingRules.length > 0 || pendingQuery ? 'Tambah pencarian...' : 'Cari nama pelanggan, HP, order #, atau klik + Filter...'}
+                value={pendingQuery}
+                onChange={e => setPendingQuery(e.target.value)}
+                onFocus={() => setPopoverOpen(true)}
+                onClick={() => setPopoverOpen(true)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSearchSubmit()
+                }}
+                style={{
+                  flex: 1, minWidth: '200px', border: 'none', outline: 'none',
+                  background: 'transparent', fontSize: '13px', color: 'var(--su-text)',
+                  padding: '4px 0',
+                }}
+              />
+            </div>
+
+            {/* 🔍 CARI Primary Button */}
+            <button
+              onClick={handleSearchSubmit}
+              disabled={isFetching}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                padding: '8px 18px', borderRadius: '8px', cursor: 'pointer',
+                background: isDirty ? '#2563EB' : 'var(--su-primary)',
+                color: 'white', border: 'none',
+                fontSize: '12px', fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase',
+                boxShadow: isDirty ? '0 2px 8px rgba(37,99,235,0.35)' : 'none',
+                transition: 'all 0.15s', flexShrink: 0,
+              }}
+            >
+              {isFetching ? (
+                <>
+                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', border: '2px solid white', borderTopColor: 'transparent' }} className="su-spin" />
+                  Memuat...
+                </>
+              ) : (
+                <>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                  </svg>
+                  Cari {isDirty && <span style={{ background: '#F59E0B', color: 'black', borderRadius: '99px', width: '8px', height: '8px', display: 'inline-block' }} title="Ada perubahan belum diterapkan" />}
+                </>
+              )}
+            </button>
+
+            {/* Reset Button */}
+            {(pendingQuery || pendingRules.length > 0) && (
+              <button
+                onClick={() => {
+                  setPendingQuery('')
+                  setPendingRules([])
+                  setProductSearchInput('')
+                  setMinTotalInput('')
+                  setStartDateInput('')
+                  setEndDateInput('')
+                  onApplyFilters('', [])
+                }}
+                style={{
+                  fontSize: '11px', fontWeight: 700, color: 'var(--su-danger)',
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  padding: '4px 6px', textTransform: 'uppercase', letterSpacing: '0.05em',
+                  flexShrink: 0,
+                }}
+                title="Reset semua filter"
+              >
+                Reset
+              </button>
+            )}
+
+            {/* Charts Toggle */}
+            <button
+              onClick={() => setShowCharts(!showCharts)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                padding: '6px 12px', borderRadius: '7px', cursor: 'pointer',
+                fontSize: '11px', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+                border: '1px solid var(--su-border)',
+                background: showCharts ? 'var(--su-accent-light)' : 'white',
+                color: showCharts ? 'var(--su-accent-dark)' : 'var(--su-text-muted)',
+                flexShrink: 0, marginLeft: 'auto',
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+              </svg>
+              {showCharts ? 'Sembunyikan Grafik' : 'Lihat Grafik'}
+            </button>
+
+          </div>
+        </div>
+
+        {/* ── FB ADS UNIFIED FILTER POPOVER ───────────────────────────────── */}
+        {popoverOpen && (
+          <div style={{
+            position: 'absolute', top: '108%', left: 0, zIndex: 40,
+            background: 'white', border: '1px solid var(--su-border)',
+            borderRadius: '12px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
+            overflow: 'hidden', width: '420px', maxWidth: '92vw',
+          }} className="su-fade-in">
+            
+            {/* Header Banner */}
+            <div style={{
+              padding: '10px 16px', background: '#F8FAFC', borderBottom: '1px solid var(--su-border)',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--su-text)' }}>
+                  {activeCategory === 'main' ? 'Pilih Kategori Filter' :
+                   activeCategory === 'date' ? 'Rentang Tanggal' :
+                   activeCategory === 'product' ? 'Produk' :
+                   activeCategory === 'status' ? 'Status Pesanan' :
+                   activeCategory === 'source' ? 'Sumber Order' :
+                   activeCategory === 'payment' ? 'Metode Pembayaran' : 'Total Belanja Minimum'}
+                </span>
+              </div>
+              {activeCategory !== 'main' ? (
+                <button
+                  onClick={() => setActiveCategory('main')}
+                  style={{ border: 'none', background: 'none', fontSize: '11px', color: 'var(--su-primary)', cursor: 'pointer', fontWeight: 700 }}
+                >
+                  ← Kembali
+                </button>
+              ) : (
+                <button
+                  onClick={() => setPopoverOpen(false)}
+                  style={{ border: 'none', background: 'none', fontSize: '11px', color: 'var(--su-text-faint)', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Tutup ✕
+                </button>
+              )}
+            </div>
+
+            {/* Content Container */}
+            <div style={{ maxHeight: '360px', overflowY: 'auto', padding: '12px 16px' }}>
+
+              {/* ── 1. MAIN CATEGORY SELECTION LIST ────────────────────────── */}
+              {activeCategory === 'main' && (
+                <div>
+                  
+                  {/* Odoo / Typing suggestions */}
+                  {pendingQuery.trim().length > 0 && (
+                    <div style={{ marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px solid var(--su-border)' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--su-primary)', marginBottom: '6px' }}>
+                        Sugesti Kata Kunci:
+                      </div>
+                      <button
+                        onClick={() => {
+                          handleApplyProductFilter(pendingQuery, 'contains')
+                          setPendingQuery('')
+                        }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '8px', width: '100%',
+                          padding: '8px 10px', borderRadius: '6px', border: '1px solid rgba(245,158,11,0.3)',
+                          background: '#FFFBEB', cursor: 'pointer', textAlign: 'left',
+                          fontSize: '12px', fontWeight: 700, color: '#B45309',
+                        }}
+                      >
+                        <span>🛍️</span>
+                        <span>Filter Produk mengandung <strong style={{ color: '#D97706' }}>"{pendingQuery}"</strong></span>
+                      </button>
+                    </div>
+                  )}
+
+                  <div style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--su-text-faint)', marginBottom: '8px' }}>
+                    Pilih Kategori Filter:
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    
+                    {/* 1. Date Range Category (TOP POSITION) */}
+                    <button
+                      onClick={() => setActiveCategory('date')}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--su-border)',
+                        background: 'white', cursor: 'pointer', textAlign: 'left',
+                        fontSize: '13px', fontWeight: 600, color: 'var(--su-text)', transition: 'all 0.12s',
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--su-bg)' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'white' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '16px' }}>📅</span>
+                        <div>
+                          <div>Rentang Tanggal</div>
+                          <div style={{ fontSize: '11px', color: 'var(--su-text-muted)', fontWeight: 400 }}>
+                            {existingDateRule ? existingDateRule.value.replace(',', ' s/d ') : 'Pilih tanggal mulai & akhir'}
+                          </div>
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '12px', color: 'var(--su-primary)', fontWeight: 700 }}>Atur ⚙️</span>
+                    </button>
+
+                    {/* 2. Product Category (RENAMED TO "Produk") */}
+                    <button
+                      onClick={() => setActiveCategory('product')}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--su-border)',
+                        background: 'white', cursor: 'pointer', textAlign: 'left',
+                        fontSize: '13px', fontWeight: 600, color: 'var(--su-text)', transition: 'all 0.12s',
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--su-bg)' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'white' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '16px' }}>🛍️</span>
+                        <div>
+                          <div>Produk</div>
+                          <div style={{ fontSize: '11px', color: 'var(--su-text-muted)', fontWeight: 400 }}>Cari kata kunci atau katalog produk</div>
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '12px', color: 'var(--su-primary)', fontWeight: 700 }}>Atur ⚙️</span>
+                    </button>
+
+                    {/* 3. Status Category */}
+                    <button
+                      onClick={() => setActiveCategory('status')}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--su-border)',
+                        background: 'white', cursor: 'pointer', textAlign: 'left',
+                        fontSize: '13px', fontWeight: 600, color: 'var(--su-text)', transition: 'all 0.12s',
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--su-bg)' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'white' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '16px' }}>📋</span>
+                        <div>
+                          <div>Status Pesanan</div>
+                          <div style={{ fontSize: '11px', color: 'var(--su-text-muted)', fontWeight: 400 }}>
+                            {selectedStatuses.length > 0 ? selectedStatuses.join(', ').toUpperCase() : 'Completed, Processing, Pending, dll.'}
+                          </div>
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '12px', color: 'var(--su-primary)', fontWeight: 700 }}>Pilih ▾</span>
+                    </button>
+
+                    {/* 4. Source Category */}
+                    <button
+                      onClick={() => setActiveCategory('source')}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--su-border)',
+                        background: 'white', cursor: 'pointer', textAlign: 'left',
+                        fontSize: '13px', fontWeight: 600, color: 'var(--su-text)', transition: 'all 0.12s',
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--su-bg)' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'white' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '16px' }}>🌐</span>
+                        <div>
+                          <div>Sumber Order</div>
+                          <div style={{ fontSize: '11px', color: 'var(--su-text-muted)', fontWeight: 400 }}>
+                            {selectedSources.length > 0 ? selectedSources.join(', ') : 'WooCommerce, POS, Shopee, TikTok, dll.'}
+                          </div>
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '12px', color: 'var(--su-primary)', fontWeight: 700 }}>Pilih ▾</span>
+                    </button>
+
+                    {/* 5. Payment Category */}
+                    <button
+                      onClick={() => setActiveCategory('payment')}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--su-border)',
+                        background: 'white', cursor: 'pointer', textAlign: 'left',
+                        fontSize: '13px', fontWeight: 600, color: 'var(--su-text)', transition: 'all 0.12s',
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--su-bg)' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'white' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '16px' }}>💳</span>
+                        <div>
+                          <div>Metode Pembayaran</div>
+                          <div style={{ fontSize: '11px', color: 'var(--su-text-muted)', fontWeight: 400 }}>
+                            {selectedPayments.length > 0 ? selectedPayments.join(', ').toUpperCase() : 'Bank Transfer, COD, Midtrans, QRIS, dll.'}
+                          </div>
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '12px', color: 'var(--su-primary)', fontWeight: 700 }}>Pilih ▾</span>
+                    </button>
+
+                    {/* 6. Total Minimum Category */}
+                    <button
+                      onClick={() => setActiveCategory('total')}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--su-border)',
+                        background: 'white', cursor: 'pointer', textAlign: 'left',
+                        fontSize: '13px', fontWeight: 600, color: 'var(--su-text)', transition: 'all 0.12s',
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--su-bg)' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'white' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '16px' }}>💵</span>
+                        <div>
+                          <div>Total Belanja Minimum</div>
+                          <div style={{ fontSize: '11px', color: 'var(--su-text-muted)', fontWeight: 400 }}>
+                            {existingTotalRule ? `>= Rp ${Number(existingTotalRule.value).toLocaleString('id-ID')}` : 'Misal: ≥ Rp 500.000'}
+                          </div>
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '12px', color: 'var(--su-primary)', fontWeight: 700 }}>Atur ⚙️</span>
+                    </button>
+
+                  </div>
+                </div>
+              )}
+
+              {/* ── 2. FB ADS PRODUCT FILTER FORM ───────────────────────────── */}
+              {activeCategory === 'product' && (
+                <div>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                    <select
+                      disabled
+                      style={{
+                        padding: '7px 10px', borderRadius: '7px',
+                        border: '1px solid var(--su-border)', background: 'var(--su-bg)',
+                        fontSize: '12px', color: 'var(--su-text)', fontWeight: 600, flex: 1,
+                      }}
+                    >
+                      <option>Produk</option>
+                    </select>
+
+                    <select
+                      value={productOperator}
+                      onChange={e => setProductOperator(e.target.value as any)}
+                      style={{
+                        padding: '7px 10px', borderRadius: '7px',
+                        border: '1px solid var(--su-border)', background: 'white',
+                        fontSize: '12px', color: 'var(--su-text)', fontWeight: 600, flex: 1,
+                      }}
+                    >
+                      <option value="contains">berisi semua dari</option>
+                      <option value="is_not">tidak berisi</option>
+                      <option value="is">sama persis dengan</option>
+                    </select>
+                  </div>
+
+                  <div style={{ marginBottom: '10px' }}>
+                    <input
+                      type="text"
+                      placeholder="Ketik kata kunci (misal: ash, serum) atau pilih dari katalog..."
+                      value={productSearchInput}
+                      onChange={e => setProductSearchInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleApplyProductFilter()
+                      }}
+                      style={{
+                        width: '100%', padding: '8px 12px', borderRadius: '8px',
+                        border: '1px solid var(--su-border)', fontSize: '12px', outline: 'none',
+                        boxSizing: 'border-box', fontWeight: 500,
+                      }}
+                    />
+                  </div>
+
+                  {/* Catalog list */}
+                  <div style={{
+                    maxHeight: '140px', overflowY: 'auto', border: '1px solid var(--su-border)',
+                    borderRadius: '8px', padding: '4px', background: '#FAFAFA', marginBottom: '12px',
+                  }}>
+                    <div style={{ fontSize: '9px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--su-text-faint)', padding: '2px 6px' }}>
+                      Katalog Produk Tersedia:
+                    </div>
+                    {filteredCatalogProducts.length === 0 ? (
+                      <div style={{ fontSize: '11px', color: 'var(--su-text-faint)', padding: '6px', fontStyle: 'italic' }}>
+                        Tekan Terapkan untuk menggunakan kata yang diketik.
+                      </div>
+                    ) : (
+                      filteredCatalogProducts.map(p => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setProductSearchInput(p)}
+                          style={{
+                            display: 'block', width: '100%', textAlign: 'left',
+                            padding: '5px 8px', borderRadius: '5px', border: 'none',
+                            background: productSearchInput === p ? '#E0E7FF' : 'transparent',
+                            fontSize: '11px', fontWeight: productSearchInput === p ? 700 : 500,
+                            color: productSearchInput === p ? '#3730A3' : 'var(--su-text)',
+                            cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {p}
+                        </button>
+                      ))
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px', borderTop: '1px solid var(--su-border)' }}>
+                    <button
+                      type="button"
+                      onClick={() => setActiveCategory('main')}
+                      style={{
+                        padding: '6px 14px', borderRadius: '7px', cursor: 'pointer',
+                        background: 'white', border: '1px solid var(--su-border)',
+                        fontSize: '12px', fontWeight: 600, color: 'var(--su-text-muted)',
+                      }}
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleApplyProductFilter()}
+                      style={{
+                        padding: '6px 16px', borderRadius: '7px', cursor: 'pointer',
+                        background: '#2563EB', border: 'none', color: 'white',
+                        fontSize: '12px', fontWeight: 800, boxShadow: '0 1px 3px rgba(37,99,235,0.3)',
+                      }}
+                    >
+                      Terapkan
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── 3. STATUS MULTI-SELECT ─────────────────────────────────── */}
+              {activeCategory === 'status' && (
+                <div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '240px', overflowY: 'auto', marginBottom: '12px' }}>
+                    {availableStatuses.map(s => {
+                      const checked = selectedStatuses.some(v => v.toLowerCase() === s.toLowerCase())
+                      return (
+                        <label
+                          key={s}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            padding: '6px 10px', borderRadius: '6px', cursor: 'pointer',
+                            background: checked ? 'var(--su-bg)' : 'transparent',
+                            fontSize: '12px', fontWeight: 600, color: 'var(--su-text)',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleFieldValue('status', s)}
+                            style={{ cursor: 'pointer' }}
+                          />
+                          {s.toUpperCase()}
+                        </label>
+                      )
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: '1px solid var(--su-border)' }}>
+                    <button
+                      type="button"
+                      onClick={() => toggleFieldValue('status', availableStatuses.join(','))}
+                      style={{ border: 'none', background: 'none', fontSize: '11px', color: 'var(--su-primary)', cursor: 'pointer', fontWeight: 700 }}
+                    >
+                      Pilih Semua
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPopoverOpen(false)
+                        setActiveCategory('main')
+                      }}
+                      style={{
+                        padding: '6px 16px', borderRadius: '7px', cursor: 'pointer',
+                        background: '#2563EB', border: 'none', color: 'white',
+                        fontSize: '12px', fontWeight: 800,
+                      }}
+                    >
+                      Selesai
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── 4. SOURCE MULTI-SELECT ─────────────────────────────────── */}
+              {activeCategory === 'source' && (
+                <div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '240px', overflowY: 'auto', marginBottom: '12px' }}>
+                    {availableOrderSources.map(src => {
+                      const checked = selectedSources.some(v => v.toLowerCase() === src.toLowerCase())
+                      return (
+                        <label
+                          key={src}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            padding: '6px 10px', borderRadius: '6px', cursor: 'pointer',
+                            background: checked ? 'var(--su-bg)' : 'transparent',
+                            fontSize: '12px', fontWeight: 600, color: 'var(--su-text)',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleFieldValue('source_platform', src)}
+                            style={{ cursor: 'pointer' }}
+                          />
+                          {src}
+                        </label>
+                      )
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '8px', borderTop: '1px solid var(--su-border)' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPopoverOpen(false)
+                        setActiveCategory('main')
+                      }}
+                      style={{
+                        padding: '6px 16px', borderRadius: '7px', cursor: 'pointer',
+                        background: '#2563EB', border: 'none', color: 'white',
+                        fontSize: '12px', fontWeight: 800,
+                      }}
+                    >
+                      Selesai
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── 5. PAYMENT METHOD MULTI-SELECT ──────────────────────────── */}
+              {activeCategory === 'payment' && (
+                <div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '240px', overflowY: 'auto', marginBottom: '12px' }}>
+                    {availablePaymentMethods.map(p => {
+                      const checked = selectedPayments.some(v => v.toLowerCase() === p.toLowerCase())
+                      const labelText = p.toLowerCase() === 'bacs' ? 'BANK TRANSFER (BACS)' : p.toUpperCase()
+                      return (
+                        <label
+                          key={p}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            padding: '6px 10px', borderRadius: '6px', cursor: 'pointer',
+                            background: checked ? 'var(--su-bg)' : 'transparent',
+                            fontSize: '12px', fontWeight: 600, color: 'var(--su-text)',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleFieldValue('payment_method', p)}
+                            style={{ cursor: 'pointer' }}
+                          />
+                          {labelText}
+                        </label>
+                      )
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '8px', borderTop: '1px solid var(--su-border)' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPopoverOpen(false)
+                        setActiveCategory('main')
+                      }}
+                      style={{
+                        padding: '6px 16px', borderRadius: '7px', cursor: 'pointer',
+                        background: '#2563EB', border: 'none', color: 'white',
+                        fontSize: '12px', fontWeight: 800,
+                      }}
+                    >
+                      Selesai
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── 6. TOTAL AMOUNT FORM ───────────────────────────────────── */}
+              {activeCategory === 'total' && (
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--su-text)', display: 'block', marginBottom: '6px' }}>
+                    Minimal Total Belanja (Rp):
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="Contoh: 500000"
+                    value={minTotalInput}
+                    onChange={e => setMinTotalInput(e.target.value)}
+                    style={{
+                      width: '100%', padding: '8px 12px', borderRadius: '8px',
+                      border: '1px solid var(--su-border)', fontSize: '13px', outline: 'none',
+                      marginBottom: '12px', boxSizing: 'border-box',
+                    }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px', borderTop: '1px solid var(--su-border)' }}>
+                    <button
+                      type="button"
+                      onClick={() => setActiveCategory('main')}
+                      style={{
+                        padding: '6px 14px', borderRadius: '7px', cursor: 'pointer',
+                        background: 'white', border: '1px solid var(--su-border)',
+                        fontSize: '12px', fontWeight: 600, color: 'var(--su-text-muted)',
+                      }}
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleApplyTotalFilter}
+                      style={{
+                        padding: '6px 16px', borderRadius: '7px', cursor: 'pointer',
+                        background: '#2563EB', border: 'none', color: 'white',
+                        fontSize: '12px', fontWeight: 800,
+                      }}
+                    >
+                      Terapkan
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── 7. DATE RANGE FORM ─────────────────────────────────────── */}
+              {activeCategory === 'date' && (
+                <div>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: '10px', fontWeight: 700, color: 'var(--su-text-faint)', display: 'block', marginBottom: '4px' }}>
+                        Tanggal Mulai:
+                      </label>
+                      <input
+                        type="date"
+                        value={startDateInput}
+                        onChange={e => setStartDateInput(e.target.value)}
+                        style={{
+                          width: '100%', padding: '6px 8px', borderRadius: '7px',
+                          border: '1px solid var(--su-border)', fontSize: '12px',
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: '10px', fontWeight: 700, color: 'var(--su-text-faint)', display: 'block', marginBottom: '4px' }}>
+                        Tanggal Akhir:
+                      </label>
+                      <input
+                        type="date"
+                        value={endDateInput}
+                        onChange={e => setEndDateInput(e.target.value)}
+                        style={{
+                          width: '100%', padding: '6px 8px', borderRadius: '7px',
+                          border: '1px solid var(--su-border)', fontSize: '12px',
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px', borderTop: '1px solid var(--su-border)' }}>
+                    <button
+                      type="button"
+                      onClick={() => setActiveCategory('main')}
+                      style={{
+                        padding: '6px 14px', borderRadius: '7px', cursor: 'pointer',
+                        background: 'white', border: '1px solid var(--su-border)',
+                        fontSize: '12px', fontWeight: 600, color: 'var(--su-text-muted)',
+                      }}
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleApplyDateFilter}
+                      style={{
+                        padding: '6px 16px', borderRadius: '7px', cursor: 'pointer',
+                        background: '#2563EB', border: 'none', color: 'white',
+                        fontSize: '12px', fontWeight: 800,
+                      }}
+                    >
+                      Terapkan
+                    </button>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* Footer Banner */}
+            <div style={{
+              padding: '8px 16px', background: '#F8FAFC', borderTop: '1px solid var(--su-border)',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <span style={{ fontSize: '10px', color: 'var(--su-text-faint)' }}>Klik 'Cari' atau Enter untuk memuat</span>
+              <button
+                type="button"
+                onClick={() => setPopoverOpen(false)}
+                style={{ border: 'none', background: 'none', fontSize: '11px', fontWeight: 700, color: 'var(--su-primary)', cursor: 'pointer' }}
+              >
+                Selesai
+              </button>
+            </div>
+
+          </div>
+        )}
+
+      </div>
+
+    </div>
+  )
+}

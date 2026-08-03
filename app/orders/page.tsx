@@ -65,27 +65,13 @@ export default function OrderPage() {
 
   const [selectedOrder, setSelectedOrder]       = useState<any>(null)
   const [searchQuery, setSearchQuery]           = useState('')
-  const [debouncedSearch, setDebouncedSearch]   = useState('')
   const [rules, setRules]                       = useState<OrderFilterRule[]>([])
   const [showCharts, setShowCharts]             = useState(false)
   const [activeBiz, setActiveBiz]               = useState<any>(null)
   const [activeBizId, setActiveBizId]           = useState<string | null>(null)
 
-  // ─── Search Debounce ──────────────────────────────────────────────────────
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearch(searchQuery)
-    }, 400)
-    return () => clearTimeout(handler)
-  }, [searchQuery])
-
   // Serialize rules to use in useEffect dependency
   const serializedRules = JSON.stringify(rules)
-
-  // Reset to page 1 when search or rules change
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [debouncedSearch, serializedRules])
 
   // ─── Fetcher function for metrics and orders page ──────────────────
   const fetchMetricsAndOrders = useCallback(async (
@@ -169,14 +155,14 @@ export default function OrderPage() {
     loadProfile()
   }, [supabase])
 
-  // ─── Refresh when active business, filters, or page change ───────────────
+  // ─── Refresh when active business, applied filters, or page change ───────────────
   useEffect(() => {
     if (!activeBizId) return
 
     const rulesArray = JSON.parse(serializedRules)
 
     // Check if we can use cache (only for empty filters on page 1)
-    const isDefaultFilters = !debouncedSearch && rulesArray.length === 0 && currentPage === 1 && pageSize === 25
+    const isDefaultFilters = !searchQuery && rulesArray.length === 0 && currentPage === 1 && pageSize === 25
     if (isDefaultFilters) {
       const cached = readCache(activeBizId)
       if (cached) {
@@ -187,43 +173,55 @@ export default function OrderPage() {
         // Background revalidation
         const age = Date.now() - cached.ts
         if (age > STALE_RECHECK) {
-          fetchMetricsAndOrders(activeBizId, debouncedSearch, rulesArray, currentPage, pageSize, true)
+          fetchMetricsAndOrders(activeBizId, searchQuery, rulesArray, currentPage, pageSize, true)
         }
         return
       }
     }
 
-    // Otherwise, fetch fresh data for selected page
-    fetchMetricsAndOrders(activeBizId, debouncedSearch, rulesArray, currentPage, pageSize, false)
-  }, [activeBizId, debouncedSearch, serializedRules, currentPage, pageSize, fetchMetricsAndOrders])
+    // Otherwise, fetch fresh data for selected page & applied search/filters
+    fetchMetricsAndOrders(activeBizId, searchQuery, rulesArray, currentPage, pageSize, false)
+  }, [activeBizId, searchQuery, serializedRules, currentPage, pageSize, fetchMetricsAndOrders])
 
-  // ─── Derived Dropdown Data for Filters ────────────────────────────────────
-  const availableStatuses = useMemo(() => {
-    const defaultStatuses = ['completed', 'processing', 'pending', 'failed', 'cancelled', 'shipped', 'on-hold', 'return-request']
-    const statuses = new Set<string>(defaultStatuses)
-    orders.forEach(o => {
-      if (o.status) statuses.add(o.status.toLowerCase())
-    })
-    return Array.from(statuses).sort()
-  }, [orders])
+  // ─── Master Static Dropdown Data for Filters (Never changes on search) ───
+  const availableStatuses = useMemo(() => [
+    'completed',
+    'processing',
+    'pending',
+    'failed',
+    'cancelled',
+    'shipped',
+    'on-hold',
+    'return-request',
+    'refunded',
+    'trash',
+    'draft',
+  ], [])
 
-  const availablePaymentMethods = useMemo(() => {
-    const defaultMethods = ['cod', 'bacs', 'midtrans', 'manual', 'cash']
-    const methods = new Set<string>(defaultMethods)
-    orders.forEach(o => {
-      if (o.payment_method) methods.add(o.payment_method.toLowerCase())
-    })
-    return Array.from(methods).sort()
-  }, [orders])
+  const availablePaymentMethods = useMemo(() => [
+    'cod',
+    'bacs',
+    'bank_transfer',
+    'midtrans',
+    'manual',
+    'cash',
+    'qris',
+    'credit_card',
+    'ewallet',
+  ], [])
 
-  const availableOrderSources = useMemo(() => {
-    const defaultSources = ['WooCommerce', 'Invoice', 'POS', 'Manual', 'Shopee', 'Tokopedia', 'TikTok']
-    const sources = new Set<string>(defaultSources)
-    orders.forEach(o => {
-      if (o.source_platform) sources.add(o.source_platform)
-    })
-    return Array.from(sources).sort()
-  }, [orders])
+  const availableOrderSources = useMemo(() => [
+    'WooCommerce',
+    'Invoice',
+    'POS',
+    'Manual',
+    'Shopee',
+    'Tokopedia',
+    'TikTok',
+    'Lazada',
+    'WhatsApp',
+    'Instagram',
+  ], [])
 
   const [availableProducts, setAvailableProducts] = useState<string[]>([])
 
@@ -237,7 +235,7 @@ export default function OrderPage() {
           .eq('business_id', activeBizId)
           .order('name')
         if (data && data.length > 0) {
-          setAvailableProducts(data.map(p => p.name).filter(Boolean))
+          setAvailableProducts(Array.from(new Set(data.map(p => p.name).filter(Boolean))).sort())
         }
       } catch (err) {
         console.error('[ShapeUp] Error loading products for filter:', err)
@@ -306,22 +304,26 @@ export default function OrderPage() {
         )}
       </div>
 
-      {/* ── KPI Stats ─────────────────────────────────────────────────────── */}
-      {isLoadingFirst ? <OrderStatsSkeleton /> : <OrderStats stats={metrics?.stats ?? null} />}
-
-      {/* ── Filter Bar ────────────────────────────────────────────────────── */}
+      {/* ── Filter Bar (FB Ads Style Unified Search Bar ABOVE Metrics) ─────── */}
       <FilterBar
         searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
         rules={rules}
-        setRules={setRules}
+        onApplyFilters={(newQuery, newRules) => {
+          setSearchQuery(newQuery)
+          setRules(newRules)
+          setCurrentPage(1)
+        }}
         showCharts={showCharts}
         setShowCharts={setShowCharts}
         availableStatuses={availableStatuses}
         availablePaymentMethods={availablePaymentMethods}
         availableOrderSources={availableOrderSources}
         availableProducts={availableProducts}
+        isFetching={isFetching}
       />
+
+      {/* ── KPI Stats (Metrics Cards BELOW Search Bar) ───────────────────── */}
+      {isLoadingFirst ? <OrderStatsSkeleton /> : <OrderStats stats={metrics?.stats ?? null} />}
 
       {/* ── Charts ────────────────────────────────────────────────────────── */}
       {showCharts && (isLoadingFirst ? <OrderChartsSkeleton /> : <OrderCharts data={metrics} />)}

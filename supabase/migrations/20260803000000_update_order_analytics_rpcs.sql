@@ -1,10 +1,11 @@
 -- Migration: 20260803000000_update_order_analytics_rpcs.sql
 -- Description: Enhanced RPC functions get_order_analytics_metrics and get_order_list for order segmentation:
 -- 1. Multi-status and multi-payment method matching (comma-separated string support)
--- 2. Order source (source_platform) filtering
--- 3. Product name / segment keyword filtering (product_name)
--- 4. Improved date comparison & date range (between, equal, after, before)
--- 5. Include source_platform in returned order list items
+-- 2. Flexible payment method matching for Bank Transfer (bacs/bank_transfer/transfer), COD, Midtrans, etc.
+-- 3. Order source (source_platform) filtering
+-- 4. Product name / segment keyword filtering (product_name)
+-- 5. Improved date comparison & date range (between, equal, after, before)
+-- 6. Include source_platform in returned order list items
 
 CREATE OR REPLACE FUNCTION public.get_order_analytics_metrics(
   p_business_id UUID,
@@ -27,6 +28,8 @@ DECLARE
   v_arr TEXT[];
   v_i INT;
   v_quoted_arr TEXT;
+  v_pm_cond TEXT;
+  v_item_val TEXT;
 BEGIN
   -- 1. Handle Search
   IF p_search IS NOT NULL AND p_search <> '' THEN
@@ -105,12 +108,28 @@ BEGIN
         ELSE
           v_where := v_where || ' AND LOWER(o.status) IN (' || v_quoted_arr || ')';
         END IF;
+
       ELSIF v_field = 'payment_method' THEN
         IF v_op = 'is_not' OR v_op = 'not_in' THEN
           v_where := v_where || ' AND LOWER(o.payment_method) NOT IN (' || v_quoted_arr || ')';
         ELSE
-          v_where := v_where || ' AND LOWER(o.payment_method) IN (' || v_quoted_arr || ')';
+          -- Flexible matching for Bank Transfer (bacs/bank_transfer), COD, Midtrans, etc.
+          v_pm_cond := '';
+          FOR v_i IN 1..cardinality(v_arr) LOOP
+            v_item_val := LOWER(TRIM(v_arr[v_i]));
+            IF v_i > 1 THEN v_pm_cond := v_pm_cond || ' OR '; END IF;
+
+            IF v_item_val IN ('bacs', 'bank_transfer', 'transfer') THEN
+              v_pm_cond := v_pm_cond || '(LOWER(o.payment_method) IN (''bacs'', ''bank_transfer'', ''transfer'') OR o.payment_method ILIKE ''%bacs%'' OR o.payment_method ILIKE ''%bank%'' OR o.payment_method ILIKE ''%transfer%'')';
+            ELSIF v_item_val = 'cod' THEN
+              v_pm_cond := v_pm_cond || '(LOWER(o.payment_method) IN (''cod'', ''cash_on_delivery'') OR o.payment_method ILIKE ''%cod%'' OR o.payment_method ILIKE ''%cash%delivery%'')';
+            ELSE
+              v_pm_cond := v_pm_cond || '(LOWER(o.payment_method) = ' || quote_literal(v_item_val) || ' OR o.payment_method ILIKE ' || quote_literal('%' || v_item_val || '%') || ')';
+            END IF;
+          END LOOP;
+          v_where := v_where || ' AND (' || v_pm_cond || ')';
         END IF;
+
       ELSIF v_field = 'source_platform' THEN
         IF v_op = 'is_not' OR v_op = 'not_in' THEN
           v_where := v_where || ' AND LOWER(o.source_platform) NOT IN (' || v_quoted_arr || ')';
@@ -202,6 +221,8 @@ DECLARE
   v_arr TEXT[];
   v_i INT;
   v_quoted_arr TEXT;
+  v_pm_cond TEXT;
+  v_item_val TEXT;
 BEGIN
   -- 1. Handle Search
   IF p_search IS NOT NULL AND p_search <> '' THEN
@@ -280,12 +301,28 @@ BEGIN
         ELSE
           v_where := v_where || ' AND LOWER(o.status) IN (' || v_quoted_arr || ')';
         END IF;
+
       ELSIF v_field = 'payment_method' THEN
         IF v_op = 'is_not' OR v_op = 'not_in' THEN
           v_where := v_where || ' AND LOWER(o.payment_method) NOT IN (' || v_quoted_arr || ')';
         ELSE
-          v_where := v_where || ' AND LOWER(o.payment_method) IN (' || v_quoted_arr || ')';
+          -- Flexible matching for Bank Transfer (bacs/bank_transfer), COD, Midtrans, etc.
+          v_pm_cond := '';
+          FOR v_i IN 1..cardinality(v_arr) LOOP
+            v_item_val := LOWER(TRIM(v_arr[v_i]));
+            IF v_i > 1 THEN v_pm_cond := v_pm_cond || ' OR '; END IF;
+
+            IF v_item_val IN ('bacs', 'bank_transfer', 'transfer') THEN
+              v_pm_cond := v_pm_cond || '(LOWER(o.payment_method) IN (''bacs'', ''bank_transfer'', ''transfer'') OR o.payment_method ILIKE ''%bacs%'' OR o.payment_method ILIKE ''%bank%'' OR o.payment_method ILIKE ''%transfer%'')';
+            ELSIF v_item_val = 'cod' THEN
+              v_pm_cond := v_pm_cond || '(LOWER(o.payment_method) IN (''cod'', ''cash_on_delivery'') OR o.payment_method ILIKE ''%cod%'' OR o.payment_method ILIKE ''%cash%delivery%'')';
+            ELSE
+              v_pm_cond := v_pm_cond || '(LOWER(o.payment_method) = ' || quote_literal(v_item_val) || ' OR o.payment_method ILIKE ' || quote_literal('%' || v_item_val || '%') || ')';
+            END IF;
+          END LOOP;
+          v_where := v_where || ' AND (' || v_pm_cond || ')';
         END IF;
+
       ELSIF v_field = 'source_platform' THEN
         IF v_op = 'is_not' OR v_op = 'not_in' THEN
           v_where := v_where || ' AND LOWER(o.source_platform) NOT IN (' || v_quoted_arr || ')';
