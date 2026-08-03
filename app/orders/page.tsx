@@ -67,7 +67,7 @@ export default function OrderPage() {
   const [searchQuery, setSearchQuery]           = useState('')
   const [debouncedSearch, setDebouncedSearch]   = useState('')
   const [rules, setRules]                       = useState<OrderFilterRule[]>([])
-  const [showCharts, setShowCharts]             = useState(true)
+  const [showCharts, setShowCharts]             = useState(false)
   const [activeBiz, setActiveBiz]               = useState<any>(null)
   const [activeBizId, setActiveBizId]           = useState<string | null>(null)
 
@@ -199,7 +199,7 @@ export default function OrderPage() {
 
   // ─── Derived Dropdown Data for Filters ────────────────────────────────────
   const availableStatuses = useMemo(() => {
-    const defaultStatuses = ['completed', 'processing', 'pending', 'failed', 'cancelled']
+    const defaultStatuses = ['completed', 'processing', 'pending', 'failed', 'cancelled', 'shipped', 'on-hold', 'return-request']
     const statuses = new Set<string>(defaultStatuses)
     orders.forEach(o => {
       if (o.status) statuses.add(o.status.toLowerCase())
@@ -208,13 +208,43 @@ export default function OrderPage() {
   }, [orders])
 
   const availablePaymentMethods = useMemo(() => {
-    const defaultMethods = ['cod', 'bacs', 'midtrans', 'manual']
+    const defaultMethods = ['cod', 'bacs', 'midtrans', 'manual', 'cash']
     const methods = new Set<string>(defaultMethods)
     orders.forEach(o => {
       if (o.payment_method) methods.add(o.payment_method.toLowerCase())
     })
     return Array.from(methods).sort()
   }, [orders])
+
+  const availableOrderSources = useMemo(() => {
+    const defaultSources = ['WooCommerce', 'Invoice', 'POS', 'Manual', 'Shopee', 'Tokopedia', 'TikTok']
+    const sources = new Set<string>(defaultSources)
+    orders.forEach(o => {
+      if (o.source_platform) sources.add(o.source_platform)
+    })
+    return Array.from(sources).sort()
+  }, [orders])
+
+  const [availableProducts, setAvailableProducts] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!activeBizId) return
+    async function loadProducts() {
+      try {
+        const { data } = await supabase
+          .from('products')
+          .select('name')
+          .eq('business_id', activeBizId)
+          .order('name')
+        if (data && data.length > 0) {
+          setAvailableProducts(data.map(p => p.name).filter(Boolean))
+        }
+      } catch (err) {
+        console.error('[ShapeUp] Error loading products for filter:', err)
+      }
+    }
+    loadProducts()
+  }, [activeBizId, supabase])
 
   const isLoadingFirst = isFetching && orders.length === 0
 
@@ -289,6 +319,8 @@ export default function OrderPage() {
         setShowCharts={setShowCharts}
         availableStatuses={availableStatuses}
         availablePaymentMethods={availablePaymentMethods}
+        availableOrderSources={availableOrderSources}
+        availableProducts={availableProducts}
       />
 
       {/* ── Charts ────────────────────────────────────────────────────────── */}

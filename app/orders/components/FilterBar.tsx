@@ -2,8 +2,8 @@ import { useState } from 'react'
 
 export interface OrderFilterRule {
   id: string
-  field: 'grand_total' | 'total_qty' | 'status' | 'payment_method' | 'order_date'
-  operator: 'greater_or_equal' | 'less_or_equal' | 'equal' | 'after' | 'before' | 'is' | 'is_not'
+  field: 'grand_total' | 'total_qty' | 'status' | 'payment_method' | 'order_date' | 'product_name' | 'source_platform'
+  operator: 'greater_or_equal' | 'less_or_equal' | 'equal' | 'after' | 'before' | 'between' | 'is' | 'is_not' | 'in' | 'not_in' | 'contains'
   value: string
 }
 
@@ -16,43 +16,112 @@ interface FilterBarProps {
   setShowCharts: (show: boolean) => void
   availableStatuses: string[]
   availablePaymentMethods: string[]
+  availableOrderSources: string[]
+  availableProducts: string[]
 }
 
 const FIELD_OPTIONS = [
-  { value: 'grand_total',    label: 'Total Belanja',       type: 'number' },
-  { value: 'total_qty',       label: 'Jumlah Item (Qty)',   type: 'number' },
-  { value: 'status',          label: 'Status Pesanan',      type: 'select-status' },
-  { value: 'payment_method',  label: 'Metode Pembayaran',   type: 'select-payment' },
-  { value: 'order_date',      label: 'Tanggal Pesanan',     type: 'date'   },
+  { value: 'grand_total',     label: 'Total Belanja (Rp)',   type: 'number' },
+  { value: 'total_qty',       label: 'Jumlah Item (Qty)',    type: 'number' },
+  { value: 'status',          label: 'Status Pesanan',       type: 'select-status' },
+  { value: 'payment_method',  label: 'Metode Pembayaran',    type: 'select-payment' },
+  { value: 'order_date',      label: 'Tanggal Pesanan',      type: 'date'   },
+  { value: 'product_name',    label: 'Nama / Segmen Produk', type: 'select-product' },
+  { value: 'source_platform', label: 'Sumber Order',         type: 'select-source' },
 ]
 
 const OPERATOR_OPTIONS: Record<string, { value: string; label: string }[]> = {
   number: [
-    { value: 'greater_or_equal', label: '>= Lebih dari sama dengan' },
-    { value: 'less_or_equal',    label: '<= Kurang dari sama dengan' },
+    { value: 'greater_or_equal', label: '>= Lebih dari atau sama dengan' },
+    { value: 'less_or_equal',    label: '<= Kurang dari atau sama dengan' },
     { value: 'equal',            label: '= Sama dengan' },
   ],
   date: [
-    { value: 'after',  label: 'Setelah tanggal' },
-    { value: 'before', label: 'Sebelum tanggal' },
+    { value: 'between', label: '↔️ Rentang tanggal (s/d)' },
+    { value: 'equal',   label: '= Pada tanggal' },
+    { value: 'after',   label: '>= Pada / setelah tanggal' },
+    { value: 'before',  label: '<= Pada / sebelum tanggal' },
   ],
   'select-status': [
-    { value: 'is',     label: 'Sama dengan' },
-    { value: 'is_not', label: 'Tidak sama dengan' },
+    { value: 'is',     label: 'Adalah salah satu dari' },
+    { value: 'is_not', label: 'Bukan salah satu dari' },
   ],
   'select-payment': [
-    { value: 'is',     label: 'Sama dengan' },
-    { value: 'is_not', label: 'Tidak sama dengan' },
+    { value: 'is',     label: 'Adalah salah satu dari' },
+    { value: 'is_not', label: 'Bukan salah satu dari' },
+  ],
+  'select-product': [
+    { value: 'contains', label: 'Mengandung nama / kata' },
+    { value: 'is',       label: 'Sama persis dengan' },
+    { value: 'is_not',   label: 'Tidak mengandung' },
+  ],
+  'select-source': [
+    { value: 'is',     label: 'Adalah salah satu dari' },
+    { value: 'is_not', label: 'Bukan salah satu dari' },
   ],
 }
 
 const PRESETS = [
-  { key: 'all',      label: 'Semua',                     emoji: '📦' },
-  { key: 'high_val', label: 'High Value ≥500k',          emoji: '💰' },
-  { key: 'cod',      label: 'Bayar COD',                 emoji: '🚚' },
-  { key: 'completed',label: 'Selesai / Completed',       emoji: '✅' },
-  { key: 'pending',  label: 'Pending / Processing',      emoji: '⏳' },
+  { key: 'all',        label: 'Semua',                     emoji: '📦' },
+  { key: 'this_month', label: 'Bulan Ini',                 emoji: '📅' },
+  { key: 'last_month', label: 'Bulan Lalu',                emoji: '⏪' },
+  { key: 'high_val',   label: 'High Value ≥500k',          emoji: '💰' },
+  { key: 'cod',        label: 'Bayar COD',                 emoji: '🚚' },
+  { key: 'completed',  label: 'Selesai / Completed',       emoji: '✅' },
+  { key: 'pending',    label: 'Pending / Processing',      emoji: '⏳' },
+  { key: 'woocommerce',label: 'WooCommerce',               emoji: '🌐' },
+  { key: 'pos',        label: 'POS / Toko',                emoji: '🏪' },
 ]
+
+function getDatePresetRange(preset: 'today' | 'this_month' | 'last_month' | 'last_7' | 'last_30' | 'this_year'): { op: string; val: string } {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = now.getMonth()
+
+  const formatDate = (d: Date) => {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+
+  if (preset === 'today') {
+    const todayStr = formatDate(now)
+    return { op: 'equal', val: todayStr }
+  }
+
+  if (preset === 'this_month') {
+    const start = new Date(year, month, 1)
+    const end = new Date(year, month + 1, 0)
+    return { op: 'between', val: `${formatDate(start)},${formatDate(end)}` }
+  }
+
+  if (preset === 'last_month') {
+    const start = new Date(year, month - 1, 1)
+    const end = new Date(year, month, 0)
+    return { op: 'between', val: `${formatDate(start)},${formatDate(end)}` }
+  }
+
+  if (preset === 'last_7') {
+    const start = new Date(now)
+    start.setDate(now.getDate() - 6)
+    return { op: 'between', val: `${formatDate(start)},${formatDate(now)}` }
+  }
+
+  if (preset === 'last_30') {
+    const start = new Date(now)
+    start.setDate(now.getDate() - 29)
+    return { op: 'between', val: `${formatDate(start)},${formatDate(now)}` }
+  }
+
+  if (preset === 'this_year') {
+    const start = new Date(year, 0, 1)
+    const end = new Date(year, 11, 31)
+    return { op: 'between', val: `${formatDate(start)},${formatDate(end)}` }
+  }
+
+  return { op: 'between', val: '' }
+}
 
 const btnBase: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: '5px',
@@ -69,15 +138,27 @@ export function FilterBar({
   showCharts, setShowCharts,
   availableStatuses,
   availablePaymentMethods,
+  availableOrderSources,
+  availableProducts,
 }: FilterBarProps) {
   const [showBuilder, setShowBuilder] = useState(false)
 
   const applyPreset = (key: string) => {
     if (key === 'all') return setRules([])
+    if (key === 'this_month') {
+      const p = getDatePresetRange('this_month')
+      return setRules([{ id: uid(), field: 'order_date', operator: p.op as any, value: p.val }])
+    }
+    if (key === 'last_month') {
+      const p = getDatePresetRange('last_month')
+      return setRules([{ id: uid(), field: 'order_date', operator: p.op as any, value: p.val }])
+    }
     if (key === 'high_val') return setRules([{ id: uid(), field: 'grand_total', operator: 'greater_or_equal', value: '500000' }])
     if (key === 'cod') return setRules([{ id: uid(), field: 'payment_method', operator: 'is', value: 'cod' }])
     if (key === 'completed') return setRules([{ id: uid(), field: 'status', operator: 'is', value: 'completed' }])
-    if (key === 'pending') return setRules([{ id: uid(), field: 'status', operator: 'is_not', value: 'completed' }])
+    if (key === 'pending') return setRules([{ id: uid(), field: 'status', operator: 'is', value: 'pending,processing' }])
+    if (key === 'woocommerce') return setRules([{ id: uid(), field: 'source_platform', operator: 'is', value: 'WooCommerce' }])
+    if (key === 'pos') return setRules([{ id: uid(), field: 'source_platform', operator: 'is', value: 'POS' }])
   }
 
   const addRule = () => {
@@ -100,6 +181,12 @@ export function FilterBar({
           next.value = availableStatuses[0] || 'completed'
         } else if (ft === 'select-payment') {
           next.value = availablePaymentMethods[0] || 'cod'
+        } else if (ft === 'select-source') {
+          next.value = availableOrderSources[0] || 'WooCommerce'
+        } else if (ft === 'date') {
+          const res = getDatePresetRange('this_month')
+          next.operator = res.op as any
+          next.value = res.val
         } else {
           next.value = ''
         }
@@ -242,10 +329,23 @@ export function FilterBar({
                   fontSize: '12px', color: 'var(--su-text)', outline: 'none',
                   fontWeight: 500,
                 }
+
+                const currentVals = rule.value ? rule.value.split(',').map(s => s.trim()) : []
+
+                const togglePill = (valToToggle: string) => {
+                  let next: string[]
+                  const exists = currentVals.some(v => v.toLowerCase() === valToToggle.toLowerCase())
+                  if (exists) {
+                    next = currentVals.filter(v => v.toLowerCase() !== valToToggle.toLowerCase())
+                  } else {
+                    next = [...currentVals, valToToggle]
+                  }
+                  updateRule(rule.id, { value: next.join(',') })
+                }
                 
                 return (
                   <div key={rule.id} style={{
-                    display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center',
+                    display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'flex-start',
                     background: 'var(--su-bg)', padding: '10px 12px', borderRadius: '8px',
                     border: '1px solid var(--su-border)',
                   }}>
@@ -253,22 +353,204 @@ export function FilterBar({
                       {FIELD_OPTIONS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                     </select>
                     
-                    <select value={rule.operator} onChange={e => updateRule(rule.id, { operator: e.target.value as any })} style={{ ...selectStyle, minWidth: '180px' }}>
+                    <select value={rule.operator} onChange={e => updateRule(rule.id, { operator: e.target.value as any })} style={{ ...selectStyle, minWidth: '190px' }}>
                       {operators.map(op => <option key={op.value} value={op.value}>{op.label}</option>)}
                     </select>
                     
+                    {/* Value Field Component */}
                     {ft === 'select-status' ? (
-                      <select value={rule.value} onChange={e => updateRule(rule.id, { value: e.target.value })} style={{ ...selectStyle, flex: 1 }}>
-                        {availableStatuses.map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
-                      </select>
+                      <div style={{ flex: 1, minWidth: '220px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+                          {availableStatuses.map(s => {
+                            const isSelected = currentVals.some(v => v.toLowerCase() === s.toLowerCase())
+                            return (
+                              <button
+                                key={s}
+                                type="button"
+                                onClick={() => togglePill(s)}
+                                style={{
+                                  padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
+                                  fontSize: '11px', fontWeight: 700,
+                                  border: isSelected ? '1px solid var(--su-primary)' : '1px solid var(--su-border)',
+                                  background: isSelected ? 'var(--su-primary)' : 'white',
+                                  color: isSelected ? 'white' : 'var(--su-text-muted)',
+                                  transition: 'all 0.15s',
+                                  boxShadow: isSelected ? '0 1px 2px rgba(37,99,235,0.2)' : 'none',
+                                }}
+                              >
+                                {isSelected ? '✓ ' : '+ '}{s.toUpperCase()}
+                              </button>
+                            )
+                          })}
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', fontSize: '10px' }}>
+                          <button
+                            type="button"
+                            onClick={() => updateRule(rule.id, { value: availableStatuses.join(',') })}
+                            style={{ border: 'none', background: 'none', color: 'var(--su-primary)', cursor: 'pointer', padding: 0, fontWeight: 700 }}
+                          >
+                            Pilih Semua
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateRule(rule.id, { value: '' })}
+                            style={{ border: 'none', background: 'none', color: 'var(--su-text-faint)', cursor: 'pointer', padding: 0, fontWeight: 600 }}
+                          >
+                            Hapus Pilihan
+                          </button>
+                        </div>
+                      </div>
+                    ) : ft === 'select-source' ? (
+                      <div style={{ flex: 1, minWidth: '220px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+                          {availableOrderSources.map(src => {
+                            const isSelected = currentVals.some(v => v.toLowerCase() === src.toLowerCase())
+                            return (
+                              <button
+                                key={src}
+                                type="button"
+                                onClick={() => togglePill(src)}
+                                style={{
+                                  padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
+                                  fontSize: '11px', fontWeight: 700,
+                                  border: isSelected ? '1px solid var(--su-accent-dark)' : '1px solid var(--su-border)',
+                                  background: isSelected ? 'var(--su-accent-light)' : 'white',
+                                  color: isSelected ? 'var(--su-accent-dark)' : 'var(--su-text-muted)',
+                                  transition: 'all 0.15s',
+                                }}
+                              >
+                                {isSelected ? '✓ ' : '+ '}{src}
+                              </button>
+                            )
+                          })}
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', fontSize: '10px' }}>
+                          <button
+                            type="button"
+                            onClick={() => updateRule(rule.id, { value: availableOrderSources.join(',') })}
+                            style={{ border: 'none', background: 'none', color: 'var(--su-primary)', cursor: 'pointer', padding: 0, fontWeight: 700 }}
+                          >
+                            Pilih Semua
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateRule(rule.id, { value: '' })}
+                            style={{ border: 'none', background: 'none', color: 'var(--su-text-faint)', cursor: 'pointer', padding: 0, fontWeight: 600 }}
+                          >
+                            Hapus Pilihan
+                          </button>
+                        </div>
+                      </div>
                     ) : ft === 'select-payment' ? (
-                      <select value={rule.value} onChange={e => updateRule(rule.id, { value: e.target.value })} style={{ ...selectStyle, flex: 1 }}>
-                        {availablePaymentMethods.map(p => <option key={p} value={p}>{p.toUpperCase()}</option>)}
-                      </select>
+                      <div style={{ flex: 1, minWidth: '220px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+                          {availablePaymentMethods.map(p => {
+                            const isSelected = currentVals.some(v => v.toLowerCase() === p.toLowerCase())
+                            return (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() => togglePill(p)}
+                                style={{
+                                  padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
+                                  fontSize: '11px', fontWeight: 700,
+                                  border: isSelected ? '1px solid #16A34A' : '1px solid var(--su-border)',
+                                  background: isSelected ? '#F0FDF4' : 'white',
+                                  color: isSelected ? '#16A34A' : 'var(--su-text-muted)',
+                                  transition: 'all 0.15s',
+                                }}
+                              >
+                                {isSelected ? '✓ ' : '+ '}{p.toUpperCase()}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ) : ft === 'select-product' ? (
+                      <div style={{ flex: 1, minWidth: '180px' }}>
+                        <input
+                          type="text"
+                          list="product-name-list"
+                          placeholder="Ketik kata / pilih nama produk..."
+                          value={rule.value}
+                          onChange={e => updateRule(rule.id, { value: e.target.value })}
+                          style={{ ...selectStyle, width: '100%' }}
+                        />
+                        <datalist id="product-name-list">
+                          {availableProducts.map(p => <option key={p} value={p} />)}
+                        </datalist>
+                      </div>
+                    ) : ft === 'date' ? (
+                      <div style={{ flex: 1, minWidth: '260px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {rule.operator === 'between' ? (
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <input
+                              type="date"
+                              value={rule.value.split(',')[0] || ''}
+                              onChange={e => {
+                                const parts = rule.value.split(',')
+                                updateRule(rule.id, { value: `${e.target.value},${parts[1] || ''}` })
+                              }}
+                              style={{ ...selectStyle, flex: 1 }}
+                            />
+                            <span style={{ fontSize: '11px', color: 'var(--su-text-muted)', fontWeight: 600 }}>s/d</span>
+                            <input
+                              type="date"
+                              value={rule.value.split(',')[1] || ''}
+                              onChange={e => {
+                                const parts = rule.value.split(',')
+                                updateRule(rule.id, { value: `${parts[0] || ''},${e.target.value}` })
+                              }}
+                              style={{ ...selectStyle, flex: 1 }}
+                            />
+                          </div>
+                        ) : (
+                          <input
+                            type="date"
+                            value={rule.value.split(',')[0] || ''}
+                            onChange={e => updateRule(rule.id, { value: e.target.value })}
+                            style={{ ...selectStyle, width: '100%' }}
+                          />
+                        )}
+
+                        {/* Quick Date Presets */}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+                          <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--su-text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: '2px' }}>
+                            Pintas:
+                          </span>
+                          {[
+                            { label: '📅 Bulan Ini', preset: 'this_month' },
+                            { label: '⏪ Bulan Lalu', preset: 'last_month' },
+                            { label: '⚡ 7 Hari', preset: 'last_7' },
+                            { label: '📊 30 Hari', preset: 'last_30' },
+                            { label: '🎯 Hari Ini', preset: 'today' },
+                            { label: '🗓️ Tahun Ini', preset: 'this_year' },
+                          ].map(p => (
+                            <button
+                              key={p.preset}
+                              type="button"
+                              onClick={() => {
+                                const res = getDatePresetRange(p.preset as any)
+                                updateRule(rule.id, { operator: res.op as any, value: res.val })
+                              }}
+                              style={{
+                                padding: '3px 8px', borderRadius: '5px', cursor: 'pointer',
+                                fontSize: '10px', fontWeight: 700,
+                                border: '1px solid var(--su-border)', background: 'white',
+                                color: 'var(--su-text-muted)', transition: 'all 0.15s',
+                              }}
+                              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--su-primary)'; (e.currentTarget as HTMLElement).style.color = 'var(--su-primary)' }}
+                              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--su-border)'; (e.currentTarget as HTMLElement).style.color = 'var(--su-text-muted)' }}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     ) : (
                       <input
-                        type={ft}
-                        placeholder={ft === 'number' ? 'Contoh: 150000' : ''}
+                        type="number"
+                        placeholder="Contoh: 150000"
                         value={rule.value}
                         onChange={e => updateRule(rule.id, { value: e.target.value })}
                         style={{ ...selectStyle, flex: 1, minWidth: '140px' }}
@@ -282,6 +564,7 @@ export function FilterBar({
                         padding: '7px', borderRadius: '7px', cursor: 'pointer',
                         background: 'none', border: '1px solid var(--su-border)',
                         color: 'var(--su-text-faint)', transition: 'all 0.15s',
+                        alignSelf: 'center',
                       }}
                       onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--su-danger)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--su-danger)' }}
                       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--su-text-faint)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--su-border)' }}
@@ -328,3 +611,4 @@ export function FilterBar({
 }
 
 function uid() { return Math.random().toString(36).slice(2) }
+
