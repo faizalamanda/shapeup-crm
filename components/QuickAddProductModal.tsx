@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
 
 type Product = {
@@ -34,6 +35,7 @@ export default function QuickAddProductModal({
     []
   )
 
+  const [mounted, setMounted] = useState(false)
   const [name, setName] = useState('')
   const [type, setType] = useState<'physical' | 'service'>('physical')
   const [price, setPrice] = useState<number>(0)
@@ -45,7 +47,11 @@ export default function QuickAddProductModal({
   const [submitting, setSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
-  // Prefill name when opening
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  // Prefill name when opening & lock body scroll
   useEffect(() => {
     if (isOpen) {
       setName(initialName)
@@ -56,10 +62,17 @@ export default function QuickAddProductModal({
       setTrackStock(false)
       setInitialStock(0)
       setErrorMessage('')
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+
+    return () => {
+      document.body.style.overflow = ''
     }
   }, [isOpen, initialName])
 
-  if (!isOpen) return null
+  if (!isOpen || !mounted) return null
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -103,114 +116,153 @@ export default function QuickAddProductModal({
     }
   }
 
-  return (
-    <div className="fixed inset-0 bg-[#1C1C1A]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl border border-[#EBEBEA] shadow-xl p-6 max-w-md w-full space-y-4 animate-in fade-in zoom-in-95 duration-200 text-[#1C1C1A]">
-        <div>
-          <h3 className="text-sm font-black uppercase tracking-wider text-[#70706E]">Tambah Produk Baru</h3>
-          <p className="text-xs text-[#70706E] mt-1">Buat produk baru dengan cepat untuk dimasukkan ke baris invoice.</p>
+  return createPortal(
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[99999] flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-2xl max-w-lg w-full flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200 text-[#1C1C1A]">
+        
+        {/* Header */}
+        <div className="flex justify-between items-center px-6 py-4 bg-slate-50 border-b border-gray-200">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-bold">
+              📦
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">Tambah Produk Baru</h3>
+              <p className="text-[11px] text-slate-500 font-medium">Buat produk baru dengan cepat ke database master</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-200/60 flex items-center justify-center text-lg font-bold transition-all"
+            aria-label="Tutup"
+          >
+            ✕
+          </button>
         </div>
 
-        {errorMessage && (
-          <div className="p-2.5 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-xl">
-            ⚠️ {errorMessage}
-          </div>
-        )}
+        {/* Form Body */}
+        <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-6 space-y-4 text-xs font-semibold">
+          {errorMessage && (
+            <div className="p-3 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2">
+              <span>⚠️</span>
+              <span>{errorMessage}</span>
+            </div>
+          )}
 
-        <form onSubmit={handleSave} className="space-y-3.5 text-xs font-semibold">
+          {/* Product Type Toggle */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Tipe Produk</label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setType('physical')}
+                className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                  type === 'physical'
+                    ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
+                    : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <span>📦</span>
+                <span>Fisik (Barang)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setType('service')
+                  setTrackStock(false)
+                }}
+                className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                  type === 'service'
+                    ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
+                    : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <span>⚡</span>
+                <span>Jasa / Layanan</span>
+              </button>
+            </div>
+          </div>
+
           {/* Product Name */}
-          <div className="space-y-1">
-            <label className="text-[#70706E]">Nama Produk *</label>
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Nama Produk *</label>
             <input
               type="text"
               required
-              placeholder="Contoh: Kemeja Flannel Navy"
+              placeholder="Contoh: Kemeja Flannel Navy, Jasa Servis AC..."
               value={name}
               onChange={e => setName(e.target.value)}
-              className="w-full p-2.5 rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
+              className="w-full p-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-medium text-gray-900 transition-all placeholder:text-gray-400"
             />
           </div>
 
-          {/* Grid: Type & SKU */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-[#70706E]">Tipe Produk</label>
-              <select
-                value={type}
-                onChange={e => {
-                  const val = e.target.value as 'physical' | 'service'
-                  setType(val)
-                  if (val === 'service') {
-                    setTrackStock(false)
-                  }
-                }}
-                className="w-full p-2.5 rounded-xl border border-[#EBEBEA] bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none"
-              >
-                <option value="physical">Fisik (Barang)</option>
-                <option value="service">Jasa / Layanan</option>
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[#70706E]">SKU / Kode (Opsional)</label>
-              <input
-                type="text"
-                placeholder="SKU-XXX"
-                value={sku}
-                onChange={e => setSku(e.target.value)}
-                className="w-full p-2.5 rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none font-mono"
-              />
-            </div>
-          </div>
-
           {/* Grid: Sale Price & Cost Price */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-[#70706E]">Harga Jual (Rp) *</label>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Harga Jual (Rp) *</label>
               <input
                 type="number"
                 min="0"
                 required
+                placeholder="0"
                 value={price || ''}
                 onChange={e => setPrice(Math.max(0, Number(e.target.value)))}
-                className="w-full p-2.5 rounded-xl border border-[#EBEBEA] text-right focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                onWheel={e => e.currentTarget.blur()}
+                className="w-full p-2.5 rounded-xl border border-gray-300 text-right focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-medium text-gray-900 transition-all"
               />
             </div>
 
-            <div className="space-y-1">
-              <label className="text-[#70706E]">Harga Modal / HPP (Rp)</label>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Harga Modal / HPP (Rp)</label>
               <input
                 type="number"
                 min="0"
+                placeholder="0"
                 value={costPrice || ''}
                 onChange={e => setCostPrice(Math.max(0, Number(e.target.value)))}
-                className="w-full p-2.5 rounded-xl border border-[#EBEBEA] text-right focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                onWheel={e => e.currentTarget.blur()}
+                className="w-full p-2.5 rounded-xl border border-gray-300 text-right focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-medium text-gray-900 transition-all"
               />
             </div>
           </div>
 
-          {/* Stock Tracking Toggle (only for physical products) */}
+          {/* SKU */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">SKU / Kode Produk (Opsional)</label>
+            <input
+              type="text"
+              placeholder="SKU-1001"
+              value={sku}
+              onChange={e => setSku(e.target.value)}
+              className="w-full p-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-mono text-gray-900 transition-all"
+            />
+          </div>
+
+          {/* Stock Tracking (for physical products) */}
           {type === 'physical' && (
-            <div className="pt-2 border-t border-slate-100 space-y-3">
-              <label className="flex items-center gap-2 text-slate-800 cursor-pointer">
+            <div className="pt-3 border-t border-gray-100 space-y-3">
+              <label className="flex items-center gap-2 text-slate-800 font-bold cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={trackStock}
                   onChange={e => setTrackStock(e.target.checked)}
-                  className="rounded border-[#EBEBEA] text-blue-600 focus:ring-blue-600"
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span>Aktifkan Pelacakan Stok</span>
               </label>
 
               {trackStock && (
-                <div className="space-y-1 w-1/2">
-                  <label className="text-[#70706E]">Stok Awal</label>
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Stok Awal</label>
                   <input
                     type="number"
                     min="0"
+                    placeholder="0"
                     value={initialStock || ''}
                     onChange={e => setInitialStock(Math.max(0, Number(e.target.value)))}
-                    className="w-full p-2 rounded-xl border border-[#EBEBEA] text-center focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                    onWheel={e => e.currentTarget.blur()}
+                    className="w-full p-2.5 rounded-xl border border-gray-300 bg-white text-center focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-bold text-gray-900"
                   />
                 </div>
               )}
@@ -218,19 +270,19 @@ export default function QuickAddProductModal({
           )}
 
           {/* Action Buttons */}
-          <div className="flex gap-3 pt-3 border-t border-slate-100 text-xs font-bold">
+          <div className="flex gap-3 pt-4 border-t border-gray-100 text-xs font-bold">
             <button
               type="button"
               onClick={onClose}
               disabled={submitting}
-              className="flex-1 py-2.5 text-center text-slate-600 hover:text-slate-800 transition-colors"
+              className="flex-1 py-2.5 text-center text-slate-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-all"
             >
               Batal
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="flex-1 py-2.5 text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
+              className="flex-1 py-2.5 text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2"
             >
               {submitting ? (
                 <>
@@ -244,6 +296,7 @@ export default function QuickAddProductModal({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

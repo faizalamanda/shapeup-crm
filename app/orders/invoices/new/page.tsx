@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import QuickAddProductModal from '@/components/QuickAddProductModal'
 import { QuickAddCustomerForm, NewCustomerFormData, EMPTY_CUSTOMER_FORM } from '@/components/QuickAddCustomerForm'
+import { CustomerSelectCombobox } from '@/components/CustomerSelectCombobox'
+import { ProductSelectCombobox } from '@/components/ProductSelectCombobox'
 
 type Customer = {
   id: string
@@ -140,6 +142,18 @@ export default function NewInvoicePage() {
     setInvoiceDate(dateStr)
     setDueDate(dateStr) // Due on receipt default
   }, [])
+
+  // Lock body scroll when payment modal is open
+  useEffect(() => {
+    if (showPaymentModal) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [showPaymentModal])
 
   // Auto calculate due date when invoice date or terms change
   useEffect(() => {
@@ -401,17 +415,19 @@ export default function NewInvoicePage() {
 
             {!isNewCustomer ? (
               <div className="space-y-1">
-                <label className="text-xs font-bold text-[#70706E]">Customer</label>
-                <select
-                  value={selectedCustomerId}
-                  onChange={e => setSelectedCustomerId(e.target.value)}
-                  className="w-full p-2.5 text-sm rounded-xl border border-[#EBEBEA] bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
-                >
-                  <option value="">-- Pilih Customer --</option>
-                  {customers.map(c => (
-                    <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
-                  ))}
-                </select>
+                <CustomerSelectCombobox
+                  customers={customers}
+                  selectedCustomerId={selectedCustomerId}
+                  onSelectCustomer={setSelectedCustomerId}
+                  onAddNewCustomer={query => {
+                    setIsNewCustomer(true)
+                    setSelectedCustomerId('')
+                    setNewCustForm(prev => ({
+                      ...prev,
+                      name: query || prev.name
+                    }))
+                  }}
+                />
                 {selectedCustomerId && (
                   <div className="mt-2 p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-semibold text-slate-700">
                     📍 <span className="font-bold">Alamat:</span> {
@@ -529,18 +545,34 @@ export default function NewInvoicePage() {
 
                   {/* Item name input with product search */}
                   <div className="w-full md:flex-1 relative">
-                    <input
-                      type="text"
-                      placeholder="Nama Produk / Deskripsi Item"
-                      value={item.name}
-                      onChange={e => {
-                        handleItemFieldChange(idx, 'name', e.target.value)
-                        setProductSearchQueries({ ...productSearchQueries, [idx]: e.target.value })
-                        setShowProductDropdown({ ...showProductDropdown, [idx]: true })
+                    <ProductSelectCombobox
+                      products={products}
+                      selectedProductId={item.product_id}
+                      selectedProductName={item.name}
+                      onSelectProduct={p => {
+                        handleItemFieldsChange(idx, {
+                          product_id: p.id,
+                          name: p.name,
+                          price: p.price,
+                          sku: p.sku || '',
+                          discount: 0
+                        })
                       }}
-                      onFocus={() => setShowProductDropdown({ ...showProductDropdown, [idx]: true })}
-                      onBlur={() => setTimeout(() => setShowProductDropdown({ ...showProductDropdown, [idx]: false }), 200)}
-                      className="w-full p-2 text-sm rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
+                      onClearProduct={() => {
+                        handleItemFieldsChange(idx, {
+                          product_id: null,
+                          name: '',
+                          price: 0,
+                          sku: '',
+                          discount: 0
+                        })
+                      }}
+                      onAddNewProduct={query => {
+                        setQuickAddRowIndex(idx)
+                        setQuickAddName(query)
+                        setIsQuickAddModalOpen(true)
+                      }}
+                      placeholder="Nama Produk"
                     />
                     
                     {/* Indented description field to show it is a sub-part of the item */}
@@ -553,51 +585,6 @@ export default function NewInvoicePage() {
                         className="w-full p-1.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none text-[#70706E]"
                       />
                     </div>
-
-                    {/* Product Autocomplete Dropdown */}
-                    {showProductDropdown[idx] && (
-                      <div className="absolute left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-white border border-[#EBEBEA] rounded-xl shadow-lg z-50 divide-y divide-gray-50">
-                        {productSearchQueries[idx] && productSearchQueries[idx].trim() !== '' && (
-                          <button
-                            key="quick-add-new-btn"
-                            type="button"
-                            onMouseDown={() => {
-                              setQuickAddRowIndex(idx)
-                              setQuickAddName(productSearchQueries[idx])
-                              setIsQuickAddModalOpen(true)
-                            }}
-                            className="w-full text-left p-2.5 text-xs text-[#1E40AF] hover:bg-[#1E40AF]/5 font-black border-b border-gray-100 flex items-center gap-1.5 transition-colors"
-                          >
-                            ➕ Tambah &quot;{productSearchQueries[idx]}&quot; sebagai Produk Baru
-                          </button>
-                        )}
-
-                        {products
-                          .filter(p => {
-                            const q = (productSearchQueries[idx] || '').trim().toLowerCase()
-                            return !q || p.name.toLowerCase().includes(q)
-                          })
-                          .map(p => (
-                            <button
-                              key={p.id}
-                              type="button"
-                              onMouseDown={() => {
-                                handleItemFieldsChange(idx, {
-                                  product_id: p.id,
-                                  name: p.name,
-                                  price: p.price,
-                                  sku: p.sku || '',
-                                  discount: 0
-                                })
-                                setProductSearchQueries({ ...productSearchQueries, [idx]: '' })
-                              }}
-                              className="w-full text-left p-2.5 text-xs hover:bg-[#1E40AF]/5 font-semibold text-slate-800 transition-colors"
-                            >
-                              📦 {p.name} - <span className="text-[#1E40AF]">{formatIDR(p.price)}</span> {p.sku ? `(SKU: ${p.sku})` : ''}
-                            </button>
-                          ))}
-                      </div>
-                    )}
                   </div>
 
                   {showSku && (
@@ -620,6 +607,7 @@ export default function NewInvoicePage() {
                         placeholder="Qty"
                         value={item.quantity}
                         onChange={e => handleItemFieldChange(idx, 'quantity', e.target.value)}
+                        onWheel={e => e.currentTarget.blur()}
                         className="w-full p-2 text-sm text-center rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
                       />
                     </div>
@@ -630,6 +618,7 @@ export default function NewInvoicePage() {
                         placeholder="Harga Satuan (Rp)"
                         value={item.price || ''}
                         onChange={e => handleItemFieldChange(idx, 'price', e.target.value)}
+                        onWheel={e => e.currentTarget.blur()}
                         className="w-full p-2 text-sm text-right rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none"
                       />
                       
@@ -656,6 +645,7 @@ export default function NewInvoicePage() {
                               placeholder="0"
                               value={item.discount || ''}
                               onChange={e => handleItemFieldChange(idx, 'discount', e.target.value)}
+                              onWheel={e => e.currentTarget.blur()}
                               className="w-full p-1.5 text-right text-xs rounded-xl border border-rose-200 focus:outline-none focus:ring-1 focus:ring-rose-400 text-rose-700 bg-rose-50/50"
                             />
                             <button
@@ -756,6 +746,7 @@ export default function NewInvoicePage() {
                             min="0"
                             value={shippingCost || ''}
                             onChange={e => setShippingCost(Math.max(0, Number(e.target.value)))}
+                            onWheel={e => e.currentTarget.blur()}
                             className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
                           />
                           <button
@@ -782,6 +773,7 @@ export default function NewInvoicePage() {
                             min="0"
                             value={otherFees || ''}
                             onChange={e => setOtherFees(Math.max(0, Number(e.target.value)))}
+                            onWheel={e => e.currentTarget.blur()}
                             className="w-28 p-1 text-right text-xs rounded-lg border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
                           />
                           <button
