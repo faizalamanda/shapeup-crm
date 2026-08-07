@@ -50,10 +50,18 @@ function writeCache(bid: string, payloadData: { data: any[]; statsData: any[]; t
   }
 }
 
-function applyCustomerFilters(query: any, search: string, rules: FilterRule[]) {
+function applyCustomerFilters(query: any, search: string, rules: FilterRule[], productCustomerIds: string[] | null = null) {
   if (search) {
     const s = search.trim()
     query = query.or(`name.ilike.%${s}%,phone.ilike.%${s}%`)
+  }
+
+  if (productCustomerIds !== null) {
+    if (productCustomerIds.length === 0) {
+      query = query.eq('customer_id', '00000000-0000-0000-0000-000000000000')
+    } else {
+      query = query.in('customer_id', productCustomerIds)
+    }
   }
 
   for (const rule of rules) {
@@ -77,8 +85,14 @@ function applyCustomerFilters(query: any, search: string, rules: FilterRule[]) {
     }
 
     if (field === 'last_order_status') {
-      if (operator === 'is') query = query.ilike(field, value)
-      else if (operator === 'is_not') query = query.neq(field, value)
+      const arr = value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+      if (arr.length > 0) {
+        if (operator === 'is') query = query.in(field, arr)
+        else if (operator === 'is_not') query = query.not(field, 'in', arr)
+      } else {
+        if (operator === 'is') query = query.ilike(field, value)
+        else if (operator === 'is_not') query = query.neq(field, value)
+      }
     }
 
     if (field === 'last_order_date' || field === 'joined_at') {
@@ -179,13 +193,40 @@ export default function CustomerPage() {
     const to = page * limit - 1
 
     try {
+      // 0. Pre-fetch matching customer IDs if product_name rule is present
+      const productRule = rulesArray.find(r => r.field === 'product_name' && r.value?.trim())
+      let productCustomerIds: string[] | null = null
+
+      if (productRule) {
+        const val = productRule.value.trim().toLowerCase()
+        const op = productRule.operator || 'contains'
+
+        const { data: orderRows } = await supabase
+          .from('orders')
+          .select('customer_id, items_json')
+          .eq('business_id', bid)
+          .not('customer_id', 'is', null)
+
+        const matchingSet = new Set<string>()
+        if (orderRows) {
+          for (const o of orderRows) {
+            const itemsStr = JSON.stringify(o.items_json || '').toLowerCase()
+            const matches = itemsStr.includes(val)
+            if (op === 'is_not' ? !matches : matches) {
+              matchingSet.add(o.customer_id)
+            }
+          }
+        }
+        productCustomerIds = Array.from(matchingSet)
+      }
+
       // 1. Fetch Paginated Customer Table Data
       let pageQuery = supabase
         .from('customer_metrics')
         .select('*', { count: 'exact' })
         .eq('business_id', bid)
 
-      pageQuery = applyCustomerFilters(pageQuery, search, rulesArray)
+      pageQuery = applyCustomerFilters(pageQuery, search, rulesArray, productCustomerIds)
       pageQuery = pageQuery.order('ltv', { ascending: false }).range(from, to)
 
       const { data: pageData, count, error: pageErr } = await pageQuery
@@ -212,7 +253,7 @@ export default function CustomerPage() {
             .select('ltv, aov, total_order_count, days_since_last_order, last_order_date, joined_at, last_order_status')
             .eq('business_id', bid)
 
-          statsQuery = applyCustomerFilters(statsQuery, search, rulesArray)
+          statsQuery = applyCustomerFilters(statsQuery, search, rulesArray, productCustomerIds)
           statsQuery = statsQuery.range(chunkFrom, chunkTo)
 
           chunkPromises.push(statsQuery)
@@ -310,7 +351,27 @@ export default function CustomerPage() {
     fetchCustomerData(businessId, debouncedSearch, rulesArray, currentPage, pageSize, false)
   }, [businessId, debouncedSearch, serializedRules, currentPage, pageSize, fetchCustomerData])
 
-  // ─── Derived unique statuses for filter options ───────────────────────────
+  // ─── Fetch available products for filter ───────────────────────────────
+  const [availableProducts, setAvailableProducts] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!businessId) return
+    async function loadProducts() {
+      try {
+        const { data } = await supabase
+          .from('products')
+          .select('name')
+          .eq('business_id', businessId)
+          .order('name')
+        if (data && data.length > 0) {
+          setAvailableProducts(Array.from(new Set(data.map(p => p.name).filter(Boolean))).sort())
+        }
+      } catch (err) {
+        console.error('[ShapeUp] Error loading products for customer filter:', err)
+      }
+    }
+    loadProducts()
+  }, [businessId, supabase])
   const availableStatuses = useMemo(() => {
     const defaultStatuses = ['completed', 'on-hold', 'pending', 'shipped', 'cancelled', 'return-request']
     const statuses = new Set<string>(defaultStatuses)
@@ -474,14 +535,18 @@ export default function CustomerPage() {
       {/* ── Filter Bar ────────────────────────────────────────────────────── */}
       <FilterBar
         searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
         rules={rules}
-        setRules={setRules}
+        onApplyFilters={(query, newRules) => {
+          setSearchQuery(query)
+          setRules(newRules)
+        }}
         showCharts={showCharts}
         setShowCharts={setShowCharts}
         availableStatuses={availableStatuses}
+        availableProducts={availableProducts}
         businessId={businessId}
         userId={userId}
+        isFetching={isFetching}
       />
 
       {/* ── Charts ────────────────────────────────────────────────────────── */}

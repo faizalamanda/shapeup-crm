@@ -24,9 +24,11 @@ interface ProductSelectComboboxProps {
   selectedProductName: string
   onSelectProduct: (product: ProductComboboxItem) => void
   onClearProduct: () => void
-  onAddNewProduct: (searchQuery: string) => void
+  onAddNewProduct?: (searchQuery: string) => void
+  onChangeCustomName?: (name: string) => void
   disabled?: boolean
   placeholder?: string
+  showCostPrice?: boolean
 }
 
 export function ProductSelectCombobox({
@@ -36,8 +38,10 @@ export function ProductSelectCombobox({
   onSelectProduct,
   onClearProduct,
   onAddNewProduct,
+  onChangeCustomName,
   disabled = false,
-  placeholder = 'Nama Produk'
+  placeholder = 'Nama Produk',
+  showCostPrice = false
 }: ProductSelectComboboxProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -45,7 +49,7 @@ export function ProductSelectCombobox({
 
   // Find stored product match
   const selectedProduct = products.find(
-    p => (selectedProductId && p.id === selectedProductId) || p.name.toLowerCase() === selectedProductName.toLowerCase()
+    p => (selectedProductId && p.id === selectedProductId) || (selectedProductName && p.name.toLowerCase() === selectedProductName.toLowerCase())
   )
 
   // Close dropdown on outside click & reset search query if no product selected
@@ -90,10 +94,14 @@ export function ProductSelectCombobox({
             }
           }}
           onChange={e => {
-            setSearchQuery(e.target.value)
+            const val = e.target.value
+            setSearchQuery(val)
             if (!isOpen) setIsOpen(true)
+            if (onChangeCustomName) {
+              onChangeCustomName(val)
+            }
           }}
-          className="w-full p-2 pr-14 text-sm rounded-xl border border-[#EBEBEA] bg-white disabled:bg-gray-50 focus:ring-2 focus:ring-blue-100 focus:outline-none"
+          className="w-full p-2 pr-14 text-xs font-semibold rounded-lg border border-gray-300 bg-white text-gray-800 disabled:bg-gray-50 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
         />
 
         <div className="absolute right-2 flex items-center gap-1">
@@ -106,7 +114,7 @@ export function ProductSelectCombobox({
                 setSearchQuery('')
                 setIsOpen(false)
               }}
-              className="p-1 text-xs text-gray-400 hover:text-rose-600 font-bold transition-colors"
+              className="p-1 text-xs text-gray-400 hover:text-red-600 font-bold transition-colors cursor-pointer"
               title="Hapus pilihan produk"
             >
               ✕
@@ -117,7 +125,7 @@ export function ProductSelectCombobox({
             type="button"
             disabled={disabled}
             onClick={() => !disabled && setIsOpen(!isOpen)}
-            className="p-1 text-xs text-gray-400 hover:text-gray-600"
+            className="p-1 text-xs text-gray-400 hover:text-gray-600 cursor-pointer"
           >
             {isOpen ? '▲' : '▼'}
           </button>
@@ -126,10 +134,11 @@ export function ProductSelectCombobox({
 
       {/* Dropdown list */}
       {isOpen && !disabled && (
-        <div className="absolute left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-[#EBEBEA] rounded-xl shadow-lg z-50 divide-y divide-gray-50 animate-in fade-in zoom-in-95 duration-100">
+        <div className="absolute left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg z-50 divide-y divide-gray-100 animate-in fade-in zoom-in-95 duration-100">
           {filteredProducts.length > 0 ? (
             filteredProducts.map(p => {
               const isSelected = selectedProductId === p.id || (selectedProductName && p.name.toLowerCase() === selectedProductName.toLowerCase())
+              const displayPrice = showCostPrice ? (p.cost_price ?? p.price) : p.price
               return (
                 <button
                   key={p.id}
@@ -139,35 +148,50 @@ export function ProductSelectCombobox({
                     setSearchQuery('')
                     setIsOpen(false)
                   }}
-                  className={`w-full text-left p-2.5 text-xs transition-colors flex items-center justify-between ${
-                    isSelected ? 'bg-blue-50/70 font-bold text-blue-900' : 'hover:bg-gray-50 text-slate-800 font-medium'
+                  className={`w-full text-left p-2.5 text-xs transition-colors flex items-center justify-between cursor-pointer ${
+                    isSelected ? 'bg-blue-50/70 font-bold text-blue-900' : 'hover:bg-gray-50 text-gray-800 font-medium'
                   }`}
                 >
                   <div>
-                    <span className="font-bold text-slate-900">📦 {p.name}</span>
-                    {p.sku && <span className="ml-1.5 text-[11px] font-mono text-slate-500">(SKU: {p.sku})</span>}
+                    <span className="font-bold text-gray-900">📦 {p.name}</span>
+                    {p.sku && <span className="ml-1.5 text-[10px] font-mono text-gray-500">(SKU: {p.sku})</span>}
                   </div>
-                  <span className="text-[#1E40AF] font-bold">{formatIDR(p.price)}</span>
+                  <span className="text-blue-700 font-bold">{formatIDR(displayPrice)}</span>
                 </button>
               )
             })
           ) : (
-            <div className="p-3 text-xs text-slate-500 font-medium text-center">
+            <div className="p-3 text-xs text-gray-500 font-medium text-center">
               Produk &quot;{searchQuery}&quot; tidak ditemukan.
             </div>
           )}
 
-          {/* Quick Add Product action */}
-          <button
-            type="button"
-            onMouseDown={() => {
-              setIsOpen(false)
-              onAddNewProduct(searchQuery.trim())
-            }}
-            className="w-full text-left p-2.5 text-xs text-[#1E40AF] hover:bg-[#1E40AF]/5 font-black border-t border-gray-100 flex items-center gap-1.5 transition-colors"
-          >
-            ➕ {searchQuery.trim() ? `Tambah "${searchQuery.trim()}" sebagai Produk Baru` : 'Tambah Produk Baru'}
-          </button>
+          {/* Quick Add Product action or Custom Name option */}
+          {searchQuery.trim() && onChangeCustomName && (
+            <button
+              type="button"
+              onMouseDown={() => {
+                setIsOpen(false)
+                onChangeCustomName(searchQuery.trim())
+              }}
+              className="w-full text-left p-2.5 text-xs text-blue-700 hover:bg-blue-50 font-bold border-t border-gray-100 flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              ✏️ Gunakan &quot;{searchQuery.trim()}&quot; sebagai nama manual
+            </button>
+          )}
+
+          {onAddNewProduct && (
+            <button
+              type="button"
+              onMouseDown={() => {
+                setIsOpen(false)
+                onAddNewProduct(searchQuery.trim())
+              }}
+              className="w-full text-left p-2.5 text-xs text-blue-700 hover:bg-blue-50 font-black border-t border-gray-100 flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              ➕ {searchQuery.trim() ? `Tambah "${searchQuery.trim()}" sebagai Produk Baru` : 'Tambah Produk Baru'}
+            </button>
+          )}
         </div>
       )}
     </div>

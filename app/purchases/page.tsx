@@ -3,6 +3,9 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
 import { PurchaseDetailModal } from './components/PurchaseDetailModal'
+import { SupplierSelectCombobox } from '@/components/SupplierSelectCombobox'
+import { ProductSelectCombobox } from '@/components/ProductSelectCombobox'
+import QuickAddSupplierModal from '@/components/QuickAddSupplierModal'
 
 type Supplier = {
   id: string
@@ -88,6 +91,15 @@ export default function PurchasesPage() {
   const [isPayOpen, setIsPayOpen] = useState(false)
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null)
   const [payLoading, setPayLoading] = useState(false)
+
+  // Quick Add Supplier Modal State
+  const [isQuickAddSupplierOpen, setIsQuickAddSupplierOpen] = useState(false)
+  const [quickAddSupplierQuery, setQuickAddSupplierQuery] = useState('')
+
+  const openQuickAddSupplier = (query?: string) => {
+    setQuickAddSupplierQuery(query || '')
+    setIsQuickAddSupplierOpen(true)
+  }
 
   // Upload progress
   const [uploadProgress, setUploadProgress] = useState('')
@@ -225,20 +237,30 @@ export default function PurchasesPage() {
     setFormItems(formItems.filter((_, i) => i !== idx))
   }
 
-  const handleItemChange = (idx: number, field: keyof PurchaseItem, val: any) => {
+  const handleItemChange = (idx: number, field: keyof PurchaseItem | 'custom_name', val: any) => {
     const updated = [...formItems]
     if (field === 'product_id') {
-      const selectedProd = products.find(p => p.id === val)
-      if (selectedProd) {
-        updated[idx] = {
-          product_id: selectedProd.id,
-          name: selectedProd.name,
-          quantity: updated[idx].quantity,
-          price: selectedProd.cost_price || selectedProd.price || 0,
-          is_physical: selectedProd.type === 'physical'
-        }
+      if (!val) {
+        updated[idx] = { ...updated[idx], product_id: undefined, name: '' }
       } else {
-        updated[idx] = { ...updated[idx], product_id: undefined }
+        const selectedProd = products.find(p => p.id === val)
+        if (selectedProd) {
+          updated[idx] = {
+            product_id: selectedProd.id,
+            name: selectedProd.name,
+            quantity: updated[idx].quantity,
+            price: selectedProd.cost_price || selectedProd.price || 0,
+            is_physical: selectedProd.type === 'physical'
+          }
+        } else {
+          updated[idx] = { ...updated[idx], product_id: undefined }
+        }
+      }
+    } else if (field === 'custom_name') {
+      updated[idx] = {
+        ...updated[idx],
+        product_id: undefined,
+        name: val
       }
     } else {
       updated[idx] = { ...updated[idx], [field]: val } as any
@@ -663,15 +685,23 @@ export default function PurchasesPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Pemasok (Supplier)</label>
-                  <select
-                    className="w-full p-2.5 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
-                    value={formSupplierId}
-                    onChange={e => setFormSupplierId(e.target.value)}
-                  >
-                    <option value="">-- Pilih Pemasok (Opsional) --</option>
-                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-500">Pemasok (Supplier)</label>
+                    <button
+                      type="button"
+                      onClick={() => openQuickAddSupplier()}
+                      className="text-[10px] font-black text-blue-600 hover:text-blue-800 uppercase tracking-wider cursor-pointer"
+                    >
+                      ➕ Tambah Pemasok
+                    </button>
+                  </div>
+                  <SupplierSelectCombobox
+                    suppliers={suppliers}
+                    selectedSupplierId={formSupplierId}
+                    onSelectSupplier={id => setFormSupplierId(id)}
+                    onAddNewSupplier={query => openQuickAddSupplier(query)}
+                    placeholder="Cari & pilih pemasok (ketik nama)..."
+                  />
                 </div>
               </div>
 
@@ -712,57 +742,55 @@ export default function PurchasesPage() {
 
                 {formItems.map((item, idx) => (
                   <div key={idx} className="flex gap-2 items-center bg-gray-50 p-2.5 rounded-lg border border-gray-200">
-                    <div className="flex-1 min-w-[140px]">
-                      <select
-                        className="w-full p-2 border border-gray-300 rounded text-xs font-semibold text-gray-800 bg-white"
-                        value={item.product_id || ''}
-                        onChange={e => handleItemChange(idx, 'product_id', e.target.value)}
-                      >
-                        <option value="">-- Pilih Produk / Jasa --</option>
-                        {products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.sku || '-'})</option>)}
-                      </select>
-                    </div>
-
-                    <div className="w-32">
-                      <input
-                        type="text"
-                        placeholder="Nama Manual/Barang"
-                        required
-                        className="w-full p-2 border border-gray-300 rounded text-xs font-semibold text-gray-800 bg-white"
-                        value={item.name}
-                        onChange={e => handleItemChange(idx, 'name', e.target.value)}
+                    <div className="flex-1 min-w-[200px]">
+                      <ProductSelectCombobox
+                        products={products}
+                        selectedProductId={item.product_id || null}
+                        selectedProductName={item.name}
+                        showCostPrice={true}
+                        placeholder="Cari produk / ketik nama barang..."
+                        onSelectProduct={p => {
+                          handleItemChange(idx, 'product_id', p.id)
+                        }}
+                        onClearProduct={() => {
+                          handleItemChange(idx, 'product_id', null)
+                        }}
+                        onChangeCustomName={customName => {
+                          handleItemChange(idx, 'custom_name', customName)
+                        }}
                       />
                     </div>
 
-                    <div className="w-16">
+                    <div className="w-20">
                       <input
                         type="number"
                         min="1"
                         placeholder="Qty"
                         required
-                        className="w-full p-2 border border-gray-300 rounded text-xs font-semibold text-gray-800 bg-white"
+                        className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                         value={item.quantity}
                         onChange={e => handleItemChange(idx, 'quantity', parseInt(e.target.value) || 0)}
                       />
                     </div>
 
-                    <div className="w-24">
+                    <div className="w-28">
                       <input
                         type="number"
                         min="0"
                         placeholder="Harga"
                         required
-                        className="w-full p-2 border border-gray-300 rounded text-xs font-semibold text-gray-800 bg-white"
+                        className="w-full p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                         value={item.price}
                         onChange={e => handleItemChange(idx, 'price', parseFloat(e.target.value) || 0)}
                       />
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 shrink-0">
                       <input
                         type="checkbox"
                         checked={item.is_physical}
                         onChange={e => handleItemChange(idx, 'is_physical', e.target.checked)}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                       />
                       <span className="text-[10px] font-bold text-gray-500 uppercase">Fisik</span>
                     </div>
@@ -771,7 +799,7 @@ export default function PurchasesPage() {
                       type="button"
                       onClick={() => removeItemRow(idx)}
                       disabled={formItems.length === 1}
-                      className="text-red-500 hover:text-red-700 text-xs font-bold px-1 disabled:opacity-30 cursor-pointer"
+                      className="text-red-500 hover:text-red-700 text-xs font-bold px-1.5 py-1 disabled:opacity-30 cursor-pointer shrink-0"
                     >
                       ✕
                     </button>
@@ -1041,6 +1069,17 @@ export default function PurchasesPage() {
           onClose={() => setSelectedPurchaseForDetail(null)}
         />
       )}
+
+      {/* Quick Add Supplier Modal */}
+      <QuickAddSupplierModal
+        isOpen={isQuickAddSupplierOpen}
+        onClose={() => setIsQuickAddSupplierOpen(false)}
+        initialName={quickAddSupplierQuery}
+        onSuccess={(newSupplier) => {
+          setSuppliers(prev => [...prev, newSupplier])
+          setFormSupplierId(newSupplier.id)
+        }}
+      />
 
     </div>
   )
