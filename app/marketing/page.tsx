@@ -1,5 +1,7 @@
 "use client"
 import { useEffect, useRef, useState } from 'react'
+import AudiencePreviewModal from './components/AudiencePreviewModal'
+import type { MarketingFilter } from './utils/filterEvaluator'
 import Link from 'next/link'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -12,7 +14,7 @@ const getActiveBusiness = async () => {
 
   const { data } = await supabase
     .from('profiles')
-    .select('active_business_id, businesses!active_business_id(timezone)')
+    .select('active_business_id, businesses!active_business_id(name, timezone)')
     .eq('id', user.id)
     .single()
 
@@ -20,6 +22,7 @@ const getActiveBusiness = async () => {
 
   return {
     id: data?.active_business_id || null,
+    name: business?.name || 'Toko Anda',
     timezone: business?.timezone || 'Asia/Jakarta',
   }
 }
@@ -90,6 +93,7 @@ const parseArray = <T,>(value: unknown): T[] => {
 
 type MarketingOrderPreview = {
   id: string | number
+  customer_id?: string | null
   created_at?: string | null
   status?: string | null
   order_date_utc?: string | null
@@ -110,19 +114,13 @@ type MarketingOrderPreview = {
   } | string | null
 }
 
-type MarketingFilter = {
-  key: string
-  op: string
-  value?: string
-  logic?: 'AND' | 'OR'
-}
-
 type MarketingScenario = {
   id: string
   name: string
   business_id?: string | null
   trigger_type?: string | null
   is_active?: boolean | null
+  filters?: MarketingFilter[] | null
 }
 
 type PreviewPerson = {
@@ -130,6 +128,12 @@ type PreviewPerson = {
   orderId: string
   status: string
   time: string
+}
+
+type CustomerMetricMapItem = {
+  ltv: number
+  aov: number
+  total_order_count: number
 }
 
 const getOrderDateKey = (order: MarketingOrderPreview, timezone: string) => {
@@ -221,16 +225,37 @@ const compareNumberValue = (sourceValue: string | number | null | undefined, fil
   if (!Number.isFinite(source) || !Number.isFinite(filter)) return false
 
   switch (operator) {
-    case 'equal to': return source === filter
-    case 'more than': return source > filter
-    case 'less than': return source < filter
-    default: return true
+    case 'equal to':
+    case 'equal':
+      return source === filter
+    case 'more than':
+    case 'greater':
+      return source > filter
+    case 'less than':
+    case 'less':
+      return source < filter
+    case 'greater_or_equal':
+    case 'greater than or equal to':
+    case 'at_least':
+      return source >= filter
+    case 'less_or_equal':
+    case 'less than or equal to':
+    case 'at_most':
+      return source <= filter
+    default:
+      return true
   }
 }
 
-const isOrderMatchFilter = (order: MarketingOrderPreview, filter: MarketingFilter, timezone: string) => {
+const isOrderMatchFilter = (
+  order: MarketingOrderPreview,
+  filter: MarketingFilter,
+  timezone: string,
+  customerMetricsMap?: Map<string, CustomerMetricMapItem>
+) => {
   const raw = parseRecord(order.raw_source_data) || {}
   const billing = parseRecord(raw.billing)
+  const cid = order.customer_id
 
   switch (filter.key) {
     case 'order_status':
@@ -241,6 +266,21 @@ const isOrderMatchFilter = (order: MarketingOrderPreview, filter: MarketingFilte
       return compareTextValue(getOrderProductNames(order), filter.value || '', filter.op)
     case 'total_spent':
       return compareNumberValue(raw.total as string | number | null | undefined, filter.value || '', filter.op)
+    case 'customer_aov':
+    case 'aov': {
+      const metric = cid ? customerMetricsMap?.get(cid) : undefined
+      return compareNumberValue(metric?.aov ?? 0, filter.value || '', filter.op)
+    }
+    case 'customer_ltv':
+    case 'ltv': {
+      const metric = cid ? customerMetricsMap?.get(cid) : undefined
+      return compareNumberValue(metric?.ltv ?? 0, filter.value || '', filter.op)
+    }
+    case 'customer_total_orders':
+    case 'total_order_count': {
+      const metric = cid ? customerMetricsMap?.get(cid) : undefined
+      return compareNumberValue(metric?.total_order_count ?? 0, filter.value || '', filter.op)
+    }
     case 'date_order':
       return isDateKeyMatch(getOrderDateKey(order, timezone), filter.value || '', filter.op, timezone)
     case 'date_completed':
@@ -250,11 +290,16 @@ const isOrderMatchFilter = (order: MarketingOrderPreview, filter: MarketingFilte
   }
 }
 
-const isOrderMatchFilters = (order: MarketingOrderPreview, filters: MarketingFilter[], timezone: string) => {
+const isOrderMatchFilters = (
+  order: MarketingOrderPreview,
+  filters: MarketingFilter[],
+  timezone: string,
+  customerMetricsMap?: Map<string, CustomerMetricMapItem>
+) => {
   if (!filters.length) return true
 
   return filters.reduce((result, filter, index) => {
-    const isMatch = isOrderMatchFilter(order, filter, timezone)
+    const isMatch = isOrderMatchFilter(order, filter, timezone, customerMetricsMap)
     if (index === 0) return isMatch
 
     return filter.logic === 'OR' ? result || isMatch : result && isMatch
@@ -270,9 +315,8 @@ export default function MarketingPage() {
   const [scenarios, setScenarios] = useState<MarketingScenario[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedPreview, setSelectedPreview] = useState<MarketingScenario | null>(null)
-  const [previewList, setPreviewList] = useState<PreviewPerson[]>([])
-  const [previewLoading, setPreviewLoading] = useState(false)
   const [activeBusinessId, setActiveBusinessId] = useState<string | null>(null)
+  const [activeBusinessName, setActiveBusinessName] = useState('Toko Anda')
   const [activeBusinessTimezone, setActiveBusinessTimezone] = useState('Asia/Jakarta')
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set())
   const [notification, setNotification] = useState<NotificationState>(null)
@@ -300,6 +344,7 @@ export default function MarketingPage() {
       }
 
       setActiveBusinessId(activeBusiness.id)
+      setActiveBusinessName(activeBusiness.name)
       setActiveBusinessTimezone(activeBusiness.timezone)
 
       const { data, error } = await supabase
@@ -326,83 +371,6 @@ export default function MarketingPage() {
       if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current)
     }
   }, [])
-
-  // --- LOGIC PREVIEW: DENGAN SORTING TIMESTAMP & FILTER MANUSIAWI ---
-  useEffect(() => {
-    const getValidAudience = async () => {
-      if (!selectedPreview) return;
-      setPreviewLoading(true);
-      
-      try {
-        const { data: currentMA } = await supabase
-          .from('marketing_scenarios')
-          .select('filters, business_id')
-          .eq('id', selectedPreview.id)
-          .single();
-
-        const activeFilters = (currentMA?.filters as MarketingFilter[] | null) || [];
-        const previewBusinessId = currentMA?.business_id || selectedPreview.business_id || activeBusinessId
-
-        if (!previewBusinessId) {
-          setPreviewList([])
-          return
-        }
-        
-        const { data: rawOrders, error: orderError } = await supabase
-          .from('orders')
-          .select('*')
-          .eq('business_id', previewBusinessId)
-          .order('created_at', { ascending: false })
-          .limit(5000);
-
-        if (orderError) throw orderError;
-
-        if (rawOrders) {
-          const previewOrders = rawOrders as MarketingOrderPreview[]
-          const filtered = previewOrders.filter((order) => isOrderMatchFilters(order, activeFilters, activeBusinessTimezone));
-
-          // Urutan tetap: yang paling baru di atas
-          const sorted = filtered.sort((a, b) => {
-            const timeA = `${getOrderDateKey(a, activeBusinessTimezone) || getLocalDateKey(a.created_at || '')} ${a.order_date_utc || a.order_date || a.created_at || ''}`;
-            const timeB = `${getOrderDateKey(b, activeBusinessTimezone) || getLocalDateKey(b.created_at || '')} ${b.order_date_utc || b.order_date || b.created_at || ''}`;
-            return timeB.localeCompare(timeA);
-          });
-
-          setPreviewList(sorted.map(d => {
-            const raw = parseRecord(d.raw_source_data) || {};
-            const billing = parseRecord(raw.billing)
-            const firstName = typeof billing?.first_name === 'string' ? billing.first_name : ''
-            const lastName = typeof billing?.last_name === 'string' ? billing.last_name : ''
-            const orderNumber = raw.number || d.id
-            const completedGmt = typeof raw.date_completed_gmt === 'string' ? raw.date_completed_gmt : ''
-            const completed = typeof raw.date_completed === 'string' ? raw.date_completed : ''
-            return {
-              name: firstName
-                    ? `${firstName} ${lastName}`.trim() 
-                    : 'Customer',
-              orderId: `#${orderNumber}`,
-              status: (d.status || 'unknown').toUpperCase(),
-              time: completedGmt || completed || d.order_date_utc || d.order_date || d.created_at
-                    ? completedGmt
-                      ? formatDateKeyID(ensureUTCDateString(completedGmt), activeBusinessTimezone, true)
-                      : completed
-                        ? formatDateKeyID(completed, activeBusinessTimezone)
-                        : d.order_date_utc
-                        ? formatDateKeyID(d.order_date_utc, activeBusinessTimezone, true)
-                        : formatDateKeyID(d.order_date || d.created_at || '', activeBusinessTimezone)
-                    : '-'
-            };
-          }));
-        }
-      } catch (err) {
-        console.error("Runtime Error:", err);
-      } finally {
-        setPreviewLoading(false);
-      }
-    };
-
-    getValidAudience();
-  }, [selectedPreview, activeBusinessId, activeBusinessTimezone]);
 
   const handleDelete = async (id: string, name: string) => {
     if (confirm(`YAKIN INGIN MENGHAPUS SKENARIO: ${name}?`)) {
@@ -473,7 +441,7 @@ export default function MarketingPage() {
 
       <PageHeader 
         title="MARKETING AUTOMATION" 
-        description="Kelola skenario pesan otomatis Toko Alamanda."
+        description={`Kelola skenario pesan otomatis ${activeBusinessName}.`}
         action={
           <Link href="/marketing/new">
             <Button variant="primary" className="px-6 shadow-md font-black text-xs uppercase">
@@ -588,65 +556,14 @@ export default function MarketingPage() {
       </section>
 
       {/* MODAL PREVIEW AUDIENCE */}
-      {selectedPreview && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-              <div>
-                <div className="flex items-center gap-3">
-                  <h3 className="font-black text-slate-900 uppercase tracking-tight text-sm">Preview Audience</h3>
-                  {!previewLoading && (
-                    <span className="bg-blue-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
-                      {previewList.length} DATA
-                    </span>
-                  )}
-                </div>
-                <p className="text-[10px] text-slate-500 font-bold uppercase mt-1 tracking-wider">Skenario: {selectedPreview.name}</p>
-              </div>
-              <button onClick={() => setSelectedPreview(null)} className="text-slate-300 hover:text-slate-600 transition-colors text-xl font-light">✕</button>
-            </div>
-            
-            <div className="max-h-[350px] overflow-y-auto">
-              {previewLoading ? (
-                <div className="p-16 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest animate-pulse">Menghitung Target Audience...</div>
-              ) : (
-                <table className="w-full text-left">
-                  <tbody className="divide-y divide-slate-50 text-[11px]">
-                    {previewList.map((person, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                        <td className="p-4 font-bold uppercase">
-                          {person.name}
-                          <span className="text-blue-600 block text-[9px] font-mono tracking-tighter">{person.orderId}</span>
-                        </td>
-                        <td className="p-4 text-right">
-                          <div className="flex flex-col items-end gap-1">
-                            <span className="font-black bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-[9px] uppercase tracking-tighter italic">
-                              {person.status}
-                            </span>
-                            <span className="font-black text-slate-400 text-[9px] tracking-tighter opacity-60">{person.time}</span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {previewList.length === 0 && (
-                      <tr>
-                        <td colSpan={2} className="p-16 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest leading-relaxed">
-                          Tidak ada pesanan ditemukan<br/>dengan kriteria filter ini.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              )}
-            </div>
-
-            <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
-              <button onClick={() => setSelectedPreview(null)} className="flex-1 py-3 bg-white border border-slate-200 rounded-xl text-[10px] font-black uppercase hover:bg-slate-100 transition-all text-slate-600">Tutup</button>
-              <button className="flex-1 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase shadow-lg shadow-slate-200 hover:bg-black transition-all">Test Kirim WA</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AudiencePreviewModal
+        isOpen={Boolean(selectedPreview)}
+        onClose={() => setSelectedPreview(null)}
+        scenarioName={selectedPreview?.name || ''}
+        filters={(selectedPreview?.filters as MarketingFilter[]) || []}
+        businessId={selectedPreview?.business_id || activeBusinessId}
+        timezone={activeBusinessTimezone}
+      />
     </div>
   )
 }

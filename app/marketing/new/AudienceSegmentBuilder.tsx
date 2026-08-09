@@ -1,4 +1,6 @@
 "use client"
+import { useState } from 'react'
+import AudiencePreviewModal from '../components/AudiencePreviewModal'
 
 type AudienceFieldType = 'date' | 'number' | 'select' | 'text'
 
@@ -124,6 +126,27 @@ const AUDIENCE_FIELDS: AudienceFieldConfig[] = [
     column: "(o.raw_source_data->>'total')::numeric",
     placeholder: 'RP',
   },
+  {
+    key: 'customer_aov',
+    label: 'CUSTOMER: AOV',
+    type: 'number',
+    column: "COALESCE((SELECT cm.aov FROM public.customer_metrics cm WHERE cm.customer_id = o.customer_id AND cm.business_id = o.business_id), 0)",
+    placeholder: 'RP',
+  },
+  {
+    key: 'customer_ltv',
+    label: 'CUSTOMER: LTV',
+    type: 'number',
+    column: "COALESCE((SELECT cm.ltv FROM public.customer_metrics cm WHERE cm.customer_id = o.customer_id AND cm.business_id = o.business_id), 0)",
+    placeholder: 'RP',
+  },
+  {
+    key: 'customer_total_orders',
+    label: 'CUSTOMER: JUMLAH ORDER',
+    type: 'number',
+    column: "COALESCE((SELECT cm.total_order_count FROM public.customer_metrics cm WHERE cm.customer_id = o.customer_id AND cm.business_id = o.business_id), 0)",
+    placeholder: 'JUMLAH',
+  },
 ]
 
 const OPERATOR_GROUPS = {
@@ -135,9 +158,11 @@ const OPERATOR_GROUPS = {
     { id: 'after_x_hours', label: 'SETELAH X JAM' },
   ],
   number: [
-    { id: 'equal to', label: 'EQUAL TO' },
-    { id: 'more than', label: 'MORE THAN' },
-    { id: 'less than', label: 'LESS THAN' },
+    { id: 'equal to', label: 'EQUAL TO (=)' },
+    { id: 'more than', label: 'MORE THAN (>)' },
+    { id: 'less than', label: 'LESS THAN (<)' },
+    { id: 'greater_or_equal', label: 'GREATER OR EQUAL (>=)' },
+    { id: 'less_or_equal', label: 'LESS OR EQUAL (<=)' },
   ],
   select: [
     { id: 'is', label: 'IS' },
@@ -150,7 +175,13 @@ const OPERATOR_GROUPS = {
   ],
 } satisfies Record<AudienceFieldType, { id: string; label: string }[]>
 
-const getAudienceField = (key: string) => AUDIENCE_FIELDS.find(field => field.key === key) || AUDIENCE_FIELDS[0]
+const getAudienceField = (key: string) => {
+  const normalizedKey =
+    key === 'aov' ? 'customer_aov' :
+    key === 'ltv' ? 'customer_ltv' :
+    key === 'total_order_count' ? 'customer_total_orders' : key
+  return AUDIENCE_FIELDS.find(field => field.key === normalizedKey) || AUDIENCE_FIELDS[0]
+}
 
 const getOps = (key: string) => OPERATOR_GROUPS[getAudienceField(key).type]
 
@@ -221,9 +252,19 @@ export const generateSQLFilter = (filters: AudienceFilter[]) => {
       case 'contains': 
         sqlPart = `${col} ILIKE '%${val}%'`; break;
       case 'more than': 
+      case 'greater':
         sqlPart = `${col} > ${numericVal}`; break;
       case 'less than': 
+      case 'less':
         sqlPart = `${col} < ${numericVal}`; break;
+      case 'greater_or_equal':
+      case 'greater than or equal to':
+      case 'at_least':
+        sqlPart = `${col} >= ${numericVal}`; break;
+      case 'less_or_equal':
+      case 'less than or equal to':
+      case 'at_most':
+        sqlPart = `${col} <= ${numericVal}`; break;
       case 'after': 
         sqlPart = field.type === 'date'
           ? `${col}::date > '${val}'::date`
@@ -297,6 +338,8 @@ export const generateScheduling = (filters: AudienceFilter[], schedule?: Schedul
 };
 
 export default function AudienceSegmentBuilder({ filters, setFilters }: AudienceSegmentBuilderProps) {
+  const [showPreviewModal, setShowPreviewModal] = useState(false)
+
   const addFilter = () => {
     setFilters([...filters, buildDefaultFilter()])
   }
@@ -387,14 +430,33 @@ export default function AudienceSegmentBuilder({ filters, setFilters }: Audience
         )
       })}
 
-      <div className="pt-2">
+      <div className="pt-2 flex items-center justify-between gap-3 flex-wrap">
         <button 
           onClick={addFilter} 
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-dashed border-slate-300 bg-white text-[10px] font-black text-slate-500 hover:border-blue-500 hover:text-blue-600 uppercase transition-all shadow-sm"
         >
           <span className="text-sm">+</span> TAMBAH KRITERIA BARU
         </button>
+
+        <button 
+          type="button"
+          onClick={() => setShowPreviewModal(true)} 
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-50 border border-blue-200 text-[10px] font-black text-blue-700 hover:bg-blue-100 uppercase transition-all shadow-sm"
+        >
+          <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          PREVIEW AUDIENCE
+        </button>
       </div>
+
+      <AudiencePreviewModal
+        isOpen={showPreviewModal}
+        onClose={() => setShowPreviewModal(false)}
+        scenarioName="DRAFT KRITERIA"
+        filters={filters}
+      />
     </div>
   )
 }
