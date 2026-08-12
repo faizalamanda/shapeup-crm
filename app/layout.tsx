@@ -109,6 +109,11 @@ const Icons = {
       <line x1="2" y1="10" x2="22" y2="10"/>
     </svg>
   ),
+  inbox: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+    </svg>
+  ),
   accounting: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <line x1="18" y1="20" x2="18" y2="10"/>
@@ -120,6 +125,7 @@ const Icons = {
 
 const menuItems: MenuItem[] = [
   { name: 'Overview',     href: '/dashboard',         icon: Icons.overview },
+  { name: 'Inbox / Chat', href: '/inbox',             icon: Icons.inbox },
   {
     name: 'Pemasukan',    href: '#',                  icon: Icons.pemasukan,
     children: [
@@ -182,6 +188,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const [userProfile, setUserProfile] = useState<any>(null)
   const [currentUserRole, setCurrentUserRole] = useState<string | null>(null)
   const [currentUserPermissions, setCurrentUserPermissions] = useState<string[]>([])
+  const [isWabaActive, setIsWabaActive] = useState(false)
   const [bizLoading, setBizLoading] = useState(true)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
 
@@ -306,6 +313,24 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         setActiveBusiness(null)
       }
 
+      // Check if WABA Official integration is active for this business
+      if (activeBizId) {
+        const { data: wabaInt } = await supabase
+          .from('integrations')
+          .select('is_active, api_credentials')
+          .eq('platform_name', 'waba_official')
+          .filter('api_credentials->>business_id', 'eq', activeBizId)
+          .maybeSingle()
+
+        const active = Boolean(
+          wabaInt &&
+          wabaInt.is_active === true
+        )
+        setIsWabaActive(active)
+      } else {
+        setIsWabaActive(false)
+      }
+
       // Resolve role and permissions
       const activeBs = bsResult.data?.find((item: any) => item.businesses?.id === activeBizId)
       const isUserAdmin = profile?.role === 'admin' || activeBs?.role === 'admin' || ownedResult.data?.some((biz: any) => biz.id === activeBizId)
@@ -382,14 +407,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     const perms = currentUserPermissions
 
     if (role === 'admin' || perms.includes('full_access')) {
-      // Admin/Full access sees all standard items + HR item
-      const fullList = [...menuItems]
+      // Admin/Full access sees all standard items (+ HR item if admin)
+      let fullList = [...menuItems]
+      if (!isWabaActive) {
+        fullList = fullList.filter(m => m.href !== '/inbox')
+      }
       // Insert HR right after Akuntansi (which is at index 5)
       fullList.splice(6, 0, { name: 'Karyawan & Gaji', href: '/employees', icon: Icons.employees })
       return fullList
     }
 
     const allowed: MenuItem[] = []
+
+    // 0. Inbox / Chat (Paid Plugin — only shown if active for current business)
+    if (isWabaActive) {
+      const inboxItem = menuItems.find(m => m.name === 'Inbox / Chat')
+      if (inboxItem) allowed.push(inboxItem)
+    }
 
     // 1. Overview
     if (
@@ -509,7 +543,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     }
 
     return allowed
-  }, [currentUserRole, currentUserPermissions, bizLoading])
+  }, [currentUserRole, currentUserPermissions, bizLoading, isWabaActive])
 
   // Route protection path check
   const isAllowedPath = useMemo(() => {
@@ -517,6 +551,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     
     const role = currentUserRole
     const perms = currentUserPermissions
+
+    if (pathname.startsWith('/inbox')) {
+      return isWabaActive
+    }
 
     if (role === 'admin' || perms.includes('full_access')) return true
 
@@ -594,7 +632,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     }
 
     return true
-  }, [pathname, currentUserRole, currentUserPermissions, noSidebar, bizLoading, isLoggingOut])
+  }, [pathname, currentUserRole, currentUserPermissions, noSidebar, bizLoading, isLoggingOut, isWabaActive])
 
   const accessDeniedScreen = (
     <div className="min-h-[70vh] bg-[#f4f1ea] p-4 md:p-8 text-[#2e2e2e] flex items-center justify-center">

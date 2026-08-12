@@ -65,6 +65,53 @@ export const INTEGRATION_PLUGINS: IntegrationPlugin[] = [
     ],
   },
   {
+    id: 'waba_official',
+    name: 'WABA Official (Meta)',
+    description: 'Integrasi resmi WhatsApp Business API dari Meta. Kirim dan terima pesan teks secara instan melalui Inbox ShapeUp CRM.',
+    icon: '📱',
+    category: 'messaging',
+    status: 'available',
+    badge: 'Aktif',
+    getWebhookUrl: (businessId: string, origin: string) => {
+      const baseUrl = origin || (typeof window !== 'undefined' ? window.location.origin : '')
+      return `${baseUrl}/api/webhook/waba?bid=${businessId}`
+    },
+    fields: [
+      {
+        key: 'access_token',
+        label: 'Meta Access Token (System User / Permanent Token)',
+        type: 'password',
+        placeholder: 'EAAG...',
+        description: 'Dapatkan dari Meta Business Manager > System Users > Generate Token.',
+        required: true,
+      },
+      {
+        key: 'phone_number_id',
+        label: 'Phone Number ID',
+        type: 'text',
+        placeholder: '123456789012345',
+        description: 'ID Nomor HP WABA dari Dashboard Meta Developer Portal.',
+        required: true,
+      },
+      {
+        key: 'waba_id',
+        label: 'WhatsApp Business Account ID (WABA ID)',
+        type: 'text',
+        placeholder: '109876543210987',
+        description: 'ID Akun Bisnis WhatsApp Anda.',
+        required: true,
+      },
+      {
+        key: 'webhook_verify_token',
+        label: 'Webhook Verify Token',
+        type: 'text',
+        placeholder: 'shapeup_waba_verify_token_123',
+        description: 'Token verifikasi bebas yang Anda masukkan pada konfigurasi Webhook Meta.',
+        required: true,
+      },
+    ],
+  },
+  {
     id: 'ycloud',
     name: 'YCloud (WhatsApp)',
     description: 'Hubungkan YCloud WhatsApp Business API untuk pengiriman pesan otomatis, notifikasi pesanan, dan automation.',

@@ -56,6 +56,15 @@ export default function IntegrationsSettingsPage() {
     is_active: true,
   })
 
+  // WABA Official Form State
+  const [wabaForm, setWabaForm] = useState({
+    access_token: '',
+    phone_number_id: '',
+    waba_id: '',
+    webhook_verify_token: '',
+    is_active: true,
+  })
+
   const [testingConnection, setTestingConnection] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
 
@@ -63,6 +72,7 @@ export default function IntegrationsSettingsPage() {
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [copiedWebhook, setCopiedWebhook] = useState(false)
   const [showYcloudKey, setShowYcloudKey] = useState(false)
+  const [showWabaToken, setShowWabaToken] = useState(false)
 
   // Fetch active business profile
   const checkActiveBusiness = useCallback(async () => {
@@ -122,6 +132,19 @@ export default function IntegrationsSettingsPage() {
             api_key: creds.api_key || '',
             whatsapp_number: creds.whatsapp_number || '',
             is_active: ycloud.is_active ?? true,
+          })
+        }
+
+        // Populate WABA Official form if exists
+        const waba = map['waba_official']
+        if (waba) {
+          const creds = waba.api_credentials || {}
+          setWabaForm({
+            access_token: creds.access_token || '',
+            phone_number_id: creds.phone_number_id || '',
+            waba_id: creds.waba_id || '',
+            webhook_verify_token: creds.webhook_verify_token || '',
+            is_active: waba.is_active ?? true,
           })
         }
       }
@@ -293,6 +316,115 @@ export default function IntegrationsSettingsPage() {
     }
   }
 
+  // Handle Save WABA Official Integration
+  const handleSaveWaba = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSaving(true)
+    setSaveSuccess(false)
+    setTestResult(null)
+
+    try {
+      const res = await fetch('/api/integrations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'waba_official',
+          access_token: wabaForm.access_token,
+          phone_number_id: wabaForm.phone_number_id,
+          waba_id: wabaForm.waba_id,
+          webhook_verify_token: wabaForm.webhook_verify_token,
+          is_active: wabaForm.is_active,
+        }),
+      })
+
+      const json = await res.json()
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Gagal menyimpan pengaturan WABA Official')
+      }
+
+      setSaveSuccess(true)
+      await fetchIntegrations()
+      setTimeout(() => setSaveSuccess(false), 3000)
+    } catch (err: any) {
+      alert('Error: ' + (err.message || 'Terjadi kesalahan saat menyimpan WABA Official.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Handle Test WABA Connection
+  const handleTestWabaConnection = async () => {
+    if (!wabaForm.access_token.trim() || !wabaForm.phone_number_id.trim()) {
+      return alert('Harap masukkan Meta Access Token dan Phone Number ID terlebih dahulu!')
+    }
+
+    setTestingConnection(true)
+    setTestResult(null)
+
+    try {
+      const res = await fetch('/api/integrations/waba/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          access_token: wabaForm.access_token,
+          phone_number_id: wabaForm.phone_number_id,
+        }),
+      })
+
+      const json = await res.json()
+      if (res.ok && json.success) {
+        setTestResult({
+          success: true,
+          message: json.message || '✅ Berhasil terhubung ke Meta WABA Graph API!',
+        })
+      } else {
+        setTestResult({
+          success: false,
+          message: '⚠️ ' + (json.error || 'Gagal terhubung ke Meta WABA Graph API.'),
+        })
+      }
+    } catch (err: any) {
+      setTestResult({
+        success: false,
+        message: '⚠️ ' + (err.message || 'Terjadi kesalahan jaringan.'),
+      })
+    } finally {
+      setTestingConnection(false)
+    }
+  }
+
+  // Handle One-Click Toggle Activation for WABA Official
+  const handleToggleWabaActivation = async (newActiveState: boolean) => {
+    setSaving(true)
+    try {
+      const res = await fetch('/api/integrations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'waba_official',
+          access_token: wabaForm.access_token,
+          phone_number_id: wabaForm.phone_number_id,
+          waba_id: wabaForm.waba_id,
+          webhook_verify_token: wabaForm.webhook_verify_token,
+          is_active: newActiveState,
+        }),
+      })
+
+      const json = await res.json()
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Gagal mengubah status integrasi WABA Official')
+      }
+
+      setWabaForm(prev => ({ ...prev, is_active: newActiveState }))
+      await fetchIntegrations()
+      window.location.reload()
+    } catch (err: any) {
+      alert('Error: ' + (err.message || 'Terjadi kesalahan saat mengubah status plugin WABA.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   // Handle Copy Webhook URL
   const handleCopyWebhook = (url: string) => {
     navigator.clipboard.writeText(url)
@@ -347,6 +479,11 @@ export default function IntegrationsSettingsPage() {
   const ycloudWebhookUrl = ycloudPlugin?.getWebhookUrl ? ycloudPlugin.getWebhookUrl(activeBusinessId, origin) : ''
   const ycloudSaved = integrationsData['ycloud']
   const isYcloudConfigured = Boolean(ycloudSaved && ycloudSaved.api_credentials?.api_key)
+
+  const wabaPlugin = INTEGRATION_PLUGINS.find(p => p.id === 'waba_official')!
+  const wabaWebhookUrl = wabaPlugin?.getWebhookUrl ? wabaPlugin.getWebhookUrl(activeBusinessId, origin) : ''
+  const wabaSaved = integrationsData['waba_official']
+  const isWabaConfigured = Boolean(wabaSaved && wabaSaved.api_credentials?.access_token && wabaSaved.api_credentials?.phone_number_id)
 
   return (
     <SettingsLayout title="Integrasi & Plugin" subtitle="Hubungkan WooCommerce, YCloud WhatsApp, dan API pihak ketiga.">
@@ -468,6 +605,76 @@ export default function IntegrationsSettingsPage() {
             >
               <span>{isYcloudConfigured ? 'Kelola YCloud ⚙️' : 'Atur YCloud 🔌'}</span>
             </button>
+          </div>
+        </div>
+
+        {/* 3. WABA OFFICIAL (META) PLUGIN CARD */}
+        <div className="bg-white rounded-xl border border-[#E2E2DC] p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between space-y-6">
+          <div>
+            <div className="flex items-start justify-between mb-4">
+              <div className="w-12 h-12 rounded-xl bg-green-50 border border-green-100 text-green-600 font-extrabold flex items-center justify-center text-2xl">
+                📱
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                {wabaSaved?.is_active ? (
+                  <span className="text-[10px] font-bold uppercase bg-green-50 text-green-700 border border-green-200 px-2.5 py-0.5 rounded-full">
+                    ✓ Plugin Aktif
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold uppercase bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-0.5 rounded-full">
+                    ⏸️ Belum Diaktifkan
+                  </span>
+                )}
+                {!isWabaConfigured && wabaSaved?.is_active && (
+                  <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                    ⚠️ Belum Dikonfigurasi
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <h3 className="text-base font-bold text-[#1C1C1A]">WABA Official (Meta)</h3>
+            <p className="text-xs text-[#6B6B63] mt-1.5 leading-relaxed">
+              Plugin modul pesan resmi WhatsApp Business API dari Meta. Saat diaktifkan, menu Inbox / Chat akan muncul di sidebar navigasi.
+            </p>
+          </div>
+
+          <div className="pt-4 border-t border-[#E2E2DC] flex items-center justify-between gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#A8A89E]">Plugin Messaging</span>
+
+            <div className="flex items-center gap-2">
+              {wabaSaved?.is_active ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleWabaActivation(false)}
+                    disabled={saving}
+                    className="px-3 py-1.5 border border-red-200 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    Nonaktifkan ⏸️
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPlugin(wabaPlugin)
+                      setTestResult(null)
+                    }}
+                    className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Kelola WABA ⚙️</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleToggleWabaActivation(true)}
+                  disabled={saving}
+                  className="px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-black transition-all shadow-md hover:shadow-none flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <span>{saving ? 'Mengaktifkan...' : 'Aktifkan Plugin ⚡'}</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -840,6 +1047,215 @@ export default function IntegrationsSettingsPage() {
                   className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
                 >
                   {saving ? 'Menyimpan...' : '💾 Simpan Pengaturan YCloud'}
+                </button>
+              </div>
+
+            </form>
+
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* WABA OFFICIAL CONFIGURATION MODAL / DRAWER */}
+      {selectedPlugin?.id === 'waba_official' && mounted && createPortal(
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] overflow-y-auto overscroll-contain">
+          <div className="bg-white border border-[#E2E2DC] rounded-xl p-6 md:p-8 max-w-2xl w-full shadow-xl my-8 space-y-6">
+            
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-[#E2E2DC] pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-green-50 border border-green-100 text-green-600 font-extrabold flex items-center justify-center text-xl">
+                  📱
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-[#1C1C1A]">Integrasi WABA Official (Meta)</h2>
+                  <p className="text-xs text-[#6B6B63]">
+                    Unit Bisnis: <span className="font-bold text-green-600">{activeBusinessName}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setSelectedPlugin(null)
+                  setTestResult(null)
+                }}
+                className="text-[#A8A89E] hover:text-[#1C1C1A] text-lg font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Webhook Notice Section */}
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-base">⚡</span>
+                <h4 className="font-bold text-xs text-green-900 uppercase tracking-wider">
+                  URL Webhook Callback (Meta Developer Portal &gt; WhatsApp &gt; Configuration)
+                </h4>
+              </div>
+              <p className="text-xs text-green-800 leading-relaxed">
+                Masukkan Webhook Callback URL dan Verify Token di bawah ini pada Meta App Dashboard Anda untuk menerima pesan masuk.
+              </p>
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="text"
+                  readOnly
+                  value={wabaWebhookUrl}
+                  className="w-full px-3 py-2 bg-white border border-green-300 rounded-lg font-mono text-xs text-[#1C1C1A] select-all outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleCopyWebhook(wabaWebhookUrl)}
+                  className="bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold px-4 py-2 transition-all shrink-0 cursor-pointer"
+                >
+                  {copiedWebhook ? '✅ Tersalin!' : '📋 Salin'}
+                </button>
+              </div>
+            </div>
+
+            {/* Form Settings */}
+            <form onSubmit={handleSaveWaba} className="space-y-4">
+
+              {/* Switch Active Integration */}
+              <div className="p-4 bg-[#F7F7F5] border border-[#E2E2DC] rounded-lg flex items-center justify-between">
+                <div>
+                  <label className="font-bold text-xs text-[#1C1C1A] block">
+                    Status Integrasi WABA Official
+                  </label>
+                  <span className="text-[10px] text-[#6B6B63]">
+                    {wabaForm.is_active 
+                      ? 'Aktif — Inbox & Pengiriman pesan WABA diizinkan' 
+                      : 'Nonaktif — Fitur Inbox & Webhook sementara dihentikan'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setWabaForm({ ...wabaForm, is_active: !wabaForm.is_active })}
+                  className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                    wabaForm.is_active ? 'bg-green-600 text-white' : 'bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  {wabaForm.is_active ? '✓ AKTIF' : '⏸️ NONAKTIF'}
+                </button>
+              </div>
+
+              {/* Meta Access Token */}
+              <div>
+                <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
+                  Meta Access Token (System User Permanent Token) <span className="text-red-500">*</span>
+                </label>
+                <div className="relative flex items-center">
+                  <input
+                    type={showWabaToken ? 'text' : 'password'}
+                    required
+                    placeholder="EAAGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    value={wabaForm.access_token}
+                    onChange={(e) => setWabaForm({ ...wabaForm, access_token: e.target.value })}
+                    className="w-full px-3.5 py-2.5 pr-12 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowWabaToken(!showWabaToken)}
+                    className="absolute right-3 text-sm text-[#A8A89E] hover:text-[#1C1C1A] transition-colors p-1 cursor-pointer"
+                    title={showWabaToken ? 'Sembunyikan Token' : 'Tampilkan Token'}
+                  >
+                    {showWabaToken ? '🙈 Sembunyikan' : '👁️ Tampilkan'}
+                  </button>
+                </div>
+                <span className="text-[10px] text-[#6B6B63] mt-1 block">
+                  Dapatkan Permanent Access Token dari Meta Business Manager &gt; System Users &gt; Generate Token (Permission: whatsapp_business_messaging, whatsapp_business_management).
+                </span>
+              </div>
+
+              {/* Phone Number ID & WABA ID */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
+                    Phone Number ID <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="123456789012345"
+                    value={wabaForm.phone_number_id}
+                    onChange={(e) => setWabaForm({ ...wabaForm, phone_number_id: e.target.value.trim() })}
+                    className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white font-mono"
+                  />
+                  <span className="text-[10px] text-[#6B6B63] mt-1 block">
+                    Dapatkan dari Meta Developer Portal &gt; WhatsApp &gt; API Setup.
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
+                    WABA Account ID (Opsional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="109876543210987"
+                    value={wabaForm.waba_id}
+                    onChange={(e) => setWabaForm({ ...wabaForm, waba_id: e.target.value.trim() })}
+                    className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white font-mono"
+                  />
+                  <span className="text-[10px] text-[#6B6B63] mt-1 block">
+                    ID Akun Bisnis WhatsApp di Meta Manager.
+                  </span>
+                </div>
+              </div>
+
+              {/* Webhook Verify Token */}
+              <div>
+                <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
+                  Webhook Verify Token <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="shapeup_waba_verify_token_123"
+                  value={wabaForm.webhook_verify_token}
+                  onChange={(e) => setWabaForm({ ...wabaForm, webhook_verify_token: e.target.value.trim() })}
+                  className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white font-mono"
+                />
+                <span className="text-[10px] text-[#6B6B63] mt-1 block">
+                  Token rahasia bebas pilihan Anda yang harus sama dengan yang dimasukkan di Callback Verification Meta Webhook.
+                </span>
+              </div>
+
+              {/* Test Connection Banner Result */}
+              {testResult && (
+                <div className={`p-3 rounded-lg text-xs font-semibold ${
+                  testResult.success 
+                    ? 'bg-green-50 border border-green-200 text-green-700' 
+                    : 'bg-red-50 border border-red-200 text-red-700'
+                }`}>
+                  {testResult.message}
+                </div>
+              )}
+
+              {saveSuccess && (
+                <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-xs font-semibold text-green-700">
+                  ✅ Pengaturan WABA Official (Meta) berhasil disimpan untuk unit bisnis {activeBusinessName}!
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="pt-4 border-t border-[#E2E2DC] flex flex-col sm:flex-row gap-3">
+                <button
+                  type="button"
+                  disabled={testingConnection}
+                  onClick={handleTestWabaConnection}
+                  className="flex-1 px-4 py-2.5 border border-[#E2E2DC] hover:bg-[#F7F7F5] text-[#1C1C1A] rounded-lg text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {testingConnection ? '🔄 Menguji Meta Graph API...' : '🧪 Uji Koneksi Meta API'}
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex-1 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  {saving ? 'Menyimpan...' : '💾 Simpan Pengaturan WABA'}
                 </button>
               </div>
 
