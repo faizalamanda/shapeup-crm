@@ -103,8 +103,8 @@ export async function POST(req: Request) {
     // 2. Loop items to update quantities and construct journal lines
     for (const item of items) {
       const { product_id, recorded_quantity, actual_quantity } = item
-      const recQty = parseInt(recorded_quantity) || 0
-      const actQty = parseInt(actual_quantity) || 0
+      const recQty = parseFloat(recorded_quantity) || 0
+      const actQty = parseFloat(actual_quantity) || 0
       const diff = actQty - recQty
 
       if (diff === 0) continue

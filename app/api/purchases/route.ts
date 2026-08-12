@@ -210,9 +210,9 @@ export async function POST(req: Request) {
           continue
         }
 
-        const currentQty = product.stock_quantity || 0
-        const currentCost = product.cost_price || 0
-        const purchaseQty = parseInt(item.quantity) || 0
+        const currentQty = Number(product.stock_quantity) || 0
+        const currentCost = Number(product.cost_price) || 0
+        const purchaseQty = parseFloat(item.quantity) || 0
         const netPurchasePrice = (parseFloat(item.price) || 0) * ratio // Net cost net of discount/fees allocation
 
         const newQty = currentQty + purchaseQty

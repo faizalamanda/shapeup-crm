@@ -20,6 +20,8 @@ type Product = {
   category_id: string | null
   stock_type: 'tracked' | 'available' | 'unavailable'
   stock_quantity: number
+  unit?: string
+  hpp_type?: 'fixed' | 'variable'
   created_at: string
   categories?: Category | Category[] | null // Supabase join
 }
@@ -461,7 +463,7 @@ export default function ProductsPage() {
                         )}
                         {p.stock_type === 'tracked' && (
                           <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 uppercase">
-                            Stok: {p.stock_quantity}
+                            Stok: {p.stock_quantity} {p.unit || 'pcs'}
                           </span>
                         )}
                       </div>
@@ -552,12 +554,25 @@ export default function ProductsPage() {
                               <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 uppercase w-fit">
                                 Ditrack
                               </span>
-                              <span className="text-[11px] font-bold text-gray-600 mt-1">Stok: {p.stock_quantity}</span>
+                              <span className="text-[11px] font-bold text-gray-700 mt-1">
+                                {p.stock_quantity} <span className="text-[10px] text-gray-500 font-semibold">{p.unit || 'pcs'}</span>
+                              </span>
                             </div>
                           )}
                         </td>
                         <td className="p-4">
-                          <span className="text-xs font-bold text-gray-500">{formatPrice(p.cost_price)}</span>
+                          <div className="flex flex-col">
+                            <span className="text-xs font-bold text-gray-800">{formatPrice(p.cost_price)}</span>
+                            {p.hpp_type === 'variable' ? (
+                              <span className="text-[9px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded w-fit mt-0.5">
+                                🧪 Resep / BOM
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-medium text-gray-400 mt-0.5">
+                                Flat
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="p-4">
                           <span className="text-xs font-extrabold text-gray-900">{formatPrice(p.price)}</span>

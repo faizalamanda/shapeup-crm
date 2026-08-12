@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js'
+import { calculateProductHpp } from './recipeHelper'
 
 // Memory caches to optimize performance during batch operations
 const accountCache: Record<string, Record<string, string>> = {}
@@ -207,8 +208,37 @@ export async function syncOrderToLedger(
         if (dbProd.name) productCacheByName[businessId][dbProd.name.toLowerCase()] = dbProd
 
         matchedProducts.push({ item, dbProduct: dbProd })
-        if (dbProd.type === 'physical' && dbProd.cost_price > 0) {
-          totalCogs += dbProd.cost_price * (parseInt(item.quantity) || 1)
+        const itemQty = parseFloat(item.quantity) || 1
+
+        // Check if product has Variable HPP (Recipe / Ingredients)
+        const { isVariable, unitHpp, ingredients } = await calculateProductHpp(dbProd.id, supabase)
+        let effectiveCost = Number(dbProd.cost_price) || 0
+
+        if (isVariable && ingredients.length > 0) {
+          effectiveCost = unitHpp
+          // Deduct stock for raw material ingredients
+          for (const recipe of ingredients) {
+            const ingProd = recipe.ingredient
+            if (ingProd && ingProd.stock_type === 'tracked') {
+              const neededQty = Number(recipe.quantity) * itemQty
+              const newStock = Math.max(0, Number(ingProd.stock_quantity || 0) - neededQty)
+              await supabase
+                .from('products')
+                .update({ stock_quantity: newStock })
+                .eq('id', ingProd.id)
+            }
+          }
+        } else if (dbProd.stock_type === 'tracked') {
+          // Deduct product stock for standard tracked physical product
+          const newStock = Math.max(0, Number(dbProd.stock_quantity || 0) - itemQty)
+          await supabase
+            .from('products')
+            .update({ stock_quantity: newStock })
+            .eq('id', dbProd.id)
+        }
+
+        if (dbProd.type === 'physical' && effectiveCost > 0) {
+          totalCogs += effectiveCost * itemQty
         }
       }
     }

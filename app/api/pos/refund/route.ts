@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabaseServer'
 import { NextResponse } from 'next/server'
+import { processOrderInventoryRestock } from '@/lib/recipeHelper'
 
 export async function POST(req: Request) {
   const supabase = await createClient()
@@ -74,17 +75,8 @@ export async function POST(req: Request) {
         for (const item of items) {
           const dbProd = productMap.get(item.product_id)
           if (dbProd) {
-            // Restore stock
-            if (dbProd.stock_type === 'tracked') {
-              const { error: stockErr } = await supabase
-                .from('products')
-                .update({ stock_quantity: dbProd.stock_quantity + Number(item.quantity) })
-                .eq('id', dbProd.id)
-
-              if (stockErr) {
-                console.error(`Gagal restok produk ${dbProd.id}:`, stockErr.message)
-              }
-            }
+            // Restore stock (Restocks ingredients if Variable HPP, or product stock if Fixed HPP)
+            await processOrderInventoryRestock(dbProd.id, Number(item.quantity), supabase)
 
             // Calculate COGS to reverse
             if (dbProd.type === 'physical' && dbProd.cost_price > 0) {
