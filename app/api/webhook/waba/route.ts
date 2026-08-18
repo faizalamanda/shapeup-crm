@@ -155,7 +155,7 @@ export async function POST(req: Request) {
                 await admin
                   .from('waba_conversations')
                   .update({
-                    customer_id: customerId || undefined,
+                    customer_id: customerId || null,
                     contact_name: senderName,
                     last_message_text: textBody,
                     last_message_at: msgDate,

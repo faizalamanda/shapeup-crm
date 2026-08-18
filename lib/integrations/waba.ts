@@ -51,10 +51,10 @@ export async function getWabaConfig(businessId: string): Promise<WabaConfig | nu
   const creds = integration.api_credentials || {}
 
   return {
-    access_token: creds.access_token || '',
-    phone_number_id: creds.phone_number_id || '',
-    waba_id: creds.waba_id || '',
-    webhook_verify_token: creds.webhook_verify_token || '',
+    access_token: (creds.access_token || '').replace(/\r?\n|\r/g, '').trim(),
+    phone_number_id: (creds.phone_number_id || '').trim(),
+    waba_id: (creds.waba_id || '').trim(),
+    webhook_verify_token: (creds.webhook_verify_token || '').trim(),
     is_active: Boolean(integration.is_active),
   }
 }

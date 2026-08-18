@@ -97,8 +97,18 @@ export async function POST(req: Request) {
     if (api_key !== undefined) apiCredentials.api_key = api_key
     if (whatsapp_number !== undefined) apiCredentials.whatsapp_number = whatsapp_number
 
-    // Merge any additional fields
+    // Merge any additional fields and sanitize strings
     Object.assign(apiCredentials, extraFields)
+
+    if (typeof apiCredentials.access_token === 'string') {
+      apiCredentials.access_token = apiCredentials.access_token.replace(/\r?\n|\r/g, '').trim()
+    }
+    if (typeof apiCredentials.phone_number_id === 'string') {
+      apiCredentials.phone_number_id = apiCredentials.phone_number_id.trim()
+    }
+    if (typeof apiCredentials.webhook_verify_token === 'string') {
+      apiCredentials.webhook_verify_token = apiCredentials.webhook_verify_token.trim()
+    }
 
     let resultData = null
 

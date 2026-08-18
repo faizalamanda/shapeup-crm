@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { syncExpenseStatus, syncPurchaseStatus } from '@/lib/expenseSync'
 
 function getSupabase() {
   return createClient(
@@ -105,6 +106,9 @@ export async function POST(
         return NextResponse.json({ error: `Gagal menghapus transaksi: ${delTxErr.message}` }, { status: 500 })
       }
 
+      await syncExpenseStatus(supabase, targetTx.business_id)
+      await syncPurchaseStatus(supabase, targetTx.business_id)
+
       return NextResponse.json({ message: 'Transaksi berhasil dihapus' })
     } else {
       // Standard Accounting Audit Trail: Reversal / Void Entry
@@ -157,6 +161,9 @@ export async function POST(
         await supabase.from('transactions').delete().eq('id', revTx.id)
         return NextResponse.json({ error: `Gagal menyimpan baris jurnal pembalik: ${revLinesErr.message}` }, { status: 500 })
       }
+
+      await syncExpenseStatus(supabase, targetTx.business_id)
+      await syncPurchaseStatus(supabase, targetTx.business_id)
 
       return NextResponse.json({
         message: 'Transaksi berhasil di-void dengan jurnal pembalik (reversal entry)',
@@ -383,6 +390,9 @@ export async function PUT(
     if (linesErr) {
       return NextResponse.json({ error: `Gagal membuat baris jurnal baru: ${linesErr.message}` }, { status: 500 })
     }
+
+    await syncExpenseStatus(supabase, existingTx.business_id)
+    await syncPurchaseStatus(supabase, existingTx.business_id)
 
     return NextResponse.json({
       message: 'Transaksi berhasil diperbarui dan versi data sebelumnya tersimpan di audit log',

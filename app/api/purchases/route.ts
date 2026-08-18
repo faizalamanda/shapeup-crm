@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabaseServer'
 import { NextResponse } from 'next/server'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
+import { syncPurchaseStatus } from '@/lib/expenseSync'
 
 export async function GET(req: Request) {
   const supabase = await createClient()
@@ -22,6 +23,9 @@ export async function GET(req: Request) {
     }
 
     const businessId = profile.active_business_id
+
+    // Auto-sync purchase payment status for voided/reversed transactions
+    await syncPurchaseStatus(supabase, businessId)
 
     // Fetch purchases and their linked suppliers
     const { data: purchases, error: fetchErr } = await supabase
