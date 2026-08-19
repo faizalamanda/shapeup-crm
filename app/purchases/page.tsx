@@ -84,6 +84,7 @@ export default function PurchasesPage() {
   const [searchQuery, setSearchQuery] = useState('')
 
   // Create Bill Modal State
+  const [editingPurchase, setEditingPurchase] = useState<Purchase | null>(null)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [createLoading, setCreateLoading] = useState(false)
 
@@ -344,6 +345,7 @@ export default function PurchasesPage() {
 
   // Open Create Modal
   const openCreateModal = () => {
+    setEditingPurchase(null)
     setFormSupplierId('')
     setFormPurchaseNumber(`PUR-${Date.now().toString().slice(-6)}`)
     setFormDate(new Date().toISOString().split('T')[0])
@@ -354,6 +356,23 @@ export default function PurchasesPage() {
     setFormAmountPaid('0')
     setFormPaymentAccountId('')
     setFormAttachmentUrl('')
+    setUploadProgress('')
+    setIsCreateOpen(true)
+  }
+
+  // Open Edit Modal
+  const openEditModal = (purchase: Purchase) => {
+    setEditingPurchase(purchase)
+    setFormSupplierId(purchase.supplier_id || '')
+    setFormPurchaseNumber(purchase.purchase_number)
+    setFormDate(purchase.date)
+    setFormDueDate(purchase.due_date || '')
+    setFormItems(Array.isArray(purchase.items_json) && purchase.items_json.length > 0 ? purchase.items_json : [{ name: '', quantity: 1, price: 0, is_physical: true }])
+    setFormDiscount((purchase.discount_amount || 0).toString())
+    setFormFees((purchase.other_fees || 0).toString())
+    setFormAmountPaid((purchase.amount_paid || 0).toString())
+    setFormPaymentAccountId('')
+    setFormAttachmentUrl(purchase.attachment_url || '')
     setUploadProgress('')
     setIsCreateOpen(true)
   }
@@ -395,8 +414,11 @@ export default function PurchasesPage() {
         attachment_url: formAttachmentUrl || null
       }
 
-      const res = await fetch('/api/purchases', {
-        method: 'POST',
+      const url = editingPurchase ? `/api/purchases?id=${editingPurchase.id}` : '/api/purchases'
+      const method = editingPurchase ? 'PUT' : 'POST'
+
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
@@ -407,6 +429,7 @@ export default function PurchasesPage() {
       }
 
       setIsCreateOpen(false)
+      setEditingPurchase(null)
       if (activeBizId) {
         await fetchData(activeBizId)
       }
@@ -636,6 +659,14 @@ export default function PurchasesPage() {
                         )}
                       </td>
                       <td className="p-4 text-right space-x-2" onClick={e => e.stopPropagation()}>
+                        {p.payment_status === 'unpaid' && (
+                          <button
+                            onClick={() => openEditModal(p)}
+                            className="px-2.5 py-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded border border-blue-100 transition-colors uppercase font-bold text-[10px] tracking-wider cursor-pointer"
+                          >
+                            ✏️ Edit
+                          </button>
+                        )}
                         {p.payment_status !== 'paid' && (
                           <button
                             onClick={() => openPayModal(p)}
@@ -666,7 +697,7 @@ export default function PurchasesPage() {
           <div className="bg-white rounded-xl shadow-lg border border-gray-200 max-w-2xl w-full overflow-hidden my-8 animate-in zoom-in-95 duration-200">
             <div className="bg-gray-50 border-b border-gray-200 px-6 py-4 flex justify-between items-center">
               <h2 className="text-xs font-black uppercase tracking-wider text-gray-700">
-                📦 Tambah Pembelian Stok Baru
+                {editingPurchase ? '✏️ Edit Pembelian Stok' : '📦 Tambah Pembelian Stok Baru'}
               </h2>
               <button onClick={() => setIsCreateOpen(false)} className="text-gray-400 hover:text-gray-600 text-sm cursor-pointer">✕</button>
             </div>
@@ -921,7 +952,7 @@ export default function PurchasesPage() {
                   disabled={createLoading || compressing}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm transition-all active:scale-98 disabled:opacity-50 cursor-pointer"
                 >
-                  {createLoading ? 'Menyimpan...' : 'Simpan Pembelian'}
+                  {createLoading ? 'Menyimpan...' : (editingPurchase ? 'Simpan Perubahan' : 'Simpan Pembelian')}
                 </button>
               </div>
             </form>
@@ -1067,6 +1098,7 @@ export default function PurchasesPage() {
           purchase={selectedPurchaseForDetail}
           accounts={accounts}
           onClose={() => setSelectedPurchaseForDetail(null)}
+          onEdit={openEditModal}
         />
       )}
 

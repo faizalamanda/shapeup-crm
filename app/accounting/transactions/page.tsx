@@ -241,6 +241,47 @@ function SearchableAccountSelect({
   )
 }
 
+function cleanDescriptionString(description?: string | null): string {
+  if (!description) return ''
+  let cleaned = description
+
+  const historiIdx = cleaned.indexOf('[HISTORI_EDIT:')
+  if (historiIdx !== -1) {
+    const historiEndIdx = cleaned.lastIndexOf(']')
+    if (historiEndIdx > historiIdx) {
+      cleaned = cleaned.substring(0, historiIdx) + cleaned.substring(historiEndIdx + 1)
+    } else {
+      cleaned = cleaned.substring(0, historiIdx)
+    }
+  }
+
+  cleaned = cleaned.replace(/\[Diedit:[^\]]+\]/g, '')
+  return cleaned.trim()
+}
+
+function parseHistoryList(description?: string | null): any[] {
+  if (!description) return []
+  const historiIdx = description.indexOf('[HISTORI_EDIT:')
+  if (historiIdx === -1) return []
+
+  const historiEndIdx = description.lastIndexOf(']')
+  if (historiEndIdx <= historiIdx) return []
+
+  const historyStr = description.substring(historiIdx + '[HISTORI_EDIT:'.length, historiEndIdx).trim()
+  if (!historyStr) return []
+
+  try {
+    return JSON.parse(historyStr)
+  } catch {
+    try {
+      const decoded = typeof window !== 'undefined' ? atob(historyStr) : Buffer.from(historyStr, 'base64').toString('utf-8')
+      return JSON.parse(decoded)
+    } catch {
+      return []
+    }
+  }
+}
+
 export default function TransactionsPage() {
   const supabase = useMemo(() => createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -312,6 +353,19 @@ export default function TransactionsPage() {
   const [editDescription, setEditDescription] = useState<string>('')
   const [editJnlLines, setEditJnlLines] = useState<JournalLine[]>([])
   const [editSubmitting, setEditSubmitting] = useState<boolean>(false)
+
+  // Collect set of clean descriptions for transactions that have reversal entries
+  const reversedDescriptionsSet = useMemo(() => {
+    const set = new Set<string>()
+    transactions.forEach(t => {
+      if (t.description?.includes('[VOID') || t.description?.includes('REVERSAL')) {
+        const clean = cleanDescriptionString(t.description.replace('[VOID / REVERSAL]', ''))
+        if (clean) set.add(clean)
+      }
+    })
+    return set
+  }, [transactions])
+
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState<number>(1)
@@ -801,6 +855,12 @@ export default function TransactionsPage() {
 
   // Handle Void / Reverse Transaction
   const handleVoidTransaction = async (tx: Transaction) => {
+    const clean = cleanDescriptionString(tx.description)
+    if (tx.description?.includes('[VOID') || tx.description?.includes('REVERSAL') || reversedDescriptionsSet.has(clean)) {
+      alert('Transaksi ini sudah dibatalkan (void) sebelumnya.')
+      return
+    }
+
     if (!confirm(`Apakah Anda yakin ingin membatalkan (Void) transaksi "${tx.description}"? Sesuai standar akuntansi PSAK, sistem akan otomatis membuat Jurnal Pembalik (Reversal Entry) untuk menjaga integritas jejak audit.`)) {
       return
     }
@@ -842,49 +902,14 @@ export default function TransactionsPage() {
     }
   }, [editJnlLines])
 
-  // Description & History Parsing Helpers (Handles nested brackets & Base64 tags)
-  const cleanDescriptionString = (description?: string | null): string => {
-    if (!description) return ''
-    let cleaned = description
 
-    const historiIdx = cleaned.indexOf('[HISTORI_EDIT:')
-    if (historiIdx !== -1) {
-      const historiEndIdx = cleaned.lastIndexOf(']')
-      if (historiEndIdx > historiIdx) {
-        cleaned = cleaned.substring(0, historiIdx) + cleaned.substring(historiEndIdx + 1)
-      } else {
-        cleaned = cleaned.substring(0, historiIdx)
-      }
-    }
-
-    cleaned = cleaned.replace(/\[Diedit:[^\]]+\]/g, '')
-    return cleaned.trim()
-  }
-
-  const parseHistoryList = (description?: string | null): any[] => {
-    if (!description) return []
-    const historiIdx = description.indexOf('[HISTORI_EDIT:')
-    if (historiIdx === -1) return []
-
-    const historiEndIdx = description.lastIndexOf(']')
-    if (historiEndIdx <= historiIdx) return []
-
-    const historyStr = description.substring(historiIdx + '[HISTORI_EDIT:'.length, historiEndIdx).trim()
-    if (!historyStr) return []
-
-    try {
-      return JSON.parse(historyStr)
-    } catch {
-      try {
-        const decoded = typeof window !== 'undefined' ? atob(historyStr) : Buffer.from(historyStr, 'base64').toString('utf-8')
-        return JSON.parse(decoded)
-      } catch {
-        return []
-      }
-    }
-  }
 
   const handleOpenEdit = (tx: Transaction) => {
+    const clean = cleanDescriptionString(tx.description)
+    if (tx.description?.includes('[VOID') || tx.description?.includes('REVERSAL') || reversedDescriptionsSet.has(clean)) {
+      alert('Transaksi yang sudah dibatalkan (void) tidak dapat diedit.')
+      return
+    }
     setEditingTransaction(tx)
     try {
       const dt = new Date(tx.date)
@@ -1230,19 +1255,21 @@ export default function TransactionsPage() {
               </thead>
               <tbody className="divide-y divide-[var(--su-border)]">
                 {paginatedTransactions.map(tx => {
-                  const isVoid = tx.description?.includes('[VOID') || tx.description?.includes('REVERSAL')
+                  const cleanDescription = cleanDescriptionString(tx.description)
+                  const isReversalTx = tx.description?.includes('[VOID') || tx.description?.includes('REVERSAL')
+                  const isOriginalReversedTx = reversedDescriptionsSet.has(cleanDescription)
+                  const isVoid = isReversalTx || isOriginalReversedTx
                   const totalAmount = (tx.journal_lines || []).reduce((sum, l) => sum + (parseFloat(String(l.debit)) || 0), 0)
 
                   // Extract edit history timestamp if present
                   const editMatch = tx.description?.match(/\[Diedit:\s*([^\]]+)\]/)
-                  const cleanDescription = cleanDescriptionString(tx.description)
 
 
                   // WaveApps style account & category resolution
                   const { accountName, categoryName, isJournalEntry, categoryStyle } = getAccountAndCategoryInfo(tx)
 
                   return (
-                    <tr key={tx.id} className={`hover:bg-gray-50/80 transition-colors ${isVoid ? 'opacity-60 bg-red-50/30' : ''}`}>
+                    <tr key={tx.id} className={`hover:bg-gray-50/80 transition-colors ${isOriginalReversedTx ? 'opacity-60 bg-red-50/30' : isReversalTx ? 'bg-purple-50/20' : ''}`}>
                       <td className="py-3.5 px-4 font-mono text-xs text-[var(--su-text-muted)] whitespace-nowrap">
                         {new Date(tx.date).toLocaleDateString('id-ID', { year: 'numeric', month: 'short', day: '2-digit' })}
                       </td>
@@ -1288,9 +1315,13 @@ export default function TransactionsPage() {
 
                       {/* Status Column */}
                       <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        {isVoid ? (
+                        {isOriginalReversedTx ? (
                           <span className="px-2.5 py-1 text-xs font-bold text-red-700 bg-red-100 rounded-full border border-red-200">
                             Dibatalkan
+                          </span>
+                        ) : isReversalTx ? (
+                          <span className="px-2.5 py-1 text-xs font-bold text-purple-700 bg-purple-100 rounded-full border border-purple-200" title="Transaksi Jurnal Pembalik yang aktif membalikkan transaksi asli">
+                            Jurnal Pembalik
                           </span>
                         ) : (
                           <span className="px-2.5 py-1 text-xs font-bold text-green-700 bg-green-100 rounded-full border border-green-200">

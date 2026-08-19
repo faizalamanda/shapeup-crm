@@ -9,6 +9,25 @@ function getSupabase() {
   )
 }
 
+function cleanDescriptionString(description?: string | null): string {
+  if (!description) return ''
+  let cleaned = description
+
+  const historiIdx = cleaned.indexOf('[HISTORI_EDIT:')
+  if (historiIdx !== -1) {
+    const historiEndIdx = cleaned.lastIndexOf(']')
+    if (historiEndIdx > historiIdx) {
+      cleaned = cleaned.substring(0, historiIdx) + cleaned.substring(historiEndIdx + 1)
+    } else {
+      cleaned = cleaned.substring(0, historiIdx)
+    }
+  }
+
+  cleaned = cleaned.replace(/\[Diedit:[^\]]+\]/g, '')
+  return cleaned.trim()
+}
+
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -112,6 +131,27 @@ export async function POST(
       return NextResponse.json({ message: 'Transaksi berhasil dihapus' })
     } else {
       // Standard Accounting Audit Trail: Reversal / Void Entry
+      if (targetTx.description?.includes('[VOID') || targetTx.description?.includes('REVERSAL')) {
+        return NextResponse.json({ error: 'Transaksi pembalik (Void) tidak dapat dibatalkan kembali' }, { status: 400 })
+      }
+
+      // Check if target transaction has already been reversed by an existing reversal entry
+      const cleanTargetDesc = cleanDescriptionString(targetTx.description)
+      const { data: existingReversals } = await supabase
+        .from('transactions')
+        .select('id, description')
+        .eq('business_id', targetTx.business_id)
+        .like('description', '[VOID / REVERSAL]%')
+
+      const isAlreadyReversed = (existingReversals || []).some(r => {
+        const cleanRev = cleanDescriptionString(r.description?.replace('[VOID / REVERSAL]', ''))
+        return cleanRev && cleanRev === cleanTargetDesc
+      })
+
+      if (isAlreadyReversed) {
+        return NextResponse.json({ error: 'Transaksi ini sudah dibatalkan (void) sebelumnya dan tidak dapat dibatalkan kembali' }, { status: 400 })
+      }
+
       const reversalDescription = `[VOID / REVERSAL] ${targetTx.description}`
       const nowISO = new Date().toISOString()
 
@@ -178,23 +218,7 @@ export async function POST(
   }
 }
 
-function cleanDescriptionString(description?: string | null): string {
-  if (!description) return ''
-  let cleaned = description
 
-  const historiIdx = cleaned.indexOf('[HISTORI_EDIT:')
-  if (historiIdx !== -1) {
-    const historiEndIdx = cleaned.lastIndexOf(']')
-    if (historiEndIdx > historiIdx) {
-      cleaned = cleaned.substring(0, historiIdx) + cleaned.substring(historiEndIdx + 1)
-    } else {
-      cleaned = cleaned.substring(0, historiIdx)
-    }
-  }
-
-  cleaned = cleaned.replace(/\[Diedit:[^\]]+\]/g, '')
-  return cleaned.trim()
-}
 
 function parseHistoryList(description?: string | null): any[] {
   if (!description) return []
@@ -271,6 +295,22 @@ export async function PUT(
 
     if (existingTx.description?.includes('[VOID') || existingTx.description?.includes('REVERSAL')) {
       return NextResponse.json({ error: 'Transaksi yang sudah di-void tidak dapat diedit' }, { status: 400 })
+    }
+
+    const cleanExistingDesc = cleanDescriptionString(existingTx.description)
+    const { data: existingReversals } = await supabase
+      .from('transactions')
+      .select('id, description')
+      .eq('business_id', existingTx.business_id)
+      .like('description', '[VOID / REVERSAL]%')
+
+    const isAlreadyReversed = (existingReversals || []).some(r => {
+      const cleanRev = cleanDescriptionString(r.description?.replace('[VOID / REVERSAL]', ''))
+      return cleanRev && cleanRev === cleanExistingDesc
+    })
+
+    if (isAlreadyReversed) {
+      return NextResponse.json({ error: 'Transaksi ini telah dibatalkan (void) dan tidak dapat diedit' }, { status: 400 })
     }
 
     // 2. Validate double-entry balance for new edits

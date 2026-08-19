@@ -253,6 +253,25 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Failed to create expense record: ${expErr.message}` }, { status: 500 })
     }
 
+    // 4. Record initial payment log if numAmountPaid > 0
+    if (numAmountPaid > 0) {
+      const { error: payLogErr } = await supabase
+        .from('expense_payments')
+        .insert({
+          business_id: businessId,
+          expense_id: expense.id,
+          transaction_id: tx.id,
+          date,
+          amount: numAmountPaid,
+          payment_method_account_id: payment_account_id,
+          notes: status === 'paid' ? 'Pembayaran Lunas Saat Pengeluaran Dibuat' : 'Uang Muka / DP'
+        })
+
+      if (payLogErr) {
+        console.error('Failed to insert initial expense payment log:', payLogErr)
+      }
+    }
+
     return NextResponse.json(expense)
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })

@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 
@@ -128,8 +128,6 @@ export function ExpenseDetailModal({ expense, accounts, onClose }: ExpenseDetail
     fetchExpenseDetails()
   }, [expense?.id, expense.transaction_id])
 
-  if (!expense || !mounted) return null
-
   const formatIDR = (val: any) => new Intl.NumberFormat('id-ID', { 
     style: 'currency', currency: 'IDR', maximumFractionDigits: 0 
   }).format(Number(val) || 0)
@@ -138,6 +136,24 @@ export function ExpenseDetailModal({ expense, accounts, onClose }: ExpenseDetail
     const acc = accounts.find(a => a.id === id)
     return acc ? `(${acc.code}) ${acc.name}` : '-'
   }
+
+  const displayPayments = useMemo(() => {
+    if (payments.length > 0) return payments
+
+    if (expense?.amount_paid && Number(expense.amount_paid) > 0) {
+      return [{
+        id: `initial-exp-pay-${expense.id}`,
+        date: expense.date,
+        payment_method_account_id: expense.payment_account_id,
+        notes: expense.payment_status === 'paid' ? 'Pembayaran Lunas Saat Pengeluaran Dibuat' : 'Uang Muka / DP',
+        amount: expense.amount_paid
+      }]
+    }
+
+    return []
+  }, [payments, expense])
+
+  if (!expense || !mounted) return null
 
   return createPortal(
     <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[99] flex justify-center items-center p-4">
@@ -226,12 +242,12 @@ export function ExpenseDetailModal({ expense, accounts, onClose }: ExpenseDetail
 
                 {/* Payment History */}
                 <div>
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Riwayat Pembayaran Cicilan</h3>
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Riwayat & Detail Pembayaran</h3>
                   {paymentsLoading ? (
-                    <div className="text-slate-400 text-xs font-semibold animate-pulse">Memuat riwayat pembayaran...</div>
-                  ) : payments.length === 0 ? (
+                    <div className="text-slate-400 text-xs font-semibold animate-pulse">Memuat rincian pembayaran...</div>
+                  ) : displayPayments.length === 0 ? (
                     <div className="text-center py-6 border border-dashed border-slate-250 text-slate-400 text-xs font-bold uppercase tracking-wider">
-                      Belum ada pembayaran cicilan.
+                      Belum ada pembayaran.
                     </div>
                   ) : (
                     <div className="border border-slate-200 rounded-sm overflow-hidden">
@@ -245,7 +261,7 @@ export function ExpenseDetailModal({ expense, accounts, onClose }: ExpenseDetail
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-150 text-slate-700">
-                          {payments.map((p) => (
+                          {displayPayments.map((p) => (
                             <tr key={p.id} className="hover:bg-slate-50/50">
                               <td className="py-2.5 px-4 font-bold">{p.date}</td>
                               <td className="py-2.5 px-4 font-semibold">{getAccountDisplay(p.payment_method_account_id)}</td>

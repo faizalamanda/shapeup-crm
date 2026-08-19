@@ -34,7 +34,9 @@ export async function syncExpenseStatus(
         amount,
         amount_paid,
         outstanding_amount,
-        payment_status
+        payment_status,
+        date,
+        payment_account_id
       `)
       .eq('business_id', businessId)
 
@@ -107,7 +109,33 @@ export async function syncExpenseStatus(
       return false
     }
 
-    // 3. Process each expense
+    // 3. Fetch journal lines for all transactions to determine initial payments in main expense transactions
+    const mainTxPaidMap = new Map<string, number>()
+    if (txIds.size > 0) {
+      const { data: jlData } = await supabase
+        .from('journal_lines')
+        .select(`
+          transaction_id,
+          credit,
+          accounts!inner(code, type)
+        `)
+        .in('transaction_id', Array.from(txIds))
+        .gt('credit', 0)
+
+      if (jlData) {
+        jlData.forEach((jl: any) => {
+          const accCode = jl.accounts?.code || ''
+          const accType = jl.accounts?.type || ''
+          // If credit line is to a Cash/Bank asset account (code starting with 101 or Asset), it's a payment
+          if (accCode.startsWith('101') || (accType === 'ASSET' && !accCode.startsWith('102') && !accCode.startsWith('120'))) {
+            const current = mainTxPaidMap.get(jl.transaction_id) || 0
+            mainTxPaidMap.set(jl.transaction_id, current + parseFloat(jl.credit || 0))
+          }
+        })
+      }
+    }
+
+    // 4. Process each expense
     for (const exp of expenses) {
       const expPayments = payments.filter(p => p.expense_id === exp.id)
       
@@ -127,9 +155,18 @@ export async function syncExpenseStatus(
         await supabase.from('expense_payments').delete().in('id', invalidPaymentIds)
       }
 
-      const totalAmount = parseFloat(exp.amount || 0)
-      const validPaidSum = validPayments.reduce((acc: number, p: ExpensePaymentRecord) => acc + parseFloat(String(p.amount || 0)), 0)
       const isMainTxVoided = isTxVoided(exp.transaction_id)
+      const mainTxPaidAmount = (!isMainTxVoided && exp.transaction_id)
+        ? (mainTxPaidMap.get(exp.transaction_id) || 0)
+        : 0
+
+      // Sum external payments (excluding any payment log tied to the main transaction to avoid double counting)
+      const externalPaymentsSum = validPayments
+        .filter(p => p.transaction_id !== exp.transaction_id)
+        .reduce((acc: number, p: ExpensePaymentRecord) => acc + parseFloat(String(p.amount || 0)), 0)
+
+      const validPaidSum = mainTxPaidAmount + externalPaymentsSum
+      const totalAmount = parseFloat(exp.amount || 0)
 
       let newPaid = validPaidSum
       let newOutstanding = Math.max(0, totalAmount - newPaid)
@@ -147,8 +184,8 @@ export async function syncExpenseStatus(
         newStatus = 'partial'
       }
 
-      // If main transaction was voided and there are no valid payments, ensure unpaid
-      if (isMainTxVoided && validPaidSum <= 0.01) {
+      // If main transaction was voided and there are no valid external payments, ensure unpaid
+      if (isMainTxVoided && externalPaymentsSum <= 0.01) {
         newPaid = 0
         newOutstanding = totalAmount
         newStatus = 'unpaid'
@@ -156,8 +193,8 @@ export async function syncExpenseStatus(
 
       // Update expense if status or amounts changed
       if (
-        parseFloat(exp.amount_paid || 0) !== newPaid ||
-        parseFloat(exp.outstanding_amount || 0) !== newOutstanding ||
+        Math.abs(parseFloat(exp.amount_paid || 0) - newPaid) > 0.01 ||
+        Math.abs(parseFloat(exp.outstanding_amount || 0) - newOutstanding) > 0.01 ||
         exp.payment_status !== newStatus
       ) {
         await supabase
@@ -168,6 +205,21 @@ export async function syncExpenseStatus(
             payment_status: newStatus
           })
           .eq('id', exp.id)
+      }
+
+      // Auto-backfill initial payment log into expense_payments table for Single Source of Truth
+      if (!isMainTxVoided && mainTxPaidAmount > 0 && expPayments.length === 0) {
+        await supabase
+          .from('expense_payments')
+          .insert({
+            business_id: businessId,
+            expense_id: exp.id,
+            transaction_id: exp.transaction_id || null,
+            date: exp.date || new Date().toISOString().split('T')[0],
+            amount: mainTxPaidAmount,
+            payment_method_account_id: exp.payment_account_id || null,
+            notes: newStatus === 'paid' ? 'Pembayaran Lunas Saat Pengeluaran Dibuat' : 'Uang Muka / DP'
+          })
       }
     }
   } catch (err) {
@@ -194,7 +246,8 @@ export async function syncPurchaseStatus(
         total_amount,
         amount_paid,
         outstanding_amount,
-        payment_status
+        payment_status,
+        date
       `)
       .eq('business_id', businessId)
 
@@ -318,6 +371,21 @@ export async function syncPurchaseStatus(
             payment_status: newStatus
           })
           .eq('id', pur.id)
+      }
+
+      // Auto-backfill initial payment log into purchase_payments table for Single Source of Truth
+      if (!isMainTxVoided && validPaidSum > 0 && purPayments.length === 0) {
+        await supabase
+          .from('purchase_payments')
+          .insert({
+            business_id: businessId,
+            purchase_id: pur.id,
+            transaction_id: pur.transaction_id || null,
+            date: pur.date || new Date().toISOString().split('T')[0],
+            amount: validPaidSum,
+            payment_method_account_id: null,
+            notes: newStatus === 'paid' ? 'Pembayaran Lunas Saat Pembelian Dibuat' : 'Uang Muka / DP'
+          })
       }
     }
   } catch (err) {

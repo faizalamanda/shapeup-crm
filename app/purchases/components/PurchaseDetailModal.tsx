@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 
@@ -34,6 +34,7 @@ type Purchase = {
   payment_status: 'unpaid' | 'partial' | 'paid'
   items_json: PurchaseItem[]
   attachment_url: string | null
+  created_at?: string
   suppliers?: { id: string; name: string } | null
 }
 
@@ -41,9 +42,10 @@ interface PurchaseDetailModalProps {
   purchase: Purchase
   accounts: Account[]
   onClose: () => void
+  onEdit?: (purchase: any) => void
 }
 
-export function PurchaseDetailModal({ purchase, accounts, onClose }: PurchaseDetailModalProps) {
+export function PurchaseDetailModal({ purchase, accounts, onClose, onEdit }: PurchaseDetailModalProps) {
   const [mounted, setMounted] = useState(false)
   const [activeTab, setActiveTab] = useState<'details' | 'journal'>('details')
   const [loading, setLoading] = useState(false)
@@ -136,8 +138,6 @@ export function PurchaseDetailModal({ purchase, accounts, onClose }: PurchaseDet
     fetchPurchaseDetails()
   }, [purchase?.id, purchase.transaction_id])
 
-  if (!purchase || !mounted) return null
-
   const formatIDR = (val: any) => new Intl.NumberFormat('id-ID', { 
     style: 'currency', currency: 'IDR', maximumFractionDigits: 0 
   }).format(Number(val) || 0)
@@ -146,6 +146,24 @@ export function PurchaseDetailModal({ purchase, accounts, onClose }: PurchaseDet
     const acc = accounts.find(a => a.id === id)
     return acc ? `(${acc.code}) ${acc.name}` : '-'
   }
+
+  const displayPayments = useMemo(() => {
+    if (payments.length > 0) return payments
+
+    if (purchase?.amount_paid && Number(purchase.amount_paid) > 0) {
+      return [{
+        id: `initial-pur-pay-${purchase.id}`,
+        date: purchase.date,
+        payment_method_account_id: '',
+        notes: purchase.payment_status === 'paid' ? 'Pembayaran Lunas Saat Pembelian Dibuat' : 'Uang Muka / DP',
+        amount: purchase.amount_paid
+      }]
+    }
+
+    return []
+  }, [payments, purchase])
+
+  if (!purchase || !mounted) return null
 
   const items = Array.isArray(purchase.items_json) ? purchase.items_json : []
   const outstandingAmount = Math.max(0, purchase.grand_total - purchase.amount_paid)
@@ -169,9 +187,22 @@ export function PurchaseDetailModal({ purchase, accounts, onClose }: PurchaseDet
               <span>📅 {purchase.date}</span>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-[10px] font-black border border-slate-100 px-4 py-2 rounded-sm transition-all uppercase">
-            [ Close ]
-          </button>
+          <div className="flex items-center gap-2">
+            {purchase.payment_status === 'unpaid' && onEdit && (
+              <button 
+                onClick={() => {
+                  onClose()
+                  onEdit(purchase)
+                }} 
+                className="text-blue-600 hover:text-blue-700 bg-blue-50 border border-blue-100 text-[10px] font-black px-4 py-2 rounded-sm transition-all uppercase cursor-pointer"
+              >
+                ✏️ Edit Pembelian
+              </button>
+            )}
+            <button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-[10px] font-black border border-slate-100 px-4 py-2 rounded-sm transition-all uppercase cursor-pointer">
+              [ Close ]
+            </button>
+          </div>
         </div>
 
         {/* BODY */}
@@ -252,12 +283,12 @@ export function PurchaseDetailModal({ purchase, accounts, onClose }: PurchaseDet
 
                 {/* Payment History */}
                 <div>
-                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Riwayat Pembayaran Cicilan</h3>
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Riwayat & Detail Pembayaran</h3>
                   {paymentsLoading ? (
-                    <div className="text-slate-400 text-xs font-semibold animate-pulse">Memuat riwayat pembayaran...</div>
-                  ) : payments.length === 0 ? (
+                    <div className="text-slate-400 text-xs font-semibold animate-pulse">Memuat rincian pembayaran...</div>
+                  ) : displayPayments.length === 0 ? (
                     <div className="text-center py-6 border border-dashed border-slate-250 text-slate-400 text-xs font-bold uppercase tracking-wider">
-                      Belum ada pembayaran cicilan.
+                      Belum ada pembayaran.
                     </div>
                   ) : (
                     <div className="border border-slate-200 rounded-sm overflow-hidden">
@@ -267,19 +298,19 @@ export function PurchaseDetailModal({ purchase, accounts, onClose }: PurchaseDet
                             <th className="py-2.5 px-4">Tanggal</th>
                             <th className="py-2.5 px-4">Kas/Bank</th>
                             <th className="py-2.5 px-4">Catatan</th>
-                            {payments.some(p => Number(p.write_off_amount) !== 0) && (
+                            {displayPayments.some(p => Number(p.write_off_amount) !== 0) && (
                               <th className="py-2.5 px-4 text-right">Penyesuaian</th>
                             )}
                             <th className="py-2.5 px-4 text-right">Jumlah</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-150 text-slate-700">
-                          {payments.map((p) => (
+                          {displayPayments.map((p) => (
                             <tr key={p.id} className="hover:bg-slate-50/50">
                               <td className="py-2.5 px-4 font-bold">{p.date}</td>
                               <td className="py-2.5 px-4 font-semibold">{getAccountDisplay(p.payment_method_account_id)}</td>
                               <td className="py-2.5 px-4 italic text-slate-500 font-medium">{p.notes || '-'}</td>
-                              {payments.some(x => Number(x.write_off_amount) !== 0) && (
+                              {displayPayments.some(x => Number(x.write_off_amount) !== 0) && (
                                 <td className="py-2.5 px-4 text-right text-rose-600 font-semibold">
                                   {Number(p.write_off_amount) !== 0 ? formatIDR(p.write_off_amount) : '-'}
                                 </td>
