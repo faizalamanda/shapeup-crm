@@ -32,8 +32,13 @@ function LoginForm() {
       setErrorMsg(res.error)
       setLoading(false)
     } else {
-      const isDismissed = localStorage.getItem('shapeup_onboarding_dismissed') === 'true'
-      window.location.href = isDismissed ? '/dashboard' : '/onboarding'
+      const nextParam = searchParams.get('next')
+      if (nextParam && nextParam.startsWith('/')) {
+        window.location.href = nextParam
+      } else {
+        const isDismissed = localStorage.getItem('shapeup_onboarding_dismissed') === 'true'
+        window.location.href = isDismissed ? '/dashboard' : '/onboarding'
+      }
     }
   }
 

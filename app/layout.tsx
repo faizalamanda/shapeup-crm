@@ -134,7 +134,7 @@ const menuItems: MenuItem[] = [
   { name: 'Overview',     href: '/dashboard',         icon: Icons.overview },
   { name: 'Inbox / Chat', href: '/inbox',             icon: Icons.inbox },
   {
-    name: 'Pemasukan',    href: '#',                  icon: Icons.pemasukan,
+    name: 'Pemasukan',    href: '/orders',            icon: Icons.pemasukan,
     children: [
       { name: 'Orders',   href: '/orders' },
       { name: 'Invoices', href: '/orders/invoices' },
@@ -150,7 +150,7 @@ const menuItems: MenuItem[] = [
     ],
   },
   {
-    name: 'Products', href: '#', icon: Icons.products,
+    name: 'Products', href: '/products', icon: Icons.products,
     children: [
       { name: 'Daftar Produk', href: '/products' },
       { name: 'Pembelian',     href: '/purchases' },
@@ -158,14 +158,14 @@ const menuItems: MenuItem[] = [
     ],
   },
   {
-    name: 'Pengeluaran', href: '#', icon: Icons.expenses,
+    name: 'Pengeluaran', href: '/expenses', icon: Icons.expenses,
     children: [
       { name: 'Daftar Pengeluaran', href: '/expenses' },
       { name: 'Pemasok (Suppliers)', href: '/suppliers' },
     ],
   },
   {
-    name: 'Akuntansi', href: '#', icon: Icons.accounting,
+    name: 'Akuntansi', href: '/accounting/transactions', icon: Icons.accounting,
     children: [
       { name: 'Transaksi & Jurnal', href: '/accounting/transactions' },
       { name: 'Laporan Arus Kas', href: '/accounting/cash-flow' },
@@ -408,7 +408,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   // Dynamic menu filtering based on permissions
   const allowedMenuItems = useMemo(() => {
-    if (bizLoading && !userProfile) return []
+    if (bizLoading && !userProfile) {
+      let initialList = [...menuItems]
+      if (!isWabaActive) {
+        initialList = initialList.filter(m => m.href !== '/inbox')
+      }
+      return initialList
+    }
     
     const role = currentUserRole
     const perms = currentUserPermissions
@@ -985,14 +991,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     href={item.href}
                     onClick={(e) => {
                       if (item.children) {
-                        e.preventDefault()
                         setExpandedMenus(prev => ({
                           ...prev,
-                          [item.name]: !prev[item.name]
+                          [item.name]: true
                         }))
-                      } else {
-                        setIsMobileMenuOpen(false)
+                        if (item.href === '#') {
+                          e.preventDefault()
+                          setExpandedMenus(prev => ({
+                            ...prev,
+                            [item.name]: !prev[item.name]
+                          }))
+                        }
                       }
+                      setIsMobileMenuOpen(false)
                     }}
                     style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -1022,15 +1033,31 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                       <span style={{ textTransform: 'uppercase', letterSpacing: '0.06em', fontSize: '11px' }}>{item.name}</span>
                     </div>
                     {item.children && (
-                      <span style={{ 
-                        transform: expandedMenus[item.name] ? 'rotate(180deg)' : 'rotate(0deg)',
-                        transition: 'transform 0.2s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        opacity: 0.5
-                      }}>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setExpandedMenus(prev => ({
+                            ...prev,
+                            [item.name]: !prev[item.name]
+                          }))
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          padding: '2px 4px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          opacity: 0.7,
+                          color: 'inherit',
+                          transform: expandedMenus[item.name] ? 'rotate(180deg)' : 'rotate(0deg)',
+                          transition: 'transform 0.2s ease',
+                        }}
+                      >
                         {Icons.chevronDown}
-                      </span>
+                      </button>
                     )}
                   </Link>
 

@@ -104,10 +104,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirectUrl)
   }
 
-  // Already logged in + trying to access auth routes → redirect to onboarding
+  // Already logged in + trying to access auth routes → redirect to next or onboarding
   if (user && isAuthRoute) {
+    const nextParam = request.nextUrl.searchParams.get('next')
     const redirectUrl = request.nextUrl.clone()
-    redirectUrl.pathname = '/onboarding'
+    redirectUrl.pathname = (nextParam && nextParam.startsWith('/')) ? nextParam : '/onboarding'
     redirectUrl.search = ''
     return NextResponse.redirect(redirectUrl)
   }
