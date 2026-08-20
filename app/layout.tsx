@@ -18,6 +18,12 @@ type MenuItem = {
 }
 
 const Icons = {
+  onboarding: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <polygon points="12 8 8 16 16 16 12 8"/>
+    </svg>
+  ),
   overview: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
@@ -124,6 +130,7 @@ const Icons = {
 }
 
 const menuItems: MenuItem[] = [
+  { name: 'Onboarding',   href: '/onboarding',        icon: Icons.onboarding },
   { name: 'Overview',     href: '/dashboard',         icon: Icons.overview },
   { name: 'Inbox / Chat', href: '/inbox',             icon: Icons.inbox },
   {
@@ -412,14 +419,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       if (!isWabaActive) {
         fullList = fullList.filter(m => m.href !== '/inbox')
       }
-      // Insert HR right after Akuntansi (which is at index 5)
-      fullList.splice(6, 0, { name: 'Karyawan & Gaji', href: '/employees', icon: Icons.employees })
+      // Insert HR right after Akuntansi
+      const akuntansiIdx = fullList.findIndex(m => m.name === 'Akuntansi')
+      const insertIdx = akuntansiIdx !== -1 ? akuntansiIdx + 1 : fullList.length
+      fullList.splice(insertIdx, 0, { name: 'Karyawan & Gaji', href: '/employees', icon: Icons.employees })
       return fullList
     }
 
     const allowed: MenuItem[] = []
 
-    // 0. Inbox / Chat (Paid Plugin — only shown if active for current business)
+    // 0. Onboarding (accessible to all active users)
+    const onboardingItem = menuItems.find(m => m.name === 'Onboarding')
+    if (onboardingItem) allowed.push(onboardingItem)
+
+    // 1. Inbox / Chat (Paid Plugin — only shown if active for current business)
     if (isWabaActive) {
       const inboxItem = menuItems.find(m => m.name === 'Inbox / Chat')
       if (inboxItem) allowed.push(inboxItem)
@@ -551,6 +564,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     
     const role = currentUserRole
     const perms = currentUserPermissions
+
+    if (pathname.startsWith('/onboarding')) {
+      return true
+    }
 
     if (pathname.startsWith('/inbox')) {
       return isWabaActive

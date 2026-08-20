@@ -32,7 +32,8 @@ function LoginForm() {
       setErrorMsg(res.error)
       setLoading(false)
     } else {
-      window.location.href = '/dashboard'
+      const isDismissed = localStorage.getItem('shapeup_onboarding_dismissed') === 'true'
+      window.location.href = isDismissed ? '/dashboard' : '/onboarding'
     }
   }
 
