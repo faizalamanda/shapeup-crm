@@ -5,6 +5,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import Link from 'next/link'
 import { ExpenseDetailModal } from './components/ExpenseDetailModal'
 import { Pagination } from '../components/Pagination'
+import { useUserContext } from '@/components/UserContext'
 
 const STANDARD_CATEGORIES = [
   { key: 'marketing', name: 'Pemasaran & Promosi', code: '503100', icon: '📢', desc: 'Biaya iklan, sosmed, brosur, promo' },
@@ -67,6 +68,7 @@ type Expense = {
 }
 
 export default function ExpensesPage() {
+  const { activeBusiness } = useUserContext()
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -177,36 +179,40 @@ export default function ExpensesPage() {
     setGroupItemLimits({})
   }, [searchQuery, selectedCategoryAcc, selectedPaymentStatus, groupBy, startDate, endDate])
 
-  // Fetch Page Data
-  const fetchData = useCallback(async (businessId: string, isSilent = false) => {
-    if (!isSilent) setLoading(true)
+  // Fetch Expenses & Accounts data
+  const fetchExpensesData = useCallback(async (businessId: string) => {
     setBgUpdating(true)
     try {
-      const [expRes, accRes] = await Promise.all([
-        fetch('/api/expenses'),
-        supabase
-          .from('accounts')
-          .select('id, code, name, type')
-          .eq('business_id', businessId)
-          .order('code', { ascending: true })
-      ])
+      // 1. Fetch Expense Records
+      const { data: expData, error: expErr } = await supabase
+        .from('expenses')
+        .select(`
+          id, business_id, transaction_id, category_account_id, payment_account_id,
+          amount, date, description, vendor_name, attachment_url, created_at,
+          payment_status, due_date, amount_paid, outstanding_amount,
+          category_account:accounts!category_account_id(id, code, name),
+          payment_account:accounts!payment_account_id(id, code, name),
+          expense_payments(id)
+        `)
+        .eq('business_id', businessId)
+        .order('date', { ascending: false })
 
-      let freshExpenses: Expense[] = []
-      let freshAccounts: Account[] = []
+      if (expErr) throw expErr
 
-      if (expRes.ok) {
-        freshExpenses = await expRes.json()
-        setExpenses(freshExpenses)
-      } else {
-        throw new Error('Gagal memuat data pengeluaran')
-      }
+      // 2. Fetch Accounts list for filters
+      const { data: accData, error: accErr } = await supabase
+        .from('accounts')
+        .select('id, code, name, type')
+        .eq('business_id', businessId)
+        .order('code', { ascending: true })
 
-      if (!accRes.error && accRes.data) {
-        freshAccounts = accRes.data
-        setAccounts(freshAccounts)
-      } else if (accRes.error) {
-        throw accRes.error
-      }
+      if (accErr) throw accErr
+
+      const freshExpenses = expData || []
+      const freshAccounts = accData || []
+
+      setExpenses(freshExpenses as any)
+      setAccounts(freshAccounts)
 
       localStorage.setItem(`cache_expenses_${businessId}`, JSON.stringify(freshExpenses))
       localStorage.setItem(`cache_accounts_${businessId}`, JSON.stringify(freshAccounts))
@@ -220,59 +226,41 @@ export default function ExpensesPage() {
 
   // Load Active Business Profile and initiate SWR cache loading
   useEffect(() => {
-    async function initProfileAndCache() {
+    if (!activeBusiness?.id) return
+    const businessId = activeBusiness.id
+    setActiveBizId(businessId)
+    setActiveBizName(activeBusiness.name || 'Bisnis Saya')
+
+    const cachedExpenses = localStorage.getItem(`cache_expenses_${businessId}`)
+    const cachedAccounts = localStorage.getItem(`cache_accounts_${businessId}`)
+
+    let hasCache = false
+    if (cachedExpenses) {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
-
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name)')
-          .eq('id', user.id)
-          .single()
-
-        if (error) throw error
-
-        const businessId = profile?.active_business_id
-        if (businessId) {
-          setActiveBizId(businessId)
-          const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
-          setActiveBizName(biz?.name || 'Bisnis Saya')
-
-          const cachedExpenses = localStorage.getItem(`cache_expenses_${businessId}`)
-          const cachedAccounts = localStorage.getItem(`cache_accounts_${businessId}`)
-
-          let hasCache = false
-          if (cachedExpenses) {
-            try {
-              setExpenses(JSON.parse(cachedExpenses))
-              hasCache = true
-            } catch (e) {
-              console.error('Error parsing cached expenses:', e)
-            }
-          }
-          if (cachedAccounts) {
-            try {
-              setAccounts(JSON.parse(cachedAccounts))
-              hasCache = true
-            } catch (e) {
-              console.error('Error parsing cached accounts:', e)
-            }
-          }
-
-          if (hasCache) {
-            setLoading(false)
-          }
-
-          await fetchData(businessId, hasCache)
-        }
-      } catch (err) {
-        console.error('Error loading profile:', err)
-        setLoading(false)
+        setExpenses(JSON.parse(cachedExpenses))
+        hasCache = true
+      } catch (e) {
+        console.error('Error parsing cached expenses:', e)
       }
     }
-    initProfileAndCache()
-  }, [supabase, fetchData])
+    if (cachedAccounts) {
+      try {
+        setAccounts(JSON.parse(cachedAccounts))
+        hasCache = true
+      } catch (e) {
+        console.error('Error parsing cached accounts:', e)
+      }
+    }
+
+    if (hasCache) {
+      setLoading(false)
+      setBgUpdating(true)
+    } else {
+      setLoading(true)
+    }
+
+    fetchExpensesData(businessId)
+  }, [activeBusiness, fetchExpensesData])
 
   const paymentAccounts = useMemo(() => {
     return accounts.filter(a => a.type === 'ASSET' && a.code.startsWith('101'))
@@ -509,7 +497,7 @@ export default function ExpensesPage() {
       setIsBulkPayModalOpen(false)
       setSelectedIds([])
       if (activeBizId) {
-        await fetchData(activeBizId, true)
+        await fetchExpensesData(activeBizId)
       }
     } catch (err: any) {
       console.error('Error bulk paying expenses:', err)
@@ -566,7 +554,7 @@ export default function ExpensesPage() {
 
       setIsPayModalOpen(false)
       if (activeBizId) {
-        await fetchData(activeBizId, true)
+        await fetchExpensesData(activeBizId)
       }
     } catch (err: any) {
       console.error('Error paying expense:', err)
@@ -601,7 +589,7 @@ export default function ExpensesPage() {
       }
 
       if (activeBizId) {
-        await fetchData(activeBizId, true)
+        await fetchExpensesData(activeBizId)
       }
     } catch (err: any) {
       console.error('Error deleting expense:', err)

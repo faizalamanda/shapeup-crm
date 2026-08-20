@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
+import { useUserContext } from '@/components/UserContext'
 
 const STANDARD_CATEGORIES = [
   { key: 'marketing', name: 'Pemasaran & Promosi', code: '503100', icon: '📢', desc: 'Biaya iklan, sosmed, brosur, promo' },
@@ -53,6 +54,7 @@ type Supplier = {
 }
 
 export default function NewExpensePage() {
+  const { activeBusiness } = useUserContext()
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -131,52 +133,37 @@ export default function NewExpensePage() {
   // Load Active Business Profile, Accounts, and Suppliers
   useEffect(() => {
     async function loadData() {
+      if (!activeBusiness?.id) return
+      const businessId = activeBusiness.id
+      setActiveBizId(businessId)
+      setActiveBizName(activeBusiness.name || 'Bisnis Saya')
+
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          router.push('/login')
-          return
-        }
+        // Fetch all accounts
+        const { data: accData, error: accErr } = await supabase
+          .from('accounts')
+          .select('id, code, name, type')
+          .eq('business_id', businessId)
+          .order('code', { ascending: true })
 
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name)')
-          .eq('id', user.id)
-          .single()
+        if (accErr) throw accErr
+        setAccounts(accData || [])
 
-        if (error) throw error
-
-        const businessId = profile?.active_business_id
-        if (businessId) {
-          setActiveBizId(businessId)
-          const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
-          setActiveBizName(biz?.name || 'Bisnis Saya')
-
-          // Fetch all accounts
-          const { data: accData, error: accErr } = await supabase
-            .from('accounts')
-            .select('id, code, name, type')
-            .eq('business_id', businessId)
-            .order('code', { ascending: true })
-
-          if (accErr) throw accErr
-          setAccounts(accData || [])
-
-          // Fetch all suppliers/vendors
-          const supRes = await fetch('/api/suppliers')
-          if (supRes.ok) {
-            const supData = await supRes.json()
-            setSuppliers(supData || [])
-          }
+        // Fetch all suppliers/vendors
+        const supRes = await fetch('/api/suppliers')
+        if (supRes.ok) {
+          const supData = await supRes.json()
+          setSuppliers(supData || [])
         }
       } catch (err) {
-        console.error('Error loading data:', err)
+        console.error('Error loading new expense data:', err)
       } finally {
         setLoading(false)
       }
     }
+
     loadData()
-  }, [supabase, router])
+  }, [activeBusiness, supabase])
 
   // Filter accounts
   const categoryAccounts = useMemo(() => {

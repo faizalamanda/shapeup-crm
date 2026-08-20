@@ -477,163 +477,38 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     }
   }, [pathname, noSidebar, supabase, loadProfileAndBusinesses])
 
-  // Dynamic menu filtering based on permissions
+  // Dynamic menu filtering based on permissions using centralized canAccessPath
   const allowedMenuItems = useMemo(() => {
-    if (bizLoading && !userProfile) {
-      let initialList = [...menuItems]
-      if (!isWabaActive) {
-        initialList = initialList.filter(m => m.href !== '/inbox')
+    let fullList = menuItems.map(item => {
+      if (item.children) {
+        const validChildren = item.children.filter(child =>
+          canAccessPath(child.href, {
+            role: currentUserRole,
+            permissions: currentUserPermissions,
+            isWabaActive,
+          })
+        )
+        return { ...item, children: validChildren }
       }
-      return initialList
-    }
+      return item
+    })
     
-    const role = currentUserRole
-    const perms = currentUserPermissions
+    // Insert HR item right after Akuntansi
+    const akuntansiIdx = fullList.findIndex(m => m.name === 'Akuntansi')
+    const insertIdx = akuntansiIdx !== -1 ? akuntansiIdx + 1 : fullList.length
+    fullList.splice(insertIdx, 0, { name: 'Karyawan & Gaji', href: '/employees', icon: Icons.employees })
 
-    if (role === 'admin' || perms.includes('full_access')) {
-      // Admin/Full access sees all standard items (+ HR item if admin)
-      let fullList = [...menuItems]
-      if (!isWabaActive) {
-        fullList = fullList.filter(m => m.href !== '/inbox')
+    return fullList.filter(item => {
+      if (item.children) {
+        return item.children.length > 0
       }
-      // Insert HR right after Akuntansi
-      const akuntansiIdx = fullList.findIndex(m => m.name === 'Akuntansi')
-      const insertIdx = akuntansiIdx !== -1 ? akuntansiIdx + 1 : fullList.length
-      fullList.splice(insertIdx, 0, { name: 'Karyawan & Gaji', href: '/employees', icon: Icons.employees })
-      return fullList
-    }
-
-    const allowed: MenuItem[] = []
-
-    // 0. Onboarding (accessible to all active users)
-    const onboardingItem = menuItems.find(m => m.name === 'Onboarding')
-    if (onboardingItem) allowed.push(onboardingItem)
-
-    // 1. Inbox / Chat (Paid Plugin — only shown if active for current business)
-    if (isWabaActive) {
-      const inboxItem = menuItems.find(m => m.name === 'Inbox / Chat')
-      if (inboxItem) allowed.push(inboxItem)
-    }
-
-    // 1. Overview
-    if (
-      perms.includes('view_financials_no_salary') ||
-      perms.includes('input_journal_expenses') ||
-      perms.includes('manage_invoices') ||
-      perms.includes('manage_bills') ||
-      perms.includes('manage_products') ||
-      perms.includes('manage_purchases')
-    ) {
-      const overviewItem = menuItems.find(m => m.name === 'Overview')
-      if (overviewItem) allowed.push(overviewItem)
-    }
-
-    // 2. Pemasukan (Orders, Invoices, POS)
-    if (
-      perms.includes('view_financials_no_salary') ||
-      perms.includes('manage_invoices')
-    ) {
-      const pemasukanItem = menuItems.find(m => m.name === 'Pemasukan')
-      if (pemasukanItem) allowed.push(pemasukanItem)
-    }
-
-    // 3. Customers
-    if (
-      perms.includes('view_financials_no_salary') ||
-      perms.includes('manage_invoices')
-    ) {
-      const customersItem = menuItems.find(m => m.name === 'Customers')
-      if (customersItem) allowed.push(customersItem)
-    }
-
-    // 4. Products
-    if (
-      perms.includes('view_financials_no_salary') ||
-      perms.includes('manage_invoices') ||
-      perms.includes('manage_bills') ||
-      perms.includes('manage_products') ||
-      perms.includes('manage_purchases')
-    ) {
-      const productsItem = menuItems.find(m => m.name === 'Products')
-      if (productsItem) {
-        // Dynamically filter children submenus based on specific permissions
-        const filteredChildren = productsItem.children?.filter(child => {
-          if (child.href === '/products' || child.href === '/stock-opname') {
-            return (
-              perms.includes('view_financials_no_salary') ||
-              perms.includes('manage_invoices') ||
-              perms.includes('manage_products')
-            )
-          }
-          if (child.href === '/purchases') {
-            return (
-              perms.includes('view_financials_no_salary') ||
-              perms.includes('manage_bills') ||
-              perms.includes('manage_purchases')
-            )
-          }
-          return true
-        })
-
-        if (filteredChildren && filteredChildren.length > 0) {
-          allowed.push({ ...productsItem, children: filteredChildren })
-        }
-      }
-    }
-
-    // 5. Pengeluaran (Expenses, Purchases, Suppliers)
-    if (
-      perms.includes('view_financials_no_salary') ||
-      perms.includes('input_journal_expenses') ||
-      perms.includes('manage_bills') ||
-      perms.includes('manage_purchases')
-    ) {
-      const expensesItem = menuItems.find(m => m.name === 'Pengeluaran')
-      if (expensesItem) {
-        const filteredChildren = expensesItem.children?.filter(child => {
-          if (child.href === '/expenses') {
-            return (
-              perms.includes('view_financials_no_salary') ||
-              perms.includes('input_journal_expenses') ||
-              perms.includes('manage_bills')
-            )
-          }
-          if (child.href === '/suppliers') {
-            return (
-              perms.includes('view_financials_no_salary') ||
-              perms.includes('input_journal_expenses') ||
-              perms.includes('manage_bills') ||
-              perms.includes('manage_purchases')
-            )
-          }
-          return true
-        })
-
-        if (filteredChildren && filteredChildren.length > 0) {
-          allowed.push({ ...expensesItem, children: filteredChildren })
-        }
-      }
-    }
-
-    // 6. Akuntansi (Cash Flow, P&L, Balance Sheet)
-    if (perms.includes('view_financials_no_salary')) {
-      const accountingItem = menuItems.find(m => m.name === 'Akuntansi')
-      if (accountingItem) allowed.push(accountingItem)
-    }
-
-    // 7. Karyawan & Gaji (HR)
-    if (perms.includes('manage_employees_salary')) {
-      allowed.push({ name: 'Karyawan & Gaji', href: '/employees', icon: Icons.employees })
-    }
-
-    // 8. Marketing
-    if (perms.includes('manage_marketing')) {
-      const marketingItem = menuItems.find(m => m.name === 'Marketing')
-      if (marketingItem) allowed.push(marketingItem)
-    }
-
-    return allowed
-  }, [currentUserRole, currentUserPermissions, bizLoading, isWabaActive])
+      return canAccessPath(item.href, {
+        role: currentUserRole,
+        permissions: currentUserPermissions,
+        isWabaActive,
+      })
+    })
+  }, [currentUserRole, currentUserPermissions, isWabaActive])
 
   // Route protection path check using centralized canAccessPath
   const isAllowedPath = useMemo(() => {
@@ -919,7 +794,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   flex: 1,
                   color: bizLoading ? 'rgba(255,254,249,0.3)' : undefined,
                 }}>
-                  {bizLoading ? 'Memuat...' : (activeBusiness ? activeBusiness.name : 'Pilih Bisnis')}
+                  {activeBusiness ? activeBusiness.name : (bizLoading ? 'Memuat...' : 'Pilih Bisnis')}
                 </span>
               </div>
               <span style={{ 

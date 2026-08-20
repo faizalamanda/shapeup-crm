@@ -18,9 +18,7 @@ export interface AccessContext {
 export function canAccessPath(href: string, context: AccessContext): boolean {
   const { role, permissions = [], isWabaActive = false } = context
 
-  // 1. Integration / Paid Plugin Guard (Evaluated BEFORE role overrides)
-  // If a paid plugin (e.g. WABA Inbox) is inactive for the business,
-  // access is denied for ALL users, including Admins.
+  // 1. Integration / Paid Plugin Guard
   if (href.startsWith('/inbox') && !isWabaActive) {
     return false
   }
@@ -33,56 +31,79 @@ export function canAccessPath(href: string, context: AccessContext): boolean {
   // 3. Unauthenticated / Initial Loading State Fallback
   if (!role) return false
 
-  // 3. Admin & Full Access Overrides (Applies to standard features)
+  // 4. Admin or Full Access Override (All modules accessible)
   if (role === 'admin' || permissions.includes('full_access')) {
     return true
   }
 
-  // 4. Restricted System / Owner Only Routes
+  // 5. System Settings (Owner / Admin only)
   if (href.startsWith('/settings')) {
     return false
   }
 
-  // 5. Specific Staff Permission Guards
+  // 6. HR & Employees Module (Requires manage_employees_salary)
   if (href.startsWith('/employees')) {
     return permissions.includes('manage_employees_salary')
   }
 
+  // 7. Akuntansi / Accounting Financials (Requires view_financials_no_salary)
   if (href.startsWith('/accounting')) {
     return permissions.includes('view_financials_no_salary')
   }
 
-  if (href.startsWith('/expenses')) {
-    return (
-      permissions.includes('view_financials_no_salary') ||
-      permissions.includes('input_journal_expenses') ||
-      permissions.includes('manage_bills')
-    )
+  // 8. Overview / Dashboard
+  if (href === '/dashboard') {
+    return true
   }
 
-  if (href.startsWith('/suppliers')) {
-    return (
-      permissions.includes('view_financials_no_salary') ||
-      permissions.includes('input_journal_expenses') ||
-      permissions.includes('manage_bills') ||
-      permissions.includes('manage_purchases')
-    )
-  }
-
+  // 9. Pemasukan (Orders, Invoices, POS) & Customers
   if (href.startsWith('/orders') || href.startsWith('/customers')) {
     return (
-      permissions.includes('view_financials_no_salary') ||
-      permissions.includes('manage_invoices')
+      permissions.includes('manage_invoices') ||
+      permissions.includes('view_financials_no_salary')
     )
   }
 
+  // 10. Products & Stock Opname
   if (href.startsWith('/products') || href.startsWith('/stock-opname')) {
     return (
-      permissions.includes('view_financials_no_salary') ||
-      permissions.includes('manage_invoices') ||
-      permissions.includes('manage_products')
+      permissions.includes('manage_products') ||
+      permissions.includes('view_financials_no_salary')
     )
   }
 
-  return true
+  // 11. Daftar Pengeluaran (General Operational Expenses)
+  if (href === '/expenses' || href.startsWith('/expenses/')) {
+    return (
+      permissions.includes('input_journal_expenses') ||
+      permissions.includes('manage_bills') ||
+      permissions.includes('view_financials_no_salary')
+    )
+  }
+
+  // 12. Pembelian Produk (Product Purchases)
+  if (href.startsWith('/purchases')) {
+    return (
+      permissions.includes('manage_purchases') ||
+      permissions.includes('manage_bills') ||
+      permissions.includes('view_financials_no_salary')
+    )
+  }
+
+  // 13. Pemasok (Suppliers)
+  if (href.startsWith('/suppliers')) {
+    return (
+      permissions.includes('manage_purchases') ||
+      permissions.includes('manage_bills') ||
+      permissions.includes('input_journal_expenses') ||
+      permissions.includes('view_financials_no_salary')
+    )
+  }
+
+  // 14. Marketing
+  if (href.startsWith('/marketing')) {
+    return permissions.includes('manage_marketing')
+  }
+
+  return false
 }
