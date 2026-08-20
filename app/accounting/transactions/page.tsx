@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
 import { formatCurrencyIDR, getDateRangeLimits, DateRangeKey } from '../utils'
+import { sortTransactionsNewestFirst, formatDisplayDate } from '@/lib/timeUtils'
 import * as XLSX from 'xlsx'
 
 type Account = {
@@ -571,6 +572,7 @@ export default function TransactionsPage() {
           filtered = filtered.filter(t => t.description?.startsWith('[Jurnal Umum') || t.description?.startsWith('[JU') || (!t.description?.includes('[Kategori') && !t.order_id))
         }
 
+        filtered = sortTransactionsNewestFirst(filtered)
         setTransactions(filtered)
         if (json.summary) setSummary(json.summary)
       }

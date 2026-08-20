@@ -288,7 +288,7 @@ export async function syncOrderToLedger(
         } else if (raw.date_completed) {
           paymentDate = new Date(raw.date_completed).toISOString()
         } else {
-          paymentDate = order.order_date || new Date().toISOString()
+          paymentDate = order.order_date_utc || order.order_date || new Date().toISOString()
         }
       } else {
         if (raw.date_paid_gmt) {
@@ -296,7 +296,7 @@ export async function syncOrderToLedger(
         } else if (raw.date_paid) {
           paymentDate = new Date(raw.date_paid).toISOString()
         } else {
-          paymentDate = order.order_date || new Date().toISOString()
+          paymentDate = order.order_date_utc || order.order_date || new Date().toISOString()
         }
       }
     }
@@ -342,7 +342,7 @@ export async function syncOrderToLedger(
           .insert({
             business_id: businessId,
             order_id: orderId,
-            date: order.order_date || new Date().toISOString(),
+            date: order.order_date_utc || order.order_date || new Date().toISOString(),
             description: `Penjualan ${platform} #${orderNumber}`
           })
           .select('id')
@@ -519,7 +519,7 @@ export async function syncOrderToLedger(
           .insert({
             business_id: businessId,
             order_id: orderId,
-            date: order.order_date || new Date().toISOString(),
+            date: order.order_date_utc || order.order_date || new Date().toISOString(),
             description: `Penjualan ${platform} #${orderNumber}`
           })
           .select('id')

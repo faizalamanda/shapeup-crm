@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { formatTransactionDate, sortTransactionsNewestFirst } from '@/lib/timeUtils'
 
 function getSupabase() {
   return createClient(
@@ -76,6 +77,9 @@ export async function GET(request: NextRequest) {
         tx.journal_lines?.some((jl: any) => jl.account_id === accountId)
       )
     }
+
+    // Sort transactions strictly newest first
+    resultTransactions = sortTransactionsNewestFirst(resultTransactions)
 
     // Calculate aggregated metrics for the list
     let totalDebitSum = 0
@@ -169,8 +173,8 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    // Ensure transaction date format is ISO
-    let txDate = new Date(date).toISOString()
+    // Ensure transaction date format is ISO with time precision
+    let txDate = formatTransactionDate(date)
 
     // 1. Insert Transaction record
     const { data: newTx, error: txErr } = await supabase

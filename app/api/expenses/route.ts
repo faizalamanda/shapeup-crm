@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabaseServer'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
 import { syncExpenseStatus } from '@/lib/expenseSync'
 import { NextResponse } from 'next/server'
+import { formatTransactionDate } from '@/lib/timeUtils'
 
 export async function GET(req: Request) {
   const supabase = await createClient()
@@ -178,7 +179,7 @@ export async function POST(req: Request) {
       .from('transactions')
       .insert({
         business_id: businessId,
-        date: date,
+        date: formatTransactionDate(date),
         description: `Pengeluaran: ${description || 'Operasional'}`
       })
       .select('*')

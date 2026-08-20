@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { syncExpenseStatus, syncPurchaseStatus } from '@/lib/expenseSync'
+import { formatTransactionDate } from '@/lib/timeUtils'
 
 function getSupabase() {
   return createClient(
@@ -373,7 +374,7 @@ export async function PUT(
     const finalDescription = `${cleanNewDesc} [Diedit: ${editTimestamp}] [HISTORI_EDIT:${historyB64}]`
 
 
-    let txDate = new Date(date).toISOString()
+    let txDate = formatTransactionDate(date, existingTx.date)
 
     // 5. Update transaction header
     const { data: updatedTx, error: updateErr } = await supabase
