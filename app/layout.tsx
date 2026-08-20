@@ -5,8 +5,10 @@ import { usePathname } from 'next/navigation'
 import { logoutAction } from '@/app/auth/actions'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
+import { canAccessPath } from '@/lib/permissions'
 import "./globals.css"
 import BusinessOnboarding from '@/components/BusinessOnboarding'
+import { UserProvider, UserContextType } from '@/components/UserContext'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -188,13 +190,56 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({})
 
-  // Business switcher states
-  const [businesses, setBusinesses] = useState<any[]>([])
-  const [activeBusiness, setActiveBusiness] = useState<any>(null)
+  // Business switcher & User context states (initialized with instant local cache if present)
+  const [businesses, setBusinesses] = useState<any[]>(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const saved = localStorage.getItem('su_cached_businesses')
+        if (saved) return JSON.parse(saved)
+      } catch (e) {}
+    }
+    return []
+  })
+
+  const [activeBusiness, setActiveBusiness] = useState<any>(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const saved = localStorage.getItem('su_cached_active_biz')
+        if (saved) return JSON.parse(saved)
+      } catch (e) {}
+    }
+    return null
+  })
+
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
-  const [userProfile, setUserProfile] = useState<any>(null)
-  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null)
-  const [currentUserPermissions, setCurrentUserPermissions] = useState<string[]>([])
+
+  const [userProfile, setUserProfile] = useState<any>(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const saved = localStorage.getItem('su_cached_user_profile')
+        if (saved) return JSON.parse(saved)
+      } catch (e) {}
+    }
+    return null
+  })
+
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return localStorage.getItem('su_cached_role')
+    }
+    return null
+  })
+
+  const [currentUserPermissions, setCurrentUserPermissions] = useState<string[]>(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const saved = localStorage.getItem('su_cached_perms')
+        if (saved) return JSON.parse(saved)
+      } catch (e) {}
+    }
+    return []
+  })
+
   const [isWabaActive, setIsWabaActive] = useState(false)
   const [bizLoading, setBizLoading] = useState(true)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
@@ -293,11 +338,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
       // Find and set the active business
       const activeBizId = profile?.active_business_id || combined[0]?.id
+      let selectedActiveBiz: any = null
+
       if (activeBizId) {
         const active = combined.find(b => b.id === activeBizId)
         if (active) {
           console.log('[Layout] active business found:', active.name)
           setActiveBusiness(active)
+          selectedActiveBiz = active
         } else {
           // Fallback: direct lookup (edge case)
           const { data: fallbackBiz } = await supabase
@@ -308,13 +356,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           if (loadId === loadIdRef.current && fallbackBiz) {
             console.log('[Layout] fallback business:', fallbackBiz.name)
             setActiveBusiness(fallbackBiz)
+            selectedActiveBiz = fallbackBiz
           } else if (combined.length > 0) {
             setActiveBusiness(combined[0])
+            selectedActiveBiz = combined[0]
           }
         }
       } else if (combined.length > 0) {
         console.log('[Layout] no active_business_id, auto-selecting first:', combined[0].name)
         setActiveBusiness(combined[0])
+        selectedActiveBiz = combined[0]
       } else {
         console.log('[Layout] no businesses found at all')
         setActiveBusiness(null)
@@ -342,15 +393,31 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       const activeBs = bsResult.data?.find((item: any) => item.businesses?.id === activeBizId)
       const isUserAdmin = profile?.role === 'admin' || activeBs?.role === 'admin' || ownedResult.data?.some((biz: any) => biz.id === activeBizId)
       
+      let resolvedRole = 'staff'
+      let resolvedPerms: string[] = []
+
       if (isUserAdmin) {
-        setCurrentUserRole('admin')
-        setCurrentUserPermissions(['full_access'])
+        resolvedRole = 'admin'
+        resolvedPerms = ['full_access']
       } else if (activeBs) {
-        setCurrentUserRole(activeBs.role)
-        setCurrentUserPermissions(activeBs.permissions || [])
-      } else {
-        setCurrentUserRole('staff')
-        setCurrentUserPermissions([])
+        resolvedRole = activeBs.role || 'staff'
+        resolvedPerms = activeBs.permissions || []
+      }
+
+      setCurrentUserRole(resolvedRole)
+      setCurrentUserPermissions(resolvedPerms)
+
+      // Save to localStorage cache for instant loading on next refresh
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          if (profile) localStorage.setItem('su_cached_user_profile', JSON.stringify(profile))
+          if (combined) localStorage.setItem('su_cached_businesses', JSON.stringify(combined))
+          if (selectedActiveBiz) localStorage.setItem('su_cached_active_biz', JSON.stringify(selectedActiveBiz))
+          localStorage.setItem('su_cached_role', resolvedRole)
+          localStorage.setItem('su_cached_perms', JSON.stringify(resolvedPerms))
+        }
+      } catch (e) {
+        console.error('[Layout] Error setting user cache:', e)
       }
     } catch (err) {
       console.error('[Layout] Error loading profile and businesses:', err)
@@ -371,6 +438,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           const force = event === 'SIGNED_IN' || event === 'USER_UPDATED' || session.user.id !== loadedUserIdRef.current
           loadProfileAndBusinesses(session.user.id, force)
         } else if (event === 'SIGNED_OUT' || (event === 'INITIAL_SESSION' && !session)) {
+          setIsLoggingOut(true)
           loadedUserIdRef.current = null
           setUserProfile(null)
           setBusinesses([])
@@ -378,6 +446,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           setCurrentUserRole(null)
           setCurrentUserPermissions([])
           setBizLoading(false)
+          if (!noSidebar && typeof window !== 'undefined') {
+            window.location.href = '/login'
+          }
         }
       }
     )
@@ -385,7 +456,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     return () => {
       subscription.unsubscribe()
     }
-  }, [supabase, loadProfileAndBusinesses])
+  }, [supabase, loadProfileAndBusinesses, noSidebar])
 
   // Sync session on navigation/pathname change when we are on a page with sidebar
   useEffect(() => {
@@ -564,97 +635,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     return allowed
   }, [currentUserRole, currentUserPermissions, bizLoading, isWabaActive])
 
-  // Route protection path check
+  // Route protection path check using centralized canAccessPath
   const isAllowedPath = useMemo(() => {
-    if (noSidebar || bizLoading || isLoggingOut) return true
-    
-    const role = currentUserRole
-    const perms = currentUserPermissions
-
-    if (pathname.startsWith('/onboarding')) {
-      return true
-    }
-
-    if (pathname.startsWith('/inbox')) {
-      return isWabaActive
-    }
-
-    if (role === 'admin' || perms.includes('full_access')) return true
-
-    if (pathname.startsWith('/settings')) {
-      return false
-    }
-
-    if (pathname.startsWith('/marketing')) {
-      return perms.includes('manage_marketing')
-    }
-
-    if (pathname.startsWith('/employees')) {
-      return perms.includes('manage_employees_salary')
-    }
-
-    if (pathname.startsWith('/accounting')) {
-      return perms.includes('view_financials_no_salary')
-    }
-
-    if (
-      pathname.startsWith('/orders') ||
-      pathname.startsWith('/customers')
-    ) {
-      return (
-        perms.includes('view_financials_no_salary') ||
-        perms.includes('manage_invoices')
-      )
-    }
-
-    if (
-      pathname.startsWith('/products') ||
-      pathname.startsWith('/stock-opname')
-    ) {
-      return (
-        perms.includes('view_financials_no_salary') ||
-        perms.includes('manage_invoices') ||
-        perms.includes('manage_products')
-      )
-    }
-
-    if (pathname.startsWith('/purchases')) {
-      return (
-        perms.includes('view_financials_no_salary') ||
-        perms.includes('manage_bills') ||
-        perms.includes('manage_purchases')
-      )
-    }
-
-    if (pathname.startsWith('/suppliers')) {
-      return (
-        perms.includes('view_financials_no_salary') ||
-        perms.includes('input_journal_expenses') ||
-        perms.includes('manage_bills') ||
-        perms.includes('manage_purchases')
-      )
-    }
-
-    if (pathname.startsWith('/expenses')) {
-      return (
-        perms.includes('view_financials_no_salary') ||
-        perms.includes('input_journal_expenses') ||
-        perms.includes('manage_bills')
-      )
-    }
-
-    if (pathname === '/dashboard') {
-      return (
-        perms.includes('view_financials_no_salary') ||
-        perms.includes('input_journal_expenses') ||
-        perms.includes('manage_invoices') ||
-        perms.includes('manage_bills') ||
-        perms.includes('manage_products') ||
-        perms.includes('manage_purchases')
-      )
-    }
-
-    return true
+    if (noSidebar || isLoggingOut) return true
+    if (bizLoading && !currentUserRole) return false
+    return canAccessPath(pathname, {
+      role: currentUserRole,
+      permissions: currentUserPermissions,
+      isWabaActive,
+    })
   }, [pathname, currentUserRole, currentUserPermissions, noSidebar, bizLoading, isLoggingOut, isWabaActive])
 
   const accessDeniedScreen = (
@@ -751,14 +740,88 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       console.error('[Layout] LocalStorage clear error:', e)
     }
 
-    await logoutAction()
-    window.location.href = '/login'
+    try {
+      await logoutAction()
+    } catch (e) {
+      console.error('[Layout] logoutAction error:', e)
+    } finally {
+      window.location.href = '/login'
+    }
   }
+
+  const userContextValue = useMemo<UserContextType>(() => ({
+    userProfile,
+    activeBusiness,
+    businesses,
+    currentUserRole,
+    currentUserPermissions,
+    isWabaActive,
+    bizLoading,
+    refreshProfile: async (forceRefresh = true) => {
+      if (loadedUserIdRef.current) {
+        await loadProfileAndBusinesses(loadedUserIdRef.current, forceRefresh)
+      }
+    }
+  }), [userProfile, activeBusiness, businesses, currentUserRole, currentUserPermissions, isWabaActive, bizLoading, loadProfileAndBusinesses])
 
   if (noSidebar) {
     return (
       <html lang="en" suppressHydrationWarning>
-        <body className={inter.className}>{children}</body>
+        <body className={inter.className}>
+          <UserProvider value={userContextValue}>
+            {children}
+          </UserProvider>
+        </body>
+      </html>
+    )
+  }
+
+  // Intercept layout to display logout screen during logout
+  if (isLoggingOut) {
+    return (
+      <html lang="en" suppressHydrationWarning>
+        <body className={inter.className} style={{ background: '#0F172A', color: '#FFFFFF' }}>
+          <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center">
+            <div className="w-14 h-14 bg-gradient-to-br from-red-500 to-amber-500 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-xl shadow-red-500/20 mb-6 animate-pulse">
+              👋
+            </div>
+            <h2 className="text-xl font-extrabold text-slate-100 tracking-tight mb-2">
+              ShapeUp CRM
+            </h2>
+            <p className="text-sm text-slate-400 font-medium tracking-wide flex items-center justify-center gap-2">
+              <svg className="w-4 h-4 animate-spin text-red-500" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <span>Sedang keluar dari akun...</span>
+            </p>
+          </div>
+        </body>
+      </html>
+    )
+  }
+
+  // Intercept layout to display loading screen on initial login when cache is empty
+  if (bizLoading && !currentUserRole) {
+    return (
+      <html lang="en" suppressHydrationWarning>
+        <body className={inter.className} style={{ background: '#0F172A', color: '#FFFFFF' }}>
+          <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center">
+            <div className="w-14 h-14 bg-gradient-to-br from-blue-600 to-amber-500 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-xl shadow-blue-500/20 mb-6 animate-pulse">
+              S
+            </div>
+            <h2 className="text-xl font-extrabold text-slate-100 tracking-tight mb-2">
+              ShapeUp CRM
+            </h2>
+            <p className="text-sm text-slate-400 font-medium tracking-wide flex items-center justify-center gap-2">
+              <svg className="w-4 h-4 animate-spin text-blue-500" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <span>Memuat profil & hak akses user...</span>
+            </p>
+          </div>
+        </body>
       </html>
     )
   }
@@ -788,10 +851,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           top: 0,
           bottom: 0,
           left: 0,
-          zIndex: 50,
+          zIndex: 30,
           transition: 'transform 0.25s ease',
         }}
-          className={`${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
+          className={`${isMobileMenuOpen ? 'translate-x-0 z-50' : '-translate-x-full z-30'} lg:translate-x-0 lg:z-30`}
         >
           {/* Logo */}
           <div style={{ padding: '20px 16px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
@@ -1190,7 +1253,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* Page content */}
           <main style={{ flex: 1, overflowY: 'auto', padding: '28px 28px 48px' }}>
             <div style={{ maxWidth: '1600px', margin: '0 auto' }} className="su-fade-in">
-              {isAllowedPath ? children : accessDeniedScreen}
+              <UserProvider value={userContextValue}>
+                {isAllowedPath ? children : accessDeniedScreen}
+              </UserProvider>
             </div>
           </main>
         </div>

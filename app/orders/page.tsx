@@ -1,6 +1,7 @@
 "use client"
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
+import { useUserContext } from '@/components/UserContext'
 import { OrderStats } from './components/OrderStats'
 import { OrderTable } from './components/OrderTable'
 import { OrderCharts } from './components/OrderCharts'
@@ -130,30 +131,15 @@ export default function OrderPage() {
     }
   }, [supabase])
 
-  // ─── Load profile / active business ID ─────────────────────────────────────
+  const { activeBusiness } = useUserContext()
+
+  // ─── Load profile / active business ID from UserContext ──────────────────
   useEffect(() => {
-    async function loadProfile() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
-
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name)')
-          .eq('id', user.id)
-          .single()
-
-        const businessId = profile?.active_business_id
-        if (!businessId) return
-        
-        setActiveBizId(businessId)
-        setActiveBiz(profile.businesses)
-      } catch (err) {
-        console.error('[ShapeUp] Profile init error:', err)
-      }
+    if (activeBusiness?.id) {
+      setActiveBizId(activeBusiness.id)
+      setActiveBiz(activeBusiness)
     }
-    loadProfile()
-  }, [supabase])
+  }, [activeBusiness])
 
   // ─── Refresh when active business, applied filters, or page change ───────────────
   useEffect(() => {

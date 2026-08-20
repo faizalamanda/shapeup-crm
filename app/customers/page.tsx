@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
+import { useUserContext } from '@/components/UserContext'
 import { StatsPanel } from './components/StatsPanel'
 import { FilterBar, FilterRule } from './components/FilterBar'
 import { AnalyticsCharts } from './components/AnalyticsCharts'
@@ -297,33 +298,17 @@ export default function CustomerPage() {
     }
   }, [supabase])
 
-  // ─── Initial Load & Business Profile ──────────────────────────────────────
+  const { userProfile, activeBusiness } = useUserContext()
+
+  // ─── Initial Load & Business Profile from UserContext ─────────────────────
   useEffect(() => {
-    async function init() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
-
-        setUserId(user.id)
-
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('active_business_id')
-          .eq('id', user.id)
-          .single()
-
-        const bid = profile?.active_business_id
-        if (!bid) return
-
-        setBusinessId(bid)
-      } catch (err) {
-        console.error('[ShapeUp] Init error:', err)
-        setIsFetching(false)
-      }
+    if (userProfile?.id) {
+      setUserId(userProfile.id)
     }
-
-    init()
-  }, [supabase])
+    if (activeBusiness?.id) {
+      setBusinessId(activeBusiness.id)
+    }
+  }, [userProfile, activeBusiness])
 
   // ─── Fetch data on businessId, search, rules, or page change ─────────────
   useEffect(() => {

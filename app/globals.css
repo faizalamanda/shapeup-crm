@@ -64,6 +64,12 @@ body {
   color: var(--su-text);
 }
 
+/* Prevent background container scroll when any modal locks body scroll */
+body[style*="overflow: hidden"] main,
+body[style*="overflow:hidden"] main {
+  overflow: hidden !important;
+}
+
 /* ─── Scrollbar ──────────────────────────────────────────────────────────── */
 
 ::-webkit-scrollbar {
@@ -162,12 +168,12 @@ body {
 /* ─── Animations ─────────────────────────────────────────────────────────── */
 
 @keyframes su-fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 @keyframes su-slide-in {
-  from { opacity: 0; transform: translateX(-8px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 @keyframes su-spin {
   to { transform: rotate(360deg); }

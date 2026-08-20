@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
+import { useUserContext } from '@/components/UserContext'
 import { formatCurrencyIDR } from '../accounting/utils'
 
 type Employee = {
@@ -170,66 +171,52 @@ export default function EmployeesPage() {
     }
   }, [supabase])
 
-  // Get active business profile and initiate SWR cache loading
+  const { activeBusiness } = useUserContext()
+
+  // Get active business profile from UserContext and initiate SWR cache loading
   useEffect(() => {
-    async function initProfileAndCache() {
+    if (!activeBusiness?.id) return
+
+    const businessId = activeBusiness.id
+    const bizName = activeBusiness.name || 'Bisnis Saya'
+
+    setActiveBizId(businessId)
+    setActiveBizName(bizName)
+
+    // ── STALE-WHILE-REVALIDATE PATTERN ──
+    // 1. Immediately read from localStorage cache to present data instantly
+    const cachedEmp = localStorage.getItem(`cache_employees_${businessId}`)
+    const cachedSal = localStorage.getItem(`cache_salaries_${businessId}`)
+    const cachedAcc = localStorage.getItem(`cache_accounts_${businessId}`)
+
+    let hasCache = false
+    if (cachedEmp) {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          router.push('/login')
-          return
-        }
-
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name)')
-          .eq('id', user.id)
-          .single()
-
-        if (error) throw error
-
-        const businessId = profile?.active_business_id
-        if (businessId) {
-          setActiveBizId(businessId)
-          const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
-          const bizName = biz?.name || 'Bisnis Saya'
-          setActiveBizName(bizName)
-
-          // ── STALE-WHILE-REVALIDATE PATTERN ──
-          // 1. Immediately read from localStorage cache to present data instantly
-          const cachedEmp = localStorage.getItem(`cache_employees_${businessId}`)
-          const cachedSal = localStorage.getItem(`cache_salaries_${businessId}`)
-          const cachedAcc = localStorage.getItem(`cache_accounts_${businessId}`)
-
-          let hasCache = false
-          if (cachedEmp) {
-            setEmployees(JSON.parse(cachedEmp))
-            hasCache = true
-          }
-          if (cachedSal) {
-            setSalaries(JSON.parse(cachedSal))
-            hasCache = true
-          }
-          if (cachedAcc) {
-            setAccounts(JSON.parse(cachedAcc))
-            hasCache = true
-          }
-
-          // If we had cached data, stop showing the full page loading spinner
-          if (hasCache) {
-            setLoading(false)
-          }
-
-          // 2. Fetch fresh data in the background and update the state/cache silently
-          loadAllData(businessId, bizName)
-        }
-      } catch (err) {
-        console.error('Error in profile/cache initialization:', err)
-        setLoading(false)
-      }
+        setEmployees(JSON.parse(cachedEmp))
+        hasCache = true
+      } catch (e) {}
     }
-    initProfileAndCache()
-  }, [supabase, router, loadAllData])
+    if (cachedSal) {
+      try {
+        setSalaries(JSON.parse(cachedSal))
+        hasCache = true
+      } catch (e) {}
+    }
+    if (cachedAcc) {
+      try {
+        setAccounts(JSON.parse(cachedAcc))
+        hasCache = true
+      } catch (e) {}
+    }
+
+    // If we had cached data, stop showing the full page loading spinner
+    if (hasCache) {
+      setLoading(false)
+    }
+
+    // 2. Fetch fresh data in the background and update the state/cache silently
+    loadAllData(businessId, bizName)
+  }, [activeBusiness, loadAllData])
 
   // Filter payment methods: Assets starting with 101 (Kas/Bank)
   const paymentAccounts = useMemo(() => {
@@ -948,7 +935,7 @@ export default function EmployeesPage() {
 
       {/* Employee Add/Edit Modal */}
       {isEmployeeModalOpen && mounted && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="w-full max-w-md bg-white border border-gray-200 rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="bg-gray-50 border-b border-gray-150 px-6 py-4 flex justify-between items-center">
               <h3 className="font-extrabold text-sm uppercase text-gray-900 tracking-tight">
@@ -1043,7 +1030,7 @@ export default function EmployeesPage() {
 
       {/* Delete Employee Confirmation Modal */}
       {isDeleteModalOpen && mounted && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="w-full max-w-sm bg-white border border-gray-200 rounded-2xl shadow-xl p-6 space-y-4 animate-in fade-in zoom-in-95 duration-155">
             <div className="text-center space-y-2">
               <div className="text-2xl">⚠️</div>
@@ -1076,7 +1063,7 @@ export default function EmployeesPage() {
 
       {/* Record Salary Payment Modal */}
       {isSalaryModalOpen && mounted && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="w-full max-w-md bg-white border border-gray-200 rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="bg-gray-50 border-b border-gray-150 px-6 py-4 flex justify-between items-center">
               <h3 className="font-extrabold text-sm uppercase text-gray-900 tracking-tight">
@@ -1251,7 +1238,7 @@ export default function EmployeesPage() {
 
       {/* Quick Pay / Pay Pending Salary Modal */}
       {isQuickPayModalOpen && mounted && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="w-full max-w-md bg-white border border-gray-200 rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="bg-gray-50 border-b border-gray-150 px-6 py-4 flex justify-between items-center">
               <h3 className="font-extrabold text-sm uppercase text-gray-900 tracking-tight">
@@ -1367,7 +1354,7 @@ export default function EmployeesPage() {
 
       {/* Cancel Salary Confirmation Modal */}
       {isCancelSalaryModalOpen && mounted && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="w-full max-w-sm bg-white border border-gray-200 rounded-2xl shadow-xl p-6 space-y-4 animate-in fade-in zoom-in-95 duration-155">
             <div className="text-center space-y-2">
               <div className="text-2xl">⚠️</div>
@@ -1403,7 +1390,7 @@ export default function EmployeesPage() {
 
       {/* Delete Salary Confirmation Modal */}
       {isDeleteSalaryModalOpen && mounted && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="w-full max-w-sm bg-white border border-gray-200 rounded-2xl shadow-xl p-6 space-y-4 animate-in fade-in zoom-in-95 duration-155">
             <div className="text-center space-y-2">
               <div className="text-2xl">🚨</div>
@@ -1439,7 +1426,7 @@ export default function EmployeesPage() {
 
       {/* Salary Detail and Journal Entries Modal */}
       {isSalaryDetailOpen && selectedSalaryForDetail && mounted && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
           <div className="w-full max-w-4xl bg-white border border-gray-200 rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[90vh] font-sans animate-in fade-in zoom-in-95 duration-150">
             {/* Header */}
             <div className="bg-gray-50 border-b border-gray-150 px-8 py-5 flex justify-between items-center">

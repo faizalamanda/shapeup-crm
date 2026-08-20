@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
+import { useUserContext } from '@/components/UserContext'
 import Link from 'next/link'
 
 // Types
@@ -238,69 +239,30 @@ export default function DashboardPage() {
     }
   }, [supabase])
 
+  const { activeBusiness } = useUserContext()
+
   // Initial Load & Caching
   useEffect(() => {
     let isMounted = true
     let ordersChannel: ReturnType<typeof supabase.channel> | null = null
 
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user || !isMounted) return
+    if (!activeBusiness?.id) return
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('active_business_id, businesses!active_business_id(name)')
-        .eq('id', user.id)
-        .single()
+    const activeBid = activeBusiness.id
+    const activeName = activeBusiness.name || 'Bisnis Saya'
 
-      if (!isMounted) return
+    setBusinessId(activeBid)
+    setBusinessName(activeName)
 
-      // ── Resolve valid active business ──────────────────────────────────
-      // Fetch businesses this user actually has access to (staff or owner)
-      const [{ data: bsData }, { data: ownedData }] = await Promise.all([
-        supabase.from('business_staff').select('business_id, businesses(id, name)').eq('profile_id', user.id),
-        supabase.from('businesses').select('id, name').eq('owner_id', user.id),
-      ])
-
-      if (!isMounted) return
-
-      // Build a Set of accessible business IDs
-      const accessibleMap = new Map<string, string>()
-      bsData?.forEach((item: any) => {
-        if (item.businesses?.id) accessibleMap.set(item.businesses.id, item.businesses.name || '')
-      })
-      ownedData?.forEach((biz: any) => {
-        if (biz.id) accessibleMap.set(biz.id, biz.name || '')
-      })
-
-      let activeBid = profile?.active_business_id as string | undefined
-      let activeName = (profile?.businesses as { name?: string } | null)?.name || ''
-
-      // If the stored active_business_id is not accessible by this user, fallback to first accessible
-      if (!activeBid || !accessibleMap.has(activeBid)) {
-        const firstEntry = accessibleMap.entries().next().value
-        if (!firstEntry) return // no accessible businesses at all
-        activeBid = firstEntry[0]
-        activeName = firstEntry[1]
-
-        // Update the profile so next load is correct
-        await supabase.from('profiles').update({ active_business_id: activeBid }).eq('id', user.id)
+    // Load layout settings
+    const savedLayout = localStorage.getItem(`su_dash_layout_${activeBid}`)
+    if (savedLayout) {
+      try {
+        setLayout(JSON.parse(savedLayout))
+      } catch (e) {
+        console.error('Error parsing layout preference', e)
       }
-
-      if (!activeBid || !isMounted) return
-
-      setBusinessId(activeBid)
-      setBusinessName(activeName)
-
-      // Load layout settings
-      const savedLayout = localStorage.getItem(`su_dash_layout_${activeBid}`)
-      if (savedLayout) {
-        try {
-          setLayout(JSON.parse(savedLayout))
-        } catch (e) {
-          console.error('Error parsing layout preference', e)
-        }
-      }
+    }
 
       // ── Smart Tiered Cache Strategy ────────────────────────────────────
       // Tier 1: <30s  → show cache, skip sync (definitely fresh)
@@ -359,9 +321,6 @@ export default function DashboardPage() {
           }
         )
         .subscribe()
-    }
-
-    init()
 
     return () => {
       isMounted = false
@@ -369,7 +328,7 @@ export default function DashboardPage() {
         supabase.removeChannel(ordersChannel)
       }
     }
-  }, [supabase, fetchAllData])
+  }, [activeBusiness, supabase, fetchAllData])
 
 
   // Date Preset Handler

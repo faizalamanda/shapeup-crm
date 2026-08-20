@@ -5,6 +5,8 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
 
   const isProtectedRoute =
+    pathname.startsWith('/onboarding') ||
+    pathname.startsWith('/inbox') ||
     pathname.startsWith('/dashboard') ||
     pathname.startsWith('/marketing') ||
     pathname.startsWith('/settings') ||

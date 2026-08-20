@@ -3,6 +3,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
+import { canAccessPath } from '@/lib/permissions'
+import { useUserContext } from '@/components/UserContext'
 
 // ─── Available Shortcuts Pool ────────────────────────────────────────────────
 type ShortcutItem = {
@@ -29,6 +31,8 @@ const AVAILABLE_SHORTCUTS: ShortcutItem[] = [
   { id: 'inbox', name: 'Inbox / WA Chat', href: '/inbox', category: 'Komunikasi', description: 'Perpesanan pelanggan terintegrasi', icon: '💬' },
   { id: 'accounting_trans', name: 'Jurnal Akuntansi', href: '/accounting/transactions', category: 'Akuntansi', description: 'Buku kas & pembukuan umum', icon: '📖' },
   { id: 'profit_loss', name: 'Laba Rugi', href: '/accounting/profit-loss', category: 'Akuntansi', description: 'Laporan untung rugi operasional', icon: '💵' },
+  { id: 'cash_flow', name: 'Arus Kas', href: '/accounting/cash-flow', category: 'Akuntansi', description: 'Laporan alur kas masuk & keluar', icon: '📈' },
+  { id: 'balance_sheet', name: 'Neraca Keuangan', href: '/accounting/balance-sheet', category: 'Akuntansi', description: 'Laporan posisi keuangan & ekuitas', icon: '⚖️' },
   { id: 'employees', name: 'Karyawan & Gaji', href: '/employees', category: 'HR', description: 'Manajemen staf & daftar gaji', icon: '👔' },
   { id: 'settings', name: 'Pengaturan Bisnis', href: '/settings', category: 'Sistem', description: 'Profil bisnis & hak akses user', icon: '⚙️' },
 ]
@@ -58,50 +62,7 @@ const getCategoryStyles = (category: string) => {
   }
 }
 
-// Helper: Path permission validator based on User Role & Permissions
-const isPathAllowed = (href: string, role: string | null, perms: string[], wabaActive: boolean): boolean => {
-  if (!role) return true // default open during initial loading
-  if (role === 'admin' || perms.includes('full_access')) return true
 
-  if (href.startsWith('/settings')) return false
-  if (href.startsWith('/inbox')) return wabaActive
-  if (href.startsWith('/employees')) return perms.includes('manage_employees_salary')
-  if (href.startsWith('/accounting')) return perms.includes('view_financials_no_salary')
-
-  if (href.startsWith('/expenses')) {
-    return (
-      perms.includes('view_financials_no_salary') ||
-      perms.includes('input_journal_expenses') ||
-      perms.includes('manage_bills')
-    )
-  }
-
-  if (href.startsWith('/suppliers')) {
-    return (
-      perms.includes('view_financials_no_salary') ||
-      perms.includes('input_journal_expenses') ||
-      perms.includes('manage_bills') ||
-      perms.includes('manage_purchases')
-    )
-  }
-
-  if (href.startsWith('/orders') || href.startsWith('/customers')) {
-    return (
-      perms.includes('view_financials_no_salary') ||
-      perms.includes('manage_invoices')
-    )
-  }
-
-  if (href.startsWith('/products') || href.startsWith('/stock-opname')) {
-    return (
-      perms.includes('view_financials_no_salary') ||
-      perms.includes('manage_invoices') ||
-      perms.includes('manage_products')
-    )
-  }
-
-  return true
-}
 
 // ─── Activity Stage Definitions ──────────────────────────────────────────────
 type OnboardingTask = {
@@ -231,6 +192,44 @@ const ONBOARDING_STAGES: OnboardingTask[] = [
     dbCheckKey: 'invoices',
     icon: '🧾',
   },
+
+  // Stage 4
+  {
+    id: 'check_profit_loss',
+    stage: 4,
+    stageTitle: 'Stage 4: Laporan Keuangan & Akuntansi',
+    stageBadge: 'Buku Kas & Finansial',
+    title: 'Pantau Laporan Laba Rugi (Profit & Loss)',
+    desc: 'Tinjau ringkasan pendapatan, HPP, beban operasional, dan laba bersih usaha.',
+    actionLabel: 'Buka Laba Rugi',
+    href: '/accounting/profit-loss',
+    dbCheckKey: 'orders',
+    icon: '💵',
+  },
+  {
+    id: 'check_cash_flow',
+    stage: 4,
+    stageTitle: 'Stage 4: Laporan Keuangan & Akuntansi',
+    stageBadge: 'Buku Kas & Finansial',
+    title: 'Analisis Arus Kas (Cash Flow)',
+    desc: 'Lacak pergerakan kas masuk dari penjualan dan kas keluar untuk biaya operasional.',
+    actionLabel: 'Buka Arus Kas',
+    href: '/accounting/cash-flow',
+    dbCheckKey: 'expenses',
+    icon: '📈',
+  },
+  {
+    id: 'check_balance_sheet',
+    stage: 4,
+    stageTitle: 'Stage 4: Laporan Keuangan & Akuntansi',
+    stageBadge: 'Buku Kas & Finansial',
+    title: 'Periksa Neraca Keuangan (Balance Sheet)',
+    desc: 'Pantau keseimbangan aset, liabilitas (hutang), dan ekuitas (modal) bisnis Anda.',
+    actionLabel: 'Buka Neraca',
+    href: '/accounting/balance-sheet',
+    dbCheckKey: 'orders',
+    icon: '⚖️',
+  },
 ]
 
 export default function OnboardingPage() {
@@ -239,11 +238,8 @@ export default function OnboardingPage() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   ), [])
 
-  // User Role & Permissions State
-  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null)
-  const [currentUserPermissions, setCurrentUserPermissions] = useState<string[]>([])
-  const [isWabaActive, setIsWabaActive] = useState(false)
-  const [isRoleLoading, setIsRoleLoading] = useState(true)
+  // Consume instant UserContext state (0ms delay via cache)
+  const { currentUserRole, currentUserPermissions, isWabaActive, bizLoading: isRoleLoading } = useUserContext()
 
   // Manual checked state stored in localStorage
   const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([])
@@ -267,6 +263,16 @@ export default function OnboardingPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('Semua')
   const [shortcutSearch, setShortcutSearch] = useState('')
 
+  // Prevent background scrolling when modals are open
+  useEffect(() => {
+    if (isAddModalOpen || showDismissModal) {
+      document.body.style.overflow = 'hidden'
+      return () => {
+        document.body.style.overflow = ''
+      }
+    }
+  }, [isAddModalOpen, showDismissModal])
+
   const toggleStage = (stageNum: number) => {
     setOpenStageNums(prev =>
       prev.includes(stageNum) ? prev.filter(s => s !== stageNum) : [...prev, stageNum]
@@ -274,70 +280,12 @@ export default function OnboardingPage() {
   }
 
   const toggleAllStages = () => {
-    if (openStageNums.length === 3) {
+    if (openStageNums.length === allStageNumbers.length) {
       setOpenStageNums([])
     } else {
-      setOpenStageNums([1, 2, 3])
+      setOpenStageNums(allStageNumbers)
     }
   }
-
-  // Fetch User Role, Permissions, and WABA Plugin Status
-  useEffect(() => {
-    async function loadUserRoleAndPermissions() {
-      setIsRoleLoading(true)
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          setIsRoleLoading(false)
-          return
-        }
-
-        const [
-          { data: profile },
-          { data: staffRows },
-          { data: ownedBiz }
-        ] = await Promise.all([
-          supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
-          supabase.from('business_staff').select('*, businesses(*)').eq('profile_id', user.id),
-          supabase.from('businesses').select('*').eq('owner_id', user.id)
-        ])
-
-        const activeBizId = profile?.active_business_id || ownedBiz?.[0]?.id || staffRows?.[0]?.businesses?.id
-
-        if (activeBizId) {
-          const { data: wabaInt } = await supabase
-            .from('integrations')
-            .select('is_active, api_credentials')
-            .eq('platform_name', 'waba_official')
-            .filter('api_credentials->>business_id', 'eq', activeBizId)
-            .maybeSingle()
-
-          setIsWabaActive(Boolean(wabaInt && wabaInt.is_active === true))
-        }
-
-        const activeBs = staffRows?.find((item: any) => item.businesses?.id === activeBizId)
-        const isUserAdmin = profile?.role === 'admin' || activeBs?.role === 'admin' || ownedBiz?.some((b: any) => b.id === activeBizId)
-
-        if (isUserAdmin) {
-          setCurrentUserRole('admin')
-          setCurrentUserPermissions(['full_access'])
-        } else if (activeBs) {
-          setCurrentUserRole(activeBs.role)
-          setCurrentUserPermissions(activeBs.permissions || [])
-        } else {
-          setCurrentUserRole('staff')
-          setCurrentUserPermissions([])
-        }
-      } catch (err) {
-        console.error("Error loading user role & permissions in onboarding:", err)
-        setCurrentUserRole('admin')
-      } finally {
-        setIsRoleLoading(false)
-      }
-    }
-
-    loadUserRoleAndPermissions()
-  }, [supabase])
 
   // Load initial local states & DB counts
   useEffect(() => {
@@ -402,8 +350,8 @@ export default function OnboardingPage() {
 
   // Dynamically Filtered Shortcuts & Stages based on Permissions
   const allowedShortcutsPool = useMemo(() => {
-    if (isRoleLoading) return AVAILABLE_SHORTCUTS
-    return AVAILABLE_SHORTCUTS.filter(s => isPathAllowed(s.href, currentUserRole, currentUserPermissions, isWabaActive))
+    if (isRoleLoading && !currentUserRole) return AVAILABLE_SHORTCUTS
+    return AVAILABLE_SHORTCUTS.filter(s => canAccessPath(s.href, { role: currentUserRole, permissions: currentUserPermissions, isWabaActive }))
   }, [currentUserRole, currentUserPermissions, isWabaActive, isRoleLoading])
 
   const activeShortcutsList = useMemo(() => {
@@ -424,8 +372,13 @@ export default function OnboardingPage() {
   }, [allowedShortcutsPool, activeShortcutIds, selectedCategory, shortcutSearch])
 
   const allowedTasksList = useMemo(() => {
-    return ONBOARDING_STAGES.filter(t => isPathAllowed(t.href, currentUserRole, currentUserPermissions, isWabaActive))
+    return ONBOARDING_STAGES.filter(t => canAccessPath(t.href, { role: currentUserRole, permissions: currentUserPermissions, isWabaActive }))
   }, [currentUserRole, currentUserPermissions, isWabaActive])
+
+  const allStageNumbers = useMemo(() => {
+    const stages = new Set(allowedTasksList.map(t => t.stage))
+    return Array.from(stages).sort((a, b) => a - b)
+  }, [allowedTasksList])
 
   const toggleTaskCompletion = (taskId: string) => {
     setCompletedTaskIds(prev => {
@@ -544,245 +497,7 @@ export default function OnboardingPage() {
   return (
     <div className="min-h-screen bg-[var(--su-bg,#F7F7F5)] text-[var(--su-text,#1C1C1A)] p-3 sm:p-6 md:p-8 space-y-6 md:space-y-8 max-w-7xl mx-auto pb-20">
       
-      {/* ─── RESTORE BANNER (IF DISMISSED OR HIDDEN) ────────────────────────── */}
-      {isGuideHidden ? (
-        <div className="bg-white border border-[var(--su-border,#E2E2DC)] rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs animate-in fade-in duration-200">
-          <div className="flex items-center gap-2.5 text-xs sm:text-sm font-semibold text-slate-700">
-            <span className="text-base">💡</span>
-            <span>Panduan Aktivitas Onboarding disembunyikan.</span>
-            <span className="text-slate-400 font-normal">({progressPercent}% selesai)</span>
-          </div>
-          <button
-            onClick={handleRestoreOnboarding}
-            className="text-xs font-extrabold text-blue-600 hover:text-blue-800 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3.5 py-1.5 rounded-lg transition-colors shrink-0"
-          >
-            ⚙️ Tampilkan Kembali Panduan
-          </button>
-        </div>
-      ) : (
-        <>
-          {/* ─── 100% CELEBRATION CARD ─────────────────────────────────────── */}
-          {progressPercent === 100 && (
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in fade-in duration-200">
-              <div className="flex items-center gap-3">
-                <span className="text-3xl">🎉</span>
-                <div>
-                  <h4 className="text-sm font-extrabold text-emerald-900">
-                    Selamat! Anda Telah Menyelesaikan 100% Panduan Onboarding!
-                  </h4>
-                  <p className="text-xs text-emerald-700 mt-0.5">
-                    Bisnis Anda kini siap berjalan optimal dengan pencatatan transaksi & retensi pelanggan aktif harian.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={handleDismissPermanently}
-                className="text-xs font-extrabold bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2 rounded-lg shadow-xs transition-colors shrink-0"
-              >
-                Sembunyikan Panduan Ini
-              </button>
-            </div>
-          )}
-
-          {/* ─── HEADER & DAU PROGRESS BANNER (WITH CLOSE X BUTTON) ─────────── */}
-          <div className="relative bg-white border border-[var(--su-border,#E2E2DC)] rounded-xl p-5 md:p-8 shadow-sm space-y-6">
-            
-            {/* CLOSE (X) BUTTON ON TOP-RIGHT */}
-            <button
-              onClick={() => setShowDismissModal(true)}
-              title="Sembunyikan atau tutup panduan ini"
-              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-            </button>
-
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pr-6 sm:pr-8">
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xs font-black uppercase tracking-widest text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-md">
-                    🚀 Shape Up Onboarding
-                  </span>
-                  <span className={`text-xs font-bold px-2.5 py-1 rounded-md border ${activeBadge.color}`}>
-                    {activeBadge.title}
-                  </span>
-                </div>
-                <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight">
-                  Panduan Aktivitas & Retensi Bisnis
-                </h1>
-                <p className="text-xs sm:text-sm text-slate-600 mt-1 max-w-2xl">
-                  Selesaikan langkah-langkah di bawah ini untuk mengoptimalkan operasional Shape Up CRM.
-                </p>
-              </div>
-
-              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 flex items-center gap-4 min-w-[210px]">
-                <div className="relative w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center font-extrabold text-base sm:text-lg text-blue-600 bg-blue-100 rounded-full border-2 border-blue-500 shrink-0">
-                  {progressPercent}%
-                </div>
-                <div>
-                  <div className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-slate-500">Progres Onboarding</div>
-                  <div className="text-base sm:text-lg font-black text-slate-900">{completedCount} / {totalTasks} Selesai</div>
-                  <div className="text-[11px] text-slate-500">Aktivitas terverifikasi</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
-                <div
-                  className="bg-blue-600 h-full transition-all duration-500 ease-out rounded-full"
-                  style={{ width: `${progressPercent}%` }}
-                />
-              </div>
-              <div className="flex justify-between text-[10px] sm:text-[11px] font-semibold text-slate-500">
-                <span>Stage 1: Setup</span>
-                <span>Stage 2: Transaksi Harian</span>
-                <span>Stage 3: Growth & Retensi</span>
-              </div>
-            </div>
-          </div>
-
-
-          {/* ─── STAGE-BASED GUIDED ACTIVITIES (EXPANDABLE) ───────────────── */}
-          <div className="space-y-4 sm:space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
-                  Aktivitas Berdasarkan Stage
-                </h2>
-                <p className="text-xs sm:text-sm text-slate-600">
-                  Klik pada stage di bawah ini untuk melihat daftar aktivitas.
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                {(loadingDb || isRoleLoading) && (
-                  <span className="text-xs text-slate-400 animate-pulse hidden sm:inline">
-                    Memeriksa izin & data...
-                  </span>
-                )}
-                <button
-                  onClick={toggleAllStages}
-                  className="text-xs font-extrabold text-blue-600 hover:text-blue-800 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
-                >
-                  {openStageNums.length === 3 ? 'Tutup Semua' : 'Buka Semua'}
-                </button>
-              </div>
-            </div>
-
-            {[1, 2, 3].map(stageNum => {
-              const stageTasks = allowedTasksList.filter(t => t.stage === stageNum)
-              if (stageTasks.length === 0) return null // Hide stage if no permissions for any task in this stage
-
-              const firstTask = stageTasks[0]
-              const stageDoneCount = stageTasks.filter(t => isTaskCompleted(t)).length
-              const isOpen = openStageNums.includes(stageNum)
-
-              return (
-                <div key={stageNum} className="bg-white border border-[var(--su-border,#E2E2DC)] rounded-xl p-4 md:p-6 shadow-sm space-y-4">
-                  <div
-                    onClick={() => toggleStage(stageNum)}
-                    className="flex items-center justify-between gap-3 cursor-pointer select-none group hover:bg-slate-50/80 p-2 -m-2 rounded-lg transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="w-8 h-8 rounded-full bg-slate-900 text-white font-bold text-xs flex items-center justify-center group-hover:scale-105 transition-transform shrink-0">
-                        {stageNum}
-                      </span>
-                      <div>
-                        <h3 className="text-sm sm:text-base font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
-                          {firstTask.stageTitle}
-                        </h3>
-                        <span className="text-[11px] sm:text-xs text-slate-500 font-medium">
-                          {firstTask.stageBadge}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      <div className="text-[11px] sm:text-xs font-semibold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-full whitespace-nowrap">
-                        {stageDoneCount}/{stageTasks.length} <span className="hidden sm:inline">Selesai</span>
-                      </div>
-
-                      <div className={`p-1.5 rounded-md text-slate-400 group-hover:text-slate-700 transition-all transform ${isOpen ? 'rotate-180' : 'rotate-0'}`}>
-                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <polyline points="6 9 12 15 18 9"/>
-                        </svg>
-                      </div>
-                    </div>
-                  </div>
-
-                  {isOpen && (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-100 animate-in fade-in duration-200">
-                      {stageTasks.map(task => {
-                        const done = isTaskCompleted(task)
-                        return (
-                          <div
-                            key={task.id}
-                            className={`relative flex flex-col justify-between border rounded-lg p-4 transition-all duration-200 ${
-                              done
-                                ? 'bg-slate-50/70 border-emerald-200 shadow-none'
-                                : 'bg-white border-slate-200 shadow-sm hover:border-blue-300 hover:shadow-md'
-                            }`}
-                          >
-                            <div>
-                              <div className="flex items-start justify-between gap-2 mb-2">
-                                <span className="text-2xl">{task.icon}</span>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    toggleTaskCompletion(task.id)
-                                  }}
-                                  title={done ? 'Tandai belum selesai' : 'Tandai selesai'}
-                                  className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-md border transition-colors ${
-                                    done
-                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200'
-                                      : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
-                                  }`}
-                                >
-                                  {done ? '✓ Selesai' : '○ Tandai'}
-                                </button>
-                              </div>
-
-                              <h4 className={`text-sm font-bold leading-snug mb-1 ${done ? 'line-through text-slate-500' : 'text-slate-900'}`}>
-                                {task.title}
-                              </h4>
-                              <p className="text-xs text-slate-500 leading-relaxed mb-4">
-                                {task.desc}
-                              </p>
-                            </div>
-
-                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                              <Link
-                                href={task.href}
-                                onClick={(e) => e.stopPropagation()}
-                                className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline"
-                              >
-                                <span>{task.actionLabel}</span>
-                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                  <path d="M5 12h14M12 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round"/>
-                                </svg>
-                              </Link>
-
-                              {done && (
-                                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
-                                  Verified
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </>
-      )}
-
-
-      {/* ─── WORLD-CLASS MOBILE-FIRST QUICK MENU ────────────────────────────── */}
+      {/* ─── WORLD-CLASS MOBILE-FIRST QUICK MENU (TOP HERO POSITION) ───────── */}
       <div className="bg-white border border-[var(--su-border,#E2E2DC)] rounded-xl p-4 sm:p-6 md:p-8 shadow-sm space-y-5">
         
         {/* Header & Controls */}
@@ -1020,10 +735,248 @@ export default function OnboardingPage() {
         )}
       </div>
 
+      {/* ─── RESTORE BANNER (IF DISMISSED OR HIDDEN) ────────────────────────── */}
+      {isGuideHidden ? (
+        <div className="bg-white border border-[var(--su-border,#E2E2DC)] rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs animate-in fade-in duration-200">
+          <div className="flex items-center gap-2.5 text-xs sm:text-sm font-semibold text-slate-700">
+            <span className="text-base">💡</span>
+            <span>Panduan Aktivitas Onboarding disembunyikan.</span>
+            <span className="text-slate-400 font-normal">({progressPercent}% selesai)</span>
+          </div>
+          <button
+            onClick={handleRestoreOnboarding}
+            className="text-xs font-extrabold text-blue-600 hover:text-blue-800 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3.5 py-1.5 rounded-lg transition-colors shrink-0"
+          >
+            ⚙️ Tampilkan Kembali Panduan
+          </button>
+        </div>
+      ) : (
+        <>
+          {/* ─── 100% CELEBRATION CARD ─────────────────────────────────────── */}
+          {progressPercent === 100 && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in fade-in duration-200">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl">🎉</span>
+                <div>
+                  <h4 className="text-sm font-extrabold text-emerald-900">
+                    Selamat! Anda Telah Menyelesaikan 100% Panduan Onboarding!
+                  </h4>
+                  <p className="text-xs text-emerald-700 mt-0.5">
+                    Bisnis Anda kini siap berjalan optimal dengan pencatatan transaksi & retensi pelanggan aktif harian.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleDismissPermanently}
+                className="text-xs font-extrabold bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2 rounded-lg shadow-xs transition-colors shrink-0"
+              >
+                Sembunyikan Panduan Ini
+              </button>
+            </div>
+          )}
+
+          {/* ─── HEADER & DAU PROGRESS BANNER (WITH CLOSE X BUTTON) ─────────── */}
+          <div className="relative bg-white border border-[var(--su-border,#E2E2DC)] rounded-xl p-5 md:p-8 shadow-sm space-y-6">
+            
+            {/* CLOSE (X) BUTTON ON TOP-RIGHT */}
+            <button
+              onClick={() => setShowDismissModal(true)}
+              title="Sembunyikan atau tutup panduan ini"
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pr-6 sm:pr-8">
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-black uppercase tracking-widest text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-md">
+                    🚀 Shape Up Onboarding
+                  </span>
+                  <span className={`text-xs font-bold px-2.5 py-1 rounded-md border ${activeBadge.color}`}>
+                    {activeBadge.title}
+                  </span>
+                </div>
+                <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight">
+                  Panduan Aktivitas & Retensi Bisnis
+                </h1>
+                <p className="text-xs sm:text-sm text-slate-600 mt-1 max-w-2xl">
+                  Selesaikan langkah-langkah di bawah ini untuk mengoptimalkan operasional Shape Up CRM.
+                </p>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 flex items-center gap-4 min-w-[210px]">
+                <div className="relative w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center font-extrabold text-base sm:text-lg text-blue-600 bg-blue-100 rounded-full border-2 border-blue-500 shrink-0">
+                  {progressPercent}%
+                </div>
+                <div>
+                  <div className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-slate-500">Progres Onboarding</div>
+                  <div className="text-base sm:text-lg font-black text-slate-900">{completedCount} / {totalTasks} Selesai</div>
+                  <div className="text-[11px] text-slate-500">Aktivitas terverifikasi</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
+                <div
+                  className="bg-blue-600 h-full transition-all duration-500 ease-out rounded-full"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[10px] sm:text-[11px] font-semibold text-slate-500 overflow-x-auto gap-2">
+                <span>Stage 1: Setup</span>
+                <span>Stage 2: Transaksi Harian</span>
+                <span>Stage 3: Growth & Retensi</span>
+                <span>Stage 4: Laporan Keuangan</span>
+              </div>
+            </div>
+          </div>
+
+
+          {/* ─── STAGE-BASED GUIDED ACTIVITIES (EXPANDABLE) ───────────────── */}
+          <div className="space-y-4 sm:space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
+                  Aktivitas Berdasarkan Stage
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-600">
+                  Klik pada stage di bawah ini untuk melihat daftar aktivitas.
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                {(loadingDb || isRoleLoading) && (
+                  <span className="text-xs text-slate-400 animate-pulse hidden sm:inline">
+                    Memeriksa izin & data...
+                  </span>
+                )}
+                <button
+                  onClick={toggleAllStages}
+                  className="text-xs font-extrabold text-blue-600 hover:text-blue-800 bg-blue-50 border border-blue-200 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  {openStageNums.length === allStageNumbers.length ? 'Tutup Semua' : 'Buka Semua'}
+                </button>
+              </div>
+            </div>
+
+            {allStageNumbers.map(stageNum => {
+              const stageTasks = allowedTasksList.filter(t => t.stage === stageNum)
+              if (stageTasks.length === 0) return null // Hide stage if no permissions for any task in this stage
+
+              const firstTask = stageTasks[0]
+              const stageDoneCount = stageTasks.filter(t => isTaskCompleted(t)).length
+              const isOpen = openStageNums.includes(stageNum)
+
+              return (
+                <div key={stageNum} className="bg-white border border-[var(--su-border,#E2E2DC)] rounded-xl p-4 md:p-6 shadow-sm space-y-4">
+                  <div
+                    onClick={() => toggleStage(stageNum)}
+                    className="flex items-center justify-between gap-3 cursor-pointer select-none group hover:bg-slate-50/80 p-2 -m-2 rounded-lg transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-8 h-8 rounded-full bg-slate-900 text-white font-bold text-xs flex items-center justify-center group-hover:scale-105 transition-transform shrink-0">
+                        {stageNum}
+                      </span>
+                      <div>
+                        <h3 className="text-sm sm:text-base font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
+                          {firstTask.stageTitle}
+                        </h3>
+                        <span className="text-[11px] sm:text-xs text-slate-500 font-medium">
+                          {firstTask.stageBadge}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 sm:gap-3">
+                      <div className="text-[11px] sm:text-xs font-semibold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-full whitespace-nowrap">
+                        {stageDoneCount}/{stageTasks.length} <span className="hidden sm:inline">Selesai</span>
+                      </div>
+
+                      <div className={`p-1.5 rounded-md text-slate-400 group-hover:text-slate-700 transition-all transform ${isOpen ? 'rotate-180' : 'rotate-0'}`}>
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+
+                  {isOpen && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-100 animate-in fade-in duration-200">
+                      {stageTasks.map(task => {
+                        const done = isTaskCompleted(task)
+                        return (
+                          <div
+                            key={task.id}
+                            className={`relative flex flex-col justify-between border rounded-lg p-4 transition-all duration-200 ${
+                              done
+                                ? 'bg-slate-50/70 border-emerald-200 shadow-none'
+                                : 'bg-white border-slate-200 shadow-sm hover:border-blue-300 hover:shadow-md'
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-start justify-between gap-2 mb-2">
+                                <span className="text-2xl">{task.icon}</span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    toggleTaskCompletion(task.id)
+                                  }}
+                                  title={done ? 'Tandai belum selesai' : 'Tandai selesai'}
+                                  className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-md border transition-colors ${
+                                    done
+                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200'
+                                      : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  {done ? '✓ Selesai' : '○ Tandai'}
+                                </button>
+                              </div>
+
+                              <h4 className={`text-sm font-bold leading-snug mb-1 ${done ? 'line-through text-slate-500' : 'text-slate-900'}`}>
+                                {task.title}
+                              </h4>
+                              <p className="text-xs text-slate-500 leading-relaxed mb-4">
+                                {task.desc}
+                              </p>
+                            </div>
+
+                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                              <Link
+                                href={task.href}
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline"
+                              >
+                                <span>{task.actionLabel}</span>
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                  <path d="M5 12h14M12 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                              </Link>
+
+                              {done && (
+                                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+                                  Verified
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+
 
       {/* ─── DISMISS CONFIRMATION MODAL ─────────────────────────────────────── */}
       {showDismissModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150 overscroll-contain">
           <div className="bg-white border border-slate-300 rounded-xl w-full max-w-md p-6 shadow-2xl space-y-5">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
@@ -1092,118 +1045,151 @@ export default function OnboardingPage() {
 
       {/* ─── ADD SHORTCUT MODAL / BOTTOM SHEET ──────────────────────────────── */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
-          <div className="bg-white border border-slate-300 rounded-t-2xl sm:rounded-xl w-full max-w-2xl p-5 sm:p-6 shadow-2xl space-y-4 max-h-[85vh] flex flex-col slide-in-from-bottom sm:slide-in-from-bottom-0 duration-200">
-            <div className="w-12 h-1.5 bg-slate-300 rounded-full mx-auto sm:hidden -mt-1 mb-1" />
-
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200 overscroll-contain">
+          <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] sm:max-h-[80vh] transition-all animate-in zoom-in-95 duration-150 overscroll-contain">
+            
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-start justify-between gap-4 bg-white shrink-0">
               <div>
-                <h3 className="text-base sm:text-lg font-extrabold text-slate-900">
-                  Tambah Pintasan Quick Menu
+                <h3 className="text-base sm:text-lg font-extrabold text-slate-900 flex items-center gap-2">
+                  <span>⚡</span>
+                  <span>Tambah Pintasan Quick Menu</span>
                 </h3>
-                <p className="text-xs text-slate-500">
-                  Pilih fitur yang sering Anda buka untuk ditambahkan ke layar depan.
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Pilih fitur yang sering Anda akses untuk ditambahkan ke layar depan.
                 </p>
               </div>
               <button
                 onClick={() => setIsAddModalOpen(false)}
-                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100"
+                className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 p-2 rounded-xl transition-colors shrink-0 -mr-1"
+                title="Tutup"
               >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
               </button>
             </div>
 
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Cari fitur (contoh: POS, Customers, Invoices)..."
-                value={shortcutSearch}
-                onChange={e => setShortcutSearch(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div className="flex items-center gap-1.5 overflow-x-auto py-1 px-0.5 no-scrollbar text-xs border-b border-slate-100 pb-2.5">
-              {CATEGORIES.map(cat => {
-                const isActive = selectedCategory === cat
-                return (
+            {/* Search & Category Filter Section */}
+            <div className="px-6 py-3.5 bg-slate-50/70 border-b border-slate-100 space-y-3 shrink-0">
+              {/* Search Bar */}
+              <div className="relative flex items-center">
+                <svg className="w-4 h-4 text-slate-400 absolute left-3.5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+                </svg>
+                <input
+                  type="text"
+                  placeholder="Cari fitur (contoh: POS, Customers, Invoices)..."
+                  value={shortcutSearch}
+                  onChange={e => setShortcutSearch(e.target.value)}
+                  className="w-full pl-10 pr-9 py-2 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-2xs"
+                />
+                {shortcutSearch && (
                   <button
-                    key={cat}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-3 py-1.5 rounded-full font-bold whitespace-nowrap shrink-0 transition-all ${
-                      isActive
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
+                    onClick={() => setShortcutSearch('')}
+                    className="absolute right-3 text-slate-400 hover:text-slate-600 p-0.5 text-xs font-bold"
                   >
-                    {cat}
+                    ✕
                   </button>
-                )
-              })}
+                )}
+              </div>
+
+              {/* Category Pills Bar */}
+              <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 text-xs scrollbar-none">
+                {CATEGORIES.map(cat => {
+                  const isActive = selectedCategory === cat
+                  return (
+                    <button
+                      key={cat}
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`px-3 py-1.5 rounded-lg font-bold text-xs whitespace-nowrap shrink-0 transition-all ${
+                        isActive
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'bg-white border border-slate-200/90 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
 
-            <div className="overflow-y-auto space-y-2 pr-1 flex-1 min-h-[220px]">
+            {/* Scrollable Items List */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2.5">
               {unaddedShortcutsList.length === 0 ? (
-                <div className="text-center py-10 text-xs text-slate-500 space-y-1">
-                  <p className="font-semibold">Tidak ada fitur yang cocok.</p>
-                  <p className="text-[11px] text-slate-400">Semua fitur pada kategori ini mungkin sudah ditambahkan atau tidak diizinkan untuk akun Anda.</p>
+                <div className="text-center py-12 px-4 text-xs text-slate-500 space-y-2">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center text-xl mx-auto">
+                    🔍
+                  </div>
+                  <p className="font-extrabold text-slate-700 text-sm">Tidak ada fitur yang ditemukan</p>
+                  <p className="text-slate-400 max-w-xs mx-auto leading-relaxed">
+                    Semua fitur pada kategori ini sudah ditambahkan atau tidak sesuai dengan kata kunci pencarian.
+                  </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-2.5">
-                  {unaddedShortcutsList.map(shortcut => {
-                    const catStyles = getCategoryStyles(shortcut.category)
-                    const isAdded = activeShortcutIds.includes(shortcut.id)
-                    return (
-                      <div
-                        key={shortcut.id}
-                        className="flex items-center justify-between border border-slate-200 hover:border-blue-300 rounded-xl p-3.5 hover:bg-slate-50/80 transition-all group"
-                      >
-                        <div className="flex items-center gap-3.5 min-w-0 flex-1 pr-3">
-                          <span className={`text-2xl p-2.5 rounded-xl border ${catStyles.bg} ${catStyles.border} shrink-0`}>
-                            {shortcut.icon}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-0.5">
-                              <span className="text-xs sm:text-sm font-bold text-slate-900 truncate">
-                                {shortcut.name}
-                              </span>
-                              <span className={`text-[10px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded border shrink-0 ${catStyles.border} ${catStyles.bg} ${catStyles.text}`}>
-                                {shortcut.category}
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-500 truncate leading-relaxed">
-                              {shortcut.description}
-                            </p>
-                          </div>
+                unaddedShortcutsList.map(shortcut => {
+                  const catStyles = getCategoryStyles(shortcut.category)
+                  const isAdded = activeShortcutIds.includes(shortcut.id)
+                  return (
+                    <div
+                      key={shortcut.id}
+                      className="group flex items-center justify-between p-3.5 bg-white hover:bg-slate-50/80 border border-slate-200/80 hover:border-blue-200 rounded-xl transition-all duration-150 shadow-2xs"
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0 flex-1 pr-3">
+                        <div className={`w-11 h-11 rounded-xl border ${catStyles.bg} ${catStyles.border} flex items-center justify-center text-xl shrink-0 shadow-2xs`}>
+                          {shortcut.icon}
                         </div>
-
-                        <button
-                          onClick={() => addShortcut(shortcut.id)}
-                          disabled={isAdded}
-                          className={`text-xs font-extrabold px-3.5 py-2 rounded-xl shadow-xs transition-all shrink-0 active:scale-95 ${
-                            isAdded
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 cursor-default'
-                              : 'bg-blue-600 hover:bg-blue-700 text-white'
-                          }`}
-                        >
-                          {isAdded ? '✓ Ditambahkan' : '+ Tambah'}
-                        </button>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs sm:text-sm font-bold text-slate-900 truncate">
+                              {shortcut.name}
+                            </span>
+                            <span className={`text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md border shrink-0 ${catStyles.border} ${catStyles.bg} ${catStyles.text}`}>
+                              {shortcut.category}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 truncate mt-0.5 leading-normal">
+                            {shortcut.description}
+                          </p>
+                        </div>
                       </div>
-                    )
-                  })}
-                </div>
+
+                      <button
+                        onClick={() => addShortcut(shortcut.id)}
+                        disabled={isAdded}
+                        className={`inline-flex items-center gap-1 text-xs font-bold px-3.5 py-2 rounded-xl transition-all shrink-0 active:scale-95 ${
+                          isAdded
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default'
+                            : 'bg-blue-600 hover:bg-blue-700 text-white shadow-xs'
+                        }`}
+                      >
+                        {isAdded ? (
+                          <>
+                            <span>✓</span>
+                            <span>Aktif</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>+</span>
+                            <span>Tambah</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )
+                })
               )}
             </div>
 
-            <div className="border-t border-slate-100 pt-3 flex justify-between items-center">
-              <span className="text-xs text-slate-500 font-medium">
-                {activeShortcutsList.length} pintasan aktif
+            {/* Footer */}
+            <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between shrink-0">
+              <span className="text-xs font-semibold text-slate-500">
+                {activeShortcutsList.length} pintasan aktif di Quick Menu
               </span>
               <button
                 onClick={() => setIsAddModalOpen(false)}
-                className="text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-xl shadow-xs"
+                className="text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white px-5 py-2 rounded-xl shadow-xs transition-colors"
               >
                 Selesai
               </button>
