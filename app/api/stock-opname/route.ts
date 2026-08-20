@@ -25,7 +25,26 @@ export async function GET(req: Request) {
 
     const { data: opnames, error: fetchErr } = await supabase
       .from('stock_opname')
-      .select('*')
+      .select(`
+        *,
+        transactions (
+          id,
+          date,
+          description,
+          journal_lines (
+            id,
+            account_id,
+            debit,
+            credit,
+            accounts (
+              id,
+              code,
+              name,
+              type
+            )
+          )
+        )
+      `)
       .eq('business_id', businessId)
       .order('date', { ascending: false })
       .order('created_at', { ascending: false })

@@ -26,56 +26,123 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'business_id parameters is required' }, { status: 400 })
     }
 
-    // Base query for transactions
-    let query = supabase
-      .from('transactions')
-      .select(`
-        id,
-        date,
-        description,
-        order_id,
-        business_id,
-        journal_lines (
-          id,
-          account_id,
-          debit,
-          credit,
-          accounts (
-            id,
-            code,
-            name,
-            type,
-            sub_type
-          )
-        )
-      `, { count: 'exact' })
-      .eq('business_id', businessId)
+    let resultTransactions: any[] = []
+    let totalCount = 0
 
-    if (startDate) {
-      query = query.gte('date', `${startDate}T00:00:00.000Z`)
-    }
-    if (endDate) {
-      query = query.lte('date', `${endDate}T23:59:59.999Z`)
-    }
-
-    if (search) {
-      query = query.ilike('description', `%${search}%`)
-    }
-
-    query = query.order('date', { ascending: false }).range(offset, offset + limit - 1)
-
-    const { data: transactions, count, error } = await query
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    // Filter by account_id client-side or post-query if requested
-    let resultTransactions = transactions || []
     if (accountId) {
-      resultTransactions = resultTransactions.filter((tx: any) =>
-        tx.journal_lines?.some((jl: any) => jl.account_id === accountId)
-      )
+      // 1. Filter matching transaction IDs in DB with inner join and date filters
+      let idQuery = supabase
+        .from('transactions')
+        .select(`
+          id,
+          date,
+          journal_lines!inner (
+            account_id
+          )
+        `, { count: 'exact' })
+        .eq('business_id', businessId)
+        .eq('journal_lines.account_id', accountId)
+
+      if (startDate) {
+        idQuery = idQuery.gte('date', `${startDate}T00:00:00.000Z`)
+      }
+      if (endDate) {
+        idQuery = idQuery.lte('date', `${endDate}T23:59:59.999Z`)
+      }
+      if (search) {
+        idQuery = idQuery.ilike('description', `%${search}%`)
+      }
+
+      idQuery = idQuery.order('date', { ascending: false }).range(offset, offset + limit - 1)
+
+      const { data: pageTxIds, count, error: idErr } = await idQuery
+
+      if (idErr) {
+        return NextResponse.json({ error: idErr.message }, { status: 500 })
+      }
+
+      totalCount = count || 0
+
+      if (pageTxIds && pageTxIds.length > 0) {
+        const ids = pageTxIds.map((t: any) => t.id)
+        const { data: fullTxs, error: fullErr } = await supabase
+          .from('transactions')
+          .select(`
+            id,
+            date,
+            description,
+            order_id,
+            business_id,
+            journal_lines (
+              id,
+              account_id,
+              debit,
+              credit,
+              accounts (
+                id,
+                code,
+                name,
+                type,
+                sub_type
+              )
+            )
+          `)
+          .in('id', ids)
+
+        if (fullErr) {
+          return NextResponse.json({ error: fullErr.message }, { status: 500 })
+        }
+
+        const txMap = new Map((fullTxs || []).map((t: any) => [t.id, t]))
+        resultTransactions = ids.map((id: string) => txMap.get(id)).filter(Boolean)
+      }
+    } else {
+      // Standard query for transactions when no account_id filter is applied
+      let query = supabase
+        .from('transactions')
+        .select(`
+          id,
+          date,
+          description,
+          order_id,
+          business_id,
+          journal_lines (
+            id,
+            account_id,
+            debit,
+            credit,
+            accounts (
+              id,
+              code,
+              name,
+              type,
+              sub_type
+            )
+          )
+        `, { count: 'exact' })
+        .eq('business_id', businessId)
+
+      if (startDate) {
+        query = query.gte('date', `${startDate}T00:00:00.000Z`)
+      }
+      if (endDate) {
+        query = query.lte('date', `${endDate}T23:59:59.999Z`)
+      }
+
+      if (search) {
+        query = query.ilike('description', `%${search}%`)
+      }
+
+      query = query.order('date', { ascending: false }).range(offset, offset + limit - 1)
+
+      const { data: transactions, count, error } = await query
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+
+      resultTransactions = transactions || []
+      totalCount = count || 0
     }
 
     // Sort transactions strictly newest first
@@ -106,13 +173,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       data: resultTransactions,
       pagination: {
-        total: count || 0,
+        total: totalCount,
         page,
         limit,
-        totalPages: Math.ceil((count || 0) / limit)
+        totalPages: Math.ceil(totalCount / limit)
       },
       summary: {
-        totalTransactions: count || 0,
+        totalTransactions: totalCount,
         totalDebit: totalDebitSum,
         totalCredit: totalCreditSum,
         totalIncome,

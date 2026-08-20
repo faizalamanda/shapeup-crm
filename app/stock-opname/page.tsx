@@ -18,6 +18,19 @@ type OpnameItem = {
   actual_quantity: number
 }
 
+type JournalLine = {
+  id: string
+  account_id: string
+  debit: number
+  credit: number
+  accounts: {
+    id?: string
+    code: string
+    name: string
+    type: string
+  } | null
+}
+
 type StockOpname = {
   id: string
   business_id: string
@@ -27,6 +40,12 @@ type StockOpname = {
   notes: string | null
   items_json: OpnameItem[]
   created_at: string
+  transactions?: {
+    id: string
+    date?: string
+    description?: string
+    journal_lines?: JournalLine[]
+  } | null
 }
 
 export default function StockOpnamePage() {
@@ -673,15 +692,15 @@ export default function StockOpnamePage() {
 
       {isDetailOpen && selectedOpname && mounted && createPortal(
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-          <div className="bg-white rounded-xl shadow-lg border border-gray-200 max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-xl shadow-lg border border-gray-200 max-w-xl w-full overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="bg-gray-50 border-b border-gray-200 px-6 py-4 flex justify-between items-center">
               <h2 className="text-xs font-black uppercase tracking-wider text-gray-700">
-                👁️ Rincian Hasil Stock Opname
+                👁️ Rincian Hasil Stock Opname & Jurnal
               </h2>
               <button onClick={() => setIsDetailOpen(false)} className="text-gray-400 hover:text-gray-600 text-sm cursor-pointer">✕</button>
             </div>
 
-            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+            <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
               <div className="grid grid-cols-2 text-xs font-bold text-gray-700 space-y-0.5 bg-gray-50 p-3 rounded-lg border border-gray-200">
                 <div>No. Dokumen:</div>
                 <div className="text-gray-900 text-right">{selectedOpname.opname_number}</div>
@@ -695,8 +714,11 @@ export default function StockOpnamePage() {
                 )}
               </div>
 
+              {/* 1. Fisik & Perhitungan */}
               <div className="space-y-2">
-                <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400">Selisih & Perhitungan Fisik</h4>
+                <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400">
+                  📦 Selisih & Perhitungan Fisik
+                </h4>
                 <div className="border border-gray-200 rounded-lg overflow-hidden">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead className="bg-gray-50 border-b border-gray-200 text-[10px] text-gray-400 font-bold uppercase">
@@ -717,8 +739,8 @@ export default function StockOpnamePage() {
                             <td className="p-2 text-center text-gray-950">{item.actual_quantity}</td>
                             <td className="p-2 text-right">
                               {diff === 0 && <span className="text-gray-400">-</span>}
-                              {diff > 0 && <span className="text-emerald-600">+{diff}</span>}
-                              {diff < 0 && <span className="text-red-500">{diff}</span>}
+                              {diff > 0 && <span className="text-emerald-600 font-bold">+{diff} (Lebih)</span>}
+                              {diff < 0 && <span className="text-red-500 font-bold">{diff} (Susut)</span>}
                             </td>
                           </tr>
                         )
@@ -726,6 +748,77 @@ export default function StockOpnamePage() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              {/* 2. Journal Lines / Entri Jurnal Akuntansi */}
+              <div className="space-y-2 pt-2 border-t border-gray-100">
+                <div className="flex justify-between items-center">
+                  <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400">
+                    📒 Entri Jurnal Akuntansi
+                  </h4>
+                  {selectedOpname.transaction_id ? (
+                    <span className="text-[9px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full uppercase">
+                      ✓ Diposting Ke Jurnal
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-extrabold bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full uppercase">
+                      Tanpa Penyesuaian Jurnal (Stok Pas)
+                    </span>
+                  )}
+                </div>
+
+                {selectedOpname.transactions?.journal_lines && selectedOpname.transactions.journal_lines.length > 0 ? (
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="bg-slate-50 border-b border-gray-200 text-[10px] text-gray-500 font-bold uppercase">
+                        <tr>
+                          <th className="p-2.5">Kode & Akun Akuntansi</th>
+                          <th className="p-2.5 text-right">Debet</th>
+                          <th className="p-2.5 text-right">Kredit</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 font-medium text-gray-700">
+                        {selectedOpname.transactions.journal_lines.map((jl) => {
+                          const code = jl.accounts?.code || '---'
+                          const name = jl.accounts?.name || 'Akun Tidak Ditemukan'
+                          const debit = jl.debit || 0
+                          const credit = jl.credit || 0
+                          return (
+                            <tr key={jl.id} className="hover:bg-gray-50/50">
+                              <td className="p-2.5 font-semibold text-gray-900">
+                                <span className="font-mono text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 mr-1.5 font-bold">
+                                  [{code}]
+                                </span>
+                                {name}
+                              </td>
+                              <td className="p-2.5 text-right font-mono text-gray-900 font-semibold">
+                                {debit > 0 ? `Rp ${debit.toLocaleString('id-ID')}` : '-'}
+                              </td>
+                              <td className="p-2.5 text-right font-mono text-gray-900 font-semibold">
+                                {credit > 0 ? `Rp ${credit.toLocaleString('id-ID')}` : '-'}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                      <tfoot className="bg-slate-50 border-t border-gray-200 text-xs font-bold text-gray-900">
+                        <tr>
+                          <td className="p-2.5 uppercase text-[10px] tracking-wider text-gray-500">Total Balancing</td>
+                          <td className="p-2.5 text-right font-mono text-emerald-700">
+                            Rp {selectedOpname.transactions.journal_lines.reduce((s, l) => s + (l.debit || 0), 0).toLocaleString('id-ID')}
+                          </td>
+                          <td className="p-2.5 text-right font-mono text-emerald-700">
+                            Rp {selectedOpname.transactions.journal_lines.reduce((s, l) => s + (l.credit || 0), 0).toLocaleString('id-ID')}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-3 text-center text-xs text-slate-500 font-medium">
+                    Tidak ada entri jurnal keuangan yang dibuat untuk hasil opname ini (selisih stok = 0).
+                  </div>
+                )}
               </div>
 
               <div className="pt-4 border-t border-gray-100 flex justify-end">
