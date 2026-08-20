@@ -1053,20 +1053,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <Link
                     href={item.href}
                     onClick={(e) => {
-                      if (item.children) {
+                      if (item.children && item.children.length > 0) {
+                        e.preventDefault()
                         setExpandedMenus(prev => ({
                           ...prev,
-                          [item.name]: true
+                          [item.name]: !prev[item.name]
                         }))
-                        if (item.href === '#') {
-                          e.preventDefault()
-                          setExpandedMenus(prev => ({
-                            ...prev,
-                            [item.name]: !prev[item.name]
-                          }))
-                        }
+                      } else {
+                        setIsMobileMenuOpen(false)
                       }
-                      setIsMobileMenuOpen(false)
                     }}
                     style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
