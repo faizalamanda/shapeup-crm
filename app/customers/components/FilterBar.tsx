@@ -1312,9 +1312,9 @@ export function FilterBar({
       </div>
 
       {/* ── Presets Rows ─────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', marginBottom: '10px' }}>
-        <span style={{ fontSize: '9px', fontWeight: 800, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--su-text-faint)', marginRight: '4px' }}>
-          Preset Sistem:
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 mb-2.5 max-w-full scrollbar-none">
+        <span style={{ fontSize: '9px', fontWeight: 800, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--su-text-faint)', marginRight: '4px' }} className="shrink-0">
+          Preset:
         </span>
         {DEFAULT_PRESETS.map(p => {
           const isActive = activePresetKey === p.key
@@ -1331,6 +1331,7 @@ export function FilterBar({
                 background: isActive ? 'var(--su-primary)' : 'white',
                 color: isActive ? 'white' : 'var(--su-text-muted)',
               }}
+              className="shrink-0"
             >
               {p.emoji} {p.label}
             </button>
@@ -1340,9 +1341,9 @@ export function FilterBar({
 
       {/* ── Saved Custom Presets Row ────────────────────────────────────────── */}
       {savedPresets.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', background: '#FAFAF8', padding: '6px 12px', borderRadius: '8px', border: '1px dashed var(--su-border)', marginBottom: '12px' }}>
-          <span style={{ fontSize: '9px', fontWeight: 800, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--su-text-faint)', marginRight: '4px' }}>
-            Segmen Tersimpan:
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 mb-3 max-w-full scrollbar-none bg-[#FAFAF8] p-1.5 rounded-lg border border-dashed border-gray-200">
+          <span style={{ fontSize: '9px', fontWeight: 800, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--su-text-faint)', marginRight: '4px' }} className="shrink-0">
+            Segmen:
           </span>
           {savedPresets.map(p => {
             const isActive = activePresetKey === p.id
@@ -1359,6 +1360,7 @@ export function FilterBar({
                   background: isActive ? 'var(--su-success)' : 'white',
                   color: isActive ? 'white' : 'var(--su-text-muted)',
                 }}
+                className="shrink-0"
               >
                 <span>{p.emoji} {p.name}</span>
                 <button

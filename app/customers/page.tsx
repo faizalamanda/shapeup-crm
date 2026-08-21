@@ -233,9 +233,26 @@ export default function CustomerPage() {
       const { data: pageData, count, error: pageErr } = await pageQuery
       if (pageErr) throw pageErr
 
+      let finalPageData = pageData || []
+      if (finalPageData.length > 0) {
+        const pageCustomerIds = finalPageData.map((c: any) => c.customer_id)
+        const { data: metaRows } = await supabase
+          .from('customers')
+          .select('id, metadata')
+          .in('id', pageCustomerIds)
+
+        if (metaRows && metaRows.length > 0) {
+          const metaMap = new Map(metaRows.map((m: any) => [m.id, m.metadata]))
+          finalPageData = finalPageData.map((c: any) => ({
+            ...c,
+            metadata: metaMap.get(c.customer_id) || {}
+          }))
+        }
+      }
+
       const total = count ?? 0
       setTotalCount(total)
-      setCustomers(pageData || [])
+      setCustomers(finalPageData)
 
       // 2. Fetch Lightweight Summary Metrics for ALL Matching Customers (for 100% accurate Stats & Charts)
       const STATS_CHUNK = 1000
@@ -368,9 +385,37 @@ export default function CustomerPage() {
 
   const isLoadingFirst = isFetching && customers.length === 0
 
+  const handleTagUpdate = useCallback((customerId: string, newTags: string[]) => {
+    setCustomers(prev => prev.map(c => {
+      if (c.customer_id === customerId || c.id === customerId) {
+        return {
+          ...c,
+          metadata: {
+            ...(c.metadata || {}),
+            tags: newTags
+          }
+        }
+      }
+      return c
+    }))
+
+    setSelectedCustomer((prev: any) => {
+      if (prev && (prev.customer_id === customerId || prev.id === customerId)) {
+        return {
+          ...prev,
+          metadata: {
+            ...(prev.metadata || {}),
+            tags: newTags
+          }
+        }
+      }
+      return prev
+    })
+  }, [])
+
   const handleCustomerUpdate = useCallback((updatedCustomer: any) => {
     setCustomers(prev => prev.map(c => {
-      if (c.customer_id === updatedCustomer.id) {
+      if (c.customer_id === updatedCustomer.id || c.id === updatedCustomer.id) {
         let newAddressString = ''
         if (updatedCustomer.address_data) {
           const ad = updatedCustomer.address_data
@@ -392,14 +437,15 @@ export default function CustomerPage() {
           phone: updatedCustomer.phone,
           email: updatedCustomer.email,
           category: updatedCustomer.category,
-          address: newAddressString || null
+          address: newAddressString || null,
+          metadata: updatedCustomer.metadata || c.metadata
         }
       }
       return c
     }))
 
     setSelectedCustomer((prev: any) => {
-      if (prev && prev.customer_id === updatedCustomer.id) {
+      if (prev && (prev.customer_id === updatedCustomer.id || prev.id === updatedCustomer.id)) {
         let newAddressString = ''
         if (updatedCustomer.address_data) {
           const ad = updatedCustomer.address_data
@@ -421,7 +467,8 @@ export default function CustomerPage() {
           phone: updatedCustomer.phone,
           email: updatedCustomer.email,
           category: updatedCustomer.category,
-          address: newAddressString || null
+          address: newAddressString || null,
+          metadata: updatedCustomer.metadata || prev.metadata
         }
       }
       return prev
@@ -564,6 +611,7 @@ export default function CustomerPage() {
         <CustomerTable
           customers={customers}
           onSelect={(customer) => setSelectedCustomer(customer)}
+          onTagUpdate={handleTagUpdate}
         />
         <Pagination
           currentPage={currentPage}

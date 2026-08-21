@@ -1,9 +1,6 @@
 "use client"
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react'
-
-const ROW_HEIGHT    = 60   // px per row (fixed for virtual scroll)
-const OVERSCAN      = 8    // extra rows to render above/below viewport
-const CONTAINER_H   = 600  // visible table height in px
+import { createPortal } from 'react-dom'
 
 const formatIDR = (val: number) =>
   new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Math.round(val || 0))
@@ -55,17 +52,257 @@ function getCustomerBadges(c: any) {
   return badges
 }
 
-function CustomerRow({ c, onSelect, style }: { c: any; onSelect: (c: any) => void; style: React.CSSProperties }) {
-  const [hovered, setHovered] = useState(false)
+function getTagColors(tag: string) {
+  const colors = [
+    { bg: '#EFF6FF', text: '#1D4ED8', border: 'rgba(37,99,235,0.2)' },
+    { bg: '#FDF4FF', text: '#9333EA', border: 'rgba(147,51,234,0.2)' },
+    { bg: '#F0FDF4', text: '#16A34A', border: 'rgba(22,163,74,0.2)' },
+    { bg: '#FFFBEB', text: '#D97706', border: 'rgba(217,119,6,0.2)' },
+    { bg: '#FFF1F2', text: '#E11D48', border: 'rgba(225,29,72,0.2)' },
+    { bg: '#ECFEFF', text: '#0891B2', border: 'rgba(8,145,178,0.2)' },
+  ]
+  const hash = (tag || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
+  return colors[hash % colors.length]
+}
+
+// ─── Inline Badges (Karakteristik) Component ─────────────────────────────
+function CustomerBadges({ c }: { c: any }) {
   const badges = useMemo(() => getCustomerBadges(c), [c])
+
+  if (badges.length === 0) {
+    return <span style={{ fontSize: '11px', color: 'var(--su-text-faint)' }}>—</span>
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {badges.map(b => (
+        <span
+          key={b.label}
+          style={{ background: b.bg, color: b.color }}
+          className="text-[9px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded-full"
+        >
+          {b.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+// ─── Inline Async Tag List Component ──────────────────────────────────────
+function CustomerTagList({ c, onTagUpdate }: { c: any; onTagUpdate?: (id: string, tags: string[]) => void }) {
+  const [popoverOpen, setPopoverOpen] = useState(false)
+  const [tagInput, setTagInput] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [deletingTag, setDeletingTag] = useState<string | null>(null)
+
+  const customTags: string[] = c.metadata?.tags || []
+
+  const handleAddTag = async (newTag: string) => {
+    const cleanTag = newTag.trim().toUpperCase()
+    if (!cleanTag) return
+    if (customTags.includes(cleanTag)) {
+      setTagInput('')
+      setPopoverOpen(false)
+      return
+    }
+
+    const updatedTags = [...customTags, cleanTag]
+    setSaving(true)
+    try {
+      const customerId = c.customer_id || c.id
+      const res = await fetch(`/api/customers/${customerId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metadata: {
+            tags: updatedTags
+          }
+        })
+      })
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.error || 'Gagal menambahkan tag')
+
+      if (onTagUpdate) {
+        onTagUpdate(customerId, updatedTags)
+      }
+      setTagInput('')
+      setPopoverOpen(false)
+    } catch (err: any) {
+      alert(err.message || 'Gagal menyimpan tag baru')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDeleteTag = async (tagToRemove: string) => {
+    const updatedTags = customTags.filter(t => t !== tagToRemove)
+    setDeletingTag(tagToRemove)
+    try {
+      const customerId = c.customer_id || c.id
+      const res = await fetch(`/api/customers/${customerId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metadata: {
+            tags: updatedTags
+          }
+        })
+      })
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.error || 'Gagal menghapus tag')
+
+      if (onTagUpdate) {
+        onTagUpdate(customerId, updatedTags)
+      }
+    } catch (err: any) {
+      alert(err.message || 'Gagal menghapus tag')
+    } finally {
+      setDeletingTag(null)
+    }
+  }
+
+  const PRESET_SUGGESTIONS = ['VIP', 'RESELLER', 'GROSIR', 'DROPSHIP', 'PRIORITY', 'REPEAT', 'PROMO']
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 relative" onClick={e => e.stopPropagation()}>
+      {/* Custom Customer Tags */}
+      {customTags.map(tag => {
+        const color = getTagColors(tag)
+        const isDeleting = deletingTag === tag
+        return (
+          <span
+            key={tag}
+            style={{ background: color.bg, color: color.text, borderColor: color.border }}
+            className="inline-flex items-center gap-1 text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md border shadow-2xs group transition-all"
+          >
+            <span>{tag}</span>
+            <button
+              type="button"
+              disabled={isDeleting}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleDeleteTag(tag)
+              }}
+              className="text-gray-400 hover:text-red-600 focus:outline-none font-bold text-[10px] leading-none opacity-70 group-hover:opacity-100 transition-opacity"
+              title={`Hapus tag ${tag}`}
+            >
+              {isDeleting ? '...' : '✕'}
+            </button>
+          </span>
+        )
+      })}
+
+      {/* Add Tag Button & Popover */}
+      <div className="relative inline-block">
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => setPopoverOpen(!popoverOpen)}
+          className="inline-flex items-center gap-1 text-[9px] font-extrabold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200/80 px-2 py-0.5 rounded-md cursor-pointer transition-all active:scale-95"
+          title="Tambah tag baru untuk pelanggan ini"
+        >
+          {saving ? (
+            <span className="w-2.5 h-2.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin inline-block" />
+          ) : (
+            <>
+              <span>+ Tag</span>
+            </>
+          )}
+        </button>
+
+        {popoverOpen && typeof document !== 'undefined' && createPortal(
+          <div
+            className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-150"
+            onClick={(e) => {
+              e.stopPropagation()
+              setPopoverOpen(false)
+            }}
+          >
+            <div
+              className="bg-white border border-gray-200 rounded-2xl shadow-2xl p-4 w-full max-w-xs text-xs flex flex-col gap-3 animate-in zoom-in-95 duration-150"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+                <div>
+                  <h4 className="text-xs font-bold text-gray-900">Tambah Tag Customer</h4>
+                  <p className="text-[10px] text-gray-500 font-medium truncate max-w-[200px]">
+                    {c.name || 'Tanpa Nama'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPopoverOpen(false)}
+                  className="text-gray-400 hover:text-gray-600 font-bold p-1 rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  handleAddTag(tagInput)
+                }}
+                className="flex gap-1.5"
+              >
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="cth: RESELLER"
+                  value={tagInput}
+                  onChange={e => setTagInput(e.target.value)}
+                  className="flex-1 px-2.5 py-1.5 bg-gray-50 border border-gray-300 rounded-xl text-xs font-semibold text-gray-900 focus:outline-none focus:border-blue-500 uppercase"
+                />
+                <button
+                  type="submit"
+                  disabled={!tagInput.trim() || saving}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shrink-0 transition-colors"
+                >
+                  {saving ? '...' : '+ Tag'}
+                </button>
+              </form>
+
+              {/* Quick Suggestions */}
+              <div className="flex flex-wrap gap-1.5 pt-1 border-t border-gray-100">
+                <span className="text-[9px] font-bold text-gray-400 w-full uppercase tracking-wider">Rekomendasi:</span>
+                {PRESET_SUGGESTIONS.filter(st => !customTags.includes(st)).slice(0, 6).map(st => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => handleAddTag(st)}
+                    className="text-[10px] font-bold bg-gray-100 hover:bg-blue-50 hover:text-blue-600 text-gray-700 px-2 py-1 rounded-lg border border-gray-200/80 transition-colors"
+                  >
+                    +{st}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Desktop Row Component ────────────────────────────────────────────────
+function CustomerDesktopRow({
+  c,
+  onSelect,
+  onTagUpdate,
+}: {
+  c: any
+  onSelect: (c: any) => void
+  onTagUpdate?: (id: string, tags: string[]) => void
+}) {
+  const [hovered, setHovered] = useState(false)
   const [avatarBg, avatarText] = avatarColor(c.name || '')
 
   return (
     <div
       style={{
-        ...style,
         display: 'grid',
-        gridTemplateColumns: '2fr 1.2fr 90px 70px 130px 120px 100px 72px',
+        gridTemplateColumns: '200px 1.1fr 1.3fr 95px 65px 120px 110px 95px 64px',
         alignItems: 'center',
         gap: 0,
         cursor: 'pointer',
@@ -73,6 +310,8 @@ function CustomerRow({ c, onSelect, style }: { c: any; onSelect: (c: any) => voi
         borderBottom: '1px solid var(--su-border)',
         transition: 'background 0.12s',
         boxSizing: 'border-box',
+        minHeight: '60px',
+        padding: '8px 0',
       }}
       onClick={() => onSelect(c)}
       onMouseEnter={() => setHovered(true)}
@@ -100,18 +339,14 @@ function CustomerRow({ c, onSelect, style }: { c: any; onSelect: (c: any) => voi
         </div>
       </div>
 
-      {/* Badges */}
-      <div style={{ padding: '0 8px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-        {badges.map(b => (
-          <span key={b.label} style={{
-            fontSize: '8px', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase',
-            padding: '2px 7px', borderRadius: '99px',
-            background: b.bg, color: b.color,
-          }}>{b.label}</span>
-        ))}
-        {badges.length === 0 && (
-          <span style={{ fontSize: '10px', color: 'var(--su-text-faint)' }}>—</span>
-        )}
+      {/* Karakteristik */}
+      <div style={{ padding: '0 8px' }}>
+        <CustomerBadges c={c} />
+      </div>
+
+      {/* Tag / Label */}
+      <div style={{ padding: '0 8px' }}>
+        <CustomerTagList c={c} onTagUpdate={onTagUpdate} />
       </div>
 
       {/* Joined */}
@@ -192,25 +427,107 @@ function CustomerRow({ c, onSelect, style }: { c: any; onSelect: (c: any) => voi
   )
 }
 
-export function CustomerTable({ customers, onSelect }: { customers: any[]; onSelect: (c: any) => void }) {
+// ─── Compact WhatsApp/Contacts Style Mobile Row Component ─────────────────────
+function CustomerMobileCard({
+  c,
+  onSelect,
+  onTagUpdate,
+}: {
+  c: any
+  onSelect: (c: any) => void
+  onTagUpdate?: (id: string, tags: string[]) => void
+}) {
+  const [avatarBg, avatarText] = avatarColor(c.name || '')
+
+  return (
+    <div
+      className="bg-white border border-gray-200/80 rounded-xl p-3 shadow-2xs mb-2 flex flex-col gap-2 transition-all active:scale-[0.99] cursor-pointer hover:border-blue-300"
+      onClick={() => onSelect(c)}
+    >
+      {/* Primary Row: Avatar + Name/Phone + LTV/Orders & WA */}
+      <div className="flex items-center justify-between gap-2">
+        {/* Left: Avatar & Customer Name / Phone */}
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <div
+            style={{ background: avatarBg, color: avatarText }}
+            className="w-9 h-9 rounded-full shrink-0 flex items-center justify-center text-xs font-black shadow-2xs border border-white"
+          >
+            {getInitials(c.name)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <h4 className="text-xs font-bold text-gray-900 truncate leading-snug">
+              {c.name || 'Tanpa Nama'}
+            </h4>
+            <p className="text-[10px] text-gray-500 font-medium leading-none mt-0.5 flex items-center gap-1">
+              <span>+{c.phone}</span>
+              {c.joined_at && (
+                <span className="text-[9px] text-gray-400">
+                  • {new Date(c.joined_at).toLocaleDateString('id-ID', { month: 'short', year: '2-digit' })}
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        {/* Right: LTV Value & Order Count */}
+        <div className="text-right shrink-0">
+          <div className="text-xs font-extrabold text-blue-700 leading-tight">
+            {formatIDR(c.ltv)}
+          </div>
+          <div className="text-[9px] font-semibold text-gray-500 mt-0.5">
+            {c.total_order_count || 0} order
+          </div>
+        </div>
+
+        {/* Action: Quick WhatsApp Contact */}
+        <div className="shrink-0 pl-1" onClick={e => e.stopPropagation()}>
+          <a
+            href={`https://wa.me/${c.phone}`}
+            target="_blank"
+            rel="noreferrer"
+            className="w-7 h-7 rounded-lg bg-green-500 hover:bg-green-600 text-white flex items-center justify-center shadow-2xs transition-transform active:scale-95"
+            title={`WA +${c.phone}`}
+          >
+            <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.455L0 24zm6.59-4.846c1.6.95 3.197 1.451 4.793 1.451 5.385 0 9.768-4.383 9.771-9.77.002-2.61-1.012-5.064-2.855-6.907C16.488 2.083 14.04 1.07 11.43 1.07 6.046 1.07 1.663 5.453 1.66 10.84c-.001 1.705.452 3.37 1.31 4.866l-.998 3.648 3.732-.979z"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+
+      {/* Secondary Row: Separated Karakteristik & Tag List */}
+      <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-gray-100/80">
+        <div className="flex items-center gap-1 flex-wrap">
+          <CustomerBadges c={c} />
+        </div>
+        <div className="flex items-center gap-1 flex-wrap">
+          <CustomerTagList c={c} onTagUpdate={onTagUpdate} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Main CustomerTable Component ──────────────────────────────────────────
+export function CustomerTable({
+  customers,
+  onSelect,
+  onTagUpdate,
+}: {
+  customers: any[]
+  onSelect: (c: any) => void
+  onTagUpdate?: (id: string, tags: string[]) => void
+}) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [scrollTop, setScrollTop] = useState(0)
 
   // Sort State
   const [sortKey, setSortKey] = useState<string>('ltv')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
 
-  const handleScroll = useCallback(() => {
-    if (containerRef.current) {
-      setScrollTop(containerRef.current.scrollTop)
-    }
-  }, [])
-
   // Reset scroll on data change or sorting change
   useEffect(() => {
     if (containerRef.current) {
       containerRef.current.scrollTop = 0
-      setScrollTop(0)
     }
   }, [customers, sortKey, sortDirection])
 
@@ -254,20 +571,12 @@ export function CustomerTable({ customers, onSelect }: { customers: any[]; onSel
     return sorted
   }, [customers, sortKey, sortDirection])
 
-  const totalHeight  = sortedCustomers.length * ROW_HEIGHT
-  const startIndex   = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
-  const visibleCount = Math.ceil(CONTAINER_H / ROW_HEIGHT) + OVERSCAN * 2
-  const endIndex     = Math.min(sortedCustomers.length - 1, startIndex + visibleCount)
-
-  const visibleCustomers = sortedCustomers.slice(startIndex, endIndex + 1)
-  const offsetY          = startIndex * ROW_HEIGHT
-
   const handleSort = (key: string) => {
     if (sortKey === key) {
       setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')
     } else {
       setSortKey(key)
-      setSortDirection('desc') // Default to desc for new keys
+      setSortDirection('desc')
     }
   }
 
@@ -311,56 +620,84 @@ export function CustomerTable({ customers, onSelect }: { customers: any[]; onSel
     )
   }
 
-  return (
-    <div style={{
-      background: 'white',
-      border: '1px solid var(--su-border)',
-      borderRadius: '10px',
-      overflow: 'hidden',
-      boxShadow: 'var(--su-shadow-sm)',
-    }}>
-      {/* Table Header */}
+  if (sortedCustomers.length === 0) {
+    return (
       <div style={{
-        display: 'grid',
-        gridTemplateColumns: '2fr 1.2fr 90px 70px 130px 120px 100px 72px',
-        background: '#FAFAF8',
-        borderBottom: '1px solid var(--su-border)',
-        height: '36px',
-        alignItems: 'center',
-        position: 'sticky',
-        top: 0,
-        zIndex: 1,
+        background: 'white',
+        border: '1px solid var(--su-border)',
+        borderRadius: '12px',
+        padding: '48px 24px', textAlign: 'center',
+        color: 'var(--su-text-faint)', fontSize: '13px', fontStyle: 'italic',
       }}>
-        <div style={{ paddingLeft: '8px' }}>{colHeader('Nama Pelanggan', 'name')}</div>
-        {colHeader('Karakteristik')}
-        {colHeader('Bergabung', 'joined_at', 'center')}
-        {colHeader('Orders', 'total_order_count', 'center')}
-        {colHeader('LTV Total', 'ltv', 'right')}
-        {colHeader('AOV', 'aov', 'right')}
-        {colHeader('Terakhir', 'last_order_date', 'center')}
-        {colHeader('Aksi', undefined, 'center')}
+        Tidak ada pelanggan yang cocok dengan kriteria segmentasi.
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {/* ── MOBILE VIEW: Shopee/Amazon Style Compact Cards (< 768px) ── */}
+      <div className="block md:hidden">
+        {sortedCustomers.map((c, i) => (
+          <CustomerMobileCard
+            key={c.customer_id || c.id || i}
+            c={c}
+            onSelect={onSelect}
+            onTagUpdate={onTagUpdate}
+          />
+        ))}
       </div>
 
-      {/* Empty state */}
-      {sortedCustomers.length === 0 ? (
+      {/* ── DESKTOP VIEW: Responsive Table Container (>= 768px) ─────── */}
+      <div className="hidden md:block">
         <div style={{
-          padding: '48px', textAlign: 'center',
-          color: 'var(--su-text-faint)', fontSize: '13px', fontStyle: 'italic',
+          background: 'white',
+          border: '1px solid var(--su-border)',
+          borderRadius: '12px',
+          overflow: 'hidden',
+          boxShadow: 'var(--su-shadow-sm)',
         }}>
-          Tidak ada pelanggan yang cocok dengan kriteria segmentasi.
+          {/* Horizontal scroll container for table */}
+          <div className="overflow-x-auto">
+            <div style={{ minWidth: '1050px' }}>
+              {/* Table Header */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '200px 1.1fr 1.3fr 95px 65px 120px 110px 95px 64px',
+                background: '#FAFAF8',
+                borderBottom: '1px solid var(--su-border)',
+                height: '38px',
+                alignItems: 'center',
+                position: 'sticky',
+                top: 0,
+                zIndex: 1,
+              }}>
+                <div style={{ paddingLeft: '8px' }}>{colHeader('Nama Pelanggan', 'name')}</div>
+                {colHeader('Karakteristik')}
+                {colHeader('Tag / Label')}
+                {colHeader('Bergabung', 'joined_at', 'center')}
+                {colHeader('Orders', 'total_order_count', 'center')}
+                {colHeader('LTV Total', 'ltv', 'right')}
+                {colHeader('AOV', 'aov', 'right')}
+                {colHeader('Terakhir', 'last_order_date', 'center')}
+                {colHeader('Aksi', undefined, 'center')}
+              </div>
+
+              {/* Table Rows */}
+              <div ref={containerRef}>
+                {sortedCustomers.map((c, i) => (
+                  <CustomerDesktopRow
+                    key={c.customer_id || c.id || i}
+                    c={c}
+                    onSelect={onSelect}
+                    onTagUpdate={onTagUpdate}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
-      ) : (
-        <div ref={containerRef}>
-          {sortedCustomers.map((c, i) => (
-            <CustomerRow
-              key={c.customer_id || i}
-              c={c}
-              onSelect={onSelect}
-              style={{ minHeight: `${ROW_HEIGHT}px` }}
-            />
-          ))}
-        </div>
-      )}
+      </div>
     </div>
   )
 }

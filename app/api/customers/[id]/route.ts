@@ -103,7 +103,7 @@ export async function PATCH(
     // Verify customer exists and belongs to this business
     const { data: existing, error: existErr } = await supabaseAdmin
       .from('customers')
-      .select('id, business_id')
+      .select('id, business_id, name, phone, email, category, address_data, metadata')
       .eq('id', id)
       .eq('business_id', businessId)
       .maybeSingle()
@@ -116,44 +116,53 @@ export async function PATCH(
     const body = await req.json()
     const { name, phone, email, category, address_data, metadata } = body
 
-    if (!name || !phone) {
+    const targetName = name !== undefined ? name.trim() : existing.name
+    let targetPhone = existing.phone
+
+    if (phone !== undefined && phone !== null) {
+      let cleanPhone = String(phone).replace(/\D/g, '')
+      if (cleanPhone.startsWith('0')) {
+        cleanPhone = '62' + cleanPhone.substring(1)
+      } else if (cleanPhone.startsWith('8')) {
+        cleanPhone = '62' + cleanPhone
+      }
+      targetPhone = cleanPhone
+
+      // Check if phone number is already used by ANOTHER customer in the same business
+      const { data: phoneCheck, error: phoneErr } = await supabaseAdmin
+        .from('customers')
+        .select('id, name')
+        .eq('business_id', businessId)
+        .eq('phone', targetPhone)
+        .neq('id', id)
+        .maybeSingle()
+
+      if (phoneErr) throw phoneErr
+      if (phoneCheck) {
+        return NextResponse.json({ 
+          error: `Nomor HP sudah digunakan oleh customer lain: ${phoneCheck.name}` 
+        }, { status: 400 })
+      }
+    }
+
+    if (!targetName || !targetPhone) {
       return NextResponse.json({ error: 'Nama dan Nomor HP wajib diisi' }, { status: 400 })
     }
 
-    // Clean phone number
-    let cleanPhone = phone.replace(/\D/g, '')
-    if (cleanPhone.startsWith('0')) {
-      cleanPhone = '62' + cleanPhone.substring(1)
-    } else if (cleanPhone.startsWith('8')) {
-      cleanPhone = '62' + cleanPhone
-    }
-
-    // Check if phone number is already used by ANOTHER customer in the same business
-    const { data: phoneCheck, error: phoneErr } = await supabaseAdmin
-      .from('customers')
-      .select('id, name')
-      .eq('business_id', businessId)
-      .eq('phone', cleanPhone)
-      .neq('id', id)
-      .maybeSingle()
-
-    if (phoneErr) throw phoneErr
-    if (phoneCheck) {
-      return NextResponse.json({ 
-        error: `Nomor HP sudah digunakan oleh customer lain: ${phoneCheck.name}` 
-      }, { status: 400 })
-    }
+    const mergedMetadata = metadata !== undefined 
+      ? { ...(existing.metadata || {}), ...metadata }
+      : existing.metadata
 
     // Update customer
     const { data: updatedCustomer, error: updateErr } = await supabaseAdmin
       .from('customers')
       .update({
-        name: name.trim(),
-        phone: cleanPhone,
-        email: email ? email.trim() : null,
-        category: category || 'General',
-        address_data: address_data || null,
-        metadata: metadata || null
+        name: targetName,
+        phone: targetPhone,
+        email: email !== undefined ? (email ? email.trim() : null) : existing.email,
+        category: category !== undefined ? (category || 'General') : existing.category,
+        address_data: address_data !== undefined ? (address_data || null) : existing.address_data,
+        metadata: mergedMetadata || null
       })
       .eq('id', id)
       .select('*')

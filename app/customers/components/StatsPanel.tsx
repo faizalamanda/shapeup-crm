@@ -13,29 +13,17 @@ function StatCard({
   accentColor: string
 }) {
   return (
-    <div style={{
-      background: 'white',
-      border: '1px solid var(--su-border)',
-      borderRadius: '10px',
-      padding: '16px 20px',
-      borderLeft: `3px solid ${accentColor}`,
-      boxShadow: 'var(--su-shadow-sm)',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '4px',
-      transition: 'box-shadow 0.15s',
-    }}
-      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.boxShadow = 'var(--su-shadow)' }}
-      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.boxShadow = 'var(--su-shadow-sm)' }}
+    <div
+      style={{ borderLeftColor: accentColor }}
+      className="bg-white border border-gray-200/90 rounded-xl p-3 sm:p-4 border-l-4 shadow-xs flex flex-col gap-1 transition-all hover:shadow-md"
     >
-      <p style={{
-        fontSize: '9px', fontWeight: 800, textTransform: 'uppercase',
-        letterSpacing: '0.18em', color: 'var(--su-text-faint)', margin: 0,
-      }}>{label}</p>
-      <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--su-text)', lineHeight: 1.2, margin: '2px 0' }}>
+      <p className="text-[9px] font-extrabold uppercase tracking-widest text-gray-400 m-0 truncate">
+        {label}
+      </p>
+      <div className="text-base sm:text-lg font-black text-gray-900 leading-tight my-0.5 truncate">
         {value}
       </div>
-      <p style={{ fontSize: '10px', color: 'var(--su-text-faint)', margin: 0 }}>{sub}</p>
+      <p className="text-[10px] text-gray-400 m-0 truncate font-medium">{sub}</p>
     </div>
   )
 }
@@ -58,47 +46,59 @@ export function StatsPanel({ customers }: { customers: any[] }) {
   const vipCount = customers.filter(c => (Number(c.ltv) || 0) >= 1000000).length
 
   return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-      gap: '12px',
-      marginBottom: '24px',
-    }}>
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3 mb-6">
       <StatCard
         label="Total Customer"
-        value={<span style={{ color: 'var(--su-text)' }}>{total.toLocaleString('id-ID')}<span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--su-text-faint)', marginLeft: '4px' }}>orang</span></span>}
+        value={
+          <span className="text-gray-900">
+            {total.toLocaleString('id-ID')}
+            <span className="text-xs font-semibold text-gray-400 ml-1">org</span>
+          </span>
+        }
         sub="Dalam segmen aktif"
-        accentColor="var(--su-primary)"
+        accentColor="#2563EB"
       />
       <StatCard
-        label="Omset Segmen (LTV)"
-        value={<span style={{ color: 'var(--su-primary)', fontSize: '16px' }} title={formatIDR(totalRevenue)}>{formatIDR(totalRevenue)}</span>}
-        sub="Akumulasi order selesai"
+        label="Omset Segmen"
+        value={
+          <span className="text-blue-600 text-sm sm:text-base font-extrabold" title={formatIDR(totalRevenue)}>
+            {formatIDR(totalRevenue)}
+          </span>
+        }
+        sub="Order selesai"
         accentColor="#6366F1"
       />
       <StatCard
         label="Rata-rata LTV"
-        value={<span style={{ fontSize: '16px' }} title={formatIDR(avgLTV)}>{formatIDR(avgLTV)}</span>}
-        sub="LTV dari order selesai"
-        accentColor="var(--su-accent)"
+        value={
+          <span className="text-sm sm:text-base font-bold text-gray-900" title={formatIDR(avgLTV)}>
+            {formatIDR(avgLTV)}
+          </span>
+        }
+        sub="Order selesai"
+        accentColor="#0284C7"
       />
       <StatCard
         label="Rata-rata AOV"
-        value={<span style={{ fontSize: '16px' }} title={formatIDR(avgAOV)}>{formatIDR(avgAOV)}</span>}
-        sub="AOV dari order selesai"
+        value={
+          <span className="text-sm sm:text-base font-bold text-gray-900" title={formatIDR(avgAOV)}>
+            {formatIDR(avgAOV)}
+          </span>
+        }
+        sub="Order selesai"
         accentColor="#F59E0B"
       />
       <StatCard
-        label="Repeat Order Rate"
-        value={<span style={{ color: 'var(--su-success)' }}>{repeatRate.toFixed(1)}%</span>}
-        sub="Order selesai > 1 kali"
-        accentColor="var(--su-success)"
+        label="Repeat Rate"
+        value={<span className="text-emerald-600 font-extrabold">{repeatRate.toFixed(1)}%</span>}
+        sub="Order > 1 kali"
+        accentColor="#16A34A"
       />
       <StatCard
         label="VIP (LTV ≥ 1jt)"
-        value={<span style={{ color: '#7C3AED' }}>{vipCount.toLocaleString('id-ID')}</span>}
+        value={<span className="text-purple-600 font-extrabold">{vipCount.toLocaleString('id-ID')}</span>}
         sub="LTV selesai ≥ 1jt"
-        accentColor="#7C3AED"
+        accentColor="#9333EA"
       />
     </div>
   )
