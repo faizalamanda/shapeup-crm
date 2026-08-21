@@ -66,6 +66,20 @@ export default function StaffSettings() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
   const [deleteMessage, setDeleteMessage] = useState({ text: '', type: '' })
 
+  // Search and Role Filter state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [roleFilter, setRoleFilter] = useState<'all' | 'admin' | 'staff'>('all')
+
+  const filteredStaffList = useMemo(() => {
+    return staffList.filter(s => {
+      const isStaffAdmin = s.role === 'admin'
+      const matchesRole = roleFilter === 'all' ? true : (roleFilter === 'admin' ? isStaffAdmin : !isStaffAdmin)
+      const q = searchQuery.toLowerCase().trim()
+      const matchesQuery = !q || (s.full_name?.toLowerCase().includes(q) || s.email?.toLowerCase().includes(q))
+      return matchesRole && matchesQuery
+    })
+  }, [staffList, roleFilter, searchQuery])
+
   // Prevent body scroll when any modal is open
   useEffect(() => {
     if (isModalOpen || isEditModalOpen || isDeleteModalOpen) {
@@ -387,6 +401,66 @@ export default function StaffSettings() {
         )}
       </div>
 
+      {/* Filter & Search Bar */}
+      <div className="bg-white border border-[#E2E2DC] rounded-xl p-4 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+        <div className="relative flex-1 max-w-md">
+          <input
+            type="text"
+            placeholder="Cari nama atau email staf..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-4 py-2 border border-[#E2E2DC] rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 bg-[#FAF9F5]"
+          />
+          <svg className="w-4 h-4 text-[#A8A89E] absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#A8A89E] hover:text-[#1C1C1A]"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-[#6B6B63] whitespace-nowrap">Filter Role:</span>
+          <div className="flex items-center bg-[#FAF9F5] p-1 border border-[#E2E2DC] rounded-lg">
+            <button
+              onClick={() => setRoleFilter('all')}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                roleFilter === 'all'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-[#6B6B63] hover:text-[#1C1C1A]'
+              }`}
+            >
+              Semua ({staffList.length})
+            </button>
+            <button
+              onClick={() => setRoleFilter('admin')}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                roleFilter === 'admin'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-[#6B6B63] hover:text-[#1C1C1A]'
+              }`}
+            >
+              Admin ({staffList.filter(s => s.role === 'admin').length})
+            </button>
+            <button
+              onClick={() => setRoleFilter('staff')}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                roleFilter === 'staff'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-[#6B6B63] hover:text-[#1C1C1A]'
+              }`}
+            >
+              Staff ({staffList.filter(s => s.role !== 'admin').length})
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Tabel Staff */}
       <div className="bg-white border border-[#E2E2DC] rounded-xl shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
@@ -409,8 +483,8 @@ export default function StaffSettings() {
                     Memuat Data Tim...
                   </td>
                 </tr>
-              ) : staffList.length > 0 ? (
-                staffList.map((s) => (
+              ) : filteredStaffList.length > 0 ? (
+                filteredStaffList.map((s) => (
                   <tr key={s.id} className="hover:bg-[#F7F7F5] transition-colors">
                     <td className="px-6 py-4 font-semibold text-sm text-[#1C1C1A]">
                       <div className="flex items-center gap-3">
@@ -483,7 +557,9 @@ export default function StaffSettings() {
               ) : (
                 <tr>
                   <td colSpan={isAdmin ? 5 : 4} className="px-6 py-12 text-center text-[#A8A89E] text-xs font-semibold">
-                    Belum ada staff yang terdaftar pada unit bisnis ini.
+                    {searchQuery || roleFilter !== 'all'
+                      ? 'Tidak ada anggota tim yang sesuai dengan kata kunci / filter role Anda.'
+                      : 'Belum ada staff yang terdaftar pada unit bisnis ini.'}
                   </td>
                 </tr>
               )}

@@ -183,18 +183,23 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
 
       // Resolve role and permissions (Business Owners & Admins always get full_access)
       const activeBs = bsResult.data?.find((item: any) => item.businesses?.id === activeBizId)
-      const isUserOwner = (ownedResult.data && ownedResult.data.length > 0) || Boolean(profile?.active_business_id)
-      const isUserAdmin = profile?.role === 'admin' || activeBs?.role === 'admin' || isUserOwner || !activeBs
+      const isUserOwner = Boolean(ownedResult.data && ownedResult.data.some((b: any) => b.id === activeBizId))
+      const isGlobalAdmin = profile?.role === 'admin'
+      const isBsAdmin = activeBs?.role === 'admin'
+      const isUserAdmin = isGlobalAdmin || isBsAdmin || isUserOwner
 
-      let resolvedRole = 'admin'
-      let resolvedPerms: string[] = ['full_access']
+      let resolvedRole = 'staff'
+      let resolvedPerms: string[] = []
 
       if (isUserAdmin) {
         resolvedRole = 'admin'
         resolvedPerms = ['full_access']
       } else if (activeBs) {
         resolvedRole = activeBs.role || 'staff'
-        resolvedPerms = activeBs.permissions && activeBs.permissions.length > 0 ? activeBs.permissions : ['full_access']
+        resolvedPerms = Array.isArray(activeBs.permissions) ? activeBs.permissions : []
+      } else if (ownedResult.data && ownedResult.data.length > 0) {
+        resolvedRole = 'admin'
+        resolvedPerms = ['full_access']
       }
 
       setCurrentUserRole(resolvedRole)
