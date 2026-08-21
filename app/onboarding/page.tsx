@@ -19,22 +19,22 @@ type ShortcutItem = {
 
 const AVAILABLE_SHORTCUTS: ShortcutItem[] = [
   { id: 'pos', name: 'POS Kasir', href: '/orders/pos', category: 'Penjualan', description: 'Transaksi kasir instan & cetak struk', icon: '💻', badge: 'Kasir' },
-  { id: 'orders', name: 'Orders Penjualan', href: '/orders', category: 'Penjualan', description: 'Daftar & status riwayat pesanan', icon: '🛒' },
-  { id: 'invoices', name: 'Invoices & Tagihan', href: '/orders/invoices', category: 'Penjualan', description: 'Faktur & penagihan pembayaran', icon: '🧾' },
-  { id: 'products', name: 'Daftar Produk', href: '/products', category: 'Katalog', description: 'Kelola harga, stok, & variasi', icon: '📦' },
-  { id: 'stock_opname', name: 'Stock Opname', href: '/stock-opname', category: 'Katalog', description: 'Penyesuaian jumlah stok fisik', icon: '📋' },
-  { id: 'customers', name: 'Data Pelanggan', href: '/customers', category: 'Pelanggan', description: 'Database & riwayat kontak pembeli', icon: '👥' },
-  { id: 'cohort', name: 'Returning Cohort', href: '/customers/cohorts/returning', category: 'Pelanggan', description: 'Analisis repeat order & retensi', icon: '📊' },
+  { id: 'orders', name: 'Orders', href: '/orders', category: 'Penjualan', description: 'Daftar & status riwayat pesanan', icon: '🛒' },
+  { id: 'invoices', name: 'Invoices', href: '/orders/invoices', category: 'Penjualan', description: 'Faktur & penagihan pembayaran', icon: '🧾' },
+  { id: 'products', name: 'Produk', href: '/products', category: 'Katalog', description: 'Kelola harga, stok, & variasi', icon: '📦' },
+  { id: 'stock_opname', name: 'Stok Opname', href: '/stock-opname', category: 'Katalog', description: 'Penyesuaian jumlah stok fisik', icon: '📋' },
+  { id: 'customers', name: 'Pelanggan', href: '/customers', category: 'Pelanggan', description: 'Database & riwayat kontak pembeli', icon: '👥' },
+  { id: 'cohort', name: 'Retensi Cohort', href: '/customers/cohorts/returning', category: 'Pelanggan', description: 'Analisis repeat order & retensi', icon: '📊' },
   { id: 'retention', name: 'Retensi Produk', href: '/customers/product-retention', category: 'Pelanggan', description: 'Produk paling sering dibeli ulang', icon: '📈' },
-  { id: 'expenses', name: 'Catat Pengeluaran', href: '/expenses', category: 'Pengeluaran', description: 'Pencatatan biaya operasional harian', icon: '💸' },
-  { id: 'suppliers', name: 'Pemasok (Suppliers)', href: '/suppliers', category: 'Pengeluaran', description: 'Vendor stok & pemasok bahan', icon: '🏭' },
-  { id: 'inbox', name: 'Inbox / WA Chat', href: '/inbox', category: 'Komunikasi', description: 'Perpesanan pelanggan terintegrasi', icon: '💬' },
+  { id: 'expenses', name: 'Pengeluaran', href: '/expenses', category: 'Pengeluaran', description: 'Pencatatan biaya operasional harian', icon: '💸' },
+  { id: 'suppliers', name: 'Pemasok', href: '/suppliers', category: 'Pengeluaran', description: 'Vendor stok & pemasok bahan', icon: '🏭' },
+  { id: 'inbox', name: 'Inbox Chat', href: '/inbox', category: 'Komunikasi', description: 'Perpesanan pelanggan terintegrasi', icon: '💬' },
   { id: 'accounting_trans', name: 'Jurnal Akuntansi', href: '/accounting/transactions', category: 'Akuntansi', description: 'Buku kas & pembukuan umum', icon: '📖' },
   { id: 'profit_loss', name: 'Laba Rugi', href: '/accounting/profit-loss', category: 'Akuntansi', description: 'Laporan untung rugi operasional', icon: '💵' },
   { id: 'cash_flow', name: 'Arus Kas', href: '/accounting/cash-flow', category: 'Akuntansi', description: 'Laporan alur kas masuk & keluar', icon: '📈' },
-  { id: 'balance_sheet', name: 'Neraca Keuangan', href: '/accounting/balance-sheet', category: 'Akuntansi', description: 'Laporan posisi keuangan & ekuitas', icon: '⚖️' },
+  { id: 'balance_sheet', name: 'Neraca', href: '/accounting/balance-sheet', category: 'Akuntansi', description: 'Laporan posisi keuangan & ekuitas', icon: '⚖️' },
   { id: 'employees', name: 'Karyawan & Gaji', href: '/employees', category: 'HR', description: 'Manajemen staf & daftar gaji', icon: '👔' },
-  { id: 'settings', name: 'Pengaturan Bisnis', href: '/settings', category: 'Sistem', description: 'Profil bisnis & hak akses user', icon: '⚙️' },
+  { id: 'settings', name: 'Pengaturan', href: '/settings', category: 'Sistem', description: 'Profil bisnis & hak akses user', icon: '⚙️' },
 ]
 
 const DEFAULT_SHORTCUT_IDS = ['pos', 'orders', 'products', 'customers', 'stock_opname', 'expenses', 'inbox', 'cohort']
@@ -505,8 +505,8 @@ export default function OnboardingPage() {
           <div>
             <div className="flex items-center gap-2">
               <span className="text-xl">⚡</span>
-              <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
-                Quick Menu Icon (Pintasan Cepat)
+              <h2 className="text-base sm:text-xl font-extrabold text-slate-900 tracking-tight break-words">
+                Quick Menu (Pintasan Cepat)
               </h2>
             </div>
             <p className="text-xs sm:text-sm text-slate-600 mt-0.5">
@@ -600,7 +600,7 @@ export default function OnboardingPage() {
             </button>
           </div>
         ) : viewMode === 'compact' ? (
-          <div className="grid grid-cols-4 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3 sm:gap-4">
+          <div className="grid grid-cols-4 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 sm:gap-4">
             {activeShortcutsList.map((shortcut, index) => {
               const catStyles = getCategoryStyles(shortcut.category)
               return (
@@ -644,18 +644,18 @@ export default function OnboardingPage() {
                     onClick={(e) => {
                       if (isEditingShortcuts) e.preventDefault()
                     }}
-                    className={`w-full flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all duration-150 ${
+                    className={`w-full flex flex-col items-center gap-1 p-1 sm:p-2 rounded-xl transition-all duration-150 ${
                       isEditingShortcuts ? 'cursor-default opacity-90' : 'active:scale-95 hover:bg-slate-50'
                     }`}
                   >
-                    <div className={`relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl border ${catStyles.bg} ${catStyles.border} flex items-center justify-center text-2xl sm:text-3xl shadow-xs transition-transform group-hover:scale-105 ${
+                    <div className={`relative w-13 h-13 sm:w-16 sm:h-16 rounded-2xl border ${catStyles.bg} ${catStyles.border} flex items-center justify-center text-2xl sm:text-3xl shadow-xs transition-transform group-hover:scale-105 ${
                       isEditingShortcuts ? 'ring-2 ring-amber-400 ring-offset-1 animate-pulse' : ''
                     }`}>
                       {shortcut.icon}
                       <span className={`absolute bottom-1 right-1 w-2.5 h-2.5 rounded-full border border-white ${catStyles.bg}`} />
                     </div>
 
-                    <span className="text-[11px] sm:text-xs font-bold text-slate-800 text-center line-clamp-1 w-full tracking-tight">
+                    <span className="text-[10px] sm:text-xs font-bold text-slate-800 text-center line-clamp-2 w-full tracking-tight leading-tight min-h-[2.4em] flex items-center justify-center break-words px-0.5 mt-0.5">
                       {shortcut.name}
                     </span>
                   </Link>
@@ -713,7 +713,7 @@ export default function OnboardingPage() {
                         <span className={`text-[10px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded border ${catStyles.border} ${catStyles.bg} ${catStyles.text}`}>
                           {shortcut.category}
                         </span>
-                        <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors mt-0.5">
+                        <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors mt-0.5 break-words leading-snug">
                           {shortcut.name}
                         </h3>
                       </div>
@@ -1142,7 +1142,7 @@ export default function OnboardingPage() {
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs sm:text-sm font-bold text-slate-900 truncate">
+                            <span className="text-xs sm:text-sm font-bold text-slate-900 break-words leading-tight">
                               {shortcut.name}
                             </span>
                             <span className={`text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md border shrink-0 ${catStyles.border} ${catStyles.bg} ${catStyles.text}`}>
