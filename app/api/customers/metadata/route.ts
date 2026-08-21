@@ -23,33 +23,42 @@ export async function POST(req: Request) {
 
     const businessId = profile.active_business_id
 
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
-      return NextResponse.json({ 
-        error: 'SUPABASE_SERVICE_ROLE_KEY is not defined in env' 
-      }, { status: 500 })
-    }
-
     const { ids } = await req.json()
     if (!Array.isArray(ids) || ids.length === 0) {
       return NextResponse.json({ success: true, metadataMap: {} })
     }
 
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey
-    )
+    // Try service role key first, fallback to authenticated server client
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    let customersData: any[] | null = null
+    let fetchErr: any = null
 
-    const { data: customers, error: fetchErr } = await supabaseAdmin
-      .from('customers')
-      .select('id, metadata')
-      .eq('business_id', businessId)
-      .in('id', ids)
+    if (serviceRoleKey) {
+      const supabaseAdmin = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        serviceRoleKey
+      )
+      const res = await supabaseAdmin
+        .from('customers')
+        .select('id, metadata')
+        .eq('business_id', businessId)
+        .in('id', ids)
+      customersData = res.data
+      fetchErr = res.error
+    } else {
+      const res = await supabase
+        .from('customers')
+        .select('id, metadata')
+        .eq('business_id', businessId)
+        .in('id', ids)
+      customersData = res.data
+      fetchErr = res.error
+    }
 
     if (fetchErr) throw fetchErr
 
     const metadataMap: Record<string, any> = {}
-    customers?.forEach(c => {
+    customersData?.forEach(c => {
       metadataMap[c.id] = c.metadata || {}
     })
 
