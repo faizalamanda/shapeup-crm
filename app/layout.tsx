@@ -718,7 +718,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         {/* ── SIDEBAR ────────────────────────────────────────────────────── */}
         <aside style={{
-          width: '220px',
+          width: '240px',
           background: 'var(--su-sidebar-bg)',
           display: 'flex',
           flexDirection: 'column',
@@ -726,15 +726,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           top: 0,
           bottom: 0,
           left: 0,
-          zIndex: 30,
+          zIndex: isMobileMenuOpen ? 50 : 30,
           transition: 'transform 0.25s ease',
         }}
-          className={`${isMobileMenuOpen ? 'translate-x-0 z-50' : '-translate-x-full z-30'} lg:translate-x-0 lg:z-30`}
+          className={`${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
         >
           {/* Logo */}
           <div style={{ padding: '20px 16px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none' }}>
+              <Link href="/dashboard" onClick={() => setIsMobileMenuOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none' }}>
                 {/* Logo mark */}
                 <div style={{
                   width: '32px', height: '32px',
@@ -845,6 +845,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                         onClick={() => {
                           handleSwitchBusiness(biz.id)
                           setIsDropdownOpen(false)
+                          setIsMobileMenuOpen(false)
                         }}
                         style={{
                           width: '100%',
@@ -873,7 +874,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '6px 0' }} />
                     <Link
                       href="/settings/business?create=true"
-                      onClick={() => setIsDropdownOpen(false)}
+                      onClick={() => {
+                        setIsDropdownOpen(false)
+                        setIsMobileMenuOpen(false)
+                      }}
                       style={{
                         display: 'block',
                         padding: '8px 12px',
@@ -894,7 +898,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '6px 0' }} />
                     <Link
                       href="/settings/business"
-                      onClick={() => setIsDropdownOpen(false)}
+                      onClick={() => {
+                        setIsDropdownOpen(false)
+                        setIsMobileMenuOpen(false)
+                      }}
                       style={{
                         display: 'block',
                         padding: '8px 12px',
@@ -1029,6 +1036,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {currentUserRole === 'admin' && (
               <Link
                 href="/settings/business"
+                onClick={() => setIsMobileMenuOpen(false)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '10px',
                   padding: '8px 12px', borderRadius: '7px',
@@ -1068,7 +1076,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </aside>
 
         {/* ── MAIN AREA ──────────────────────────────────────────────────── */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', minWidth: 0 }} className="ml-0 lg:ml-[220px]">
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', minWidth: 0 }} className="ml-0 lg:ml-[240px]">
 
           {/* Topbar */}
           <header style={{
