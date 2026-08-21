@@ -179,70 +179,27 @@ const menuItems: MenuItem[] = [
   { name: 'Marketing',    href: '/marketing',         icon: Icons.marketing },
 ]
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const supabase = useMemo(() => createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ), [])
+import { AppUserProvider, useUserContext } from '@/components/UserContext'
+
+function LayoutContent({ children }: { children: React.ReactNode }) {
+  const {
+    userProfile,
+    activeBusiness,
+    businesses,
+    currentUserRole,
+    currentUserPermissions,
+    isWabaActive,
+    bizLoading,
+    isLoggingOut,
+    handleLogout,
+    handleSwitchBusiness,
+  } = useUserContext()
 
   const pathname = usePathname()
   const noSidebar = ["/login", "/register", "/"].includes(pathname)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({})
-
-  // Business switcher & User context states (initialized with instant local cache if present)
-  const [businesses, setBusinesses] = useState<any[]>(() => {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      try {
-        const saved = localStorage.getItem('su_cached_businesses')
-        if (saved) return JSON.parse(saved)
-      } catch (e) {}
-    }
-    return []
-  })
-
-  const [activeBusiness, setActiveBusiness] = useState<any>(() => {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      try {
-        const saved = localStorage.getItem('su_cached_active_biz')
-        if (saved) return JSON.parse(saved)
-      } catch (e) {}
-    }
-    return null
-  })
-
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
-
-  const [userProfile, setUserProfile] = useState<any>(() => {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      try {
-        const saved = localStorage.getItem('su_cached_user_profile')
-        if (saved) return JSON.parse(saved)
-      } catch (e) {}
-    }
-    return null
-  })
-
-  const [currentUserRole, setCurrentUserRole] = useState<string | null>(() => {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      return localStorage.getItem('su_cached_role')
-    }
-    return null
-  })
-
-  const [currentUserPermissions, setCurrentUserPermissions] = useState<string[]>(() => {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      try {
-        const saved = localStorage.getItem('su_cached_perms')
-        if (saved) return JSON.parse(saved)
-      } catch (e) {}
-    }
-    return []
-  })
-
-  const [isWabaActive, setIsWabaActive] = useState(false)
-  const [bizLoading, setBizLoading] = useState(true)
-  const [isLoggingOut, setIsLoggingOut] = useState(false)
 
   useEffect(() => {
     const updated: Record<string, boolean> = {}
@@ -259,223 +216,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     setExpandedMenus(prev => ({ ...prev, ...updated }))
   }, [pathname])
 
-  // Load profile and businesses — onAuthStateChange as single source of truth
-  const loadIdRef = useRef(0)
-  const loadedUserIdRef = useRef<string | null>(null)
-
-  const loadProfileAndBusinesses = useCallback(async (userId: string, forceRefresh = false) => {
-    // Check if the active user changed from the previous session
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        const lastUserId = localStorage.getItem('su_last_logged_in_user_id')
-        if (lastUserId && lastUserId !== userId) {
-          console.log('[Layout] Active user changed from', lastUserId, 'to', userId, '- clearing local storage cache')
-          const keysToRemove: string[] = []
-          for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i)
-            if (
-              key && (
-                key.startsWith('su_') ||
-                key.startsWith('cache_') ||
-                key.startsWith('shapeup_')
-              )
-            ) {
-              keysToRemove.push(key)
-            }
-          }
-          keysToRemove.forEach(k => localStorage.removeItem(k))
-        }
-        localStorage.setItem('su_last_logged_in_user_id', userId)
-      }
-    } catch (e) {
-      console.error('[Layout] Error checking user localStorage cache:', e)
-    }
-
-    if (!forceRefresh && loadedUserIdRef.current === userId) {
-      console.log('[Layout] Profile already loaded for userId:', userId, '- skipping DB fetch')
-      setBizLoading(false)
-      return
-    }
-
-    const loadId = ++loadIdRef.current
-
-    console.log('[Layout] loadProfileAndBusinesses called, userId:', userId)
-
-    try {
-      const [profileResult, bsResult, ownedResult] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', userId).single(),
-        supabase.from('business_staff').select('role, permissions, businesses (*)').eq('profile_id', userId),
-        supabase.from('businesses').select('*').eq('owner_id', userId),
-      ])
-
-      console.log('[Layout] profileResult:', profileResult.data, profileResult.error)
-      console.log('[Layout] bsResult:', bsResult.data, bsResult.error)
-      console.log('[Layout] ownedResult:', ownedResult.data, ownedResult.error)
-
-      // If a newer load has started, discard this result
-      if (loadId !== loadIdRef.current) return
-
-      const profile = profileResult.data
-      setUserProfile(profile || null)
-      if (profile) {
-        loadedUserIdRef.current = userId
-      }
-
-      // Combine and deduplicate businesses
-      const bizMap = new Map<string, any>()
-      bsResult.data?.forEach((item: any) => {
-        if (item.businesses) {
-          bizMap.set(item.businesses.id, item.businesses)
-        }
-      })
-      ownedResult.data?.forEach((biz: any) => {
-        bizMap.set(biz.id, biz)
-      })
-
-      const combined = Array.from(bizMap.values())
-      console.log('[Layout] combined businesses:', combined)
-      setBusinesses(combined)
-
-      // Find and set the active business
-      const activeBizId = profile?.active_business_id || combined[0]?.id
-      let selectedActiveBiz: any = null
-
-      if (activeBizId) {
-        const active = combined.find(b => b.id === activeBizId)
-        if (active) {
-          console.log('[Layout] active business found:', active.name)
-          setActiveBusiness(active)
-          selectedActiveBiz = active
-        } else {
-          // Fallback: direct lookup (edge case)
-          const { data: fallbackBiz } = await supabase
-            .from('businesses')
-            .select('*')
-            .eq('id', activeBizId)
-            .single()
-          if (loadId === loadIdRef.current && fallbackBiz) {
-            console.log('[Layout] fallback business:', fallbackBiz.name)
-            setActiveBusiness(fallbackBiz)
-            selectedActiveBiz = fallbackBiz
-          } else if (combined.length > 0) {
-            setActiveBusiness(combined[0])
-            selectedActiveBiz = combined[0]
-          }
-        }
-      } else if (combined.length > 0) {
-        console.log('[Layout] no active_business_id, auto-selecting first:', combined[0].name)
-        setActiveBusiness(combined[0])
-        selectedActiveBiz = combined[0]
-      } else {
-        console.log('[Layout] no businesses found at all')
-        setActiveBusiness(null)
-      }
-
-      // Check if WABA Official integration is active for this business
-      if (activeBizId) {
-        const { data: wabaInt } = await supabase
-          .from('integrations')
-          .select('is_active, api_credentials')
-          .eq('platform_name', 'waba_official')
-          .filter('api_credentials->>business_id', 'eq', activeBizId)
-          .maybeSingle()
-
-        const active = Boolean(
-          wabaInt &&
-          wabaInt.is_active === true
-        )
-        setIsWabaActive(active)
-      } else {
-        setIsWabaActive(false)
-      }
-
-      // Resolve role and permissions
-      const activeBs = bsResult.data?.find((item: any) => item.businesses?.id === activeBizId)
-      const isUserAdmin = profile?.role === 'admin' || activeBs?.role === 'admin' || ownedResult.data?.some((biz: any) => biz.id === activeBizId)
-      
-      let resolvedRole = 'staff'
-      let resolvedPerms: string[] = []
-
-      if (isUserAdmin) {
-        resolvedRole = 'admin'
-        resolvedPerms = ['full_access']
-      } else if (activeBs) {
-        resolvedRole = activeBs.role || 'staff'
-        resolvedPerms = activeBs.permissions || []
-      }
-
-      setCurrentUserRole(resolvedRole)
-      setCurrentUserPermissions(resolvedPerms)
-
-      // Save to localStorage cache for instant loading on next refresh
-      try {
-        if (typeof window !== 'undefined' && window.localStorage) {
-          if (profile) localStorage.setItem('su_cached_user_profile', JSON.stringify(profile))
-          if (combined) localStorage.setItem('su_cached_businesses', JSON.stringify(combined))
-          if (selectedActiveBiz) localStorage.setItem('su_cached_active_biz', JSON.stringify(selectedActiveBiz))
-          localStorage.setItem('su_cached_role', resolvedRole)
-          localStorage.setItem('su_cached_perms', JSON.stringify(resolvedPerms))
-        }
-      } catch (e) {
-        console.error('[Layout] Error setting user cache:', e)
-      }
-    } catch (err) {
-      console.error('[Layout] Error loading profile and businesses:', err)
-    } finally {
-      if (loadId === loadIdRef.current) {
-        setBizLoading(false)
-      }
-    }
-  }, [supabase])
-
-  // Load profile and businesses — onAuthStateChange as single source of truth
+  // Close switcher dropdown on click outside
   useEffect(() => {
-    // onAuthStateChange is the single source of truth.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        console.log('[Layout] onAuthStateChange event:', event, 'user:', session?.user?.id)
-        if (session?.user?.id) {
-          const force = event === 'SIGNED_IN' || event === 'USER_UPDATED' || session.user.id !== loadedUserIdRef.current
-          loadProfileAndBusinesses(session.user.id, force)
-        } else if (event === 'SIGNED_OUT' || (event === 'INITIAL_SESSION' && !session)) {
-          setIsLoggingOut(true)
-          loadedUserIdRef.current = null
-          setUserProfile(null)
-          setBusinesses([])
-          setActiveBusiness(null)
-          setCurrentUserRole(null)
-          setCurrentUserPermissions([])
-          setBizLoading(false)
-          if (!noSidebar && typeof window !== 'undefined') {
-            window.location.href = '/login'
-          }
-        }
-      }
-    )
-
-    return () => {
-      subscription.unsubscribe()
-    }
-  }, [supabase, loadProfileAndBusinesses, noSidebar])
-
-  // Sync session on navigation/pathname change when we are on a page with sidebar
-  useEffect(() => {
-    if (!noSidebar) {
-      if (!loadedUserIdRef.current) {
-        console.log('[Layout] Pathname changed to sidebar page without loaded profile. Re-checking session...')
-        supabase.auth.getSession().then(({ data: { session } }) => {
-          const sessionUserId = session?.user?.id
-
-          if (sessionUserId) {
-            console.log('[Layout] Loading profile for session user ID:', sessionUserId)
-            loadProfileAndBusinesses(sessionUserId)
-          } else {
-            setBizLoading(false)
-          }
-        })
-      }
-    }
-  }, [pathname, noSidebar, supabase, loadProfileAndBusinesses])
+    if (!isDropdownOpen) return
+    const closeDropdown = () => setIsDropdownOpen(false)
+    window.addEventListener('click', closeDropdown)
+    return () => window.removeEventListener('click', closeDropdown)
+  }, [isDropdownOpen])
 
   // Dynamic menu filtering based on permissions using centralized canAccessPath
   const allowedMenuItems = useMemo(() => {
@@ -545,116 +292,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </div>
   )
 
-  // Close switcher dropdown on click outside
-  useEffect(() => {
-    if (!isDropdownOpen) return
-    const closeDropdown = () => setIsDropdownOpen(false)
-    window.addEventListener('click', closeDropdown)
-    return () => window.removeEventListener('click', closeDropdown)
-  }, [isDropdownOpen])
-
-  const handleSwitchBusiness = async (bizId: string) => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-
-    const { error } = await supabase
-      .from('profiles')
-      .update({ active_business_id: bizId })
-      .eq('id', user.id)
-
-    if (error) {
-      alert("Gagal mengaktifkan bisnis: " + error.message)
-    } else {
-      // Clear ALL dashboard caches so the new business data loads fresh
-      const keysToRemove: string[] = []
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i)
-        if (key && (key.startsWith('su_dash_orders_') || key.startsWith('su_dash_metrics_') || key.startsWith('su_dash_ts_'))) {
-          keysToRemove.push(key)
-        }
-      }
-      keysToRemove.forEach(k => localStorage.removeItem(k))
-      window.location.reload()
-    }
-  }
-
-  const handleLogout = async () => {
-    setIsLoggingOut(true)
-
-    // 1. Clear local & session storage immediately
-    try {
-      if (typeof window !== 'undefined') {
-        sessionStorage.clear()
-        if (window.localStorage) {
-          const keysToRemove: string[] = []
-          for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i)
-            if (
-              key && (
-                key.startsWith('su_') ||
-                key.startsWith('cache_') ||
-                key.startsWith('shapeup_') ||
-                key.startsWith('sb-')
-              )
-            ) {
-              keysToRemove.push(key)
-            }
-          }
-          keysToRemove.forEach(k => localStorage.removeItem(k))
-        }
-      }
-    } catch (e) {
-      console.error('[Layout] LocalStorage clear error:', e)
-    }
-
-    loadedUserIdRef.current = null
-    setUserProfile(null)
-    setBusinesses([])
-    setActiveBusiness(null)
-    setCurrentUserRole(null)
-    setCurrentUserPermissions([])
-    setBizLoading(false)
-
-    // 2. Safety timeout guarantee: max 800ms to avoid infinite spinner lockup
-    const forceRedirectTimer = setTimeout(() => {
-      window.location.href = '/login'
-    }, 800)
-
-    try {
-      await Promise.allSettled([
-        supabase.auth.signOut(),
-        logoutAction()
-      ])
-    } catch (e) {
-      console.error('[Layout] SignOut error:', e)
-    } finally {
-      clearTimeout(forceRedirectTimer)
-      window.location.href = '/login'
-    }
-  }
-
-  const userContextValue = useMemo<UserContextType>(() => ({
-    userProfile,
-    activeBusiness,
-    businesses,
-    currentUserRole,
-    currentUserPermissions,
-    isWabaActive,
-    bizLoading,
-    refreshProfile: async (forceRefresh = true) => {
-      if (loadedUserIdRef.current) {
-        await loadProfileAndBusinesses(loadedUserIdRef.current, forceRefresh)
-      }
-    }
-  }), [userProfile, activeBusiness, businesses, currentUserRole, currentUserPermissions, isWabaActive, bizLoading, loadProfileAndBusinesses])
-
   if (noSidebar) {
     return (
       <html lang="en" suppressHydrationWarning>
         <body className={inter.className}>
-          <UserProvider value={userContextValue}>
-            {children}
-          </UserProvider>
+          {children}
         </body>
       </html>
     )
@@ -1140,9 +782,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* Page content */}
           <main style={{ flex: 1, overflowY: 'auto', padding: '28px 28px 48px' }}>
             <div style={{ maxWidth: '1600px', margin: '0 auto' }} className="su-fade-in">
-              <UserProvider value={userContextValue}>
-                {isAllowedPath ? children : accessDeniedScreen}
-              </UserProvider>
+              {isAllowedPath ? children : accessDeniedScreen}
             </div>
           </main>
         </div>
@@ -1161,5 +801,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         )}
       </body>
     </html>
+  )
+}
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <AppUserProvider>
+      <LayoutContent>{children}</LayoutContent>
+    </AppUserProvider>
   )
 }

@@ -2,6 +2,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { loginAction } from '@/app/auth/actions'
 import { useSearchParams } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
 
 function LoginForm() {
   const [email, setEmail] = useState('')
@@ -22,16 +23,35 @@ function LoginForm() {
     setLoading(true)
     setErrorMsg('')
 
-    const formData = new FormData()
-    formData.append('email', email)
-    formData.append('password', password)
+    try {
+      // 1. Try direct Supabase client login first for instant feedback & safety
+      const { error: authErr } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-    const res = await loginAction(formData)
+      if (authErr) {
+        setErrorMsg(authErr.message === 'Invalid login credentials' ? 'Email atau password salah.' : authErr.message)
+        setLoading(false)
+        return
+      }
 
-    if (res?.error) {
-      setErrorMsg(res.error)
-      setLoading(false)
-    } else {
+      // 2. Sync server action session cookies
+      const formData = new FormData()
+      formData.append('email', email)
+      formData.append('password', password)
+
+      try {
+        await loginAction(formData)
+      } catch (saErr) {
+        console.warn('[Login] Server action sync warning:', saErr)
+      }
+
+      // 3. Clear old session caches and redirect
+      if (typeof window !== 'undefined') {
+        sessionStorage.clear()
+      }
+
       const nextParam = searchParams.get('next')
       if (nextParam && nextParam.startsWith('/')) {
         window.location.href = nextParam
@@ -39,6 +59,10 @@ function LoginForm() {
         const isDismissed = localStorage.getItem('shapeup_onboarding_dismissed') === 'true'
         window.location.href = isDismissed ? '/dashboard' : '/onboarding'
       }
+    } catch (err: any) {
+      console.error('[Login] Login error:', err)
+      setErrorMsg(err?.message || 'Terjadi kesalahan saat masuk. Silakan coba lagi.')
+      setLoading(false)
     }
   }
 
