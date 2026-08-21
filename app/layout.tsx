@@ -580,10 +580,31 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   const handleLogout = async () => {
     setIsLoggingOut(true)
+
+    // 1. Clear local & session storage immediately
     try {
-      await supabase.auth.signOut()
+      if (typeof window !== 'undefined') {
+        sessionStorage.clear()
+        if (window.localStorage) {
+          const keysToRemove: string[] = []
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i)
+            if (
+              key && (
+                key.startsWith('su_') ||
+                key.startsWith('cache_') ||
+                key.startsWith('shapeup_') ||
+                key.startsWith('sb-')
+              )
+            ) {
+              keysToRemove.push(key)
+            }
+          }
+          keysToRemove.forEach(k => localStorage.removeItem(k))
+        }
+      }
     } catch (e) {
-      console.error('[Layout] Client signOut error:', e)
+      console.error('[Layout] LocalStorage clear error:', e)
     }
 
     loadedUserIdRef.current = null
@@ -594,32 +615,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     setCurrentUserPermissions([])
     setBizLoading(false)
 
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        const keysToRemove: string[] = []
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i)
-          if (
-            key && (
-              key.startsWith('su_') ||
-              key.startsWith('cache_') ||
-              key.startsWith('shapeup_')
-            )
-          ) {
-            keysToRemove.push(key)
-          }
-        }
-        keysToRemove.forEach(k => localStorage.removeItem(k))
-      }
-    } catch (e) {
-      console.error('[Layout] LocalStorage clear error:', e)
-    }
+    // 2. Safety timeout guarantee: max 800ms to avoid infinite spinner lockup
+    const forceRedirectTimer = setTimeout(() => {
+      window.location.href = '/login'
+    }, 800)
 
     try {
-      await logoutAction()
+      await Promise.allSettled([
+        supabase.auth.signOut(),
+        logoutAction()
+      ])
     } catch (e) {
-      console.error('[Layout] logoutAction error:', e)
+      console.error('[Layout] SignOut error:', e)
     } finally {
+      clearTimeout(forceRedirectTimer)
       window.location.href = '/login'
     }
   }
