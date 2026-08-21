@@ -28,19 +28,19 @@ function StatCard({
   )
 }
 
-export function StatsPanel({ customers }: { customers: any[] }) {
-  const total = customers.length
+export function StatsPanel({ customers, totalCount }: { customers: any[]; totalCount?: number }) {
+  const total = totalCount !== undefined && totalCount > 0 ? totalCount : customers.length
 
   const totalRevenue = customers.reduce((a, c) => a + (Number(c.ltv) || 0), 0)
-  const avgLTV = total > 0 ? totalRevenue / total : 0
+  const avgLTV = customers.length > 0 ? totalRevenue / customers.length : 0
 
   const withOrders = customers.filter(c => (c.total_order_count || 0) > 0)
   const avgAOV = withOrders.length > 0
     ? withOrders.reduce((a, c) => a + (Number(c.aov) || 0), 0) / withOrders.length
     : 0
 
-  const repeatRate = total > 0
-    ? (customers.filter(c => (c.total_order_count || 0) > 1).length / total) * 100
+  const repeatRate = customers.length > 0
+    ? (customers.filter(c => (c.total_order_count || 0) > 1).length / customers.length) * 100
     : 0
 
   const vipCount = customers.filter(c => (Number(c.ltv) || 0) >= 1000000).length

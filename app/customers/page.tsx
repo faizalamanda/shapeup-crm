@@ -253,58 +253,15 @@ export default function CustomerPage() {
       const total = count ?? 0
       setTotalCount(total)
       setCustomers(finalPageData)
+      setStatsCustomers(finalPageData)
 
-      // 2. Fetch Lightweight Summary Metrics for ALL Matching Customers (for 100% accurate Stats & Charts)
-      const STATS_CHUNK = 1000
-      let allStatsData: any[] = []
-
-      if (total > 0) {
-        const numChunks = Math.ceil(total / STATS_CHUNK)
-        const chunkPromises = []
-
-        for (let i = 0; i < numChunks; i++) {
-          const chunkFrom = i * STATS_CHUNK
-          const chunkTo = Math.min((i + 1) * STATS_CHUNK - 1, total - 1)
-
-          let statsQuery = supabase
-            .from('customer_metrics')
-            .select('ltv, aov, total_order_count, days_since_last_order, last_order_date, joined_at, last_order_status')
-            .eq('business_id', bid)
-
-          statsQuery = applyCustomerFilters(statsQuery, search, rulesArray, productCustomerIds)
-          statsQuery = statsQuery.range(chunkFrom, chunkTo)
-
-          chunkPromises.push(statsQuery)
-        }
-
-        const results = await Promise.all(chunkPromises)
-        for (const res of results) {
-          if (res.data) {
-            allStatsData.push(...res.data)
-          }
-        }
-      }
-
-      const finalStatsData = allStatsData.length > 0 ? allStatsData : (pageData || [])
-      setStatsCustomers(finalStatsData)
-
-      // Set overall business customer count (unfiltered)
       if (!search && rulesArray.length === 0) {
         setOverallTotalCount(total)
-      } else {
-        // Fetch unfiltered total count if currently overallTotalCount is not set or filtering is active
-        const { count: oCount } = await supabase
-          .from('customer_metrics')
-          .select('*', { count: 'exact', head: true })
-          .eq('business_id', bid)
-        if (oCount !== null && oCount !== undefined) {
-          setOverallTotalCount(oCount)
-        }
       }
 
       // Write cache only for default initial page
       if (!search && rulesArray.length === 0 && page === 1 && limit === 25) {
-        writeCache(bid, { data: finalPageData, statsData: finalStatsData, total, overallTotal: total })
+        writeCache(bid, { data: finalPageData, statsData: finalPageData, total, overallTotal: total })
       }
 
     } catch (err) {
@@ -336,11 +293,12 @@ export default function CustomerPage() {
 
     if (isDefaultFilters) {
       const cached = readCache(businessId)
-      if (cached) {
+      if (cached && cached.data && cached.data.length > 0) {
         setCustomers(cached.data)
-        setStatsCustomers(cached.statsData)
+        setStatsCustomers(cached.statsData || cached.data)
         setTotalCount(cached.total)
         setOverallTotalCount(cached.overallTotal || cached.total)
+        setIsFetching(false)
 
         const age = Date.now() - cached.ts
         if (age > STALE_RECHECK) {
@@ -569,7 +527,7 @@ export default function CustomerPage() {
       </div>
 
       {/* ── KPI Stats ─────────────────────────────────────────────────────── */}
-      <StatsPanel customers={statsCustomers} />
+      <StatsPanel customers={statsCustomers} totalCount={totalCount} />
 
       {/* ── Filter Bar ────────────────────────────────────────────────────── */}
       <FilterBar
