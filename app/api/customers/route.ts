@@ -40,7 +40,7 @@ export async function GET() {
     // 3. Fetch customers
     const { data: customers, error: fetchErr } = await supabaseAdmin
       .from('customers')
-      .select('id, name, phone, email, address_data')
+      .select('id, name, phone, email, address_data, metadata')
       .eq('business_id', businessId)
       .order('name', { ascending: true })
 

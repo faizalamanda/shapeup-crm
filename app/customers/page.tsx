@@ -23,7 +23,7 @@ type CachePayload = {
 }
 
 function getCacheKey(bid: string) {
-  return `su_customers_${bid}`
+  return `su_customers_v2_${bid}`
 }
 
 function readCache(bid: string): CachePayload | null {
@@ -176,6 +176,7 @@ export default function CustomerPage() {
   // Reset to page 1 when search or rules change
   useEffect(() => {
     setCurrentPage(1)
+    setStatsCustomers([])
   }, [debouncedSearch, serializedRules])
 
   // ─── Fetcher for Page Data & Lightweight Full Stats ────────────────────────
@@ -236,32 +237,80 @@ export default function CustomerPage() {
       let finalPageData = pageData || []
       if (finalPageData.length > 0) {
         const pageCustomerIds = finalPageData.map((c: any) => c.customer_id)
-        const { data: metaRows } = await supabase
-          .from('customers')
-          .select('id, metadata')
-          .in('id', pageCustomerIds)
-
-        if (metaRows && metaRows.length > 0) {
-          const metaMap = new Map(metaRows.map((m: any) => [m.id, m.metadata]))
-          finalPageData = finalPageData.map((c: any) => ({
-            ...c,
-            metadata: metaMap.get(c.customer_id) || {}
-          }))
+        try {
+          const metaRes = await fetch('/api/customers/metadata', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: pageCustomerIds })
+          })
+          const metaResult = await metaRes.json()
+          if (metaRes.ok && metaResult.metadataMap) {
+            finalPageData = finalPageData.map((c: any) => ({
+              ...c,
+              metadata: metaResult.metadataMap[c.customer_id] || {}
+            }))
+          }
+        } catch (mErr) {
+          console.error('[ShapeUp] Failed to fetch customer metadata:', mErr)
         }
       }
 
       const total = count ?? 0
       setTotalCount(total)
       setCustomers(finalPageData)
-      setStatsCustomers(finalPageData)
 
       if (!search && rulesArray.length === 0) {
         setOverallTotalCount(total)
       }
 
-      // Write cache only for default initial page
-      if (!search && rulesArray.length === 0 && page === 1 && limit === 25) {
-        writeCache(bid, { data: finalPageData, statsData: finalPageData, total, overallTotal: total })
+      // Unblock main UI immediately so user sees page 1 table in < 200ms
+      if (!background) {
+        setIsFetching(false)
+      }
+
+      // 2. Fetch 100% ACCURATE summary stats for ALL filtered customers in background (non-blocking)
+      if (page === 1) {
+        try {
+          const STATS_CHUNK = 1000
+          let allStatsData: any[] = []
+
+          if (total > 0) {
+            const numChunks = Math.ceil(total / STATS_CHUNK)
+            const chunkPromises = []
+
+            for (let i = 0; i < numChunks; i++) {
+              const chunkFrom = i * STATS_CHUNK
+              const chunkTo = Math.min((i + 1) * STATS_CHUNK - 1, total - 1)
+
+              let statsQuery = supabase
+                .from('customer_metrics')
+                .select('ltv, aov, total_order_count, days_since_last_order, last_order_date, joined_at, last_order_status')
+                .eq('business_id', bid)
+
+              statsQuery = applyCustomerFilters(statsQuery, search, rulesArray, productCustomerIds)
+              statsQuery = statsQuery.range(chunkFrom, chunkTo)
+
+              chunkPromises.push(statsQuery)
+            }
+
+            const results = await Promise.all(chunkPromises)
+            for (const res of results) {
+              if (res.data) {
+                allStatsData.push(...res.data)
+              }
+            }
+          }
+
+          const finalStatsData = allStatsData.length > 0 ? allStatsData : finalPageData
+          setStatsCustomers(finalStatsData)
+
+          // Write cache only for default initial page
+          if (!search && rulesArray.length === 0 && page === 1 && limit === 25) {
+            writeCache(bid, { data: finalPageData, statsData: finalStatsData, total, overallTotal: total })
+          }
+        } catch (statsErr) {
+          console.error('[ShapeUp] Non-fatal error loading 100% stats:', statsErr)
+        }
       }
 
     } catch (err) {
@@ -577,6 +626,7 @@ export default function CustomerPage() {
           customers={customers}
           onSelect={(customer) => setSelectedCustomer(customer)}
           onTagUpdate={handleTagUpdate}
+          isLoading={isFetching}
         />
         <Pagination
           currentPage={currentPage}

@@ -513,10 +513,12 @@ export function CustomerTable({
   customers,
   onSelect,
   onTagUpdate,
+  isLoading = false,
 }: {
   customers: any[]
   onSelect: (c: any) => void
   onTagUpdate?: (id: string, tags: string[]) => void
+  isLoading?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -620,7 +622,7 @@ export function CustomerTable({
     )
   }
 
-  if (sortedCustomers.length === 0) {
+  if (sortedCustomers.length === 0 && !isLoading) {
     return (
       <div style={{
         background: 'white',
@@ -637,7 +639,15 @@ export function CustomerTable({
   return (
     <div>
       {/* ── MOBILE VIEW: Shopee/Amazon Style Compact Cards (< 768px) ── */}
-      <div className="block md:hidden">
+      <div className="block md:hidden relative min-h-[150px]">
+        {isLoading && (
+          <div className="absolute inset-0 bg-white/85 backdrop-blur-[1px] z-20 flex flex-col items-center pt-8 gap-2 rounded-2xl animate-in fade-in duration-150 p-4">
+            <div className="w-7 h-7 border-3 border-blue-600 border-t-transparent rounded-full animate-spin shadow-sm" />
+            <span className="text-[10px] font-extrabold text-blue-700 uppercase tracking-widest bg-blue-50 border border-blue-200/90 px-2.5 py-0.5 rounded-full shadow-2xs">
+              Memuat Data Halaman...
+            </span>
+          </div>
+        )}
         {sortedCustomers.map((c, i) => (
           <CustomerMobileCard
             key={c.customer_id || c.id || i}
@@ -684,7 +694,15 @@ export function CustomerTable({
               </div>
 
               {/* Table Rows */}
-              <div ref={containerRef}>
+              <div ref={containerRef} className="relative min-h-[200px]">
+                {isLoading && (
+                  <div className="absolute inset-0 bg-white/85 backdrop-blur-[1px] z-20 flex flex-col items-center pt-12 gap-2.5 animate-in fade-in duration-150">
+                    <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin shadow-sm" />
+                    <span className="text-[11px] font-extrabold text-blue-700 uppercase tracking-widest bg-blue-50 border border-blue-200/90 px-3 py-1 rounded-full shadow-2xs">
+                      Memuat Data Halaman...
+                    </span>
+                  </div>
+                )}
                 {sortedCustomers.map((c, i) => (
                   <CustomerDesktopRow
                     key={c.customer_id || c.id || i}
