@@ -304,7 +304,7 @@ export default function CustomerPage() {
 
       // Write cache only for default initial page
       if (!search && rulesArray.length === 0 && page === 1 && limit === 25) {
-        writeCache(bid, { data: pageData || [], statsData: finalStatsData, total, overallTotal: total })
+        writeCache(bid, { data: finalPageData, statsData: finalStatsData, total, overallTotal: total })
       }
 
     } catch (err) {
@@ -374,6 +374,7 @@ export default function CustomerPage() {
     }
     loadProducts()
   }, [businessId, supabase])
+
   const availableStatuses = useMemo(() => {
     const defaultStatuses = ['completed', 'on-hold', 'pending', 'shipped', 'cancelled', 'return-request']
     const statuses = new Set<string>(defaultStatuses)
@@ -386,6 +387,9 @@ export default function CustomerPage() {
   const isLoadingFirst = isFetching && customers.length === 0
 
   const handleTagUpdate = useCallback((customerId: string, newTags: string[]) => {
+    if (businessId) {
+      try { sessionStorage.removeItem(getCacheKey(businessId)) } catch {}
+    }
     setCustomers(prev => prev.map(c => {
       if (c.customer_id === customerId || c.id === customerId) {
         return {
@@ -411,9 +415,12 @@ export default function CustomerPage() {
       }
       return prev
     })
-  }, [])
+  }, [businessId])
 
   const handleCustomerUpdate = useCallback((updatedCustomer: any) => {
+    if (businessId) {
+      try { sessionStorage.removeItem(getCacheKey(businessId)) } catch {}
+    }
     setCustomers(prev => prev.map(c => {
       if (c.customer_id === updatedCustomer.id || c.id === updatedCustomer.id) {
         let newAddressString = ''
@@ -473,7 +480,7 @@ export default function CustomerPage() {
       }
       return prev
     })
-  }, [])
+  }, [businessId])
 
   if (isLoadingFirst) {
     return (
