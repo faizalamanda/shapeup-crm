@@ -1,6 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
-
+import { getCachedUser } from './lib/auth'
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
 
@@ -68,24 +68,8 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // Call getUser() with a safety timeout (4 seconds) to prevent Vercel Middleware
-  // GATEWAY_TIMEOUT (MIDDLEWARE_INVOCATION_TIMEOUT) if Supabase is slow.
-  const getUserWithTimeout = async () => {
-    try {
-      const authPromise = supabase.auth.getUser()
-      const timeoutPromise = new Promise<{ data: { user: null }; error: any }>((resolve) =>
-        setTimeout(() => resolve({ data: { user: null }, error: new Error('Auth timeout') }), 4000)
-      )
-      return await Promise.race([authPromise, timeoutPromise])
-    } catch (err: any) {
-      return { data: { user: null }, error: err }
-    }
-  }
-
-  const {
-    data: { user },
-    error: authError,
-  } = await getUserWithTimeout()
+  // Retrieve cached user (or fetch once) with timeout handling
+  const { user, error: authError } = await getCachedUser(request, supabase);
 
   const isTimeoutOrNetworkError =
     authError?.message === 'Auth timeout' ||
