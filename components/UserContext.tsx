@@ -65,9 +65,9 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
 
   const [currentUserRole, setCurrentUserRole] = useState<string | null>(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
-      return localStorage.getItem('su_cached_role') || 'admin'
+      return localStorage.getItem('su_cached_role') || null
     }
-    return 'admin'
+    return null
   })
 
   const [currentUserPermissions, setCurrentUserPermissions] = useState<string[]>(() => {

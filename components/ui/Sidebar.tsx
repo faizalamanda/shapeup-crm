@@ -1,11 +1,25 @@
 "use client"
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 export const Sidebar = () => {
   const [isOpen, setIsOpen] = useState(false)
   const pathname = usePathname()
+
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden'
+      document.documentElement.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+      document.documentElement.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+      document.documentElement.style.overflow = ''
+    }
+  }, [isOpen])
 
   const menuItems = [
     { name: 'Dashboard', path: '/' },

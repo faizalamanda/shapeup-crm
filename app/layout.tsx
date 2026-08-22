@@ -201,6 +201,21 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({})
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
 
+  // Prevent background scrolling when mobile menu is open
+  useEffect(() => {
+    if (isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden'
+      document.documentElement.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+      document.documentElement.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+      document.documentElement.style.overflow = ''
+    }
+  }, [isMobileMenuOpen])
+
   useEffect(() => {
     const updated: Record<string, boolean> = {}
     menuItems.forEach(item => {
@@ -214,6 +229,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
       }
     })
     setExpandedMenus(prev => ({ ...prev, ...updated }))
+    setIsMobileMenuOpen(false)
   }, [pathname])
 
   // Close switcher dropdown on click outside
@@ -260,7 +276,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   // Route protection path check using centralized canAccessPath
   const isAllowedPath = useMemo(() => {
     if (noSidebar || isLoggingOut) return true
-    if (bizLoading && !currentUserRole) return false
+    if (bizLoading && (!userProfile || !currentUserRole)) return false
     return canAccessPath(pathname, {
       role: currentUserRole,
       permissions: currentUserPermissions,
@@ -337,7 +353,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   }
 
   // Intercept layout to display loading screen on initial login when cache is empty
-  if (bizLoading && !currentUserRole) {
+  if (bizLoading && (!userProfile || !currentUserRole)) {
     return (
       <html lang="en" suppressHydrationWarning>
         <head>
@@ -827,6 +843,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
         {isMobileMenuOpen && (
           <div
             onClick={() => setIsMobileMenuOpen(false)}
+            onTouchMove={(e) => e.preventDefault()}
             style={{
               position: 'fixed', inset: 0,
               background: 'rgba(28,28,26,0.5)', backdropFilter: 'blur(2px)',
