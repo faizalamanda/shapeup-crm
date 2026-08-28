@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { ExpenseDetailModal } from './components/ExpenseDetailModal'
 import { Pagination } from '../components/Pagination'
 import { useUserContext } from '@/components/UserContext'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 const STANDARD_CATEGORIES = [
   { key: 'marketing', name: 'Pemasaran & Promosi', code: '503100', icon: '📢', desc: 'Biaya iklan, sosmed, brosur, promo' },
@@ -116,6 +117,10 @@ export default function ExpensesPage() {
   const [bulkPayPaymentAccountId, setBulkPayPaymentAccountId] = useState('')
   const [bulkPayNotes, setBulkPayNotes] = useState('')
   const [bulkPaySubmitLoading, setBulkPaySubmitLoading] = useState(false)
+
+  // Attach mobile back button handler for pay modals
+  useModalBackHandler(isPayModalOpen, () => setIsPayModalOpen(false))
+  useModalBackHandler(isBulkPayModalOpen, () => setIsBulkPayModalOpen(false))
 
   useEffect(() => {
     setMounted(true)

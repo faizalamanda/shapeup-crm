@@ -2,10 +2,13 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 export const Sidebar = () => {
   const [isOpen, setIsOpen] = useState(false)
   const pathname = usePathname()
+
+  useModalBackHandler(isOpen, () => setIsOpen(false))
 
   useEffect(() => {
     if (isOpen) {

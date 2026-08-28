@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 type Account = {
   id: string
@@ -38,6 +39,9 @@ interface ExpenseDetailModalProps {
 export function ExpenseDetailModal({ expense, accounts, onClose }: ExpenseDetailModalProps) {
   const [mounted, setMounted] = useState(false)
   const [activeTab, setActiveTab] = useState<'details' | 'journal'>('details')
+
+  // Enable back button to close detail modal on mobile PWA
+  useModalBackHandler(true, onClose)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [transactions, setTransactions] = useState<any[]>([])
