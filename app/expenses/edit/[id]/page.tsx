@@ -4,6 +4,8 @@ import { useParams, useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
+import { getAccounts } from '@/lib/services/accountService'
+import { getSuppliers } from '@/lib/services/supplierService'
 
 const STANDARD_CATEGORIES = [
   { key: 'marketing', name: 'Pemasaran & Promosi', code: '503100', icon: '📢', desc: 'Biaya iklan, sosmed, brosur, promo' },
@@ -151,25 +153,16 @@ export default function EditExpensePage() {
           const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
           setActiveBizName(biz?.name || 'Bisnis Saya')
 
-          // Fetch accounts
-          const { data: accData, error: accErr } = await supabase
-            .from('accounts')
-            .select('id, code, name, type')
-            .eq('business_id', businessId)
-            .order('code', { ascending: true })
+          // Fetch accounts, suppliers, and current expense in PARALLEL
+          const [accResult, supResult, expRes] = await Promise.all([
+            getAccounts(businessId),
+            getSuppliers(businessId),
+            fetch(`/api/expenses?id=${expenseId}`)
+          ])
 
-          if (accErr) throw accErr
-          setAccounts(accData || [])
+          setAccounts(accResult.data || [])
+          setSuppliers(supResult.data || [])
 
-          // Fetch suppliers/vendors
-          const supRes = await fetch('/api/suppliers')
-          if (supRes.ok) {
-            const supData = await supRes.json()
-            setSuppliers(supData || [])
-          }
-
-          // Fetch the current expense
-          const expRes = await fetch(`/api/expenses?id=${expenseId}`)
           if (!expRes.ok) throw new Error('Gagal memuat detail pengeluaran')
           const expData = await expRes.json()
 

@@ -3,8 +3,11 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
+import { useAccounts, Account } from '@/hooks/useAccounts'
+import { useSuppliers, Supplier } from '@/hooks/useSuppliers'
+import { invalidateSuppliersCache } from '@/lib/services/supplierService'
 
 const STANDARD_CATEGORIES = [
   { key: 'marketing', name: 'Pemasaran & Promosi', code: '503100', icon: '📢', desc: 'Biaya iklan, sosmed, brosur, promo' },
@@ -38,34 +41,18 @@ const getCategoryDisplay = (account: { code: string; name: string } | null | und
   }
 }
 
-type Account = {
-  id: string
-  code: string
-  name: string
-  type: string
-}
-
-type Supplier = {
-  id: string
-  name: string
-  email?: string | null
-  phone?: string | null
-  address?: string | null
-}
-
 export default function NewExpensePage() {
   const { activeBusiness } = useUserContext()
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
   const router = useRouter()
 
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [activeBizId, setActiveBizId] = useState<string | null>(null)
-  const [activeBizName, setActiveBizName] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const activeBizId = activeBusiness?.id || null
+  const activeBizName = activeBusiness?.name || 'Bisnis Saya'
+
+  // Decoupled SWR hooks for Accounts and Suppliers (0ms instant loading)
+  const { accounts, loading: accountsLoading } = useAccounts(activeBizId)
+  const { suppliers, setSuppliers, loading: suppliersLoading } = useSuppliers(activeBizId)
+
+  const loading = accountsLoading || suppliersLoading
   const [mounted, setMounted] = useState(false)
   const [submitLoading, setSubmitLoading] = useState(false)
 
@@ -129,41 +116,6 @@ export default function NewExpensePage() {
       document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [])
-
-  // Load Active Business Profile, Accounts, and Suppliers
-  useEffect(() => {
-    async function loadData() {
-      if (!activeBusiness?.id) return
-      const businessId = activeBusiness.id
-      setActiveBizId(businessId)
-      setActiveBizName(activeBusiness.name || 'Bisnis Saya')
-
-      try {
-        // Fetch all accounts
-        const { data: accData, error: accErr } = await supabase
-          .from('accounts')
-          .select('id, code, name, type')
-          .eq('business_id', businessId)
-          .order('code', { ascending: true })
-
-        if (accErr) throw accErr
-        setAccounts(accData || [])
-
-        // Fetch all suppliers/vendors
-        const supRes = await fetch('/api/suppliers')
-        if (supRes.ok) {
-          const supData = await supRes.json()
-          setSuppliers(supData || [])
-        }
-      } catch (err) {
-        console.error('Error loading new expense data:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    loadData()
-  }, [activeBusiness, supabase])
 
   // Filter accounts
   const categoryAccounts = useMemo(() => {
@@ -304,6 +256,9 @@ export default function NewExpensePage() {
 
       const created = await res.json()
       setSuppliers(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
+      if (activeBizId) {
+        invalidateSuppliersCache(activeBizId)
+      }
       setFormVendorName(created.name)
       setVendorSearch(created.name)
       setIsVendorModalOpen(false)
