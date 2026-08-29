@@ -1,5 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { calculateProductHpp } from './recipeHelper'
+import { generateItemizedHppJournalLines } from './hppHelper'
 
 // Memory caches to optimize performance during batch operations
 const accountCache: Record<string, Record<string, string>> = {}
@@ -330,13 +331,62 @@ export async function syncOrderToLedger(
     }
 
     // 5. Handle transitions based on current status
-    if (status === 'processing' || status === 'shipped') {
-      // 5.1. SALES POSTING
-      if (!salesTx) {
-        // Deduct stock
-        await adjustStock('deduct')
+    // 4.5. Fetch business WooCommerce integration trigger settings
+    let stockReductionStatuses = ['shipped', 'completed']
+    let journalHppStatuses = ['shipped', 'completed']
 
-        // Insert transaction
+    try {
+      // Fetch both global and platform-specific settings in 1 batch query
+      const { data: configRows } = await supabase
+        .from('integrations')
+        .select('platform_name, api_credentials')
+        .in('platform_name', ['global', platform.toLowerCase()])
+        .filter('api_credentials->>business_id', 'eq', businessId)
+
+      const mapConfig: Record<string, any> = {}
+      if (Array.isArray(configRows)) {
+        configRows.forEach((row) => {
+          mapConfig[row.platform_name] = row.api_credentials || {}
+        })
+      }
+
+      const globalCreds = mapConfig['global'] || {}
+      const platformCreds = mapConfig[platform.toLowerCase()] || {}
+
+      // Check if platform has custom override (default: use global)
+      const useGlobal = platformCreds.use_global_settings !== false
+
+      if (!useGlobal && Array.isArray(platformCreds.stock_reduction_status) && platformCreds.stock_reduction_status.length > 0) {
+        stockReductionStatuses = platformCreds.stock_reduction_status
+      } else if (Array.isArray(globalCreds.global_stock_reduction_status) && globalCreds.global_stock_reduction_status.length > 0) {
+        stockReductionStatuses = globalCreds.global_stock_reduction_status
+      }
+
+      if (!useGlobal && Array.isArray(platformCreds.journal_hpp_status) && platformCreds.journal_hpp_status.length > 0) {
+        journalHppStatuses = platformCreds.journal_hpp_status
+      } else if (Array.isArray(globalCreds.global_journal_hpp_status) && globalCreds.global_journal_hpp_status.length > 0) {
+        journalHppStatuses = globalCreds.global_journal_hpp_status
+      }
+    } catch (cfgErr) {
+      console.warn('Failed to load trigger settings hierarchy:', cfgErr)
+    }
+
+    const isSalesTriggered = stockReductionStatuses.includes(status) || 
+                             journalHppStatuses.includes(status) || 
+                             status === 'completed' || 
+                             status === 'shipped' ||
+                             status === 'processing'
+
+    // 5. Handle transitions based on current status
+    if (isSalesTriggered && (status === 'processing' || status === 'shipped' || status === 'completed')) {
+      // 5.1. SALES POSTING & ITEMIZED HPP LOGIC (ODOO ERP STANDARD)
+      if (!salesTx) {
+        // Deduct stock if stock reduction status matches
+        if (stockReductionStatuses.includes(status) || status === 'completed') {
+          await adjustStock('deduct')
+        }
+
+        // Insert transaction header
         const { data: newSalesTx, error: insSalesErr } = await supabase
           .from('transactions')
           .insert({
@@ -386,7 +436,7 @@ export async function syncOrderToLedger(
           })
         }
 
-        // Credit: Pendapatan Penjualan POS
+        // Credit: Pendapatan Penjualan
         if (sub > 0) {
           journalLines.push({
             transaction_id: newSalesTx.id,
@@ -423,31 +473,64 @@ export async function syncOrderToLedger(
           })
         }
 
-        if (totalCogs > 0) {
-          journalLines.push(
-            {
-              transaction_id: newSalesTx.id,
-              account_id: accountMap['501000'], // HPP
-              debit: totalCogs,
-              credit: 0
-            },
-            {
-              transaction_id: newSalesTx.id,
-              account_id: accountMap['102000'], // Persediaan Barang
-              debit: 0,
-              credit: totalCogs
-            }
+        // World-Class Odoo Style Itemized HPP Lines (Debit HPP & Credit Persediaan per line item)
+        if (journalHppStatuses.includes(status) || status === 'completed') {
+          const { journalLines: hppLines } = await generateItemizedHppJournalLines(
+            matchedProducts,
+            accountMap,
+            newSalesTx.id,
+            supabase
           )
+
+          if (hppLines.length > 0) {
+            journalLines.push(...hppLines)
+          }
         }
 
-        const { error: insLinesErr } = await supabase.from('journal_lines').insert(journalLines)
+        // Sanitize journalLines to only include standard database columns
+        const dbJournalLines = journalLines.map((line: any) => ({
+          transaction_id: line.transaction_id,
+          account_id: line.account_id,
+          debit: line.debit || 0,
+          credit: line.credit || 0
+        }))
+
+        const { error: insLinesErr } = await supabase.from('journal_lines').insert(dbJournalLines)
         if (insLinesErr) throw insLinesErr
+      } else if (salesTx) {
+        // Deduct stock if stock reduction status matches now and stock wasn't deducted yet
+        if (stockReductionStatuses.includes(status) || status === 'completed') {
+          await adjustStock('deduct')
+        }
+
+        // Fallback: If salesTx already exists but has no HPP & Persediaan lines, generate them now
+        const existingLines = salesTx.journal_lines || []
+        const hasHppLine = existingLines.some((jl: any) => jl.account_id === accountMap['501000'])
+        if (!hasHppLine && (journalHppStatuses.includes(status) || status === 'completed')) {
+          const { journalLines: hppLines } = await generateItemizedHppJournalLines(
+            matchedProducts,
+            accountMap,
+            salesTx.id,
+            supabase
+          )
+          if (hppLines.length > 0) {
+            const dbHppLines = hppLines.map((line: any) => ({
+              transaction_id: line.transaction_id,
+              account_id: line.account_id,
+              debit: line.debit || 0,
+              credit: line.credit || 0
+            }))
+            await supabase.from('journal_lines').insert(dbHppLines)
+          }
+        }
       }
 
       // 5.2. PAYMENT POSTING
-      if (!isCod) {
-        // Transfer/Online payment: should record payment immediately
+      // Payment entry (Kas/Bank vs Piutang Usaha) should ONLY be created when order is paid/completed
+      const isOrderPaid = status === 'completed' || (platform === 'WooCommerce' && !isCod && status !== 'pending')
+      if (isOrderPaid) {
         if (!paymentTx) {
+          const payAccountCode = isCod ? '101000' : '101200'
           const { data: newPayTx, error: insPayErr } = await supabase
             .from('transactions')
             .insert({
@@ -464,7 +547,7 @@ export async function syncOrderToLedger(
           const paymentLines = [
             {
               transaction_id: newPayTx.id,
-              account_id: accountMap['101200'], // Bank
+              account_id: accountMap[payAccountCode], // Kas/Bank
               debit: parseFloat(grand_total) || 0,
               credit: 0
             },
@@ -479,9 +562,8 @@ export async function syncOrderToLedger(
           const { error: insPayLinesErr } = await supabase.from('journal_lines').insert(paymentLines)
           if (insPayLinesErr) throw insPayLinesErr
         }
-      } else {
-        // COD should NOT have payment posting in processing
-        // If it exists (e.g. status was moved completed -> processing), reverse it!
+      } else if (isCod && status !== 'completed') {
+        // COD should NOT have payment posting in processing/shipped. Reverse if exists.
         if (paymentTx && !reversalPaymentTx) {
           const { data: revPayTx, error: revPayErr } = await supabase
             .from('transactions')
@@ -506,153 +588,6 @@ export async function syncOrderToLedger(
           const { error: insRevLinesErr } = await supabase.from('journal_lines').insert(reversalLines)
           if (insRevLinesErr) throw insRevLinesErr
         }
-      }
-    } 
-    
-    else if (status === 'completed') {
-      // 5.1. Ensure Sales Posting exists
-      if (!salesTx) {
-        await adjustStock('deduct')
-
-        const { data: newSalesTx, error: insSalesErr } = await supabase
-          .from('transactions')
-          .insert({
-            business_id: businessId,
-            order_id: orderId,
-            date: order.order_date_utc || order.order_date || new Date().toISOString(),
-            description: `Penjualan ${platform} #${orderNumber}`
-          })
-          .select('id')
-          .single()
-
-        if (insSalesErr) throw insSalesErr
-
-        const sub = parseFloat(order.subtotal) || 0
-        const ship = parseFloat(order.shipping_cost) || 0
-        const fee = parseFloat(order.other_fees) || 0
-        const disc = parseFloat(order.discount_amount) || 0
-        const grand = parseFloat(order.grand_total) || 0
-
-        const journalLines: any[] = []
-
-        // Debit: Piutang Usaha
-        if (grand > 0) {
-          journalLines.push({
-            transaction_id: newSalesTx.id,
-            account_id: accountMap['103000'],
-            debit: grand,
-            credit: 0
-          })
-        } else if (grand < 0) {
-          journalLines.push({
-            transaction_id: newSalesTx.id,
-            account_id: accountMap['103000'],
-            debit: 0,
-            credit: Math.abs(grand)
-          })
-        }
-
-        // Debit: Potongan Penjualan / Diskon
-        if (disc > 0) {
-          journalLines.push({
-            transaction_id: newSalesTx.id,
-            account_id: accountMap['401100'],
-            debit: disc,
-            credit: 0
-          })
-        }
-
-        // Credit: Pendapatan Penjualan POS
-        if (sub > 0) {
-          journalLines.push({
-            transaction_id: newSalesTx.id,
-            account_id: accountMap['401000'],
-            debit: 0,
-            credit: sub
-          })
-        }
-
-        // Credit: Pendapatan Ongkir
-        if (ship > 0) {
-          journalLines.push({
-            transaction_id: newSalesTx.id,
-            account_id: accountMap['402000'],
-            debit: 0,
-            credit: ship
-          })
-        }
-
-        // Credit/Debit: Pendapatan Lain-lain / Admin
-        if (fee > 0) {
-          journalLines.push({
-            transaction_id: newSalesTx.id,
-            account_id: accountMap['403000'],
-            debit: 0,
-            credit: fee
-          })
-        } else if (fee < 0) {
-          journalLines.push({
-            transaction_id: newSalesTx.id,
-            account_id: accountMap['403000'],
-            debit: Math.abs(fee),
-            credit: 0
-          })
-        }
-
-        if (totalCogs > 0) {
-          journalLines.push(
-            {
-              transaction_id: newSalesTx.id,
-              account_id: accountMap['501000'],
-              debit: totalCogs,
-              credit: 0
-            },
-            {
-              transaction_id: newSalesTx.id,
-              account_id: accountMap['102000'],
-              debit: 0,
-              credit: totalCogs
-            }
-          )
-        }
-
-        const { error: insLinesErr } = await supabase.from('journal_lines').insert(journalLines)
-        if (insLinesErr) throw insLinesErr
-      }
-
-      // 5.2. Ensure Payment Posting exists
-      if (!paymentTx) {
-        const payAccountCode = isCod ? '101000' : '101200'
-        const { data: newPayTx, error: insPayErr } = await supabase
-          .from('transactions')
-          .insert({
-            business_id: businessId,
-            order_id: orderId,
-            date: paymentDate,
-            description: `Pembayaran ${platform} #${orderNumber}`
-          })
-          .select('id')
-          .single()
-
-        if (insPayErr) throw insPayErr
-
-        const paymentLines = [
-          {
-            transaction_id: newPayTx.id,
-            account_id: accountMap[payAccountCode], // Kas/Bank
-            debit: parseFloat(grand_total) || 0,
-            credit: 0
-          },
-          {
-            transaction_id: newPayTx.id,
-            account_id: accountMap['103000'], // Piutang
-            debit: 0,
-            credit: parseFloat(grand_total) || 0
-          }
-        ]
-
-        const { error: insPayLinesErr } = await supabase.from('journal_lines').insert(paymentLines)
-        if (insPayLinesErr) throw insPayLinesErr
       }
     }
 

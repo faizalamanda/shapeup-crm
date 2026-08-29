@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabaseServer'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { invalidateInvoicesCache } from '../route'
+import { syncOrderToLedger } from '@/lib/orderLedger'
 
 export async function GET(
   req: Request,
@@ -500,105 +501,9 @@ export async function PUT(
         }
       }
 
-      // Deduct stock for new items and calculate COGS
-      let totalCogs = 0
-      const newItems = Array.isArray(finalItems) ? finalItems : []
-      const newProductIds = newItems.map((i: any) => i.product_id).filter(Boolean)
-      if (newProductIds.length > 0) {
-        const { data: dbNewProducts } = await supabaseAdmin
-          .from('products')
-          .select('id, cost_price, stock_type, stock_quantity, type')
-          .in('id', newProductIds)
-        if (dbNewProducts) {
-          const newProdMap = new Map<string, any>()
-          dbNewProducts.forEach(p => newProdMap.set(p.id, p))
-          for (const item of newItems) {
-            const dbProd = newProdMap.get(item.product_id)
-            if (dbProd) {
-              if (dbProd.stock_type === 'tracked') {
-                await supabaseAdmin
-                  .from('products')
-                  .update({ stock_quantity: Math.max(0, dbProd.stock_quantity - Number(item.quantity)) })
-                  .eq('id', dbProd.id)
-              }
-              if (dbProd.type === 'physical' && dbProd.cost_price > 0) {
-                totalCogs += dbProd.cost_price * Number(item.quantity)
-              }
-            }
-          }
-        }
-      }
-
-      // Update the ledger publishing transaction
-      let { data: tx } = await supabaseAdmin
-        .from('transactions')
-        .select('id')
-        .eq('order_id', id)
-        .like('description', 'Penerbitan Invoice%')
-        .maybeSingle()
-
-      if (!tx) {
-        // If the transaction didn't exist for some reason, create it
-        const { data: newTx, error: txErr } = await supabaseAdmin
-          .from('transactions')
-          .insert({
-            business_id: businessId,
-            order_id: id,
-            date: updated.order_date,
-            description: `Penerbitan Invoice #${updated.order_number}`
-          })
-          .select('id')
-          .single()
-        if (txErr) throw txErr
-        tx = newTx
-      }
-
-      if (tx) {
-        // Delete old journal lines
-        await supabaseAdmin
-          .from('journal_lines')
-          .delete()
-          .eq('transaction_id', tx.id)
-
-        // Insert new journal lines
-        const journalLines = [
-          {
-            transaction_id: tx.id,
-            account_id: accountMap['103000'], // Piutang Usaha
-            debit: Number(updated.grand_total),
-            credit: 0
-          },
-          {
-            transaction_id: tx.id,
-            account_id: accountMap['401000'], // Pendapatan
-            debit: 0,
-            credit: Number(updated.grand_total)
-          }
-        ]
-
-        if (totalCogs > 0) {
-          journalLines.push(
-            {
-              transaction_id: tx.id,
-              account_id: accountMap['501000'], // HPP
-              debit: totalCogs,
-              credit: 0
-            },
-            {
-              transaction_id: tx.id,
-              account_id: accountMap['102000'], // Persediaan
-              debit: 0,
-              credit: totalCogs
-            }
-          )
-        }
-
-        const { error: jlErr } = await supabaseAdmin
-          .from('journal_lines')
-          .insert(journalLines)
-
-        if (jlErr) throw jlErr
-      }
+      // Sync Invoice to Ledger using unified orderLedger service
+      // Stok & Jurnal HPP strictly obey global trigger settings (shipped / completed vs processing)
+      await syncOrderToLedger(id, supabaseAdmin)
     }
 
     // If status is changed back to Draft ('pending')

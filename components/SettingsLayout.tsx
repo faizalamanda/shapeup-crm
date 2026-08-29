@@ -54,6 +54,14 @@ function SettingsContent({ children, title, subtitle }: SettingsLayoutProps) {
       group: 'Integrasi & Ekosistem',
       items: [
         {
+          id: 'inventory',
+          name: 'Stok & Jurnal Global',
+          href: '/settings/inventory',
+          icon: '📦',
+          description: 'Default trigger stok & HPP terpusat',
+          isActive: pathname.startsWith('/settings/inventory'),
+        },
+        {
           id: 'integrations',
           name: 'Integrasi & Plugin',
           href: '/settings/integrations',

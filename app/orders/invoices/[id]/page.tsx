@@ -1495,7 +1495,12 @@ export default function InvoiceDetailPage() {
                               <tr key={jl.id} className="text-slate-700">
                                 <td className="py-1">
                                   <div className="font-bold">{jl.accounts?.code}</div>
-                                  <div className="text-[9px] text-gray-400">{jl.accounts?.name}</div>
+                                  <div className="text-[9px] text-gray-400 font-semibold">{jl.accounts?.name}</div>
+                                  {(jl.accounts?.code === '501000' || jl.accounts?.code === '102000') && invoice?.items_json && Array.isArray(invoice.items_json) && (
+                                    <div className="text-[9px] text-purple-700 font-mono mt-0.5 leading-tight">
+                                      {invoice.items_json.map((it: any) => `${it.sku ? `[${it.sku}] ` : ''}${it.name || 'Produk'} - ${it.quantity || 1} Pcs`).join(', ')}
+                                    </div>
+                                  )}
                                 </td>
                                 <td className="py-1 text-right font-semibold text-emerald-700">
                                   {jl.debit > 0 ? formatIDR(jl.debit) : '-'}

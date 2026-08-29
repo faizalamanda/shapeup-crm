@@ -42,11 +42,22 @@ export default function IntegrationsSettingsPage() {
   }, [selectedPlugin])
 
   // WooCommerce Form State
-  const [wooForm, setWooForm] = useState({
+  const [wooForm, setWooForm] = useState<{
+    store_url: string
+    consumer_key: string
+    consumer_secret: string
+    is_active: boolean
+    use_global_settings: boolean
+    stock_reduction_status: string[]
+    journal_hpp_status: string[]
+  }>({
     store_url: '',
     consumer_key: '',
     consumer_secret: '',
     is_active: true,
+    use_global_settings: true,
+    stock_reduction_status: ['shipped', 'completed'],
+    journal_hpp_status: ['shipped', 'completed']
   })
 
   // YCloud Form State
@@ -116,11 +127,22 @@ export default function IntegrationsSettingsPage() {
         const woo = map['woocommerce']
         if (woo) {
           const creds = woo.api_credentials || {}
+          let stockStatuses = creds.stock_reduction_status
+          if (!Array.isArray(stockStatuses)) {
+            stockStatuses = creds.stock_reduction_status ? [creds.stock_reduction_status] : ['shipped', 'completed']
+          }
+          let journalStatuses = creds.journal_hpp_status
+          if (!Array.isArray(journalStatuses)) {
+            journalStatuses = creds.journal_hpp_status ? [creds.journal_hpp_status] : ['shipped', 'completed']
+          }
           setWooForm({
             store_url: woo.store_url || '',
             consumer_key: creds.consumer_key || '',
             consumer_secret: creds.consumer_secret || '',
             is_active: woo.is_active ?? true,
+            use_global_settings: creds.use_global_settings ?? true,
+            stock_reduction_status: stockStatuses,
+            journal_hpp_status: journalStatuses
           })
         }
 
@@ -182,6 +204,9 @@ export default function IntegrationsSettingsPage() {
           consumer_key: wooForm.consumer_key,
           consumer_secret: wooForm.consumer_secret,
           is_active: wooForm.is_active,
+          use_global_settings: wooForm.use_global_settings,
+          stock_reduction_status: wooForm.stock_reduction_status,
+          journal_hpp_status: wooForm.journal_hpp_status,
         }),
       })
 
@@ -711,66 +736,67 @@ export default function IntegrationsSettingsPage() {
 
       {/* WOOCOMMERCE CONFIGURATION MODAL / DRAWER */}
       {selectedPlugin?.id === 'woocommerce' && mounted && createPortal(
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] overflow-y-auto overscroll-contain">
-          <div className="bg-white border border-[#E2E2DC] rounded-xl p-6 md:p-8 max-w-2xl w-full shadow-xl my-8 space-y-6">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 z-[9999]">
+          <div className="bg-white border border-[#E2E2DC] rounded-2xl max-w-2xl w-full max-h-[90vh] shadow-2xl flex flex-col overflow-hidden">
             
-            {/* Modal Header */}
-            <div className="flex items-start justify-between border-b border-[#E2E2DC] pb-4">
+            {/* Modal Header (Fixed Top) */}
+            <div className="px-6 py-4 border-b border-[#E2E2DC] flex items-center justify-between shrink-0 bg-white">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-purple-50 border border-purple-100 text-purple-600 font-extrabold flex items-center justify-center text-xl">
+                <div className="w-10 h-10 rounded-xl bg-purple-50 border border-purple-100 text-purple-600 font-extrabold flex items-center justify-center text-xl shrink-0">
                   🛍️
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-[#1C1C1A]">Integrasi WooCommerce</h2>
+                  <h2 className="text-base sm:text-lg font-bold text-[#1C1C1A]">Integrasi WooCommerce</h2>
                   <p className="text-xs text-[#6B6B63]">
                     Unit Bisnis: <span className="font-bold text-blue-600">{activeBusinessName}</span>
                   </p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => {
                   setSelectedPlugin(null)
                   setTestResult(null)
                 }}
-                className="text-[#A8A89E] hover:text-[#1C1C1A] text-lg font-bold cursor-pointer"
+                className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-[#A8A89E] hover:text-[#1C1C1A] text-lg font-bold transition-all cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            {/* Webhook Notice Section */}
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="text-base">⚡</span>
-                <h4 className="font-bold text-xs text-amber-900 uppercase tracking-wider">
-                  URL Webhook Otomatis (WordPress &gt; WooCommerce &gt; Settings &gt; Webhooks)
-                </h4>
+            {/* Scrollable Modal Body */}
+            <form id="wooFormEl" onSubmit={handleSaveWooCommerce} className="flex-1 overflow-y-auto p-6 space-y-5">
+              
+              {/* Webhook Notice Section */}
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">⚡</span>
+                  <h4 className="font-bold text-xs text-amber-900 uppercase tracking-wider">
+                    URL Webhook Otomatis (WordPress &gt; WooCommerce &gt; Settings &gt; Webhooks)
+                  </h4>
+                </div>
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  Salin URL di bawah ini lalu masukkan saat membuat Webhook baru pada toko WooCommerce Anda (topik: <b>Order Created</b>).
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    readOnly
+                    value={wooWebhookUrl}
+                    className="w-full px-3 py-2 bg-white border border-amber-300 rounded-lg font-mono text-xs text-[#1C1C1A] select-all outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleCopyWebhook(wooWebhookUrl)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold px-4 py-2 transition-all shrink-0 cursor-pointer"
+                  >
+                    {copiedWebhook ? '✅ Tersalin!' : '📋 Salin'}
+                  </button>
+                </div>
               </div>
-              <p className="text-xs text-amber-800 leading-relaxed">
-                Salin URL di bawah ini lalu masukkan saat membuat Webhook baru pada toko WooCommerce Anda (topik: <b>Order Created</b>).
-              </p>
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="text"
-                  readOnly
-                  value={wooWebhookUrl}
-                  className="w-full px-3 py-2 bg-white border border-amber-300 rounded-lg font-mono text-xs text-[#1C1C1A] select-all outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => handleCopyWebhook(wooWebhookUrl)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold px-4 py-2 transition-all shrink-0 cursor-pointer"
-                >
-                  {copiedWebhook ? '✅ Tersalin!' : '📋 Salin'}
-                </button>
-              </div>
-            </div>
-
-            {/* Form Settings */}
-            <form onSubmit={handleSaveWooCommerce} className="space-y-4">
 
               {/* Switch Active Integration */}
-              <div className="p-4 bg-[#F7F7F5] border border-[#E2E2DC] rounded-lg flex items-center justify-between">
+              <div className="p-4 bg-[#F7F7F5] border border-[#E2E2DC] rounded-xl flex items-center justify-between">
                 <div>
                   <label className="font-bold text-xs text-[#1C1C1A] block">
                     Status Integrasi Webhook
@@ -785,7 +811,7 @@ export default function IntegrationsSettingsPage() {
                   type="button"
                   onClick={() => setWooForm({ ...wooForm, is_active: !wooForm.is_active })}
                   className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                    wooForm.is_active ? 'bg-green-600 text-white' : 'bg-slate-200 text-slate-700'
+                    wooForm.is_active ? 'bg-green-600 text-white shadow-xs' : 'bg-slate-200 text-slate-700'
                   }`}
                 >
                   {wooForm.is_active ? '✓ AKTIF' : '⏸️ NONAKTIF'}
@@ -795,18 +821,17 @@ export default function IntegrationsSettingsPage() {
               {/* Store URL */}
               <div>
                 <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
-                  URL Toko WordPress / WooCommerce <span className="text-red-500">*</span>
+                  URL Toko WordPress / WooCommerce <span className="text-slate-400 font-normal text-[10px] lowercase">(opsional)</span>
                 </label>
                 <input
                   type="url"
-                  required
                   placeholder="https://tokoanda.com"
                   value={wooForm.store_url}
                   onChange={(e) => setWooForm({ ...wooForm, store_url: e.target.value })}
                   className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                 />
                 <span className="text-[10px] text-[#6B6B63] mt-1 block">
-                  Domain utama website WooCommerce Anda.
+                  Domain utama website WooCommerce Anda (diperlukan jika menggunakan sinkronisasi REST API).
                 </span>
               </div>
 
@@ -814,11 +839,10 @@ export default function IntegrationsSettingsPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
-                    Consumer Key (REST API) <span className="text-red-500">*</span>
+                    Consumer Key (REST API) <span className="text-slate-400 font-normal text-[10px] lowercase">(opsional)</span>
                   </label>
                   <input
                     type="text"
-                    required
                     placeholder="ck_xxxxxxxx..."
                     value={wooForm.consumer_key}
                     onChange={(e) => setWooForm({ ...wooForm, consumer_key: e.target.value })}
@@ -828,17 +852,158 @@ export default function IntegrationsSettingsPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
-                    Consumer Secret (REST API) <span className="text-red-500">*</span>
+                    Consumer Secret (REST API) <span className="text-slate-400 font-normal text-[10px] lowercase">(opsional)</span>
                   </label>
                   <input
                     type="password"
-                    required
                     placeholder="cs_xxxxxxxx..."
                     value={wooForm.consumer_secret}
                     onChange={(e) => setWooForm({ ...wooForm, consumer_secret: e.target.value })}
                     className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white font-mono"
                   />
                 </div>
+              </div>
+
+              {/* SECTION: TRIGGER PENGURANGAN STOK & JURNAL HPP */}
+              <div className="p-4 bg-purple-50/60 border border-purple-200 rounded-xl space-y-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">📦</span>
+                    <h4 className="font-bold text-xs text-purple-900 uppercase tracking-wider">
+                      Pengaturan Trigger Stok & Jurnal HPP
+                    </h4>
+                  </div>
+                  <p className="text-[11px] text-purple-800 mt-1 leading-relaxed">
+                    Tentukan apakah WooCommerce mengikuti aturan terpusat dari <b>Settings &gt; Stok & Jurnal Global</b> atau menggunakan status khusus.
+                  </p>
+                </div>
+
+                {/* Mode Selector Toggle */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setWooForm({ ...wooForm, use_global_settings: true })}
+                    className={`p-3 rounded-xl border text-left text-xs font-bold transition-all cursor-pointer ${
+                      wooForm.use_global_settings
+                        ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>🌐 Gunakan Default Global</span>
+                      {wooForm.use_global_settings && <span>✓</span>}
+                    </div>
+                    <p className={`text-[10px] mt-1 font-normal ${wooForm.use_global_settings ? 'text-purple-100' : 'text-slate-500'}`}>
+                      Mengikuti aturan otomatis terpusat dari menu Settings &gt; Stok & Jurnal Global.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setWooForm({ ...wooForm, use_global_settings: false })}
+                    className={`p-3 rounded-xl border text-left text-xs font-bold transition-all cursor-pointer ${
+                      !wooForm.use_global_settings
+                        ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span>⚙️ Custom Status Khusus WooCommerce</span>
+                      {!wooForm.use_global_settings && <span>✓</span>}
+                    </div>
+                    <p className={`text-[10px] mt-1 font-normal ${!wooForm.use_global_settings ? 'text-purple-100' : 'text-slate-500'}`}>
+                      Menentukan status khusus WooCommerce yang berbeda dari default global.
+                    </p>
+                  </button>
+                </div>
+
+                {wooForm.use_global_settings ? (
+                  <div className="p-3 bg-purple-100/70 border border-purple-200 rounded-lg text-xs text-purple-900 leading-relaxed font-medium">
+                    ✨ WooCommerce saat ini diset menggunakan <b>Default Global</b>. Anda tidak perlu mengatur ulang status di sini. Jika Anda ingin mengubah aturan global untuk seluruh toko & POS, buka menu <a href="/settings/inventory" target="_blank" className="font-bold underline text-purple-950">Settings &gt; Stok & Jurnal Global</a>.
+                  </div>
+                ) : (
+                  <div className="space-y-4 pt-2 border-t border-purple-200">
+                    {/* Status Pengurangan Stok */}
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
+                        Pengurangan Stok Produk Saat Status Pesanan:
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { id: 'shipped', label: 'Shipped (Dikirim)' },
+                          { id: 'completed', label: 'Completed (Selesai)' },
+                          { id: 'processing', label: 'Processing (Diproses)' },
+                          { id: 'on-hold', label: 'On-Hold (Ditahan)' }
+                        ].map((st) => {
+                          const isChecked = wooForm.stock_reduction_status.includes(st.id)
+                          return (
+                            <button
+                              key={st.id}
+                              type="button"
+                              onClick={() => {
+                                const current = wooForm.stock_reduction_status
+                                const updated = isChecked
+                                  ? current.filter(s => s !== st.id)
+                                  : [...current, st.id]
+                                setWooForm({ ...wooForm, stock_reduction_status: updated.length ? updated : ['shipped', 'completed'] })
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer ${
+                                isChecked
+                                  ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                              }`}
+                            >
+                              {isChecked ? '✓ ' : ''}{st.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <span className="text-[10px] text-slate-500 block">
+                        Pilih status WooCommerce khusus yang memicu pengurangan stok fisik produk di database CRM.
+                      </span>
+                    </div>
+
+                    {/* Status Pembaruan Jurnal Item HPP & Persediaan */}
+                    <div className="space-y-1.5 pt-2 border-t border-purple-200/60">
+                      <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
+                        Pembaruan Jurnal Item (HPP & Persediaan) Saat Status Pesanan:
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { id: 'shipped', label: 'Shipped (Dikirim)' },
+                          { id: 'completed', label: 'Completed (Selesai)' },
+                          { id: 'processing', label: 'Processing (Diproses)' },
+                          { id: 'on-hold', label: 'On-Hold (Ditahan)' }
+                        ].map((st) => {
+                          const isChecked = wooForm.journal_hpp_status.includes(st.id)
+                          return (
+                            <button
+                              key={st.id}
+                              type="button"
+                              onClick={() => {
+                                const current = wooForm.journal_hpp_status
+                                const updated = isChecked
+                                  ? current.filter(s => s !== st.id)
+                                  : [...current, st.id]
+                                setWooForm({ ...wooForm, journal_hpp_status: updated.length ? updated : ['shipped', 'completed'] })
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer ${
+                                isChecked
+                                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                              }`}
+                            >
+                              {isChecked ? '✓ ' : ''}{st.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <span className="text-[10px] text-slate-500 block">
+                        Pencatatan rincian HPP line item terpisah (Debit HPP & Kredit Persediaan per produk) akan terbit saat status khusus ini terpenuhi.
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Test Connection Banner Result */}
@@ -858,27 +1023,32 @@ export default function IntegrationsSettingsPage() {
                 </div>
               )}
 
-              {/* Action Buttons */}
-              <div className="pt-4 border-t border-[#E2E2DC] flex flex-col sm:flex-row gap-3">
-                <button
-                  type="button"
-                  disabled={testingConnection}
-                  onClick={handleTestConnection}
-                  className="flex-1 px-4 py-2.5 border border-[#E2E2DC] hover:bg-[#F7F7F5] text-[#1C1C1A] rounded-lg text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
-                >
-                  {testingConnection ? '🔄 Menguji REST API...' : '🧪 Uji Koneksi REST API'}
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
-                >
-                  {saving ? 'Menyimpan...' : '💾 Simpan Pengaturan'}
-                </button>
-              </div>
-
+              <button type="submit" className="hidden" />
             </form>
+
+            {/* Modal Footer (Fixed Bottom) */}
+            <div className="px-6 py-4 border-t border-[#E2E2DC] bg-[#F9F9F8] flex flex-col sm:flex-row gap-3 shrink-0">
+              <button
+                type="button"
+                disabled={testingConnection}
+                onClick={handleTestConnection}
+                className="flex-1 px-4 py-2.5 border border-[#E2E2DC] bg-white hover:bg-[#F7F7F5] text-[#1C1C1A] rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-xs"
+              >
+                {testingConnection ? '🔄 Menguji REST API...' : '🧪 Uji Koneksi REST API'}
+              </button>
+
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => {
+                  const formEl = document.getElementById('wooFormEl') as HTMLFormElement
+                  if (formEl) formEl.requestSubmit()
+                }}
+                className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+              >
+                {saving ? 'Menyimpan...' : '💾 Simpan Pengaturan'}
+              </button>
+            </div>
 
           </div>
         </div>,
@@ -887,66 +1057,67 @@ export default function IntegrationsSettingsPage() {
 
       {/* YCLOUD (WHATSAPP) CONFIGURATION MODAL / DRAWER */}
       {selectedPlugin?.id === 'ycloud' && mounted && createPortal(
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] overflow-y-auto overscroll-contain">
-          <div className="bg-white border border-[#E2E2DC] rounded-xl p-6 md:p-8 max-w-2xl w-full shadow-xl my-8 space-y-6">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 z-[9999]">
+          <div className="bg-white border border-[#E2E2DC] rounded-2xl max-w-2xl w-full max-h-[90vh] shadow-2xl flex flex-col overflow-hidden">
             
-            {/* Modal Header */}
-            <div className="flex items-start justify-between border-b border-[#E2E2DC] pb-4">
+            {/* Modal Header (Fixed Top) */}
+            <div className="px-6 py-4 border-b border-[#E2E2DC] flex items-center justify-between shrink-0 bg-white">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-600 font-extrabold flex items-center justify-center text-xl">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-600 font-extrabold flex items-center justify-center text-xl shrink-0">
                   💬
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-[#1C1C1A]">Integrasi YCloud WhatsApp API</h2>
+                  <h2 className="text-base sm:text-lg font-bold text-[#1C1C1A]">Integrasi YCloud WhatsApp API</h2>
                   <p className="text-xs text-[#6B6B63]">
                     Unit Bisnis: <span className="font-bold text-emerald-600">{activeBusinessName}</span>
                   </p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => {
                   setSelectedPlugin(null)
                   setTestResult(null)
                 }}
-                className="text-[#A8A89E] hover:text-[#1C1C1A] text-lg font-bold cursor-pointer"
+                className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-[#A8A89E] hover:text-[#1C1C1A] text-lg font-bold transition-all cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            {/* Webhook Notice Section */}
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="text-base">⚡</span>
-                <h4 className="font-bold text-xs text-emerald-900 uppercase tracking-wider">
-                  URL Webhook Inbound Message / Status (YCloud Dashboard &gt; Webhooks)
-                </h4>
+            {/* Scrollable Modal Body */}
+            <form id="ycloudFormEl" onSubmit={handleSaveYCloud} className="flex-1 overflow-y-auto p-6 space-y-5">
+              
+              {/* Webhook Notice Section */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">⚡</span>
+                  <h4 className="font-bold text-xs text-emerald-900 uppercase tracking-wider">
+                    URL Webhook Inbound Message / Status (YCloud Dashboard &gt; Webhooks)
+                  </h4>
+                </div>
+                <p className="text-xs text-emerald-800 leading-relaxed">
+                  Gunakan URL di bawah ini untuk menerima pesan masuk atau pembaruan status pesan WhatsApp di dashboard YCloud Anda.
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    readOnly
+                    value={ycloudWebhookUrl}
+                    className="w-full px-3 py-2 bg-white border border-emerald-300 rounded-lg font-mono text-xs text-[#1C1C1A] select-all outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleCopyWebhook(ycloudWebhookUrl)}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold px-4 py-2 transition-all shrink-0 cursor-pointer"
+                  >
+                    {copiedWebhook ? '✅ Tersalin!' : '📋 Salin'}
+                  </button>
+                </div>
               </div>
-              <p className="text-xs text-emerald-800 leading-relaxed">
-                Gunakan URL di bawah ini untuk menerima pesan masuk atau pembaruan status pesan WhatsApp di dashboard YCloud Anda.
-              </p>
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="text"
-                  readOnly
-                  value={ycloudWebhookUrl}
-                  className="w-full px-3 py-2 bg-white border border-emerald-300 rounded-lg font-mono text-xs text-[#1C1C1A] select-all outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => handleCopyWebhook(ycloudWebhookUrl)}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold px-4 py-2 transition-all shrink-0 cursor-pointer"
-                >
-                  {copiedWebhook ? '✅ Tersalin!' : '📋 Salin'}
-                </button>
-              </div>
-            </div>
-
-            {/* Form Settings */}
-            <form onSubmit={handleSaveYCloud} className="space-y-4">
 
               {/* Switch Active Integration */}
-              <div className="p-4 bg-[#F7F7F5] border border-[#E2E2DC] rounded-lg flex items-center justify-between">
+              <div className="p-4 bg-[#F7F7F5] border border-[#E2E2DC] rounded-xl flex items-center justify-between">
                 <div>
                   <label className="font-bold text-xs text-[#1C1C1A] block">
                     Status Integrasi YCloud
@@ -961,7 +1132,7 @@ export default function IntegrationsSettingsPage() {
                   type="button"
                   onClick={() => setYcloudForm({ ...ycloudForm, is_active: !ycloudForm.is_active })}
                   className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                    ycloudForm.is_active ? 'bg-green-600 text-white' : 'bg-slate-200 text-slate-700'
+                    ycloudForm.is_active ? 'bg-green-600 text-white shadow-xs' : 'bg-slate-200 text-slate-700'
                   }`}
                 >
                   {ycloudForm.is_active ? '✓ AKTIF' : '⏸️ NONAKTIF'}
@@ -971,12 +1142,12 @@ export default function IntegrationsSettingsPage() {
               {/* API Key */}
               <div>
                 <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
-                  YCloud API Key <span className="text-red-500">*</span>
+                  YCloud API Key {ycloudForm.is_active && <span className="text-red-500">*</span>}
                 </label>
                 <div className="relative flex items-center">
                   <input
                     type={showYcloudKey ? 'text' : 'password'}
-                    required
+                    required={ycloudForm.is_active}
                     placeholder="yc_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                     value={ycloudForm.api_key}
                     onChange={(e) => setYcloudForm({ ...ycloudForm, api_key: e.target.value })}
@@ -1030,27 +1201,32 @@ export default function IntegrationsSettingsPage() {
                 </div>
               )}
 
-              {/* Action Buttons */}
-              <div className="pt-4 border-t border-[#E2E2DC] flex flex-col sm:flex-row gap-3">
-                <button
-                  type="button"
-                  disabled={testingConnection}
-                  onClick={handleTestYCloudConnection}
-                  className="flex-1 px-4 py-2.5 border border-[#E2E2DC] hover:bg-[#F7F7F5] text-[#1C1C1A] rounded-lg text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
-                >
-                  {testingConnection ? '🔄 Menguji API YCloud...' : '🧪 Uji Koneksi YCloud API'}
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
-                >
-                  {saving ? 'Menyimpan...' : '💾 Simpan Pengaturan YCloud'}
-                </button>
-              </div>
-
+              <button type="submit" className="hidden" />
             </form>
+
+            {/* Modal Footer (Fixed Bottom) */}
+            <div className="px-6 py-4 border-t border-[#E2E2DC] bg-[#F9F9F8] flex flex-col sm:flex-row gap-3 shrink-0">
+              <button
+                type="button"
+                disabled={testingConnection}
+                onClick={handleTestYCloudConnection}
+                className="flex-1 px-4 py-2.5 border border-[#E2E2DC] bg-white hover:bg-[#F7F7F5] text-[#1C1C1A] rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-xs"
+              >
+                {testingConnection ? '🔄 Menguji API YCloud...' : '🧪 Uji Koneksi YCloud API'}
+              </button>
+
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => {
+                  const formEl = document.getElementById('ycloudFormEl') as HTMLFormElement
+                  if (formEl) formEl.requestSubmit()
+                }}
+                className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+              >
+                {saving ? 'Menyimpan...' : '💾 Simpan Pengaturan YCloud'}
+              </button>
+            </div>
 
           </div>
         </div>,
@@ -1059,66 +1235,67 @@ export default function IntegrationsSettingsPage() {
 
       {/* WABA OFFICIAL CONFIGURATION MODAL / DRAWER */}
       {selectedPlugin?.id === 'waba_official' && mounted && createPortal(
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] overflow-y-auto overscroll-contain">
-          <div className="bg-white border border-[#E2E2DC] rounded-xl p-6 md:p-8 max-w-2xl w-full shadow-xl my-8 space-y-6">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 z-[9999]">
+          <div className="bg-white border border-[#E2E2DC] rounded-2xl max-w-2xl w-full max-h-[90vh] shadow-2xl flex flex-col overflow-hidden">
             
-            {/* Modal Header */}
-            <div className="flex items-start justify-between border-b border-[#E2E2DC] pb-4">
+            {/* Modal Header (Fixed Top) */}
+            <div className="px-6 py-4 border-b border-[#E2E2DC] flex items-center justify-between shrink-0 bg-white">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-green-50 border border-green-100 text-green-600 font-extrabold flex items-center justify-center text-xl">
+                <div className="w-10 h-10 rounded-xl bg-green-50 border border-green-100 text-green-600 font-extrabold flex items-center justify-center text-xl shrink-0">
                   📱
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-[#1C1C1A]">Integrasi WABA Official (Meta)</h2>
+                  <h2 className="text-base sm:text-lg font-bold text-[#1C1C1A]">Integrasi WABA Official (Meta)</h2>
                   <p className="text-xs text-[#6B6B63]">
                     Unit Bisnis: <span className="font-bold text-green-600">{activeBusinessName}</span>
                   </p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => {
                   setSelectedPlugin(null)
                   setTestResult(null)
                 }}
-                className="text-[#A8A89E] hover:text-[#1C1C1A] text-lg font-bold cursor-pointer"
+                className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-[#A8A89E] hover:text-[#1C1C1A] text-lg font-bold transition-all cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            {/* Webhook Notice Section */}
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="text-base">⚡</span>
-                <h4 className="font-bold text-xs text-green-900 uppercase tracking-wider">
-                  URL Webhook Callback (Meta Developer Portal &gt; WhatsApp &gt; Configuration)
-                </h4>
+            {/* Scrollable Modal Body */}
+            <form id="wabaFormEl" onSubmit={handleSaveWaba} className="flex-1 overflow-y-auto p-6 space-y-5">
+              
+              {/* Webhook Notice Section */}
+              <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">⚡</span>
+                  <h4 className="font-bold text-xs text-green-900 uppercase tracking-wider">
+                    URL Webhook Callback (Meta Developer Portal &gt; WhatsApp &gt; Configuration)
+                  </h4>
+                </div>
+                <p className="text-xs text-green-800 leading-relaxed">
+                  Masukkan Webhook Callback URL dan Verify Token di bawah ini pada Meta App Dashboard Anda untuk menerima pesan masuk.
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    readOnly
+                    value={wabaWebhookUrl}
+                    className="w-full px-3 py-2 bg-white border border-green-300 rounded-lg font-mono text-xs text-[#1C1C1A] select-all outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleCopyWebhook(wabaWebhookUrl)}
+                    className="bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold px-4 py-2 transition-all shrink-0 cursor-pointer"
+                  >
+                    {copiedWebhook ? '✅ Tersalin!' : '📋 Salin'}
+                  </button>
+                </div>
               </div>
-              <p className="text-xs text-green-800 leading-relaxed">
-                Masukkan Webhook Callback URL dan Verify Token di bawah ini pada Meta App Dashboard Anda untuk menerima pesan masuk.
-              </p>
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="text"
-                  readOnly
-                  value={wabaWebhookUrl}
-                  className="w-full px-3 py-2 bg-white border border-green-300 rounded-lg font-mono text-xs text-[#1C1C1A] select-all outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => handleCopyWebhook(wabaWebhookUrl)}
-                  className="bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold px-4 py-2 transition-all shrink-0 cursor-pointer"
-                >
-                  {copiedWebhook ? '✅ Tersalin!' : '📋 Salin'}
-                </button>
-              </div>
-            </div>
-
-            {/* Form Settings */}
-            <form onSubmit={handleSaveWaba} className="space-y-4">
 
               {/* Switch Active Integration */}
-              <div className="p-4 bg-[#F7F7F5] border border-[#E2E2DC] rounded-lg flex items-center justify-between">
+              <div className="p-4 bg-[#F7F7F5] border border-[#E2E2DC] rounded-xl flex items-center justify-between">
                 <div>
                   <label className="font-bold text-xs text-[#1C1C1A] block">
                     Status Integrasi WABA Official
@@ -1133,7 +1310,7 @@ export default function IntegrationsSettingsPage() {
                   type="button"
                   onClick={() => setWabaForm({ ...wabaForm, is_active: !wabaForm.is_active })}
                   className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                    wabaForm.is_active ? 'bg-green-600 text-white' : 'bg-slate-200 text-slate-700'
+                    wabaForm.is_active ? 'bg-green-600 text-white shadow-xs' : 'bg-slate-200 text-slate-700'
                   }`}
                 >
                   {wabaForm.is_active ? '✓ AKTIF' : '⏸️ NONAKTIF'}
@@ -1143,12 +1320,12 @@ export default function IntegrationsSettingsPage() {
               {/* Meta Access Token */}
               <div>
                 <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
-                  Meta Access Token (System User Permanent Token) <span className="text-red-500">*</span>
+                  Meta Access Token (System User Permanent Token) {wabaForm.is_active && <span className="text-red-500">*</span>}
                 </label>
                 <div className="relative flex items-center">
                   <input
                     type={showWabaToken ? 'text' : 'password'}
-                    required
+                    required={wabaForm.is_active}
                     placeholder="EAAGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                     value={wabaForm.access_token}
                     onChange={(e) => setWabaForm({ ...wabaForm, access_token: e.target.value })}
@@ -1172,11 +1349,11 @@ export default function IntegrationsSettingsPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
-                    Phone Number ID <span className="text-red-500">*</span>
+                    Phone Number ID {wabaForm.is_active && <span className="text-red-500">*</span>}
                   </label>
                   <input
                     type="text"
-                    required
+                    required={wabaForm.is_active}
                     placeholder="123456789012345"
                     value={wabaForm.phone_number_id}
                     onChange={(e) => setWabaForm({ ...wabaForm, phone_number_id: e.target.value.trim() })}
@@ -1207,11 +1384,11 @@ export default function IntegrationsSettingsPage() {
               {/* Webhook Verify Token */}
               <div>
                 <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
-                  Webhook Verify Token <span className="text-red-500">*</span>
+                  Webhook Verify Token {wabaForm.is_active && <span className="text-red-500">*</span>}
                 </label>
                 <input
                   type="text"
-                  required
+                  required={wabaForm.is_active}
                   placeholder="shapeup_waba_verify_token_123"
                   value={wabaForm.webhook_verify_token}
                   onChange={(e) => setWabaForm({ ...wabaForm, webhook_verify_token: e.target.value.trim() })}
@@ -1239,27 +1416,32 @@ export default function IntegrationsSettingsPage() {
                 </div>
               )}
 
-              {/* Action Buttons */}
-              <div className="pt-4 border-t border-[#E2E2DC] flex flex-col sm:flex-row gap-3">
-                <button
-                  type="button"
-                  disabled={testingConnection}
-                  onClick={handleTestWabaConnection}
-                  className="flex-1 px-4 py-2.5 border border-[#E2E2DC] hover:bg-[#F7F7F5] text-[#1C1C1A] rounded-lg text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
-                >
-                  {testingConnection ? '🔄 Menguji Meta Graph API...' : '🧪 Uji Koneksi Meta API'}
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex-1 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
-                >
-                  {saving ? 'Menyimpan...' : '💾 Simpan Pengaturan WABA'}
-                </button>
-              </div>
-
+              <button type="submit" className="hidden" />
             </form>
+
+            {/* Modal Footer (Fixed Bottom) */}
+            <div className="px-6 py-4 border-t border-[#E2E2DC] bg-[#F9F9F8] flex flex-col sm:flex-row gap-3 shrink-0">
+              <button
+                type="button"
+                disabled={testingConnection}
+                onClick={handleTestWabaConnection}
+                className="flex-1 px-4 py-2.5 border border-[#E2E2DC] bg-white hover:bg-[#F7F7F5] text-[#1C1C1A] rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-xs"
+              >
+                {testingConnection ? '🔄 Menguji Meta Graph API...' : '🧪 Uji Koneksi Meta API'}
+              </button>
+
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => {
+                  const formEl = document.getElementById('wabaFormEl') as HTMLFormElement
+                  if (formEl) formEl.requestSubmit()
+                }}
+                className="flex-1 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+              >
+                {saving ? 'Menyimpan...' : '💾 Simpan Pengaturan WABA'}
+              </button>
+            </div>
 
           </div>
         </div>,

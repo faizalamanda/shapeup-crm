@@ -22,6 +22,7 @@ type JournalLine = {
   debit: number
   credit: number
   line_desc?: string
+  description?: string
   accounts?: Account
 }
 
@@ -1999,7 +2000,12 @@ export default function TransactionsPage() {
                             {(detailTransaction.journal_lines || []).map((jl, idx) => (
                               <tr key={idx} className="hover:bg-gray-50">
                                 <td className="p-3 font-mono font-bold text-gray-700">{jl.accounts?.code || '---'}</td>
-                                <td className="p-3 font-semibold text-gray-900">{jl.accounts?.name || 'Akun'} ({jl.accounts?.type || ''})</td>
+                                 <td className="p-3 font-semibold text-gray-900">
+                                   <div>{jl.accounts?.name || 'Akun'} ({jl.accounts?.type || ''})</div>
+                                   {jl.description && (
+                                     <div className="text-[11px] font-normal text-[#6B6B63] mt-0.5">{jl.description}</div>
+                                   )}
+                                 </td>
                                 <td className="p-3 text-right font-mono font-bold text-green-700">
                                   {jl.debit > 0 ? formatCurrencyIDR(jl.debit) : '-'}
                                 </td>
