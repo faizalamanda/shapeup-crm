@@ -641,6 +641,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
                 <div key={item.name} style={{ marginBottom: '2px' }}>
                   <Link
                     href={item.href}
+                    replace={pathname !== '/onboarding'}
                     onClick={(e) => {
                       if (item.children && item.children.length > 0) {
                         e.preventDefault()
@@ -716,6 +717,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
                           <Link
                             key={child.href}
                             href={child.href}
+                            replace={pathname !== '/onboarding'}
                             onClick={() => setIsMobileMenuOpen(false)}
                             style={{
                               display: 'block', padding: '6px 10px', borderRadius: '6px',

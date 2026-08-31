@@ -13,7 +13,6 @@ const ACTION_KEYWORDS = new Set(['new', 'create', 'edit', 'import', 'add', 'copy
  */
 function isSubPageSegment(segment: string): boolean {
   if (ACTION_KEYWORDS.has(segment.toLowerCase())) return true
-  // Check if segment is numeric ID, UUID, or contains digits (e.g., order ID, customer ID)
   if (!isNaN(Number(segment))) return true
   if (/^[0-9a-fA-F-]{8,}$/.test(segment)) return true
   return false
@@ -23,7 +22,6 @@ function isSubPageSegment(segment: string): boolean {
  * Determine parent path or onboarding destination dynamically based on URL segments
  */
 export function getParentPath(pathname: string): string | null {
-  // Ignore auth pages, root, and onboarding
   if (!pathname || pathname === '/' || pathname === '/onboarding' || pathname === '/login' || pathname === '/register') {
     return null
   }
@@ -51,24 +49,20 @@ export function getParentPath(pathname: string): string | null {
   const secondLastSegment = segments[segments.length - 2]
 
   if (secondLastSegment === 'edit') {
-    // e.g. /orders/invoices/123/edit -> /orders/invoices
     return '/' + segments.slice(0, -2).join('/')
   }
 
   if (isSubPageSegment(lastSegment)) {
-    // e.g. /orders/invoices/new -> /orders/invoices
     return '/' + segments.slice(0, -1).join('/')
   }
 
-  // Fallback for multi-segment sub-menus (e.g. /customers/cohorts/returning -> /onboarding)
   return '/onboarding'
 }
 
 /**
- * Hook to handle mobile / browser Back button like a native app.
- * Pressing Back on sub-pages (e.g. /orders/invoices/new) returns to parent menu (/orders/invoices).
- * Pressing Back on menu pages (e.g. /orders, /expenses) returns to /onboarding.
- * Modals automatically take precedence and close without navigating away.
+ * Hook to handle mobile / browser Back button like a native app on Mobile screens (< 768px or PWA).
+ * On Mobile: Pressing Back on sub-pages returns to parent menu, menu pages return to /onboarding.
+ * On Desktop (>= 768px): Preserves standard linear browser back history.
  */
 export function useMobileBackToHome() {
   const pathname = usePathname()
@@ -81,8 +75,12 @@ export function useMobileBackToHome() {
 
   useEffect(() => {
     const handlePopState = (event: PopStateEvent) => {
-      // 1. If a modal is open (detected via history state modalStateKey), do not redirect.
-      // useModalBackHandler will handle closing the modal.
+      // 1. Check if on Desktop screen (width >= 768px). On desktop, allow normal browser back navigation.
+      if (typeof window !== 'undefined' && window.innerWidth >= 768) {
+        return
+      }
+
+      // 2. If a modal is open (modalStateKey present), do not redirect.
       if (event.state?.modalStateKey || window.history.state?.modalStateKey) {
         return
       }
@@ -91,8 +89,11 @@ export function useMobileBackToHome() {
       const targetParent = getParentPath(activePath)
 
       if (targetParent) {
-        // Prevent default browser stack traversal and replace with target parent or onboarding
-        router.replace(targetParent)
+        setTimeout(() => {
+          if (window.location.pathname !== targetParent) {
+            router.replace(targetParent)
+          }
+        }, 0)
       }
     }
 
