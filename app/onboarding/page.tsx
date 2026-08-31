@@ -315,14 +315,27 @@ export default function OnboardingPage() {
     }
 
     async function checkDbCounts() {
+      // Check session cache first to prevent redundant DB queries within 60s
+      try {
+        const cached = sessionStorage.getItem('su_cached_onboarding_counts')
+        if (cached) {
+          const parsed = JSON.parse(cached)
+          if (parsed && typeof parsed.timestamp === 'number' && Date.now() - parsed.timestamp < 60000) {
+            setDbCounts(parsed.counts)
+            setLoadingDb(false)
+            return
+          }
+        }
+      } catch (e) {}
+
       setLoadingDb(true)
       try {
         const [
-          { count: prodCount },
-          { count: ordCount },
-          { count: custCount },
-          { count: expCount },
-          { count: supCount },
+          prodRes,
+          ordRes,
+          custRes,
+          expRes,
+          supRes,
         ] = await Promise.all([
           supabase.from('products').select('*', { count: 'exact', head: true }),
           supabase.from('orders').select('*', { count: 'exact', head: true }),
@@ -331,13 +344,22 @@ export default function OnboardingPage() {
           supabase.from('suppliers').select('*', { count: 'exact', head: true }),
         ])
 
-        setDbCounts({
-          products: prodCount || 0,
-          orders: ordCount || 0,
-          customers: custCount || 0,
-          expenses: expCount || 0,
-          suppliers: supCount || 0,
-        })
+        const counts = {
+          products: prodRes.count || 0,
+          orders: ordRes.count || 0,
+          customers: custRes.count || 0,
+          expenses: expRes.count || 0,
+          suppliers: supRes.count || 0,
+        }
+
+        setDbCounts(counts)
+
+        try {
+          sessionStorage.setItem('su_cached_onboarding_counts', JSON.stringify({
+            counts,
+            timestamp: Date.now()
+          }))
+        } catch (e) {}
       } catch (err) {
         console.error("Error fetching onboarding DB counts", err)
       } finally {

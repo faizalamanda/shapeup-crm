@@ -84,7 +84,12 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
   })
 
   const [isWabaActive, setIsWabaActive] = useState(false)
-  const [bizLoading, setBizLoading] = useState(true)
+  const [bizLoading, setBizLoading] = useState(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return !Boolean(localStorage.getItem('su_cached_user_profile'))
+    }
+    return true
+  })
   const [isLoggingOut, setIsLoggingOut] = useState(false)
 
   const loadIdRef = useRef(0)
