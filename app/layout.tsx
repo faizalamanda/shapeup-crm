@@ -9,6 +9,7 @@ import { canAccessPath } from '@/lib/permissions'
 import "./globals.css"
 import BusinessOnboarding from '@/components/BusinessOnboarding'
 import { UserProvider, UserContextType } from '@/components/UserContext'
+import { useMobileBackToHome } from '@/hooks/useMobileBackToHome'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -200,6 +201,9 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({})
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+
+  // Enable native mobile back button navigation to onboarding hub and parent routes
+  useMobileBackToHome()
 
   // Prevent background scrolling when mobile menu is open
   useEffect(() => {
