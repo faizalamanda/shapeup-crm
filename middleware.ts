@@ -49,6 +49,17 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      global: {
+        fetch: (url, options) => {
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 6000)
+          if (options?.signal) {
+            options.signal.addEventListener('abort', () => controller.abort())
+          }
+          return fetch(url, { ...options, signal: controller.signal })
+            .finally(() => clearTimeout(timeoutId))
+        },
+      },
       cookies: {
         getAll() {
           return request.cookies.getAll()

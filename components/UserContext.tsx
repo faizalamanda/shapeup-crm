@@ -236,13 +236,26 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
         if (session?.user?.id) {
           const force = event === 'SIGNED_IN' || event === 'USER_UPDATED' || session.user.id !== loadedUserIdRef.current
           loadProfileAndBusinesses(session.user.id, force)
-        } else if (event === 'SIGNED_OUT' || (event === 'INITIAL_SESSION' && !session)) {
+        } else if (event === 'SIGNED_OUT') {
           loadedUserIdRef.current = null
           setUserProfile(null)
           setBusinesses([])
           setActiveBusiness(null)
           setCurrentUserRole('admin')
           setCurrentUserPermissions(['full_access'])
+          setBizLoading(false)
+        } else if (event === 'INITIAL_SESSION' && !session) {
+          // If initial session check returns null (e.g. temporary 504 network error during token refresh),
+          // only reset if there is no cached profile saved locally.
+          const hasCachedProfile = typeof window !== 'undefined' && Boolean(localStorage.getItem('su_cached_user_profile'))
+          if (!hasCachedProfile) {
+            loadedUserIdRef.current = null
+            setUserProfile(null)
+            setBusinesses([])
+            setActiveBusiness(null)
+            setCurrentUserRole('admin')
+            setCurrentUserPermissions(['full_access'])
+          }
           setBizLoading(false)
         }
       }
