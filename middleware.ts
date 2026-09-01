@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
-import { getCachedUser } from './lib/auth'
+import { getCachedUser, isInvalidTokenError } from './lib/auth'
+
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
 
@@ -80,15 +81,38 @@ export async function middleware(request: NextRequest) {
   )
 
   // Retrieve cached user (or fetch once) with timeout handling
-  const { user, error: authError } = await getCachedUser(request, supabase);
+  const { user, error: authError } = await getCachedUser(request, supabase)
 
+  const isInvalidToken = isInvalidTokenError(authError)
   const isTimeoutOrNetworkError =
-    authError?.message === 'Auth timeout' ||
-    (authError && (authError as any).status !== 401 && (authError as any).status !== 403)
+    !isInvalidToken &&
+    (authError?.message === 'Auth timeout' ||
+      (authError && (authError as any).status !== 401 && (authError as any).status !== 403 && (authError as any).status !== 400))
+
+  // If token was revoked or invalid (e.g. 400 Bad Request on refresh token),
+  // purge all dead auth cookies so browser stops sending them.
+  if (isInvalidToken) {
+    allCookies.forEach(c => {
+      if (c.name.startsWith('sb-') || c.name.includes('auth-token') || c.name.includes('supabase')) {
+        supabaseResponse.cookies.delete(c.name)
+      }
+    })
+
+    if (isProtectedRoute) {
+      const redirectUrl = request.nextUrl.clone()
+      redirectUrl.pathname = '/login'
+      redirectUrl.searchParams.set('next', pathname)
+      const redirectResponse = NextResponse.redirect(redirectUrl)
+      allCookies.forEach(c => {
+        if (c.name.startsWith('sb-') || c.name.includes('auth-token') || c.name.includes('supabase')) {
+          redirectResponse.cookies.delete(c.name)
+        }
+      })
+      return redirectResponse
+    }
+  }
 
   // Not logged in + trying to access protected route → redirect to login
-  // NOTE: If Supabase auth timed out or had a network error BUT the user has an auth cookie,
-  // DO NOT force redirect to /login so the user isn't logged out during temporary network lag.
   if (!user && isProtectedRoute) {
     if (isTimeoutOrNetworkError && hasAuthCookie) {
       console.warn('[Middleware] Supabase auth network timeout, but session cookie exists. Allowing request.')
@@ -96,9 +120,14 @@ export async function middleware(request: NextRequest) {
     }
     const redirectUrl = request.nextUrl.clone()
     redirectUrl.pathname = '/login'
-    // Preserve the original URL so we can redirect back after login
     redirectUrl.searchParams.set('next', pathname)
-    return NextResponse.redirect(redirectUrl)
+    const redirectResponse = NextResponse.redirect(redirectUrl)
+    allCookies.forEach(c => {
+      if (c.name.startsWith('sb-') || c.name.includes('auth-token') || c.name.includes('supabase')) {
+        redirectResponse.cookies.delete(c.name)
+      }
+    })
+    return redirectResponse
   }
 
   // Already logged in + trying to access auth routes → redirect to next or onboarding
@@ -110,8 +139,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirectUrl)
   }
 
-  // IMPORTANT: Return supabaseResponse (not NextResponse.next()) so the
-  // updated session cookies are properly forwarded to the browser.
   return supabaseResponse
 }
 

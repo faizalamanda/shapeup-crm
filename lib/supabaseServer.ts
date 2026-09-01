@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { parseJwtUserFromCookies } from './auth'
+import { parseJwtUserFromCookies, isInvalidTokenError } from './auth'
 
 /**
  * Custom fetch wrapper with 6s timeout protection to prevent hanging HTTP requests
@@ -76,13 +76,13 @@ export async function getAuthUser(supabaseClient?: SupabaseClient) {
       return { user: data.user, error: null }
     }
 
-    if (jwtUser) {
+    if (jwtUser && !isInvalidTokenError(error)) {
       return { user: jwtUser as any, error: null }
     }
 
     return { user: null, error: error ?? null }
   } catch (err) {
-    if (jwtUser) {
+    if (jwtUser && !isInvalidTokenError(err)) {
       return { user: jwtUser as any, error: null }
     }
     return { user: null, error: err }

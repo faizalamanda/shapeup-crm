@@ -23,6 +23,26 @@ const userMemoryCache = new Map<string, CachedUserEntry>()
 const inFlightAuthPromises = new Map<string, Promise<{ user: any | null; error: any | null }>>()
 
 /**
+ * Checks if an auth error represents a permanently revoked or invalid token (400 Bad Request, 401, invalid_grant).
+ */
+export function isInvalidTokenError(error: any): boolean {
+  if (!error) return false
+  const status = error.status || error.statusCode || (error as any).status
+  if (status === 400 || status === 401 || status === 403) return true
+  const msg = (error.message || error.name || '').toString().toLowerCase()
+  if (
+    msg.includes('invalid refresh token') ||
+    msg.includes('refresh token not found') ||
+    msg.includes('invalid_grant') ||
+    msg.includes('jwt expired') ||
+    msg.includes('user not found')
+  ) {
+    return true
+  }
+  return false
+}
+
+/**
  * Fast-path JWT decoder for cookies. Parses and validates JWT payload expiration offline
  * without hitting Supabase Auth network endpoints when token is unexpired.
  */
@@ -157,11 +177,15 @@ export async function getCachedUser(
 
       const { data, error } = await Promise.race([getUserPromise, timeoutPromise])
       let user = data?.user ?? null
-      
-      // If network auth timed out or 504'd, but we have a recently expired JWT user from cookies,
-      // fallback to jwtUser so middleware doesn't forcibly log out valid users during network lag.
-      if (!user && jwtUser && error) {
+      const isRevokedOrInvalid = isInvalidTokenError(error)
+
+      // Fallback to jwtUser ONLY IF the error is NOT a 400/401 revoked token error.
+      if (!user && jwtUser && error && !isRevokedOrInvalid) {
         user = jwtUser as any
+      }
+
+      if (isRevokedOrInvalid) {
+        user = null
       }
 
       const result = { user, error: user ? null : (error ?? null) }
@@ -176,7 +200,7 @@ export async function getCachedUser(
 
       return result
     } catch (err) {
-      if (jwtUser) {
+      if (jwtUser && !isInvalidTokenError(err)) {
         return { user: jwtUser as any, error: null }
       }
       return { user: null, error: err }
@@ -192,4 +216,3 @@ export async function getCachedUser(
   ;(request as any).locals.authUser = finalResult.user
   return finalResult
 }
-
