@@ -24,7 +24,7 @@ function LoginForm() {
     setErrorMsg('')
 
     try {
-      // 1. Try direct Supabase client login first for instant feedback & safety
+      // 1. Direct Supabase client authentication (sets session cookies automatically)
       const { error: authErr } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -36,25 +36,14 @@ function LoginForm() {
         return
       }
 
-      // 2. Sync server action session cookies
-      const formData = new FormData()
-      formData.append('email', email)
-      formData.append('password', password)
-
-      try {
-        await loginAction(formData)
-      } catch (saErr) {
-        console.warn('[Login] Server action sync warning:', saErr)
-      }
-
-      // 3. Clear old session caches and redirect
+      // 2. Clear old stale local caches
       if (typeof window !== 'undefined') {
         sessionStorage.clear()
         if (window.localStorage) {
           const keysToRemove: string[] = []
           for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i)
-            if (key && (key.startsWith('su_') || key.startsWith('cache_') || key.startsWith('shapeup_') || key.startsWith('sb-'))) {
+            if (key && (key.startsWith('su_dash_') || key.startsWith('cache_'))) {
               keysToRemove.push(key)
             }
           }
@@ -62,6 +51,7 @@ function LoginForm() {
         }
       }
 
+      // 3. Immediate redirect
       const nextParam = searchParams.get('next')
       if (nextParam && nextParam.startsWith('/')) {
         window.location.href = nextParam
