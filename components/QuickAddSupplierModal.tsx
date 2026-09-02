@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 export type SupplierItem = {
   id: string
@@ -24,6 +25,8 @@ export default function QuickAddSupplierModal({
   initialName = '',
   onSuccess
 }: QuickAddSupplierModalProps) {
+  useModalBackHandler(isOpen, onClose)
+
   const [mounted, setMounted] = useState(false)
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')

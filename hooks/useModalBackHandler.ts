@@ -1,10 +1,50 @@
 "use client"
 import { useEffect, useRef } from 'react'
 
+interface ModalStackItem {
+  id: string
+  onClose: () => void
+  key: string
+}
+
+// Global state for LIFO Modal Registry & Event Dispatching
+let modalStack: ModalStackItem[] = []
+let isProgrammaticBack = false
+let isListenersAttached = false
+
+function handleGlobalPopState() {
+  if (isProgrammaticBack) {
+    isProgrammaticBack = false
+    return
+  }
+
+  // Close ONLY the top-most active modal on smartphone/browser Back press
+  if (modalStack.length > 0) {
+    const topModal = modalStack[modalStack.length - 1]
+    topModal.onClose()
+  }
+}
+
+function handleGlobalKeyDown(e: KeyboardEvent) {
+  // Support W3C WAI-ARIA Escape key dismissal for desktop modal dialogs
+  if (e.key === 'Escape' && modalStack.length > 0) {
+    const topModal = modalStack[modalStack.length - 1]
+    topModal.onClose()
+  }
+}
+
+function ensureGlobalListeners() {
+  if (typeof window === 'undefined') return
+  if (!isListenersAttached) {
+    window.addEventListener('popstate', handleGlobalPopState)
+    window.addEventListener('keydown', handleGlobalKeyDown)
+    isListenersAttached = true
+  }
+}
+
 /**
- * Hook to handle mobile / browser back button when a modal is open.
- * When `isOpen` is true, it pushes a dummy state to history.
- * If the user clicks the browser/smartphone Back button, `onClose` will be triggered to close the modal instead of navigating away.
+ * Standard-compliant Hook to handle mobile / browser back button and desktop Escape key when a modal is open.
+ * Maintains a global LIFO stack so nested modals close top-to-bottom sequentially.
  */
 export function useModalBackHandler(isOpen: boolean, onClose: () => void) {
   const onCloseRef = useRef(onClose)
@@ -16,25 +56,31 @@ export function useModalBackHandler(isOpen: boolean, onClose: () => void) {
   useEffect(() => {
     if (!isOpen) return
 
-    const modalStateKey = `modal_open_${Math.random().toString(36).substring(2, 9)}`
-    
+    ensureGlobalListeners()
+
+    const modalId = Math.random().toString(36).substring(2, 9)
+    const modalStateKey = `modal_open_${modalId}`
+
     // Push dummy state to window.history
     window.history.pushState({ modalStateKey }, '')
 
-    const handlePopState = () => {
-      // Back button was pressed by user
-      onCloseRef.current()
+    const stackItem: ModalStackItem = {
+      id: modalId,
+      onClose: () => onCloseRef.current(),
+      key: modalStateKey
     }
-
-    window.addEventListener('popstate', handlePopState)
+    modalStack.push(stackItem)
 
     return () => {
-      window.removeEventListener('popstate', handlePopState)
+      // Remove from global stack
+      modalStack = modalStack.filter(item => item.id !== modalId)
 
-      // If modal closed via X button / backdrop / form submit, clean up dummy history entry
-      if (window.history.state?.modalStateKey === modalStateKey) {
+      // Clean up history entry if closed programmatically (X, backdrop, submit)
+      if (typeof window !== 'undefined' && window.history.state?.modalStateKey === modalStateKey) {
+        isProgrammaticBack = true
         window.history.back()
       }
     }
   }, [isOpen])
 }
+

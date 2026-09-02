@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 type Product = {
   id: string
@@ -27,6 +28,8 @@ export default function QuickAddProductModal({
   businessId,
   onSuccess
 }: QuickAddProductModalProps) {
+  useModalBackHandler(isOpen, onClose)
+
   const supabase = useMemo(
     () => createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

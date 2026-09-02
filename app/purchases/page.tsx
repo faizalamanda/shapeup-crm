@@ -106,7 +106,6 @@ export default function PurchasesPage() {
   // Handle back button for modals on mobile / browser
   useModalBackHandler(isCreateOpen, () => setIsCreateOpen(false))
   useModalBackHandler(isPayOpen, () => setIsPayOpen(false))
-  useModalBackHandler(isQuickAddSupplierOpen, () => setIsQuickAddSupplierOpen(false))
 
   const openQuickAddSupplier = (query?: string) => {
     setQuickAddSupplierQuery(query || '')
