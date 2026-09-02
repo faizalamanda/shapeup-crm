@@ -24,10 +24,7 @@ export async function GET(req: Request) {
 
     const businessId = profile.active_business_id
 
-    // Auto-sync purchase payment status for voided/reversed transactions
-    await syncPurchaseStatus(supabase, businessId)
-
-    // Fetch purchases and their linked suppliers
+    // Fetch purchases and their linked suppliers (fast, clean single query)
     const { data: purchases, error: fetchErr } = await supabase
       .from('purchases')
       .select(`
@@ -42,28 +39,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: fetchErr.message }, { status: 500 })
     }
 
-    // For each purchase, fetch payments to ensure client has detail
-    const { data: payments, error: payErr } = await supabase
-      .from('purchase_payments')
-      .select('*')
-      .eq('business_id', businessId)
-
-    const paymentsByPurchase: Record<string, any[]> = {}
-    if (payments) {
-      payments.forEach(p => {
-        if (!paymentsByPurchase[p.purchase_id]) {
-          paymentsByPurchase[p.purchase_id] = []
-        }
-        paymentsByPurchase[p.purchase_id].push(p)
-      })
-    }
-
-    const purchasesWithPayments = purchases.map(p => ({
-      ...p,
-      payments: paymentsByPurchase[p.id] || []
-    }))
-
-    return NextResponse.json(purchasesWithPayments)
+    return NextResponse.json(purchases)
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }

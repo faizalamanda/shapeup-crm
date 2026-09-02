@@ -33,8 +33,6 @@ export async function GET(req: Request) {
     const pageParam = url.searchParams.get('page')
     const limitParam = url.searchParams.get('limit')
 
-    // Auto-sync expense payment status to handle voided/reversed transactions
-    await syncExpenseStatus(supabase, businessId, id || undefined)
 
     if (id) {
       const { data: expense, error: fetchErr } = await supabase
