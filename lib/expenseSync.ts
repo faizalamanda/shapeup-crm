@@ -243,7 +243,7 @@ export async function syncPurchaseStatus(
         id,
         business_id,
         transaction_id,
-        total_amount,
+        grand_total,
         amount_paid,
         outstanding_amount,
         payment_status,
@@ -332,7 +332,7 @@ export async function syncPurchaseStatus(
         await supabase.from('purchase_payments').delete().in('id', invalidPaymentIds)
       }
 
-      const totalAmount = parseFloat(pur.total_amount || 0)
+      const totalAmount = parseFloat(pur.grand_total || 0)
       const validPaidSum = validPayments.reduce((acc: number, p: PurchasePaymentRecord) => acc + parseFloat(String(p.amount || 0)), 0)
       const isMainTxVoided = isTxVoided(pur.transaction_id)
 
