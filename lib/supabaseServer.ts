@@ -48,9 +48,29 @@ export async function createClient() {
   )
 }
 
+interface ServerCachedUserEntry {
+  user: any | null
+  error: any | null
+  expiresAt: number
+}
+
+// In-memory cache & in-flight promise map for server-side API routes
+const serverUserCache = new Map<string, ServerCachedUserEntry>()
+const inFlightServerAuthPromises = new Map<string, Promise<{ user: any | null; error: any | null }>>()
+
+function getCookieTokenKey(cookiesList: Array<{ name: string; value: string }>): string {
+  const authCookies = cookiesList
+    .filter(c => (c.name.startsWith('sb-') || c.name.includes('auth-token') || c.name.includes('supabase')) && Boolean(c.value))
+    .map(c => `${c.name}=${c.value}`)
+    .sort()
+    .join(';')
+  return authCookies || 'anonymous'
+}
+
 /**
  * Fast & safe helper to retrieve the authenticated user in Server Components / API Routes.
  * Checks unexpired JWT from cookies offline before calling network endpoints.
+ * Deduplicates parallel API route calls to prevent network storms to Supabase Auth.
  */
 export async function getAuthUser(supabaseClient?: SupabaseClient) {
   const cookieStore = await cookies()
@@ -62,29 +82,71 @@ export async function getAuthUser(supabaseClient?: SupabaseClient) {
     return { user: jwtUser, error: null }
   }
 
-  // 2. If expired or no JWT, fallback to supabase.auth.getUser()
-  const client = supabaseClient || (await createClient())
+  const tokenKey = getCookieTokenKey(cookiesList)
+  const now = Date.now()
 
-  try {
-    const getUserPromise = client.auth.getUser()
-    const timeoutPromise = new Promise<{ data: { user: null }; error: any }>((resolve) =>
-      setTimeout(() => resolve({ data: { user: null }, error: new Error('Auth timeout') }), 4000)
-    )
-
-    const { data, error } = await Promise.race([getUserPromise, timeoutPromise])
-    if (data?.user) {
-      return { user: data.user, error: null }
-    }
-
-    if (jwtUser && !isInvalidTokenError(error)) {
-      return { user: jwtUser as any, error: null }
-    }
-
-    return { user: null, error: error ?? null }
-  } catch (err) {
-    if (jwtUser && !isInvalidTokenError(err)) {
-      return { user: jwtUser as any, error: null }
-    }
-    return { user: null, error: err }
+  // 2. Check in-memory TTL cache (10 seconds)
+  const cached = serverUserCache.get(tokenKey)
+  if (cached && cached.expiresAt > now) {
+    return { user: cached.user, error: cached.error }
   }
+
+  // 3. Check in-flight promise deduplication (Single-Flight Pattern)
+  if (inFlightServerAuthPromises.has(tokenKey)) {
+    return await inFlightServerAuthPromises.get(tokenKey)!
+  }
+
+  // Periodic cleanup if cache grows
+  if (serverUserCache.size > 200) {
+    for (const [k, v] of serverUserCache.entries()) {
+      if (v.expiresAt <= now) serverUserCache.delete(k)
+    }
+  }
+
+  // 4. Fallback single network request to Supabase Auth with strict 3.5s timeout
+  const authPromise = (async () => {
+    try {
+      const client = supabaseClient || (await createClient())
+      const getUserPromise = client.auth.getUser()
+      const timeoutPromise = new Promise<{ data: { user: null }; error: any }>((resolve) =>
+        setTimeout(() => resolve({ data: { user: null }, error: new Error('Auth timeout') }), 3500)
+      )
+
+      const { data, error } = await Promise.race([getUserPromise, timeoutPromise])
+      let user = data?.user ?? null
+      const isRevokedOrInvalid = isInvalidTokenError(error)
+
+      // Fallback to jwtUser ONLY IF the error is NOT a revoked/invalid token error.
+      if (!user && jwtUser && error && !isRevokedOrInvalid) {
+        user = jwtUser as any
+      }
+
+      if (isRevokedOrInvalid) {
+        user = null
+      }
+
+      const result = { user, error: user ? null : (error ?? null) }
+
+      if (user) {
+        serverUserCache.set(tokenKey, {
+          user,
+          error: null,
+          expiresAt: Date.now() + 10000,
+        })
+      }
+
+      return result
+    } catch (err) {
+      if (jwtUser && !isInvalidTokenError(err)) {
+        return { user: jwtUser as any, error: null }
+      }
+      return { user: null, error: err }
+    } finally {
+      inFlightServerAuthPromises.delete(tokenKey)
+    }
+  })()
+
+  inFlightServerAuthPromises.set(tokenKey, authPromise)
+  return await authPromise
 }
+

@@ -231,8 +231,47 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
   }, [supabase])
 
   useEffect(() => {
+    // Safety timeout: If session resolution takes longer than 6 seconds (e.g. hung network / stale token refresh),
+    // forcibly release loading state to prevent infinite loading spinner.
+    const safetyTimeoutId = setTimeout(async () => {
+      if (loadedUserIdRef.current) return // Already loaded user profile
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user?.id) {
+          loadProfileAndBusinesses(session.user.id, true)
+        } else {
+          // If session resolution hangs for > 6 seconds and no session exists,
+          // purge stale cache, reset user state, and redirect to /login cleanly.
+          loadedUserIdRef.current = null
+          setUserProfile(null)
+          setBusinesses([])
+          setActiveBusiness(null)
+          setBizLoading(false)
+
+          if (typeof window !== 'undefined') {
+            const currentPath = window.location.pathname
+            const isAuthPage = currentPath === '/login' || currentPath === '/register'
+            if (!isAuthPage) {
+              try {
+                localStorage.removeItem('su_cached_user_profile')
+                localStorage.removeItem('su_cached_businesses')
+                localStorage.removeItem('su_cached_active_biz')
+                localStorage.removeItem('su_cached_role')
+                localStorage.removeItem('su_cached_perms')
+              } catch (e) {}
+              window.location.href = `/login?next=${encodeURIComponent(currentPath)}`
+            }
+          }
+        }
+      } catch (e) {
+        setBizLoading(false)
+      }
+    }, 6000)
+
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
+        clearTimeout(safetyTimeoutId)
         if (session?.user?.id) {
           const force = event === 'SIGNED_IN' || event === 'USER_UPDATED' || session.user.id !== loadedUserIdRef.current
           loadProfileAndBusinesses(session.user.id, force)
@@ -262,9 +301,11 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     )
 
     return () => {
+      clearTimeout(safetyTimeoutId)
       subscription.unsubscribe()
     }
   }, [supabase, loadProfileAndBusinesses])
+
 
   const handleSwitchBusiness = async (bizId: string) => {
     const { data: { user } } = await supabase.auth.getUser()
