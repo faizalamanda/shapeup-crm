@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 type Account = {
   id: string
@@ -53,6 +54,9 @@ export function PurchaseDetailModal({ purchase, accounts, onClose, onEdit }: Pur
   const [transactions, setTransactions] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
   const [paymentsLoading, setPaymentsLoading] = useState(false)
+
+  // Enable back button to close detail modal on mobile / browser
+  useModalBackHandler(true, onClose)
 
   useEffect(() => {
     setMounted(true)

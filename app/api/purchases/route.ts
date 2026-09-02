@@ -23,23 +23,98 @@ export async function GET(req: Request) {
     }
 
     const businessId = profile.active_business_id
+    const url = new URL(req.url)
+    const id = url.searchParams.get('id')
+    const all = url.searchParams.get('all') === 'true'
+    const pageParam = url.searchParams.get('page')
+    const limitParam = url.searchParams.get('limit')
+    const search = url.searchParams.get('search') || ''
 
-    // Fetch purchases and their linked suppliers (fast, clean single query)
-    const { data: purchases, error: fetchErr } = await supabase
+    if (id) {
+      const { data: purchase, error: fetchErr } = await supabase
+        .from('purchases')
+        .select(`
+          *,
+          suppliers(id, name)
+        `)
+        .eq('business_id', businessId)
+        .eq('id', id)
+        .single()
+
+      if (fetchErr) {
+        return NextResponse.json({ error: fetchErr.message }, { status: 500 })
+      }
+      return NextResponse.json(purchase)
+    }
+
+    if (all) {
+      const { data: purchases, error: fetchErr } = await supabase
+        .from('purchases')
+        .select(`
+          *,
+          suppliers(id, name)
+        `)
+        .eq('business_id', businessId)
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false })
+
+      if (fetchErr) {
+        return NextResponse.json({ error: fetchErr.message }, { status: 500 })
+      }
+      return NextResponse.json(purchases)
+    }
+
+    // Default pagination: 25 items per page
+    const page = Math.max(1, parseInt(pageParam || '1', 10))
+    const limit = Math.max(1, parseInt(limitParam || '25', 10))
+    const from = (page - 1) * limit
+    const to = from + limit - 1
+
+    let supplierIds: string[] = []
+    if (search.trim()) {
+      const { data: matchedSuppliers } = await supabase
+        .from('suppliers')
+        .select('id')
+        .eq('business_id', businessId)
+        .ilike('name', `%${search.trim()}%`)
+      if (matchedSuppliers && matchedSuppliers.length > 0) {
+        supplierIds = matchedSuppliers.map(s => s.id)
+      }
+    }
+
+    let query = supabase
       .from('purchases')
       .select(`
         *,
         suppliers(id, name)
-      `)
+      `, { count: 'exact' })
       .eq('business_id', businessId)
+
+    if (search.trim()) {
+      const trimmed = search.trim()
+      if (supplierIds.length > 0) {
+        query = query.or(`purchase_number.ilike.%${trimmed}%,supplier_id.in.(${supplierIds.join(',')})`)
+      } else {
+        query = query.ilike('purchase_number', `%${trimmed}%`)
+      }
+    }
+
+    const { data: purchases, count, error: fetchErr } = await query
       .order('date', { ascending: false })
       .order('created_at', { ascending: false })
+      .range(from, to)
 
     if (fetchErr) {
       return NextResponse.json({ error: fetchErr.message }, { status: 500 })
     }
 
-    return NextResponse.json(purchases)
+    return NextResponse.json({
+      data: purchases || [],
+      totalCount: count || 0,
+      page,
+      limit,
+      totalPages: Math.ceil((count || 0) / limit)
+    })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }

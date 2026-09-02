@@ -6,6 +6,8 @@ import { PurchaseDetailModal } from './components/PurchaseDetailModal'
 import { SupplierSelectCombobox } from '@/components/SupplierSelectCombobox'
 import { ProductSelectCombobox } from '@/components/ProductSelectCombobox'
 import QuickAddSupplierModal from '@/components/QuickAddSupplierModal'
+import { Pagination } from '../components/Pagination'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 type Supplier = {
   id: string
@@ -80,8 +82,12 @@ export default function PurchasesPage() {
   const [loading, setLoading] = useState(true)
   const [selectedPurchaseForDetail, setSelectedPurchaseForDetail] = useState<Purchase | null>(null)
 
-  // Filter
+  // Filter & Pagination States (Default 25 items per page)
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+  const [totalCount, setTotalCount] = useState(0)
 
   // Create Bill Modal State
   const [editingPurchase, setEditingPurchase] = useState<Purchase | null>(null)
@@ -96,6 +102,11 @@ export default function PurchasesPage() {
   // Quick Add Supplier Modal State
   const [isQuickAddSupplierOpen, setIsQuickAddSupplierOpen] = useState(false)
   const [quickAddSupplierQuery, setQuickAddSupplierQuery] = useState('')
+
+  // Handle back button for modals on mobile / browser
+  useModalBackHandler(isCreateOpen, () => setIsCreateOpen(false))
+  useModalBackHandler(isPayOpen, () => setIsPayOpen(false))
+  useModalBackHandler(isQuickAddSupplierOpen, () => setIsQuickAddSupplierOpen(false))
 
   const openQuickAddSupplier = (query?: string) => {
     setQuickAddSupplierQuery(query || '')
@@ -132,24 +143,57 @@ export default function PurchasesPage() {
     setMounted(true)
   }, [])
 
-  // Fetch Page Data
-  const fetchData = useCallback(async (businessId: string) => {
+  // Debounce search query
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery)
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
+  // Reset to page 1 when search query changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [debouncedSearch])
+
+  // Fetch Purchases with Server-Side Pagination
+  const fetchPurchases = useCallback(async (page: number, limit: number, search: string) => {
     setLoading(true)
     try {
-      // 1. Fetch Purchases
-      const res = await fetch('/api/purchases')
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: limit.toString(),
+      })
+      if (search.trim()) {
+        params.set('search', search.trim())
+      }
+      const res = await fetch(`/api/purchases?${params.toString()}`)
       if (!res.ok) throw new Error('Gagal memuat data pembelian')
-      const purData = await res.json()
-      setPurchases(purData)
+      const result = await res.json()
 
-      // 2. Fetch Suppliers
+      if (Array.isArray(result)) {
+        setPurchases(result)
+        setTotalCount(result.length)
+      } else {
+        setPurchases(result.data || [])
+        setTotalCount(result.totalCount || 0)
+      }
+    } catch (err) {
+      console.error('Error fetching purchases data:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // Fetch Suppliers, Products, and Accounts once
+  const fetchLookups = useCallback(async (businessId: string) => {
+    try {
       const supRes = await fetch('/api/suppliers')
       if (supRes.ok) {
         const supData = await supRes.json()
         setSuppliers(supData)
       }
 
-      // 3. Fetch Products
       const { data: prodData } = await supabase
         .from('products')
         .select('id, name, sku, price, cost_price, type')
@@ -157,7 +201,6 @@ export default function PurchasesPage() {
         .order('name', { ascending: true })
       setProducts(prodData || [])
 
-      // 4. Fetch Accounts
       const { data: accData } = await supabase
         .from('accounts')
         .select('id, code, name, type')
@@ -165,9 +208,7 @@ export default function PurchasesPage() {
         .order('code', { ascending: true })
       setAccounts(accData || [])
     } catch (err) {
-      console.error('Error fetching purchases data:', err)
-    } finally {
-      setLoading(false)
+      console.error('Error fetching lookups:', err)
     }
   }, [supabase])
 
@@ -191,7 +232,7 @@ export default function PurchasesPage() {
           setActiveBizId(businessId)
           const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
           setActiveBizName(biz?.name || 'Bisnis Saya')
-          await fetchData(businessId)
+          await fetchLookups(businessId)
         }
       } catch (err) {
         console.error('Error loading profile:', err)
@@ -199,23 +240,28 @@ export default function PurchasesPage() {
       }
     }
     loadProfile()
-  }, [supabase, fetchData])
+  }, [supabase, fetchLookups])
+
+  // Fetch purchases when page, pageSize, or debouncedSearch changes
+  useEffect(() => {
+    if (activeBizId) {
+      fetchPurchases(currentPage, pageSize, debouncedSearch)
+    }
+  }, [activeBizId, currentPage, pageSize, debouncedSearch, fetchPurchases])
+
+  const refreshData = () => {
+    if (activeBizId) {
+      fetchPurchases(currentPage, pageSize, debouncedSearch)
+    }
+  }
 
   // Payment Source Accounts (101xxx assets)
   const paymentAccounts = useMemo(() => {
     return accounts.filter(a => a.type === 'ASSET' && a.code.startsWith('101'))
   }, [accounts])
 
-  // Filtered purchases
-  const filteredPurchases = useMemo(() => {
-    return purchases.filter(p => {
-      const q = searchQuery.toLowerCase()
-      return (
-        p.purchase_number.toLowerCase().includes(q) ||
-        (p.suppliers?.name || '').toLowerCase().includes(q)
-      )
-    })
-  }, [purchases, searchQuery])
+  // Server-side filtered purchases list
+  const filteredPurchases = purchases
 
   // Calculate Subtotal dynamically in Creation form
   const createSubtotal = useMemo(() => {
@@ -430,9 +476,7 @@ export default function PurchasesPage() {
 
       setIsCreateOpen(false)
       setEditingPurchase(null)
-      if (activeBizId) {
-        await fetchData(activeBizId)
-      }
+      refreshData()
     } catch (err: any) {
       console.error(err)
       alert(err.message)
@@ -455,9 +499,7 @@ export default function PurchasesPage() {
         throw new Error(errData.error || 'Gagal menghapus pembelian')
       }
 
-      if (activeBizId) {
-        await fetchData(activeBizId)
-      }
+      refreshData()
     } catch (err: any) {
       alert(err.message)
     }
@@ -521,9 +563,7 @@ export default function PurchasesPage() {
       }
 
       setIsPayOpen(false)
-      if (activeBizId) {
-        await fetchData(activeBizId)
-      }
+      refreshData()
     } catch (err: any) {
       alert(err.message)
     } finally {
@@ -584,6 +624,22 @@ export default function PurchasesPage() {
           <span className="absolute left-3 top-3.5 text-gray-400 text-xs">🔍</span>
         </div>
       </div>
+
+      {/* Top Pagination */}
+      {!loading && totalCount > 0 && (
+        <Pagination
+          currentPage={currentPage}
+          totalCount={totalCount}
+          pageSize={pageSize}
+          onPageChange={page => setCurrentPage(page)}
+          onPageSizeChange={newSize => {
+            setPageSize(newSize)
+            setCurrentPage(1)
+          }}
+          isLoading={loading}
+          position="top"
+        />
+      )}
 
       {/* Purchases Table */}
       {loading ? (
@@ -689,6 +745,22 @@ export default function PurchasesPage() {
             </table>
           </div>
         </div>
+      )}
+
+      {/* Bottom Pagination */}
+      {!loading && totalCount > 0 && (
+        <Pagination
+          currentPage={currentPage}
+          totalCount={totalCount}
+          pageSize={pageSize}
+          onPageChange={page => setCurrentPage(page)}
+          onPageSizeChange={newSize => {
+            setPageSize(newSize)
+            setCurrentPage(1)
+          }}
+          isLoading={loading}
+          position="bottom"
+        />
       )}
 
       {/* Create Purchase bill Modal */}
