@@ -192,6 +192,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
     isWabaActive,
     bizLoading,
     isLoggingOut,
+    isOffline,
     handleLogout,
     handleSwitchBusiness,
   } = useUserContext()
@@ -836,6 +837,27 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
               }}>A</div>
             </div>
           </header>
+
+          {/* Offline Banner Indicator */}
+          {isOffline && (
+            <div style={{
+              background: 'linear-gradient(90deg, #F59E0B 0%, #D97706 100%)',
+              color: '#0F172A',
+              padding: '6px 16px',
+              fontSize: '11px',
+              fontWeight: 800,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#0F172A', display: 'inline-block' }} />
+              <span>⚡ Mode Offline — Koneksi Terputus (Menampilkan Data Cache Lokal)</span>
+            </div>
+          )}
 
           {/* Page content */}
           <main style={{ flex: 1, overflowY: 'auto', padding: '28px 28px 48px' }}>

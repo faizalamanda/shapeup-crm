@@ -13,6 +13,7 @@ export interface UserContextType {
   isWabaActive: boolean
   bizLoading: boolean
   isLoggingOut: boolean
+  isOffline: boolean
   refreshProfile: (forceRefresh?: boolean) => Promise<void>
   handleLogout: () => Promise<void>
   handleSwitchBusiness: (bizId: string) => Promise<void>
@@ -27,6 +28,7 @@ const UserContext = createContext<UserContextType>({
   isWabaActive: false,
   bizLoading: true,
   isLoggingOut: false,
+  isOffline: false,
   refreshProfile: async () => {},
   handleLogout: async () => {},
   handleSwitchBusiness: async () => {},
@@ -91,7 +93,25 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     return true
   })
   const [isLoggingOut, setIsLoggingOut] = useState(false)
+  const [isOffline, setIsOffline] = useState(() => {
+    if (typeof window !== 'undefined' && typeof navigator !== 'undefined') {
+      return !navigator.onLine
+    }
+    return false
+  })
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const handleOnline = () => setIsOffline(false)
+    const handleOffline = () => setIsOffline(true)
+
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
   const loadIdRef = useRef(0)
   const loadedUserIdRef = useRef<string | null>(null)
 
@@ -230,9 +250,49 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     }
   }, [supabase])
 
+  const clearCachedUserData = useCallback(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const keysToRemove: string[] = []
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i)
+          if (key && (key.startsWith('su_') || key.startsWith('cache_') || key.startsWith('shapeup_') || key.startsWith('sb-'))) {
+            keysToRemove.push(key)
+          }
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k))
+      } catch (e) {
+        console.error('[UserContext] Error clearing local cache:', e)
+      }
+    }
+  }, [])
+
+  const handleUnauthenticatedSession = useCallback((reason = 'INITIAL_SESSION') => {
+    loadedUserIdRef.current = null
+    setUserProfile(null)
+    setBusinesses([])
+    setActiveBusiness(null)
+    setCurrentUserRole('admin')
+    setCurrentUserPermissions(['full_access'])
+    setBizLoading(false)
+
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
+
+    if (isOnline) {
+      clearCachedUserData()
+      if (typeof window !== 'undefined') {
+        const currentPath = window.location.pathname
+        const isPublicRoute = currentPath === '/login' || currentPath === '/register' || currentPath === '/'
+        if (!isPublicRoute) {
+          window.location.href = `/login?next=${encodeURIComponent(currentPath)}`
+        }
+      }
+    }
+  }, [clearCachedUserData])
+
   useEffect(() => {
-    // Safety timeout: If session resolution takes longer than 6 seconds (e.g. hung network / stale token refresh),
-    // forcibly release loading state to prevent infinite loading spinner.
+    // Safety timeout (2 seconds): If session resolution takes longer than 2s during cold boot,
+    // evaluate whether user is logged in or offline, releasing loading spinner gracefully.
     const safetyTimeoutId = setTimeout(async () => {
       if (loadedUserIdRef.current) return // Already loaded user profile
       try {
@@ -240,34 +300,12 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
         if (session?.user?.id) {
           loadProfileAndBusinesses(session.user.id, true)
         } else {
-          // If session resolution hangs for > 6 seconds and no session exists,
-          // purge stale cache, reset user state, and redirect to /login cleanly.
-          loadedUserIdRef.current = null
-          setUserProfile(null)
-          setBusinesses([])
-          setActiveBusiness(null)
-          setBizLoading(false)
-
-          if (typeof window !== 'undefined') {
-            const currentPath = window.location.pathname
-            const isAuthPage = currentPath === '/login' || currentPath === '/register'
-            if (!isAuthPage) {
-              try {
-                localStorage.removeItem('su_cached_user_profile')
-                localStorage.removeItem('su_cached_businesses')
-                localStorage.removeItem('su_cached_active_biz')
-                localStorage.removeItem('su_cached_role')
-                localStorage.removeItem('su_cached_perms')
-              } catch (e) {}
-              window.location.href = `/login?next=${encodeURIComponent(currentPath)}`
-            }
-          }
+          handleUnauthenticatedSession('SAFETY_TIMEOUT')
         }
       } catch (e) {
         setBizLoading(false)
       }
-    }, 6000)
-
+    }, 2000)
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
@@ -276,26 +314,9 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
           const force = event === 'SIGNED_IN' || event === 'USER_UPDATED' || session.user.id !== loadedUserIdRef.current
           loadProfileAndBusinesses(session.user.id, force)
         } else if (event === 'SIGNED_OUT') {
-          loadedUserIdRef.current = null
-          setUserProfile(null)
-          setBusinesses([])
-          setActiveBusiness(null)
-          setCurrentUserRole('admin')
-          setCurrentUserPermissions(['full_access'])
-          setBizLoading(false)
+          handleUnauthenticatedSession('SIGNED_OUT')
         } else if (event === 'INITIAL_SESSION' && !session) {
-          // If initial session check returns null (e.g. temporary 504 network error during token refresh),
-          // only reset if there is no cached profile saved locally.
-          const hasCachedProfile = typeof window !== 'undefined' && Boolean(localStorage.getItem('su_cached_user_profile'))
-          if (!hasCachedProfile) {
-            loadedUserIdRef.current = null
-            setUserProfile(null)
-            setBusinesses([])
-            setActiveBusiness(null)
-            setCurrentUserRole('admin')
-            setCurrentUserPermissions(['full_access'])
-          }
-          setBizLoading(false)
+          handleUnauthenticatedSession('INITIAL_SESSION')
         }
       }
     )
@@ -304,7 +325,7 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(safetyTimeoutId)
       subscription.unsubscribe()
     }
-  }, [supabase, loadProfileAndBusinesses])
+  }, [supabase, loadProfileAndBusinesses, handleUnauthenticatedSession])
 
 
   const handleSwitchBusiness = async (bizId: string) => {
@@ -386,6 +407,7 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     isWabaActive,
     bizLoading,
     isLoggingOut,
+    isOffline,
     refreshProfile: async (forceRefresh = true) => {
       if (loadedUserIdRef.current) {
         await loadProfileAndBusinesses(loadedUserIdRef.current, forceRefresh)
@@ -393,7 +415,7 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     },
     handleLogout,
     handleSwitchBusiness,
-  }), [userProfile, activeBusiness, businesses, currentUserRole, currentUserPermissions, isWabaActive, bizLoading, isLoggingOut, loadProfileAndBusinesses])
+  }), [userProfile, activeBusiness, businesses, currentUserRole, currentUserPermissions, isWabaActive, bizLoading, isLoggingOut, isOffline, loadProfileAndBusinesses])
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>
 }
