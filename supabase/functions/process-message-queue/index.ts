@@ -8,6 +8,7 @@ import {
   markAsDead,
   retryQueue,
   recoverStuckQueue,
+  hasStuckItems,
   isRetryableError,
 } from "./queue-manager.ts"
 
@@ -22,17 +23,25 @@ Deno.serve(async () => {
   try {
     console.log("PROCESS MARKETING QUEUE START")
 
-    // 1. Recover stuck items
-    await recoverStuckQueue(supabase)
-
-    // 2. Fetch batch
-    const queues = await fetchQueueBatch(supabase, 20)
+    // 1. Fetch batch first to avoid unnecessary DB updates when idle
+    let queues = await fetchQueueBatch(supabase, 20)
 
     if (!queues || queues.length === 0) {
-      return Response.json({
-        success: true,
-        message: "No queue to process",
-      })
+      // Fast check via index if any item is stuck in 'processing' status > 15m
+      const stuck = await hasStuckItems(supabase)
+      if (!stuck) {
+        return Response.json({
+          success: true,
+          message: "No queue to process",
+        })
+      }
+
+      // Recover stuck item and re-fetch batch
+      await recoverStuckQueue(supabase)
+      queues = await fetchQueueBatch(supabase, 20)
+    } else {
+      // 2. Recover stuck items when active queues exist
+      await recoverStuckQueue(supabase)
     }
 
     console.log(`PROCESSING ${queues.length} QUEUES`)

@@ -98,6 +98,21 @@ export async function recoverStuckQueue(supabase: any) {
 }
 
 /**
+ * Fast check if any stuck items exist using index scan
+ */
+export async function hasStuckItems(supabase: any) {
+  const timeout = new Date(Date.now() - 15 * 60 * 1000).toISOString()
+  const { data } = await supabase
+    .from("marketing_queue")
+    .select("id")
+    .eq("status", "processing")
+    .lt("processing_at", timeout)
+    .limit(1)
+
+  return Boolean(data && data.length > 0)
+}
+
+/**
  * Calculate backoff time for retry
  */
 export function nextRetryTime(retryCount: number) {
