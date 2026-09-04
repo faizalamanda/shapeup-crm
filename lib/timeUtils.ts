@@ -1,74 +1,34 @@
-/**
- * Shared Time & Date Utility Module for ShapeUp CRM
- * Supports local timezone settings (default: Asia/Jakarta - WIB / UTC+7).
- */
+import { 
+  DEFAULT_TIMEZONE, 
+  formatLocalDateString, 
+  getLocalDateRangeLimits, 
+  formatLocalTransactionDate, 
+  DateRangeKey 
+} from './localzone'
 
-export const DEFAULT_TIMEZONE = 'Asia/Jakarta'
+export { DEFAULT_TIMEZONE }
 
 /**
  * Format a Date object or ISO string into a local YYYY-MM-DD string without timezone shift.
  */
 export function getLocalDateString(dateInput?: string | Date | null, timezone: string = DEFAULT_TIMEZONE): string {
   if (!dateInput) {
-    const d = new Date()
-    return formatDateKeyInTimezone(d, timezone)
+    return formatLocalDateString(new Date(), timezone)
   }
   const d = typeof dateInput === 'string' ? new Date(dateInput) : dateInput
   if (isNaN(d.getTime())) return ''
-  return formatDateKeyInTimezone(d, timezone)
-}
-
-function formatDateKeyInTimezone(date: Date, timezone: string): string {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  })
-  return formatter.format(date) // Returns YYYY-MM-DD
+  return formatLocalDateString(d, timezone)
 }
 
 /**
- * Format transaction date for DB insertion/update.
- * If given a date-only string (e.g. "2026-08-20"), appends the current creation time
- * so that records on the same day get distinct, chronological timestamps.
+ * Format transaction date for DB insertion/update using business timezone awareness.
  */
-export function formatTransactionDate(dateInput?: string | Date | null, existingDate?: string): string {
-  if (!dateInput) return new Date().toISOString()
-
-  if (typeof dateInput !== 'string') {
-    return dateInput.toISOString()
-  }
-
-  const trimmed = dateInput.trim()
-  if (!trimmed) return new Date().toISOString()
-
-  // If input already includes time (e.g., '2026-08-20T14:30:00.000Z')
-  if (trimmed.includes('T') && trimmed.length > 10) {
-    const parsed = new Date(trimmed)
-    if (!isNaN(parsed.getTime())) {
-      // Check if it's not midnight UTC (00:00:00.000Z)
-      if (parsed.getUTCHours() !== 0 || parsed.getUTCMinutes() !== 0 || parsed.getUTCSeconds() !== 0) {
-        return parsed.toISOString()
-      }
-    }
-  }
-
-  // Extract YYYY-MM-DD
-  const dateOnly = trimmed.split('T')[0]
-  const now = new Date()
-
-  // If editing an existing transaction and the existing date already has a time component for the same day, preserve it
-  if (existingDate && existingDate.startsWith(dateOnly) && existingDate.includes('T')) {
-    const existingParsed = new Date(existingDate)
-    if (!isNaN(existingParsed.getTime()) && (existingParsed.getUTCHours() !== 0 || existingParsed.getUTCMinutes() !== 0)) {
-      return existingDate
-    }
-  }
-
-  // Append current creation time of day (HH:mm:ss.sssZ)
-  const timePart = now.toISOString().split('T')[1] || '00:00:00.000Z'
-  return `${dateOnly}T${timePart}`
+export function formatTransactionDate(
+  dateInput?: string | Date | null,
+  existingDate?: string,
+  timezone: string = DEFAULT_TIMEZONE
+): string {
+  return formatLocalTransactionDate(dateInput, timezone, existingDate)
 }
 
 /**

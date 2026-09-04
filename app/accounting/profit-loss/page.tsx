@@ -35,12 +35,12 @@ export default function ProfitLossPage() {
   const [showRevenueDetail, setShowRevenueDetail] = useState(true)
   const [showExpenseDetail, setShowExpenseDetail] = useState(true)
 
-  // Initialize dates
+  // Initialize dates using business localzone
   useEffect(() => {
-    const limits = getDateRangeLimits(dateRangeType)
+    const limits = getDateRangeLimits(dateRangeType, activeBizTimezone)
     setStartDate(limits.start)
     setEndDate(limits.end)
-  }, [dateRangeType])
+  }, [dateRangeType, activeBizTimezone])
 
   // Load Active Business Profile
   useEffect(() => {

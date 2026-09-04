@@ -1,4 +1,12 @@
 import { SupabaseClient } from '@supabase/supabase-js'
+import { 
+  DateRangeKey, 
+  getLocalDateRangeLimits, 
+  getUtcTimestampInTimezone, 
+  localDateToUtcBounds 
+} from '@/lib/localzone'
+
+export type { DateRangeKey }
 
 export type Account = {
   id: string
@@ -37,96 +45,14 @@ export function formatCurrencyIDR(val: number): string {
   }).format(val)
 }
 
-// Get default date range options
-export type DateRangeKey = 'this-month' | 'this-quarter' | 'this-year' | 'last-month' | 'last-quarter' | 'last-year' | 'custom'
-
-export function getDateRangeLimits(key: DateRangeKey): { start: string; end: string } {
-  const now = new Date()
-  let start = new Date()
-  let end = new Date()
-
-  switch (key) {
-    case 'this-month':
-      start = new Date(now.getFullYear(), now.getMonth(), 1)
-      end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-      break
-    case 'this-quarter': {
-      const q = Math.floor(now.getMonth() / 3)
-      start = new Date(now.getFullYear(), q * 3, 1)
-      end = new Date(now.getFullYear(), (q + 1) * 3, 0)
-      break
-    }
-    case 'this-year':
-      start = new Date(now.getFullYear(), 0, 1)
-      end = new Date(now.getFullYear(), 11, 31)
-      break
-    case 'last-month':
-      start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      end = new Date(now.getFullYear(), now.getMonth(), 0)
-      break
-    case 'last-quarter': {
-      const q = Math.floor(now.getMonth() / 3) - 1
-      // Handle underflow for previous year
-      const targetYear = q < 0 ? now.getFullYear() - 1 : now.getFullYear()
-      const targetQ = q < 0 ? 3 : q
-      start = new Date(targetYear, targetQ * 3, 1)
-      end = new Date(targetYear, (targetQ + 1) * 3, 0)
-      break
-    }
-    case 'last-year':
-      start = new Date(now.getFullYear() - 1, 0, 1)
-      end = new Date(now.getFullYear() - 1, 11, 31)
-      break
-    case 'custom':
-      // Return current month as placeholder
-      start = new Date(now.getFullYear(), now.getMonth(), 1)
-      end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-      break
-  }
-
-  // Format as local YYYY-MM-DD
-  const toLocalISODate = (d: Date) => {
-    const year = d.getFullYear()
-    const month = String(d.getMonth() + 1).padStart(2, '0')
-    const day = String(d.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
-  }
-  return { start: toLocalISODate(start), end: toLocalISODate(end) }
+// Get default date range options accounting for localzone
+export function getDateRangeLimits(key: DateRangeKey, timezone?: string): { start: string; end: string } {
+  return getLocalDateRangeLimits(key, timezone)
 }
 
 // Helper to convert local calendar date to UTC timestamp based on timezone
 export function getUtcTimestamp(dateStr: string, timeStr: string, timeZone: string): string {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false
-  });
-  
-  const [year, month, day] = dateStr.split('-').map(Number);
-  const [hours, minutes, seconds] = timeStr.split('.')[0].split(':').map(Number);
-  const ms = Number(timeStr.split('.')[1] || 0);
-  
-  const utcDate = new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds, ms));
-  const parts = formatter.formatToParts(utcDate);
-  const partValues: Record<string, number> = {};
-  parts.forEach(p => {
-    if (p.type !== 'literal') {
-      partValues[p.type] = Number(p.value);
-    }
-  });
-  
-  const fMonth = partValues.month;
-  const fDay = partValues.day;
-  const fYear = partValues.year;
-  const fHour = partValues.hour === 24 ? 0 : partValues.hour;
-  const fMin = partValues.minute;
-  const fSec = partValues.second;
-  
-  const formattedUtc = new Date(Date.UTC(fYear, fMonth - 1, fDay, fHour, fMin, fSec, ms));
-  const diffMs = utcDate.getTime() - formattedUtc.getTime();
-  const targetDate = new Date(utcDate.getTime() + diffMs);
-  return targetDate.toISOString();
+  return getUtcTimestampInTimezone(dateStr, timeStr, timeZone)
 }
 
 // Fetch all business accounts and ledger transactions up to end date

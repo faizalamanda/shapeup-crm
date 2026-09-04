@@ -59,12 +59,12 @@ export default function CashFlowPage() {
   const [showInvDetail, setShowInvDetail] = useState(true)
   const [showFinDetail, setShowFinDetail] = useState(true)
 
-  // Initialize dates
+  // Initialize dates using business localzone
   useEffect(() => {
-    const limits = getDateRangeLimits(dateRangeType)
+    const limits = getDateRangeLimits(dateRangeType, activeBizTimezone)
     setStartDate(limits.start)
     setEndDate(limits.end)
-  }, [dateRangeType])
+  }, [dateRangeType, activeBizTimezone])
 
   // Load Active Business Profile
   useEffect(() => {

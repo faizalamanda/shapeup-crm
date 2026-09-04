@@ -63,8 +63,13 @@ export default function BalanceSheetPage() {
         if (businessId) {
           setActiveBizId(businessId)
           const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
+          const tz = biz?.timezone || 'Asia/Jakarta'
           setActiveBizName(biz?.name || 'Toko')
-          setActiveBizTimezone(biz?.timezone || 'Asia/Jakarta')
+          setActiveBizTimezone(tz)
+          // Update asOfDate to match business localzone
+          const d = new Date()
+          const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
+          setAsOfDate(formatter.format(d))
         } else {
           setErrorMsg('No active business selected')
           setLoading(false)
