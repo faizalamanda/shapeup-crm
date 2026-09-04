@@ -64,10 +64,11 @@ export function canAccessPath(href: string, context: AccessContext): boolean {
     )
   }
 
-  // 10. Products & Stock Opname
-  if (href.startsWith('/products') || href.startsWith('/stock-opname')) {
+  // 10. Products, Inventory Reports & Stock Opname
+  if (href.startsWith('/products') || href.startsWith('/stock-opname') || href.startsWith('/inventory')) {
     return (
       permissions.includes('manage_products') ||
+      permissions.includes('manage_purchases') ||
       permissions.includes('view_financials_no_salary')
     )
   }

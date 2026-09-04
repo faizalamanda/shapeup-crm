@@ -158,6 +158,7 @@ const menuItems: MenuItem[] = [
       { name: 'Daftar Produk', href: '/products' },
       { name: 'Pembelian',     href: '/purchases' },
       { name: 'Stock Opname',  href: '/stock-opname' },
+      { name: 'Laporan Stok (Inventory)', href: '/inventory/reports' },
     ],
   },
   {

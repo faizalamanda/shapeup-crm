@@ -1,5 +1,5 @@
 export type IntegrationStatus = 'available' | 'coming_soon' | 'beta'
-export type IntegrationCategory = 'e-commerce' | 'payment' | 'shipping' | 'messaging'
+export type IntegrationCategory = 'e-commerce' | 'payment' | 'shipping' | 'messaging' | 'inventory'
 
 export interface IntegrationField {
   key: string
@@ -25,6 +25,16 @@ export interface IntegrationPlugin {
 }
 
 export const INTEGRATION_PLUGINS: IntegrationPlugin[] = [
+  {
+    id: 'inventory_reports',
+    name: 'Laporan Inventory & Stok',
+    description: 'Modul Laporan Persediaan Lengkap: Stock Report, Location Report, Move History (Lot/Status), Move Analysis (Pivot & Charts), dan Valuation (FIFO/LIFO/AVCO).',
+    icon: '📦',
+    category: 'inventory',
+    status: 'available',
+    badge: 'Plugin Resmi',
+    fields: [],
+  },
   {
     id: 'woocommerce',
     name: 'WooCommerce',
