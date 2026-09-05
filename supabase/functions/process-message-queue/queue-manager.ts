@@ -11,42 +11,42 @@ export async function fetchQueueBatch(supabase: any, batchSize = 20) {
 }
 
 /**
- * Mark queue item as successfully sent
+ * Mark queue item as successfully sent.
+ * Accepts the full queue object to avoid a redundant SELECT after UPDATE.
+ * UPDATE and INSERT marketing_logs are fired in parallel to halve round-trips.
  */
-export async function markAsSent(supabase: any, id: string, response: any) {
-  await supabase
-    .from("marketing_queue")
-    .update({
-      status: "sent",
-      sent_at: new Date().toISOString(),
-      provider_response: response,
-      processing_at: null,
-      error_log: null,
-    })
-    .eq("id", id)
+export async function markAsSent(supabase: any, queue: any, response: any) {
+  const sentAt = new Date().toISOString()
 
-  // Record history in marketing_logs
   try {
-    const { data: queueItem } = await supabase
-      .from("marketing_queue")
-      .select("scenario_id, order_id, customer_id, recipient, payload")
-      .eq("id", id)
-      .single()
+    await Promise.all([
+      // 1. Update queue status
+      supabase
+        .from("marketing_queue")
+        .update({
+          status: "sent",
+          sent_at: sentAt,
+          provider_response: response,
+          processing_at: null,
+          error_log: null,
+        })
+        .eq("id", queue.id),
 
-    if (queueItem) {
-      await supabase.from("marketing_logs").insert({
-        scenario_id: queueItem.scenario_id,
-        order_id: queueItem.order_id,
-        customer_id: queueItem.customer_id,
-        recipient_phone: queueItem.recipient,
-        template_name: queueItem.payload?.template_name || '',
+      // 2. Insert log — uses data already in memory, no extra SELECT needed
+      supabase.from("marketing_logs").insert({
+        scenario_id: queue.scenario_id,
+        order_id: queue.order_id,
+        customer_id: queue.customer_id,
+        recipient_phone: queue.recipient,
+        template_name: queue.payload?.template_name || '',
         status: 'sent',
         log_type: 'whatsapp',
-        sent_at: new Date().toISOString(),
-      })
-    }
+        sent_at: sentAt,
+      }),
+    ])
   } catch (err) {
-    console.error(`Failed to insert marketing_logs for queue ${id}:`, err)
+    console.error(`Failed to markAsSent for queue ${queue.id}:`, err)
+    throw err
   }
 }
 
@@ -82,9 +82,14 @@ export async function markAsDead(supabase: any, id: string, err: any) {
 }
 
 /**
- * Recover stuck processing items (timed out > 15 mins)
+ * Recover stuck processing items (timed out > 15 mins).
+ * Only runs UPDATE when stuck items actually exist (guard via hasStuckItems).
  */
 export async function recoverStuckQueue(supabase: any) {
+  // Guard: skip the UPDATE write entirely if nothing is stuck
+  const stuck = await hasStuckItems(supabase)
+  if (!stuck) return
+
   const timeout = new Date(Date.now() - 15 * 60 * 1000).toISOString()
 
   await supabase

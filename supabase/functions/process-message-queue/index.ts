@@ -40,7 +40,7 @@ Deno.serve(async () => {
       await recoverStuckQueue(supabase)
       queues = await fetchQueueBatch(supabase, 20)
     } else {
-      // 2. Recover stuck items when active queues exist
+      // 2. Recover stuck items when active queues exist (guard is inside recoverStuckQueue)
       await recoverStuckQueue(supabase)
     }
 
@@ -74,8 +74,8 @@ async function processQueue(queue: any) {
     // Send message via provider dispatcher (e.g. YCLOUD)
     const response = await dispatchMessage(queue, supabase)
 
-    // Mark as sent on success
-    await markAsSent(supabase, queue.id, response)
+    // Mark as sent on success — pass full queue object (avoids redundant SELECT)
+    await markAsSent(supabase, queue, response)
 
     console.log(`QUEUE SENT ${queue.id}`)
   } catch (err) {

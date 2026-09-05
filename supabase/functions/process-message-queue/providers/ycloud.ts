@@ -1,10 +1,21 @@
 import { QueueItem, SendResult } from "./types.ts"
 
 /**
- * Fetch YCloud configuration for a specific business
+ * In-memory caches for the duration of a single Edge Function invocation.
+ * Eliminates redundant SELECTs when multiple queue items share the same
+ * business_id or scenario_id within one batch (up to 20 items per run).
+ */
+const _bizConfigCache = new Map<string, any>()
+const _scenarioConfigCache = new Map<string, any>()
+
+/**
+ * Fetch YCloud configuration for a specific business (cached per invocation).
  */
 export async function getBusinessYcloudConfig(supabase: any, businessId?: string) {
   if (!businessId) return null
+
+  if (_bizConfigCache.has(businessId)) return _bizConfigCache.get(businessId)
+
   try {
     const { data, error } = await supabase
       .from("integrations")
@@ -13,12 +24,17 @@ export async function getBusinessYcloudConfig(supabase: any, businessId?: string
       .filter("api_credentials->>business_id", "eq", businessId)
       .maybeSingle()
 
-    if (error || !data || !data.is_active) return null
+    if (error || !data || !data.is_active) {
+      _bizConfigCache.set(businessId, null)
+      return null
+    }
 
-    return {
+    const config = {
       apiKey: data.api_credentials?.api_key || "",
       whatsappNumber: data.api_credentials?.whatsapp_number || "",
     }
+    _bizConfigCache.set(businessId, config)
+    return config
   } catch (err) {
     console.error(`Failed to fetch YCloud config for business ${businessId}:`, err)
     return null
@@ -79,24 +95,29 @@ export async function sendYcloud(queue: QueueItem, supabase: any): Promise<SendR
   const apiKey = bizConfig.apiKey.trim()
   const channelId = bizConfig.whatsappNumber ? bizConfig.whatsappNumber.trim() : ""
 
-  // Fallback / Supplementary: Fetch scenario config if queue payload lacks details
+  // Fallback / Supplementary: Fetch scenario config if queue payload lacks details (cached per invocation)
   let scenarioConfig: any = null
   if (queue.scenario_id) {
-    try {
-      const { data: scData } = await supabase
-        .from("marketing_scenarios")
-        .select("trigger_config, template_vars, template_name")
-        .eq("id", queue.scenario_id)
-        .maybeSingle()
-      if (scData) {
-        scenarioConfig = {
-          ...(scData.trigger_config || {}),
-          ...(typeof scData.template_vars === 'object' && scData.template_vars !== null && !Array.isArray(scData.template_vars) ? scData.template_vars : {}),
-          template_name: scData.template_name
+    if (_scenarioConfigCache.has(queue.scenario_id)) {
+      scenarioConfig = _scenarioConfigCache.get(queue.scenario_id)
+    } else {
+      try {
+        const { data: scData } = await supabase
+          .from("marketing_scenarios")
+          .select("trigger_config, template_vars, template_name")
+          .eq("id", queue.scenario_id)
+          .maybeSingle()
+        if (scData) {
+          scenarioConfig = {
+            ...(scData.trigger_config || {}),
+            ...(typeof scData.template_vars === 'object' && scData.template_vars !== null && !Array.isArray(scData.template_vars) ? scData.template_vars : {}),
+            template_name: scData.template_name
+          }
         }
+        _scenarioConfigCache.set(queue.scenario_id, scenarioConfig)
+      } catch (err) {
+        console.error(`Failed to fetch scenario config for queue ${queue.id}:`, err)
       }
-    } catch (err) {
-      console.error(`Failed to fetch scenario config for queue ${queue.id}:`, err)
     }
   }
 
