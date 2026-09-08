@@ -36,6 +36,16 @@ export const INTEGRATION_PLUGINS: IntegrationPlugin[] = [
     fields: [],
   },
   {
+    id: 'pipeline',
+    name: 'Universal Pipeline & Kanban',
+    description: 'Modul alur kerja fleksibel (Penjualan, Produktivitas, Produksi, Rekrutmen) dengan papan Kanban interaktif.',
+    icon: '📊',
+    category: 'inventory',
+    status: 'available',
+    badge: 'Plugin Resmi',
+    fields: [],
+  },
+  {
     id: 'woocommerce',
     name: 'WooCommerce',
     description: 'Hubungkan toko WordPress & WooCommerce Anda untuk sinkronisasi pesanan & pelanggan secara otomatis.',

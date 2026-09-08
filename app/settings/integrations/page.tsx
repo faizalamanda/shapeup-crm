@@ -482,6 +482,33 @@ export default function IntegrationsSettingsPage() {
     }
   }
 
+  // Handle One-Click Toggle Activation for Pipeline Plugin
+  const handleTogglePipelineActivation = async (newActiveState: boolean) => {
+    setSaving(true)
+    try {
+      const res = await fetch('/api/integrations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'pipeline',
+          is_active: newActiveState,
+        }),
+      })
+
+      const json = await res.json()
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Gagal mengubah status plugin Pipeline')
+      }
+
+      await fetchIntegrations()
+      window.location.reload()
+    } catch (err: any) {
+      alert('Error: ' + (err.message || 'Terjadi kesalahan saat mengubah status plugin Pipeline.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   // Handle Copy Webhook URL
   const handleCopyWebhook = (url: string) => {
     navigator.clipboard.writeText(url)
@@ -545,6 +572,9 @@ export default function IntegrationsSettingsPage() {
   const inventorySaved = integrationsData['inventory_reports']
   const isInventoryActive = inventorySaved ? inventorySaved.is_active !== false : true
 
+  const pipelineSaved = integrationsData['pipeline']
+  const isPipelineActive = Boolean(pipelineSaved && pipelineSaved.is_active === true)
+
   return (
     <SettingsLayout title="Integrasi & Plugin" subtitle="Hubungkan WooCommerce, YCloud WhatsApp, dan API pihak ketiga.">
 
@@ -579,6 +609,67 @@ export default function IntegrationsSettingsPage() {
 
       {/* Plugins Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        {/* 0. UNIVERSAL PIPELINE & KANBAN PLUGIN CARD */}
+        <div className="bg-white rounded-xl border border-[#E2E2DC] p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between space-y-6">
+          <div>
+            <div className="flex items-start justify-between mb-4">
+              <div className="w-12 h-12 rounded-xl bg-blue-50 border border-blue-100 text-blue-600 font-extrabold flex items-center justify-center text-2xl">
+                📊
+              </div>
+              <div>
+                {isPipelineActive ? (
+                  <span className="text-[10px] font-bold uppercase bg-green-50 text-green-700 border border-green-200 px-2.5 py-0.5 rounded-full">
+                    ✓ Plugin Aktif
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold uppercase bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-0.5 rounded-full">
+                    ⏸️ Dinonaktifkan
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <h3 className="text-base font-bold text-[#1C1C1A]">Universal Pipeline & Kanban</h3>
+            <p className="text-xs text-[#6B6B63] mt-1.5 leading-relaxed">
+              Modul alur kerja &amp; pipeline fleksibel (Penjualan, Produktivitas, Produksi, Rekrutmen) dengan papan Kanban interaktif drag-and-drop.
+            </p>
+          </div>
+
+          <div className="pt-4 border-t border-[#E2E2DC] flex items-center justify-between gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#A8A89E]">Plugin Workflow</span>
+
+            <div className="flex items-center gap-2">
+              {isPipelineActive ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleTogglePipelineActivation(false)}
+                    disabled={saving}
+                    className="px-3 py-1.5 border border-red-200 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    Nonaktifkan ⏸️
+                  </button>
+                  <Link
+                    href="/pipeline"
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Buka Pipeline 📊</span>
+                  </Link>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleTogglePipelineActivation(true)}
+                  disabled={saving}
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-black transition-all shadow-md hover:shadow-none flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <span>{saving ? 'Mengaktifkan...' : 'Aktifkan Plugin ⚡'}</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* 0. INVENTORY REPORTS PLUGIN CARD */}
         <div className="bg-white rounded-xl border border-[#E2E2DC] p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between space-y-6">

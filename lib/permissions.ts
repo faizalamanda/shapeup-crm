@@ -106,5 +106,10 @@ export function canAccessPath(href: string, context: AccessContext): boolean {
     return permissions.includes('manage_marketing')
   }
 
+  // 15. Universal Pipeline & Kanban Board
+  if (href.startsWith('/pipeline')) {
+    return true
+  }
+
   return false
 }

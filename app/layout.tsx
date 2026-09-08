@@ -130,11 +130,19 @@ const Icons = {
       <line x1="6" y1="20" x2="6" y2="14"/>
     </svg>
   ),
+  pipeline: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="5" height="18" rx="1"/>
+      <rect x="11" y="3" width="5" height="12" rx="1"/>
+      <rect x="19" y="3" width="5" height="8" rx="1"/>
+    </svg>
+  ),
 }
 
 const menuItems: MenuItem[] = [
   { name: 'Onboarding',   href: '/onboarding',        icon: Icons.onboarding },
   { name: 'Overview',     href: '/dashboard',         icon: Icons.overview },
+  { name: 'Pipeline',     href: '/pipeline',          icon: Icons.pipeline },
   { name: 'Inbox / Chat', href: '/inbox',             icon: Icons.inbox },
   {
     name: 'Pemasukan',    href: '/orders',            icon: Icons.pemasukan,
