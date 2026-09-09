@@ -1,6 +1,7 @@
 "use client"
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import AccurateSettingsModal from '@/lib/integrations/accurate/AccurateSettingsModal'
 import { createBrowserClient } from '@supabase/ssr'
 import Link from 'next/link'
 import SettingsLayout from '@/components/SettingsLayout'
@@ -123,6 +124,10 @@ export default function IntegrationsSettingsPage() {
         })
         setIntegrationsData(map)
 
+
+        // Populate Accurate form if exists
+        // (Moved to AccurateSettingsModal)
+
         // Populate WooCommerce form if exists
         const woo = map['woocommerce']
         if (woo) {
@@ -186,6 +191,8 @@ export default function IntegrationsSettingsPage() {
       fetchIntegrations()
     }
   }, [activeBusinessId, fetchIntegrations])
+
+
 
   // Handle Save WooCommerce Integration
   const handleSaveWooCommerce = async (e: React.FormEvent) => {
@@ -554,6 +561,10 @@ export default function IntegrationsSettingsPage() {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   
   // Plugin references
+
+  const accuratePlugin = INTEGRATION_PLUGINS.find(p => p.id === 'accurate')!
+  const accurateSaved = integrationsData['accurate']
+
   const wooPlugin = INTEGRATION_PLUGINS.find(p => p.id === 'woocommerce')!
   const wooWebhookUrl = wooPlugin?.getWebhookUrl ? wooPlugin.getWebhookUrl(activeBusinessId, origin) : ''
   const wooSaved = integrationsData['woocommerce']
@@ -731,6 +742,51 @@ export default function IntegrationsSettingsPage() {
             </div>
           </div>
         </div>
+
+        
+        {/* ACCURATE PLUGIN CARD */}
+        {accuratePlugin && (
+          <div
+            className={`group relative bg-white border ${accurateSaved?.is_active ? 'border-green-300' : 'border-slate-200'} rounded-2xl p-5 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer overflow-hidden`}
+            onClick={() => setSelectedPlugin(accuratePlugin)}
+          >
+            <div className="absolute top-0 right-0 w-32 h-32 bg-slate-50 rounded-full blur-3xl -mr-10 -mt-10 transition-colors group-hover:bg-blue-50"></div>
+            
+            <div className="relative z-10 flex items-start justify-between mb-4">
+              <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center text-2xl shadow-sm border border-slate-100">
+                {accuratePlugin.icon}
+              </div>
+              <div className="flex flex-col items-end gap-2">
+                {accurateSaved?.is_active ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                    Terkoneksi
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
+                    Belum Terhubung
+                  </span>
+                )}
+                <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 tracking-wider uppercase">
+                  {accuratePlugin.category}
+                </span>
+              </div>
+            </div>
+
+            <div className="relative z-10">
+              <h3 className="text-base font-bold text-[#1C1C1A]">{accuratePlugin.name}</h3>
+              <p className="mt-2 text-sm text-slate-500 leading-relaxed line-clamp-3">
+                {accuratePlugin.description}
+              </p>
+            </div>
+            
+            <div className="relative z-10 mt-6 pt-4 border-t border-slate-100 flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-400 group-hover:text-blue-600 transition-colors">
+                {accurateSaved?.is_active ? 'Kelola Pengaturan →' : 'Hubungkan Sekarang →'}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* 1. WOOCOMMERCE PLUGIN CARD */}
         <div className="bg-white rounded-xl border border-[#E2E2DC] p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between space-y-6">
@@ -920,6 +976,18 @@ export default function IntegrationsSettingsPage() {
         ))}
 
       </div>
+
+      
+      {/* ACCURATE CONFIGURATION MODAL / DRAWER */}
+      {selectedPlugin?.id === 'accurate' && mounted && createPortal(
+        <AccurateSettingsModal
+          selectedPlugin={selectedPlugin}
+          setSelectedPlugin={setSelectedPlugin}
+          activeBusinessId={activeBusinessId || ''}
+          onSaveSuccess={fetchIntegrations}
+        />,
+        document.body
+      )}
 
       {/* WOOCOMMERCE CONFIGURATION MODAL / DRAWER */}
       {selectedPlugin?.id === 'woocommerce' && mounted && createPortal(

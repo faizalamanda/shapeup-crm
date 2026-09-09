@@ -202,4 +202,47 @@ export const INTEGRATION_PLUGINS: IntegrationPlugin[] = [
     badge: 'Segera Hadir',
     fields: [],
   },
+  {
+    id: 'accurate',
+    name: 'Accurate Online',
+    description: 'Integrasi dengan Accurate Online untuk sinkronisasi pesanan penjualan dan pemetaan nilai HPP produk.',
+    icon: '📊',
+    category: 'e-commerce',
+    status: 'available',
+    badge: 'Aktif',
+    fields: [
+      {
+        key: 'client_id',
+        label: 'Client ID (OAuth)',
+        type: 'text',
+        placeholder: 'Client ID dari Accurate Developer Portal',
+        description: 'Dapatkan dari portal developer Accurate.',
+        required: true,
+      },
+      {
+        key: 'client_secret',
+        label: 'Client Secret (OAuth)',
+        type: 'password',
+        placeholder: 'Client Secret dari Accurate Developer Portal',
+        description: 'Kunci rahasia aplikasi Anda di Accurate.',
+        required: true,
+      },
+      {
+        key: 'access_token',
+        label: 'Access Token',
+        type: 'password',
+        placeholder: 'Access Token',
+        description: 'Token akses aktif untuk integrasi. Harus diperbarui saat expired.',
+        required: true,
+      },
+      {
+        key: 'db_id',
+        label: 'Database ID / Session ID',
+        type: 'text',
+        placeholder: 'ID Database atau Session Accurate Anda',
+        description: 'ID sesi atau database yang digunakan pada X-Session-ID.',
+        required: true,
+      }
+    ],
+  },
 ]
