@@ -76,6 +76,52 @@ export default function KanbanColumn({
     setShowStageMenu(false);
   };
 
+  const [sortBy, setSortBy] = useState<'manual' | 'alpha_asc' | 'alpha_desc' | 'created_desc' | 'created_asc' | 'value_desc' | 'value_asc'>('manual');
+
+  const sortedCards = [...cards].sort((a, b) => {
+    switch (sortBy) {
+      case 'alpha_asc':
+        return a.title.localeCompare(b.title);
+      case 'alpha_desc':
+        return b.title.localeCompare(a.title);
+      case 'created_desc':
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      case 'created_asc':
+        return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+      case 'value_desc':
+        return (b.value || 0) - (a.value || 0);
+      case 'value_asc':
+        return (a.value || 0) - (b.value || 0);
+      default:
+        return 0;
+    }
+  });
+
+  const handleCopyText = async () => {
+    let text = `Stage: ${stage.name}\n`;
+    text += `Total Kartu: ${cards.length}\n`;
+    if (totalStageValue > 0) {
+      text += `Total Nilai: ${formatCurrency(totalStageValue, currency)}\n`;
+    }
+    text += `\nDaftar Kartu:\n`;
+    sortedCards.forEach((card, index) => {
+      text += `${index + 1}. ${card.title}`;
+      if (card.value > 0) {
+        text += ` - ${formatCurrency(card.value, currency)}`;
+      }
+      text += '\n';
+    });
+    
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('Berhasil disalin ke clipboard!');
+      setShowStageMenu(false);
+    } catch (err) {
+      console.error('Gagal menyalin:', err);
+      alert('Gagal menyalin ke clipboard');
+    }
+  };
+
   return (
     <div
       onDragOver={(e) => {
@@ -190,6 +236,40 @@ export default function KanbanColumn({
 
                   <hr className="my-2 border-gray-100 dark:border-gray-700" />
 
+                  {/* Sorting settings */}
+                  <div className="mb-3">
+                    <label className="block text-[11px] text-gray-500 dark:text-gray-400 mb-1">
+                      Urutkan Kartu:
+                    </label>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as any)}
+                      className="w-full px-2 py-1.5 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md focus:outline-hidden text-gray-900 dark:text-gray-100 text-xs"
+                    >
+                      <option value="manual">Manual (Default)</option>
+                      <option value="alpha_asc">Abjad (A - Z)</option>
+                      <option value="alpha_desc">Abjad (Z - A)</option>
+                      <option value="created_desc">Terbaru Dibuat</option>
+                      <option value="created_asc">Terlama Dibuat</option>
+                      <option value="value_desc">Nilai Terbesar</option>
+                      <option value="value_asc">Nilai Terkecil</option>
+                    </select>
+                  </div>
+
+                  <hr className="my-2 border-gray-100 dark:border-gray-700" />
+
+                  {/* Copy state button */}
+                  <button
+                    type="button"
+                    onClick={handleCopyText}
+                    className="w-full text-left px-2 py-1.5 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md font-medium flex items-center gap-1.5 transition-colors mb-1"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                    </svg>
+                    Salin Isi Stage (Teks)
+                  </button>
+
                   {/* Delete stage button */}
                   <button
                     type="button"
@@ -223,7 +303,7 @@ export default function KanbanColumn({
 
       {/* Cards List Container */}
       <div className="p-2 flex-1 overflow-y-auto min-h-[150px] space-y-2.5 custom-scrollbar">
-        {cards.map((card) => (
+        {sortedCards.map((card) => (
           <CardItem
             key={card.id}
             card={card}
