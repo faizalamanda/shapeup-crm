@@ -63,6 +63,10 @@ export default function PipelineMain() {
   const [members, setMembers] = useState<PipelineMember[]>([]);
   const [staffProfiles, setStaffProfiles] = useState<{ id: string; full_name?: string | null; email?: string | null }[]>([]);
 
+  // Sync state
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
+
   // UI Modals & Filters
   const [loading, setLoading] = useState(true);
   const [showStats, setShowStats] = useState(false);
@@ -128,19 +132,24 @@ export default function PipelineMain() {
 
     let isMounted = true;
     const loadPipelineDetail = async () => {
-      const { data: pipe } = await fetchPipelineById(supabase, selectedPipelineId);
-      if (!isMounted || !pipe) return;
+      setIsSyncing(true);
+      try {
+        const { data: pipe } = await fetchPipelineById(supabase, selectedPipelineId);
+        if (!isMounted || !pipe) return;
 
-      setActivePipeline(pipe);
-      setStages(pipe.stages || []);
+        setActivePipeline(pipe);
+        setStages(pipe.stages || []);
 
-      // Fetch cards
-      const { data: cardList } = await fetchPipelineCards(supabase, selectedPipelineId);
-      if (isMounted) setCards(cardList || []);
+        // Fetch cards
+        const { data: cardList } = await fetchPipelineCards(supabase, selectedPipelineId);
+        if (isMounted) setCards(cardList || []);
 
-      // Fetch members
-      const { data: memberList } = await fetchPipelineMembers(supabase, selectedPipelineId);
-      if (isMounted) setMembers(memberList || []);
+        // Fetch members
+        const { data: memberList } = await fetchPipelineMembers(supabase, selectedPipelineId);
+        if (isMounted) setMembers(memberList || []);
+      } finally {
+        if (isMounted) setIsSyncing(false);
+      }
     };
 
     loadPipelineDetail();
@@ -149,6 +158,49 @@ export default function PipelineMain() {
       isMounted = false;
     };
   }, [selectedPipelineId, supabase]);
+
+  // Manual sync handler
+  const handleManualSync = async () => {
+    if (!selectedPipelineId) return;
+    setIsSyncing(true);
+    try {
+      const { data: pipe } = await fetchPipelineById(supabase, selectedPipelineId);
+      if (pipe) {
+        setActivePipeline(pipe);
+        setStages(pipe.stages || []);
+      }
+      const { data: cardList } = await fetchPipelineCards(supabase, selectedPipelineId);
+      if (cardList) setCards(cardList || []);
+      const { data: memberList } = await fetchPipelineMembers(supabase, selectedPipelineId);
+      if (memberList) setMembers(memberList || []);
+    } catch (err) {
+      console.error('Manual sync error', err);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Auto sync effect
+  useEffect(() => {
+    if (!autoSyncEnabled || !selectedPipelineId) return;
+    const intervalId = setInterval(async () => {
+      try {
+        const { data: pipe } = await fetchPipelineById(supabase, selectedPipelineId);
+        if (pipe) {
+          setActivePipeline(pipe);
+          setStages(pipe.stages || []);
+        }
+        const { data: cardList } = await fetchPipelineCards(supabase, selectedPipelineId);
+        if (cardList) setCards(cardList || []);
+        const { data: memberList } = await fetchPipelineMembers(supabase, selectedPipelineId);
+        if (memberList) setMembers(memberList || []);
+      } catch (err) {
+        console.error('Auto sync error', err);
+      }
+    }, 60000); // sync every 60 seconds (1 menit) untuk menghemat resource (CPU/RAM/Supabase Free Tier)
+
+    return () => clearInterval(intervalId);
+  }, [autoSyncEnabled, selectedPipelineId, supabase]);
 
   // Filtered Cards Memo
   const filteredCards = useMemo(() => {
@@ -399,6 +451,28 @@ export default function PipelineMain() {
           {/* Action Toolbar buttons */}
           {activePipeline && (
             <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-gray-600 dark:text-gray-300 mr-2">
+                <input 
+                  type="checkbox" 
+                  className="rounded text-blue-600 focus:ring-blue-500 bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-700 w-3.5 h-3.5"
+                  checked={autoSyncEnabled}
+                  onChange={(e) => setAutoSyncEnabled(e.target.checked)}
+                />
+                Auto Sync
+              </label>
+
+              <button
+                type="button"
+                onClick={handleManualSync}
+                disabled={isSyncing}
+                className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 transition-colors disabled:opacity-50"
+                title="Sync Manual"
+              >
+                <svg className={`w-4 h-4 ${isSyncing ? 'animate-spin text-blue-600 dark:text-blue-400' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setShowStats(!showStats)}
