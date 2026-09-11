@@ -334,13 +334,13 @@ export default function OnboardingPage() {
 
         // Count new customers based on the joined total_order_count (<= 1 or unindexed null)
         const c1New = new Set(o1.filter(o => {
-          // In PostgREST, a join on a 1:1 view returns an object or null
-          const m = o.customer_metrics
+          // In PostgREST, a join on a 1:1 view may return an array if types are not perfectly synced
+          const m: any = Array.isArray(o.customer_metrics) ? o.customer_metrics[0] : o.customer_metrics
           return !m || m.total_order_count <= 1
         }).map(o => o.customer_id)).size
 
         const c2New = new Set(o2.filter(o => {
-          const m = o.customer_metrics
+          const m: any = Array.isArray(o.customer_metrics) ? o.customer_metrics[0] : o.customer_metrics
           return !m || m.total_order_count <= 1
         }).map(o => o.customer_id)).size
 
