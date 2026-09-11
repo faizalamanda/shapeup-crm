@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
 import { canAccessPath } from '@/lib/permissions'
 import { useUserContext } from '@/components/UserContext'
+import { getLocalDateRangeLimits, localDateToUtcBounds } from '@/lib/localzone'
 
 // ─── Available Shortcuts Pool ────────────────────────────────────────────────
 type ShortcutItem = {
@@ -239,7 +240,126 @@ export default function OnboardingPage() {
   ), [])
 
   // Consume instant UserContext state (0ms delay via cache)
-  const { currentUserRole, currentUserPermissions, isWabaActive, bizLoading: isRoleLoading } = useUserContext()
+  const { currentUserRole, currentUserPermissions, isWabaActive, bizLoading: isRoleLoading, userProfile, activeBusiness } = useUserContext()
+
+  // Real-time Metrics State
+  const [metrics, setMetrics] = useState({
+    sales: 0, salesGrowth: 0, trx: 0, trxGrowth: 0, avg: 0, avgGrowth: 0, cust: 0, custGrowth: 0, newCust: 0, newCustGrowth: 0
+  })
+  const [dateFilter, setDateFilter] = useState('today')
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(true)
+
+  useEffect(() => {
+    async function fetchMetrics() {
+      if (!activeBusiness?.id) return;
+      setIsLoadingMetrics(true)
+      try {
+        const businessTimezone = activeBusiness?.timezone || 'Asia/Jakarta'
+        
+        // 1. Get local date range string limits (e.g. "2026-09-11")
+        // Mapping our component's dateFilter to localzone keys
+        let dateKey = 'today'
+        if (dateFilter === 'yesterday') dateKey = 'yesterday'
+        else if (dateFilter === 'last7') dateKey = 'last7' // 'last7' is not in DateRangeKey, we must handle it manually
+        else if (dateFilter === 'thisMonth') dateKey = 'this-month'
+        
+        let startLocal, endLocal;
+        if (dateKey === 'last7') {
+          const now = new Date();
+          const endDate = new Date(now);
+          const startDate = new Date(now);
+          startDate.setDate(now.getDate() - 6);
+          const { formatLocalDateString } = require('@/lib/localzone');
+          startLocal = formatLocalDateString(startDate, businessTimezone);
+          endLocal = formatLocalDateString(endDate, businessTimezone);
+        } else {
+          const range = getLocalDateRangeLimits(dateKey as any, businessTimezone)
+          startLocal = range.start
+          endLocal = range.end
+        }
+
+        // Current period UTC bounds
+        const bounds = localDateToUtcBounds(startLocal, endLocal, businessTimezone)
+        
+        // Calculate Previous Period
+        const sDate = new Date(startLocal)
+        const eDate = new Date(endLocal)
+        const diffMs = eDate.getTime() - sDate.getTime()
+        const prevStart = new Date(sDate.getTime() - diffMs - 24 * 60 * 60 * 1000)
+        const prevEnd = new Date(sDate.getTime() - 24 * 60 * 60 * 1000)
+        const { formatLocalDateString } = require('@/lib/localzone');
+        const prevBounds = localDateToUtcBounds(
+          formatLocalDateString(prevStart, businessTimezone),
+          formatLocalDateString(prevEnd, businessTimezone),
+          businessTimezone
+        )
+
+        const countedStatuses = ['shipped', 'processing', 'complete', 'completed']
+        
+        const [o1Res, o2Res] = await Promise.all([
+          // Current period orders (with joined customer metrics for zero-latency newCust checking)
+          supabase.from('orders')
+            .select('grand_total, customer_id, customer_metrics(total_order_count)')
+            .eq('business_id', activeBusiness.id)
+            .in('status', countedStatuses)
+            .gte('order_date_utc', bounds.startOfDayISO)
+            .lte('order_date_utc', bounds.endOfDayISO),
+            
+          // Previous period orders
+          supabase.from('orders')
+            .select('grand_total, customer_id, customer_metrics(total_order_count)')
+            .eq('business_id', activeBusiness.id)
+            .in('status', countedStatuses)
+            .gte('order_date_utc', prevBounds.startOfDayISO)
+            .lte('order_date_utc', prevBounds.endOfDayISO)
+        ])
+
+        const o1 = o1Res.data || []
+        const o2 = o2Res.data || []
+        
+        // customer_metrics logic is now resolved seamlessly through relational joins in the orders query!
+
+        // Calculation exactly like dashboard
+        const s1 = o1.reduce((acc, o) => acc + (Number(o.grand_total) || 0), 0)
+        const t1 = o1.length
+        const a1 = t1 > 0 ? s1 / t1 : 0
+        const c1 = new Set(o1.map(o => o.customer_id).filter(Boolean)).size // Unique active customers
+        
+        const s2 = o2.reduce((acc, o) => acc + (Number(o.grand_total) || 0), 0)
+        const t2 = o2.length
+        const a2 = t2 > 0 ? s2 / t2 : 0
+        const c2 = new Set(o2.map(o => o.customer_id).filter(Boolean)).size
+
+        const calcGrowth = (curr: number, prev: number) => prev > 0 ? ((curr - prev) / prev) * 100 : (curr > 0 ? 100 : 0)
+
+        // Count new customers based on the joined total_order_count (<= 1 or unindexed null)
+        const c1New = new Set(o1.filter(o => {
+          // In PostgREST, a join on a 1:1 view returns an object or null
+          const m = o.customer_metrics
+          return !m || m.total_order_count <= 1
+        }).map(o => o.customer_id)).size
+
+        const c2New = new Set(o2.filter(o => {
+          const m = o.customer_metrics
+          return !m || m.total_order_count <= 1
+        }).map(o => o.customer_id)).size
+
+        setMetrics({
+          sales: s1, salesGrowth: calcGrowth(s1, s2),
+          trx: t1, trxGrowth: calcGrowth(t1, t2),
+          avg: a1, avgGrowth: calcGrowth(a1, a2),
+          cust: c1, custGrowth: calcGrowth(c1, c2),
+          newCust: c1New, newCustGrowth: calcGrowth(c1New, c2New)
+        })
+
+      } catch(e) {
+        console.error('Error fetching metrics', e)
+      }
+      setIsLoadingMetrics(false)
+    }
+    fetchMetrics()
+  }, [dateFilter, supabase, activeBusiness?.id])
+
 
   // Manual checked state stored in localStorage
   const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([])
@@ -519,242 +639,186 @@ export default function OnboardingPage() {
   return (
     <div className="min-h-screen bg-[var(--su-bg,#F7F7F5)] text-[var(--su-text,#1C1C1A)] p-3 sm:p-6 md:p-8 space-y-6 md:space-y-8 max-w-7xl mx-auto pb-20">
       
-      {/* ─── WORLD-CLASS MOBILE-FIRST QUICK MENU (TOP HERO POSITION) ───────── */}
-      <div className="bg-white border border-[var(--su-border,#E2E2DC)] rounded-xl p-4 sm:p-6 md:p-8 shadow-sm space-y-5">
+      {/* ─── NEW HERO DASHBOARD & AKSI CEPAT ─────────────────────────────── */}
+      <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
         
-        {/* Header & Controls */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+        {/* Welcome Section */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xl">⚡</span>
-              <h2 className="text-base sm:text-xl font-extrabold text-slate-900 tracking-tight break-words">
-                Quick Menu (Pintasan Cepat)
-              </h2>
-            </div>
-            <p className="text-xs sm:text-sm text-slate-600 mt-0.5">
-              Pintasan halaman favorit. **Klik 1-tap** untuk membuka langsung, atau aktifkan mode edit untuk menyesuaikan.
-            </p>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+              Good morning, {userProfile?.full_name?.split(' ')[0] || userProfile?.name?.split(' ')[0] || 'User'}! <span className="text-2xl animate-wave">👋</span>
+            </h1>
+            <p className="text-sm text-slate-500 mt-1">Semoga hari ini penjualan makin lancar.</p>
           </div>
-
-          {/* Action Bar */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="bg-slate-100 p-1 rounded-lg flex items-center gap-1 border border-slate-200">
-              <button
-                onClick={() => toggleViewMode('compact')}
-                title="Tampilan Ikon Ringkas (Mobile App Launcher)"
-                className={`p-1.5 rounded-md text-xs font-bold transition-all ${
-                  viewMode === 'compact'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <rect x="3" y="3" width="7" height="7" rx="1.5"/>
-                  <rect x="14" y="3" width="7" height="7" rx="1.5"/>
-                  <rect x="14" y="14" width="7" height="7" rx="1.5"/>
-                  <rect x="3" y="14" width="7" height="7" rx="1.5"/>
-                </svg>
-              </button>
-              <button
-                onClick={() => toggleViewMode('detailed')}
-                title="Tampilan Kartu Detail"
-                className={`p-1.5 rounded-md text-xs font-bold transition-all ${
-                  viewMode === 'detailed'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
-                </svg>
-              </button>
-            </div>
-
-            <button
-              onClick={() => setIsEditingShortcuts(!isEditingShortcuts)}
-              className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-lg border transition-all ${
-                isEditingShortcuts
-                  ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm animate-pulse'
-                  : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
-              }`}
+          
+          <div className="flex items-center gap-2 bg-white/60 backdrop-blur-md border border-slate-200/60 px-2 py-1.5 sm:px-3 sm:py-2 rounded-xl shadow-sm w-fit relative group">
+            <svg className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <select
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+              className="appearance-none bg-transparent text-xs sm:text-sm font-bold text-slate-800 focus:outline-none cursor-pointer pr-4"
             >
-              {isEditingShortcuts ? '✓ Selesai Edit' : '⚙️ Edit Pintasan'}
-            </button>
-
-            <button
-              onClick={() => setIsAddModalOpen(true)}
-              className="inline-flex items-center gap-1.5 text-xs font-extrabold bg-blue-600 text-white hover:bg-blue-700 px-3 py-2 rounded-lg transition-colors shadow-sm"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-              </svg>
-              <span>+ Tambah</span>
-            </button>
+              <option value="today">Hari Ini</option>
+              <option value="yesterday">Kemarin</option>
+              <option value="last7">7 Hari Terakhir</option>
+              <option value="thisMonth">Bulan Ini</option>
+            </select>
+            <svg className="w-3.5 h-3.5 text-slate-400 absolute right-2 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
           </div>
         </div>
 
-        {isEditingShortcuts && (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center justify-between text-xs text-amber-900 animate-in fade-in duration-150">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🛠️</span>
-              <span className="font-semibold">
-                **Mode Edit Aktif**: Tekan ikon <span className="text-red-600 font-bold">(-)</span> untuk menghapus, atau gunakan panah untuk menggeser posisi pintasan.
-              </span>
+        {/* Dashboard Card */}
+        <div className={`bg-gradient-to-br from-emerald-50 to-emerald-100/50 border border-emerald-100 rounded-3xl p-5 sm:p-6 shadow-sm transition-opacity duration-300 ${isLoadingMetrics ? 'opacity-60' : 'opacity-100'}`}>
+          <div className="flex flex-col lg:flex-row justify-between gap-6">
+            
+            {/* Left side */}
+            <div className="space-y-4 lg:w-1/3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-700">Penjualan {dateFilter === 'today' ? 'Hari Ini' : dateFilter === 'yesterday' ? 'Kemarin' : dateFilter === 'last7' ? '7 Hari Terakhir' : 'Bulan Ini'}</h3>
+                <div className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tighter mt-1">
+                  {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(metrics.sales)}
+                </div>
+                <div className="flex items-center gap-1.5 mt-2 text-sm">
+                  <span className={`font-bold flex items-center ${metrics.salesGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                    <svg className={`w-4 h-4 transform ${metrics.salesGrowth < 0 ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 15l7-7 7 7"/></svg>
+                    {Math.abs(metrics.salesGrowth).toFixed(1)}%
+                  </span>
+                  <span className="text-slate-500">dari periode sblmnya</span>
+                </div>
+              </div>
             </div>
-            <button
-              onClick={resetDefaultShortcuts}
-              className="font-bold underline text-amber-800 hover:text-amber-950 shrink-0 ml-2"
-            >
-              Reset Default
-            </button>
-          </div>
-        )}
 
-        {/* ─── QUICK MENU GRID DISPLAY ─────────────────────────────────────── */}
-        {activeShortcutsList.length === 0 ? (
-          <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-xl space-y-3">
-            <p className="text-sm font-semibold text-slate-500">Belum ada pintasan cepat yang diizinkan / ditambahkan.</p>
-            <button
-              onClick={() => setIsAddModalOpen(true)}
-              className="text-xs font-bold text-blue-600 hover:underline"
-            >
-              + Tambah Pintasan Cepat Sekarang
-            </button>
-          </div>
-        ) : viewMode === 'compact' ? (
-          <div className="grid grid-cols-4 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 sm:gap-4">
-            {activeShortcutsList.map((shortcut, index) => {
-              const catStyles = getCategoryStyles(shortcut.category)
-              return (
-                <div key={shortcut.id} className="relative group flex flex-col items-center">
-                  {isEditingShortcuts && (
-                    <div className="absolute -top-1.5 -right-1.5 z-20 flex items-center gap-0.5">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          removeShortcut(shortcut.id)
-                        }}
-                        title="Hapus pintasan"
-                        className="w-5 h-5 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center font-bold text-xs shadow-md transition-transform hover:scale-110"
-                      >
-                        -
-                      </button>
-                    </div>
-                  )}
-
-                  {isEditingShortcuts && (
-                    <div className="absolute -bottom-2 z-20 flex items-center gap-1 bg-white border border-slate-300 rounded-full px-1 shadow-sm">
-                      <button
-                        onClick={() => moveShortcut(index, 'left')}
-                        disabled={index === 0}
-                        className="text-[10px] text-slate-600 disabled:opacity-20 hover:text-blue-600 px-0.5 font-bold"
-                      >
-                        ‹
-                      </button>
-                      <button
-                        onClick={() => moveShortcut(index, 'right')}
-                        disabled={index === activeShortcutsList.length - 1}
-                        className="text-[10px] text-slate-600 disabled:opacity-20 hover:text-blue-600 px-0.5 font-bold"
-                      >
-                        ›
-                      </button>
-                    </div>
-                  )}
-
-                  <Link
-                    href={isEditingShortcuts ? '#' : shortcut.href}
-                    onClick={(e) => {
-                      if (isEditingShortcuts) e.preventDefault()
-                    }}
-                    className={`w-full flex flex-col items-center gap-1 p-1 sm:p-2 rounded-xl transition-all duration-150 ${
-                      isEditingShortcuts ? 'cursor-default opacity-90' : 'active:scale-95 hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className={`relative w-13 h-13 sm:w-16 sm:h-16 rounded-2xl border ${catStyles.bg} ${catStyles.border} flex items-center justify-center text-2xl sm:text-3xl shadow-xs transition-transform group-hover:scale-105 ${
-                      isEditingShortcuts ? 'ring-2 ring-amber-400 ring-offset-1 animate-pulse' : ''
-                    }`}>
-                      {shortcut.icon}
-                      <span className={`absolute bottom-1 right-1 w-2.5 h-2.5 rounded-full border border-white ${catStyles.bg}`} />
-                    </div>
-
-                    <span className="text-[10px] sm:text-xs font-bold text-slate-800 text-center line-clamp-2 w-full tracking-tight leading-tight min-h-[2.4em] flex items-center justify-center break-words px-0.5 mt-0.5">
-                      {shortcut.name}
-                    </span>
-                  </Link>
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {activeShortcutsList.map((shortcut, index) => {
-              const catStyles = getCategoryStyles(shortcut.category)
-              return (
-                <div
-                  key={shortcut.id}
-                  className={`group relative border rounded-xl p-4 transition-all duration-200 flex flex-col justify-between ${
-                    isEditingShortcuts
-                      ? 'bg-amber-50/40 border-amber-300 ring-1 ring-amber-300'
-                      : 'bg-white border-slate-200 hover:border-blue-300 hover:shadow-md'
-                  }`}
-                >
-                  {isEditingShortcuts && (
-                    <div className="absolute top-2 right-2 flex items-center gap-1 z-10 bg-white border border-slate-200 rounded-md p-1 shadow-xs">
-                      <button
-                        onClick={() => moveShortcut(index, 'left')}
-                        disabled={index === 0}
-                        title="Geser ke kiri"
-                        className="p-1 text-slate-500 hover:text-blue-600 disabled:opacity-30"
-                      >
-                        ←
-                      </button>
-                      <button
-                        onClick={() => moveShortcut(index, 'right')}
-                        disabled={index === activeShortcutsList.length - 1}
-                        title="Geser ke kanan"
-                        className="p-1 text-slate-500 hover:text-blue-600 disabled:opacity-30"
-                      >
-                        →
-                      </button>
-                      <button
-                        onClick={() => removeShortcut(shortcut.id)}
-                        title="Hapus pintasan"
-                        className="p-1 text-red-600 hover:text-red-800 font-bold ml-1"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  )}
-
-                  <Link href={isEditingShortcuts ? '#' : shortcut.href} className="block space-y-2.5">
-                    <div className="flex items-center gap-3">
-                      <span className={`text-2xl p-2 rounded-xl border ${catStyles.bg} ${catStyles.border}`}>
-                        {shortcut.icon}
-                      </span>
-                      <div>
-                        <span className={`text-[10px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded border ${catStyles.border} ${catStyles.bg} ${catStyles.text}`}>
-                          {shortcut.category}
-                        </span>
-                        <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors mt-0.5 break-words leading-snug">
-                          {shortcut.name}
-                        </h3>
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
-                      {shortcut.description}
-                    </p>
-                  </Link>
-
-                  <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-semibold text-blue-600">
-                    <span>Buka Halaman</span>
-                    <span className="group-hover:translate-x-1 transition-transform">→</span>
+            {/* Right side (Metrics) */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 lg:w-2/3">
+              {/* Metric 1 */}
+              <div className="bg-white rounded-2xl p-3 sm:p-4 shadow-sm border border-emerald-50 flex flex-col justify-between">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="bg-emerald-50 p-1.5 rounded-lg text-emerald-600">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
                   </div>
+                  <span className="text-lg font-black text-slate-800">{new Intl.NumberFormat('id-ID').format(metrics.trx)}</span>
                 </div>
-              )
-            })}
+                <div>
+                  <div className="text-[10px] text-slate-500 font-medium">Transaksi</div>
+                  <div className={`text-[10px] font-bold mt-0.5 ${metrics.trxGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.trxGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.trxGrowth).toFixed(1)}%</div>
+                </div>
+              </div>
+              {/* Metric 2 */}
+              <div className="bg-white rounded-2xl p-3 sm:p-4 shadow-sm border border-emerald-50 flex flex-col justify-between">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="bg-emerald-50 p-1.5 rounded-lg text-emerald-600">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                  </div>
+                  <span className="text-sm font-black text-slate-800 truncate">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(metrics.avg)}</span>
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-500 font-medium leading-tight">Rata-rata Transaksi</div>
+                  <div className={`text-[10px] font-bold mt-0.5 ${metrics.avgGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.avgGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.avgGrowth).toFixed(1)}%</div>
+                </div>
+              </div>
+              {/* Metric 3 */}
+              <div className="bg-white rounded-2xl p-3 sm:p-4 shadow-sm border border-emerald-50 flex flex-col justify-between">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="bg-emerald-50 p-1.5 rounded-lg text-emerald-600">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+                  </div>
+                  <span className="text-lg font-black text-slate-800">{new Intl.NumberFormat('id-ID').format(metrics.cust)}</span>
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-500 font-medium">Pelanggan</div>
+                  <div className={`text-[10px] font-bold mt-0.5 ${metrics.custGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.custGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.custGrowth).toFixed(1)}%</div>
+                </div>
+              </div>
+              {/* Metric 4 */}
+              <div className="bg-white rounded-2xl p-3 sm:p-4 shadow-sm border border-emerald-50 flex flex-col justify-between">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="bg-emerald-50 p-1.5 rounded-lg text-emerald-600">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg>
+                  </div>
+                  <span className="text-lg font-black text-slate-800">{new Intl.NumberFormat('id-ID').format(metrics.newCust)}</span>
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-500 font-medium">Pelanggan Baru</div>
+                  <div className={`text-[10px] font-bold mt-0.5 ${metrics.newCustGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.newCustGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.newCustGrowth).toFixed(1)}%</div>
+                </div>
+              </div>
+            </div>
           </div>
-        )}
+        </div>
+
+        {/* Aksi Cepat */}
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-extrabold text-slate-900">Aksi Cepat</h2>
+            <Link href="/orders" className="text-xs font-bold text-slate-500 hover:text-slate-800 flex items-center gap-1">
+              Lihat semua <span>→</span>
+            </Link>
+          </div>
+          
+          <div className="flex overflow-x-auto pb-4 -mx-4 px-4 sm:mx-0 sm:px-0 gap-3 sm:gap-4 no-scrollbar snap-x">
+            {/* Kasir (POS) */}
+            {canAccessPath('/orders/pos', { role: currentUserRole, permissions: currentUserPermissions, isWabaActive }) && (
+            <Link href="/orders/pos" className="snap-start shrink-0 w-24 sm:w-28 flex flex-col items-center justify-center gap-3 p-4 rounded-3xl bg-[#7C5A48] text-white hover:bg-[#684b3c] transition-all transform active:scale-95 shadow-md">
+              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2z"/></svg>
+              <span className="text-[11px] sm:text-xs font-bold text-center leading-tight">Kasir (POS)</span>
+            </Link>
+            )}
+
+            {/* Produk */}
+            {canAccessPath('/products', { role: currentUserRole, permissions: currentUserPermissions, isWabaActive }) && (
+            <Link href="/products" className="snap-start shrink-0 w-24 sm:w-28 flex flex-col items-center justify-center gap-3 p-4 rounded-3xl bg-[#FFF6EE] border border-[#FFE8D6] hover:bg-[#FFE8D6] transition-all transform active:scale-95">
+              <div className="bg-white p-2 rounded-xl shadow-sm text-[#B47953]">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+              </div>
+              <span className="text-[11px] sm:text-xs font-bold text-slate-800 text-center leading-tight">Produk</span>
+            </Link>
+            )}
+
+            {/* Stok */}
+            {canAccessPath('/stock-opname', { role: currentUserRole, permissions: currentUserPermissions, isWabaActive }) && (
+            <Link href="/stock-opname" className="snap-start shrink-0 w-24 sm:w-28 flex flex-col items-center justify-center gap-3 p-4 rounded-3xl bg-[#F0FDF4] border border-[#DCFCE7] hover:bg-[#DCFCE7] transition-all transform active:scale-95">
+              <div className="bg-white p-2 rounded-xl shadow-sm text-emerald-600">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
+              </div>
+              <span className="text-[11px] sm:text-xs font-bold text-slate-800 text-center leading-tight">Stok</span>
+            </Link>
+            )}
+
+            {/* Pelanggan */}
+            {canAccessPath('/customers', { role: currentUserRole, permissions: currentUserPermissions, isWabaActive }) && (
+            <Link href="/customers" className="snap-start shrink-0 w-24 sm:w-28 flex flex-col items-center justify-center gap-3 p-4 rounded-3xl bg-[#EFF6FF] border border-[#DBEAFE] hover:bg-[#DBEAFE] transition-all transform active:scale-95">
+              <div className="bg-white p-2 rounded-xl shadow-sm text-blue-600">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+              </div>
+              <span className="text-[11px] sm:text-xs font-bold text-slate-800 text-center leading-tight">Pelanggan</span>
+            </Link>
+            )}
+
+            {/* Pesanan */}
+            {canAccessPath('/orders', { role: currentUserRole, permissions: currentUserPermissions, isWabaActive }) && (
+            <Link href="/orders" className="snap-start shrink-0 w-24 sm:w-28 flex flex-col items-center justify-center gap-3 p-4 rounded-3xl bg-[#FEF2F2] border border-[#FEE2E2] hover:bg-[#FEE2E2] transition-all transform active:scale-95">
+              <div className="bg-white p-2 rounded-xl shadow-sm text-red-500">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+              </div>
+              <span className="text-[11px] sm:text-xs font-bold text-slate-800 text-center leading-tight">Pesanan</span>
+            </Link>
+            )}
+
+            {/* Laporan */}
+            {canAccessPath('/accounting/profit-loss', { role: currentUserRole, permissions: currentUserPermissions, isWabaActive }) && (
+            <Link href="/accounting/profit-loss" className="snap-start shrink-0 w-24 sm:w-28 flex flex-col items-center justify-center gap-3 p-4 rounded-3xl bg-[#FAF5FF] border border-[#F3E8FF] hover:bg-[#F3E8FF] transition-all transform active:scale-95">
+              <div className="bg-white p-2 rounded-xl shadow-sm text-purple-600">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+              </div>
+              <span className="text-[11px] sm:text-xs font-bold text-slate-800 text-center leading-tight">Laporan</span>
+            </Link>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ─── RESTORE BANNER (IF DISMISSED OR HIDDEN) ────────────────────────── */}

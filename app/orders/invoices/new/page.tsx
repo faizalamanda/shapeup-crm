@@ -130,6 +130,7 @@ export default function NewInvoicePage() {
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false)
   const [paymentMethod, setPaymentMethod] = useState<string>('Bank Transfer')
   const [submitting, setSubmitting] = useState<boolean>(false)
+  const [submittingType, setSubmittingType] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string>('')
 
   // Set default dates on mount
@@ -362,6 +363,7 @@ export default function NewInvoicePage() {
       setErrorMessage(err.message || 'Terjadi kesalahan sistem.')
     } finally {
       setSubmitting(false)
+      setSubmittingType(null)
       setShowPaymentModal(false)
     }
   }
@@ -821,26 +823,40 @@ export default function NewInvoicePage() {
             <button
               type="button"
               disabled={submitting}
-              onClick={() => handleSubmit('pending')}
-              className="w-full py-2.5 text-xs font-bold text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-all"
+              onClick={() => {
+                setSubmittingType('pending');
+                handleSubmit('pending');
+              }}
+              className="w-full flex justify-center items-center gap-2 py-2.5 text-xs font-bold text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              💾 Simpan sebagai Draft
+              {submitting && submittingType === 'pending' ? (
+                <><svg className="animate-spin h-4 w-4 text-slate-800" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Menyimpan...</>
+              ) : (
+                <>💾 Simpan sebagai Draft</>
+              )}
             </button>
 
             <button
               type="button"
               disabled={submitting}
-              onClick={() => handleSubmit('processing')}
-              className="w-full py-2.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition-all"
+              onClick={() => {
+                setSubmittingType('processing');
+                handleSubmit('processing');
+              }}
+              className="w-full flex justify-center items-center gap-2 py-2.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              🚀 Kirim & Terbitkan (Outstanding)
+              {submitting && submittingType === 'processing' ? (
+                <><svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Memproses...</>
+              ) : (
+                <>🚀 Kirim & Terbitkan (Outstanding)</>
+              )}
             </button>
 
             <button
               type="button"
               disabled={submitting}
               onClick={() => setShowPaymentModal(true)}
-              className="w-full py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all"
+              className="w-full flex justify-center items-center gap-2 py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               💰 Simpan & Tandai Lunas Langsung
             </button>
@@ -1017,11 +1033,18 @@ export default function NewInvoicePage() {
               </button>
               <button
                 type="button"
-                onClick={() => handleSubmit('completed')}
+                onClick={() => {
+                  setSubmittingType('completed');
+                  handleSubmit('completed');
+                }}
                 disabled={submitting}
-                className="flex-1 py-2 font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors"
+                className="flex-1 flex justify-center items-center gap-2 py-2 font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {submitting ? 'Proses...' : 'Konfirmasi Lunas'}
+                {submitting && submittingType === 'completed' ? (
+                  <><svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Memproses...</>
+                ) : (
+                  <>Konfirmasi Lunas</>
+                )}
               </button>
             </div>
           </div>
