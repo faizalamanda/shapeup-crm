@@ -118,7 +118,18 @@ export async function POST(req: NextRequest) {
     
     // Add date filter if it's the second sync onwards
     if (config.last_sync_date) {
-      listUrl += `&filter.transDate.gte=${config.last_sync_date}`
+      // To catch late updates (e.g. an order from 5 days ago just paid today),
+      // we don't just query from last_sync_date. We query from 14 days BEFORE last_sync_date.
+      const parts = String(config.last_sync_date).split('/')
+      if (parts.length === 3) {
+        const syncDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00+07:00`)
+        syncDate.setDate(syncDate.getDate() - 14) // Rollback 14 days
+        
+        const filterDateStr = `${String(syncDate.getDate()).padStart(2, '0')}/${String(syncDate.getMonth() + 1).padStart(2, '0')}/${syncDate.getFullYear()}`
+        listUrl += `&filter.transDate.gte=${filterDateStr}`
+      } else {
+        listUrl += `&filter.transDate.gte=${config.last_sync_date}`
+      }
     }
 
     // Fetch with pagination.

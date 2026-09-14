@@ -28,7 +28,7 @@ async function test() {
   const host = tokenData.d.database.host;
   
   console.log("Fetching orders from", host);
-  const listRes = await fetch(`${host}/accurate/api/sales-invoice/detail.do?id=50`, {
+  const listRes = await fetch(`${host}/accurate/api/sales-invoice/list.do?sp.page=1&sp.pageSize=10`, {
     headers: {
       'Authorization': `Bearer ${cleanToken}`,
       'X-Api-Timestamp': tsStr,
@@ -38,7 +38,16 @@ async function test() {
   });
   const listText = await listRes.text();
   console.log("List Status:", listRes.status);
-  console.log("List Body:", listText.substring(0, 1500));
+  
+  try {
+    const listData = JSON.parse(listText);
+    if (listData.d && listData.d.length > 0) {
+      console.log("Keys available:", Object.keys(listData.d[0]));
+      console.log("Sample List Order:", JSON.stringify(listData.d[0], null, 2));
+    }
+  } catch (e) {
+    console.error("Parse error", e);
+  }
 }
 
 test().catch(console.error);
