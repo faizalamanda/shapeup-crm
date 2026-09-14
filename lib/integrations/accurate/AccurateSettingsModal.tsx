@@ -13,8 +13,6 @@ export default function AccurateSettingsModal({
   activeBusinessId,
   onSaveSuccess
 }: AccurateSettingsModalProps) {
-  const [accurateClientId, setAccurateClientId] = useState('')
-  const [accurateClientSecret, setAccurateClientSecret] = useState('')
   const [accurateAccessToken, setAccurateAccessToken] = useState('')
   const [accurateDbId, setAccurateDbId] = useState('')
   const [isTestingConnection, setIsTestingConnection] = useState(false)
@@ -32,8 +30,6 @@ export default function AccurateSettingsModal({
             const accurate = data.integrations.find((i: any) => i.provider === 'accurate')
             if (accurate?.config) {
               setAccurateSaved(accurate)
-              setAccurateClientId(accurate.config.client_id || '')
-              setAccurateClientSecret(accurate.config.client_secret || '')
               setAccurateAccessToken(accurate.config.access_token || '')
               setAccurateDbId(accurate.config.db_id || '')
             }
@@ -55,8 +51,6 @@ export default function AccurateSettingsModal({
           provider: 'accurate',
           name: 'Accurate Online',
           config: {
-            client_id: accurateClientId,
-            client_secret: accurateClientSecret,
             access_token: accurateAccessToken,
             db_id: accurateDbId
           },
@@ -182,57 +176,27 @@ export default function AccurateSettingsModal({
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-semibold text-[#1C1C1A] mb-1.5">
-                Client ID (OAuth) / App Key (API Token)
-              </label>
-              <input
-                type="text"
-                required
-                value={accurateClientId}
-                onChange={(e) => setAccurateClientId(e.target.value)}
-                placeholder="Masukkan Client ID"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-[#1C1C1A] mb-1.5">
-                Client Secret (OAuth) / Signature Secret (API Token)
+                API Token
               </label>
               <input
                 type="password"
-                required
-                value={accurateClientSecret}
-                onChange={(e) => setAccurateClientSecret(e.target.value)}
-                placeholder="Masukkan Client Secret"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold text-[#1C1C1A] mb-1.5">
-                Access Token / API Token
-              </label>
-              <input
-                type="password"
-                required
                 value={accurateAccessToken}
                 onChange={(e) => setAccurateAccessToken(e.target.value)}
-                placeholder="Bearer token"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none"
+                placeholder="Masukkan API Token Accurate Anda"
+                className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E6F4F1] focus:border-[#008A70]"
               />
             </div>
 
             <div>
               <label className="block text-sm font-semibold text-[#1C1C1A] mb-1.5">
-                Database ID (Opsional jika menggunakan API Token)
+                Database ID
               </label>
               <input
                 type="text"
-                required
                 value={accurateDbId}
                 onChange={(e) => setAccurateDbId(e.target.value)}
-                placeholder="ID Session Accurate"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none"
+                placeholder="Misal: 96400 (opsional)"
+                className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E6F4F1] focus:border-[#008A70]"
               />
             </div>
           </div>

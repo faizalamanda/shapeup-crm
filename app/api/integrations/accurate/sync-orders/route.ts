@@ -57,7 +57,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Access Token Accurate wajib diisi.' }, { status: 400 })
     }
     
-    if (!config.client_secret && !config.db_id) {
+    const activeSecret = process.env.ACCURATE_CLIENT_SECRET || config.client_secret
+    
+    if (!activeSecret && !config.db_id) {
       return NextResponse.json({ error: 'Database ID wajib diisi jika tidak menggunakan metode API Token.' }, { status: 400 })
     }
 
@@ -75,13 +77,15 @@ export async function POST(req: NextRequest) {
         'Authorization': `Bearer ${config.access_token}`
       }
       
-      if (config.client_secret) {
+      const activeSecret = process.env.ACCURATE_CLIENT_SECRET || config.client_secret
+
+      if (activeSecret) {
         // API Token Method requires Signature
         const pad = (n: number) => n.toString().padStart(2, '0')
         const now = new Date()
         const tsStr = `${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
         headers['X-Api-Timestamp'] = tsStr
-        headers['X-Api-Signature'] = crypto.createHmac('sha256', config.client_secret).update(tsStr).digest('base64')
+        headers['X-Api-Signature'] = crypto.createHmac('sha256', activeSecret).update(tsStr).digest('base64')
       } else if (config.db_id) {
         // Fallback for OAuth Method
         headers['X-Session-ID'] = config.db_id

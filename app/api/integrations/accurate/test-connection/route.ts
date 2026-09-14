@@ -4,7 +4,7 @@ import crypto from 'crypto'
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { access_token, db_id, client_secret } = body
+    const { access_token, db_id } = body
 
     if (!access_token) {
       return NextResponse.json({ error: 'Access token wajib diisi.' }, { status: 400 })
@@ -12,7 +12,8 @@ export async function POST(req: NextRequest) {
 
     const cleanToken = access_token.trim()
     const cleanDbId = db_id?.trim() || ''
-    const cleanSecret = client_secret?.trim() || ''
+    // Use the Signature Secret from .env
+    const cleanSecret = process.env.ACCURATE_CLIENT_SECRET?.trim() || ''
 
     const accurateHost = 'https://account.accurate.id' 
     
