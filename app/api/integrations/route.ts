@@ -111,7 +111,7 @@ export async function POST(req: Request) {
           name: name || provider,
           config: config || {},
           is_active: is_active
-        }, { onConflict: 'business_integrations_biz_provider_unique' })
+        }, { onConflict: 'business_id,provider' })
         .select()
         .single()
 

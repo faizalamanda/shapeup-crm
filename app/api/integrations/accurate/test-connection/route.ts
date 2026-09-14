@@ -33,16 +33,16 @@ export async function POST(req: NextRequest) {
         }
       })
 
-      if (tokenRes.ok) {
-        const tokenData = await tokenRes.json()
-        if (tokenData.s) {
-          const dbData = tokenData.d?.["data usaha"]
-          const dbAlias = dbData?.alias || "Unknown"
-          return NextResponse.json({ 
-            success: true, 
-            message: `Koneksi berhasil! (Metode API Token) Terhubung dengan database: ${dbAlias}` 
-          })
-        }
+      const tokenData = await tokenRes.json()
+      if (tokenRes.ok && tokenData.s) {
+        const dbData = tokenData.d?.["data usaha"]
+        const dbAlias = dbData?.alias || "Unknown"
+        return NextResponse.json({ 
+          success: true, 
+          message: `Koneksi berhasil! (Metode API Token) Terhubung dengan database: ${dbAlias}` 
+        })
+      } else {
+        return NextResponse.json({ error: `Koneksi API Token gagal: ${JSON.stringify(tokenData.d || tokenData)}` }, { status: 400 })
       }
     }
 
@@ -66,9 +66,14 @@ export async function POST(req: NextRequest) {
     }
 
     const data = await testRes.json()
+    
+    if (!data.s) {
+      return NextResponse.json({ error: `Koneksi OAuth gagal: ${JSON.stringify(data.d || data)}` }, { status: 400 })
+    }
+
     // data.d is usually an array of databases
-    const dbList = data.d || []
-    const dbFound = dbList.find((db: any) => db.id.toString() === cleanDbId)
+    const dbList = Array.isArray(data.d) ? data.d : []
+    const dbFound = dbList.find((db: any) => String(db.id) === cleanDbId)
 
     if (!dbFound) {
       return NextResponse.json({ error: `Koneksi token berhasil, namun Database ID ${cleanDbId} tidak ditemukan di akun ini. Cek kembali Database ID.` }, { status: 400 })

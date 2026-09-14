@@ -63,7 +63,8 @@ export default function AccurateSettingsModal({
           is_active: true
         })
       })
-      if (!res.ok) throw new Error('Gagal menyimpan')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Gagal menyimpan')
       alert('Pengaturan Accurate berhasil disimpan!')
       setAccurateSaved({ is_active: true })
       if (onSaveSuccess) onSaveSuccess()
