@@ -222,33 +222,7 @@ export default function AccurateSettingsModal({
             </div>
           )}
 
-          {accurateSaved?.is_active && (
-            <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col gap-2">
-              <p className="text-xs text-slate-500 font-semibold mb-1">URL Webhook Otomatis (Real-time):</p>
-              <p className="text-[11px] text-slate-400 mb-2 leading-relaxed">
-                Salin URL di bawah ini dan tempelkan ke menu Webhook di aplikasi Accurate Online Anda agar pesanan masuk secara otomatis tanpa perlu menekan tombol sinkronisasi.
-              </p>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  value={`https://shapeup-crm.vercel.app/api/webhook/accurate?business_id=${businessId}`}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-600 font-mono outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(`https://shapeup-crm.vercel.app/api/webhook/accurate?business_id=${businessId}`)
-                    alert('URL disalin!')
-                  }}
-                  className="p-2 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex-shrink-0"
-                  title="Salin URL"
-                >
-                  📋
-                </button>
-              </div>
-            </div>
-          )}
+
 
           {/* Footer */}
           <div className="pt-6 mt-6 border-t border-slate-100 flex items-center justify-end gap-3 pb-safe">
