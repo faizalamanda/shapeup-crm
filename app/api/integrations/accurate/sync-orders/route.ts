@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabaseServer'
+import crypto from 'crypto'
 
 // Helper to delay execution (rate limiting)
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -50,9 +51,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Integrasi Accurate tidak aktif atau belum dikonfigurasi.' }, { status: 400 })
     }
 
-    const config = integration.config as { access_token?: string; db_id?: string; host?: string; last_sync_date?: string }
-    if (!config.access_token || !config.db_id) {
-      return NextResponse.json({ error: 'Kredensial Accurate tidak lengkap di pengaturan.' }, { status: 400 })
+    const config = integration.config as { access_token?: string; db_id?: string; host?: string; last_sync_date?: string; client_secret?: string }
+    
+    if (!config.access_token) {
+      return NextResponse.json({ error: 'Access Token Accurate wajib diisi.' }, { status: 400 })
+    }
+    
+    if (!config.client_secret && !config.db_id) {
+      return NextResponse.json({ error: 'Database ID wajib diisi jika tidak menggunakan metode API Token.' }, { status: 400 })
     }
 
     const accurateHost = config.host || 'https://account.accurate.id' 
@@ -71,7 +77,6 @@ export async function POST(req: NextRequest) {
       
       if (config.client_secret) {
         // API Token Method requires Signature
-        const crypto = require('crypto')
         const pad = (n: number) => n.toString().padStart(2, '0')
         const now = new Date()
         const tsStr = `${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
