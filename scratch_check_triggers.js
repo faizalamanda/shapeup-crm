@@ -16,8 +16,8 @@ envContent.split('\n').forEach(line => {
   }
 })
 
-async function checkOrders() {
-  const url = env.NEXT_PUBLIC_SUPABASE_URL + '/rest/v1/orders?select=id,status,order_date_utc,items_json,raw_source_data&status=eq.completed'
+async function checkTriggers() {
+  const url = env.NEXT_PUBLIC_SUPABASE_URL + '/rest/v1/'
   const headers = {
     'apikey': env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     'Authorization': 'Bearer ' + env.SUPABASE_SERVICE_ROLE_KEY
@@ -26,15 +26,11 @@ async function checkOrders() {
   try {
     const response = await fetch(url, { headers })
     const data = await response.json()
-    
-    // Check for orders matching "Cintya"
-    const cintyaOrders = data.filter(o => JSON.stringify(o).toLowerCase().includes('cintya'))
-    console.log("Total completed orders with 'cintya':", cintyaOrders.length)
-    if (cintyaOrders.length > 0) {
-      console.log("Cintya order dates:", cintyaOrders.map(o => o.order_date_utc))
-    }
+    console.log("Paths available:")
+    const rpcs = Object.keys(data.paths).filter(k => k.includes('trigger') || k.includes('cron') || k.includes('invoke'))
+    console.log(rpcs)
   } catch (err) {
     console.error("Error:", err)
   }
 }
-checkOrders()
+checkTriggers()

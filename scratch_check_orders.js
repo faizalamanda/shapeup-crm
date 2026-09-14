@@ -17,7 +17,7 @@ envContent.split('\n').forEach(line => {
 })
 
 async function checkOrders() {
-  const url = env.NEXT_PUBLIC_SUPABASE_URL + '/rest/v1/orders?select=id,status,order_date_utc,items_json,raw_source_data&status=eq.completed'
+  const url = env.NEXT_PUBLIC_SUPABASE_URL + '/rest/v1/orders?select=id,status,order_date_utc&status=eq.completed'
   const headers = {
     'apikey': env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     'Authorization': 'Bearer ' + env.SUPABASE_SERVICE_ROLE_KEY
@@ -27,12 +27,19 @@ async function checkOrders() {
     const response = await fetch(url, { headers })
     const data = await response.json()
     
-    // Check for orders matching "Cintya"
-    const cintyaOrders = data.filter(o => JSON.stringify(o).toLowerCase().includes('cintya'))
-    console.log("Total completed orders with 'cintya':", cintyaOrders.length)
-    if (cintyaOrders.length > 0) {
-      console.log("Cintya order dates:", cintyaOrders.map(o => o.order_date_utc))
-    }
+    // Count by date
+    const counts = {}
+    data.forEach(o => {
+      if(o.order_date_utc) {
+        const date = o.order_date_utc.split('T')[0]
+        counts[date] = (counts[date] || 0) + 1
+      }
+    })
+    console.log("Order counts by date (Aug 11-14):")
+    console.log("2026-08-11:", counts['2026-08-11'] || 0)
+    console.log("2026-08-12:", counts['2026-08-12'] || 0)
+    console.log("2026-08-13:", counts['2026-08-13'] || 0)
+    console.log("2026-08-14:", counts['2026-08-14'] || 0)
   } catch (err) {
     console.error("Error:", err)
   }

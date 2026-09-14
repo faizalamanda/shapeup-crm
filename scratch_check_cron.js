@@ -16,8 +16,11 @@ envContent.split('\n').forEach(line => {
   }
 })
 
-async function checkOrders() {
-  const url = env.NEXT_PUBLIC_SUPABASE_URL + '/rest/v1/orders?select=id,status,order_date_utc,items_json,raw_source_data&status=eq.completed'
+const { createClient } = require('@supabase/supabase-js')
+const supabase = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY)
+
+async function checkCron() {
+  const url = env.NEXT_PUBLIC_SUPABASE_URL + '/rest/v1/cron?select=*'
   const headers = {
     'apikey': env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     'Authorization': 'Bearer ' + env.SUPABASE_SERVICE_ROLE_KEY
@@ -25,16 +28,17 @@ async function checkOrders() {
   
   try {
     const response = await fetch(url, { headers })
-    const data = await response.json()
-    
-    // Check for orders matching "Cintya"
-    const cintyaOrders = data.filter(o => JSON.stringify(o).toLowerCase().includes('cintya'))
-    console.log("Total completed orders with 'cintya':", cintyaOrders.length)
-    if (cintyaOrders.length > 0) {
-      console.log("Cintya order dates:", cintyaOrders.map(o => o.order_date_utc))
+    if (response.ok) {
+        console.log("Cron jobs accessible!")
+        console.log(await response.json())
+    } else {
+        console.log("Cron REST status:", response.status)
+        // Let's try rpc to query cron.job if we made one
+        const { data, error } = await supabase.rpc('get_cron_jobs')
+        console.log("RPC get_cron_jobs:", data || error)
     }
   } catch (err) {
     console.error("Error:", err)
   }
 }
-checkOrders()
+checkCron()

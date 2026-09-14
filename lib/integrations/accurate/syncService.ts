@@ -11,7 +11,7 @@ const toNum = (val: any) => {
 
 const pad = (n: number) => n.toString().padStart(2, '0')
 
-export async function executeAccurateSync(businessId: string, page = 1): Promise<{ success: boolean; hasNextPage?: boolean; error?: string }> {
+export async function executeAccurateSync(businessId: string, page = 1): Promise<{ success: boolean; hasNextPage?: boolean; error?: string; processedOrders?: number; newProducts?: number; message?: string }> {
   try {
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!serviceRoleKey) {
