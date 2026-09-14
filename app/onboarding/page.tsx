@@ -244,7 +244,7 @@ export default function OnboardingPage() {
 
   // Real-time Metrics State
   const [metrics, setMetrics] = useState({
-    sales: 0, salesGrowth: 0, trx: 0, trxGrowth: 0, avg: 0, avgGrowth: 0, cust: 0, custGrowth: 0, newCust: 0, newCustGrowth: 0
+    sales: 0, salesGrowth: 0, trx: 0, trxGrowth: 0, avg: 0, avgGrowth: 0, cust: 0, custGrowth: 0, newCust: 0, newCustGrowth: 0, clv: 0, clvGrowth: 0
   })
   const [dateFilter, setDateFilter] = useState('last30')
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(true)
@@ -346,12 +346,16 @@ export default function OnboardingPage() {
           return !m || m.total_order_count <= 1
         }).map(o => o.customer_id)).size
 
+        const clv1 = c1 > 0 ? s1 / c1 : 0
+        const clv2 = c2 > 0 ? s2 / c2 : 0
+
         setMetrics({
           sales: s1, salesGrowth: calcGrowth(s1, s2),
           trx: t1, trxGrowth: calcGrowth(t1, t2),
           avg: a1, avgGrowth: calcGrowth(a1, a2),
           cust: c1, custGrowth: calcGrowth(c1, c2),
-          newCust: c1New, newCustGrowth: calcGrowth(c1New, c2New)
+          newCust: c1New, newCustGrowth: calcGrowth(c1New, c2New),
+          clv: clv1, clvGrowth: calcGrowth(clv1, clv2)
         })
 
       } catch(e) {
@@ -685,10 +689,10 @@ export default function OnboardingPage() {
 
         {/* Dashboard Card */}
         <div className={`bg-gradient-to-br from-emerald-50 to-emerald-100/50 border border-emerald-100 rounded-2xl p-4 sm:p-5 shadow-sm transition-opacity duration-300 ${isLoadingMetrics ? 'opacity-60' : 'opacity-100'}`}>
-          <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
             
             {/* Left side */}
-            <div className="lg:w-1/4">
+            <div className="w-full lg:w-1/4 flex flex-col justify-center items-start text-left">
               <div>
                 <h3 className="text-xs font-bold text-slate-700">Penjualan {dateFilter === 'today' ? 'Hari Ini' : dateFilter === 'yesterday' ? 'Kemarin' : dateFilter === 'last7' ? '7 Hari Terakhir' : dateFilter === 'last30' ? '30 Hari Terakhir' : 'Bulan Ini'}</h3>
                 <div className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tighter mt-0.5">
@@ -705,57 +709,77 @@ export default function OnboardingPage() {
             </div>
 
             {/* Right side (Metrics) */}
-            <div className="grid grid-cols-4 gap-2 sm:gap-3 w-full lg:w-3/4">
-              {/* Metric 1 */}
-              <div className="bg-white rounded-xl p-2 sm:p-3 shadow-sm border border-emerald-50 flex flex-col justify-between">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <div className="bg-emerald-50 p-1 rounded-md text-emerald-600">
-                    <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+            <div className="flex flex-col gap-2 sm:gap-3 w-full lg:w-3/4">
+              {/* Baris 1: Transaksi, Pelanggan, Pelanggan Baru */}
+              <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full">
+                {/* Metric 1: Transaksi */}
+                <div className="bg-white rounded-xl p-2 sm:p-3 shadow-sm border border-emerald-50 flex flex-col justify-between">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className="bg-emerald-50 p-1 rounded-md text-emerald-600">
+                      <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+                    </div>
+                    <span className="text-sm sm:text-base font-black text-slate-800 truncate">{new Intl.NumberFormat('id-ID').format(metrics.trx)}</span>
                   </div>
-                  <span className="text-sm sm:text-base font-black text-slate-800">{new Intl.NumberFormat('id-ID').format(metrics.trx)}</span>
+                  <div>
+                    <div className="text-[9px] sm:text-[10px] text-slate-500 font-medium leading-tight">Transaksi</div>
+                    <div className={`text-[9px] sm:text-[10px] font-bold mt-0.5 ${metrics.trxGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.trxGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.trxGrowth).toFixed(1)}%</div>
+                  </div>
                 </div>
-                <div>
-                  <div className="text-[9px] sm:text-[10px] text-slate-500 font-medium leading-tight">Transaksi</div>
-                  <div className={`text-[9px] sm:text-[10px] font-bold mt-0.5 ${metrics.trxGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.trxGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.trxGrowth).toFixed(1)}%</div>
+                {/* Metric 2: Pelanggan */}
+                <div className="bg-white rounded-xl p-2 sm:p-3 shadow-sm border border-emerald-50 flex flex-col justify-between">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className="bg-emerald-50 p-1 rounded-md text-emerald-600">
+                      <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+                    </div>
+                    <span className="text-sm sm:text-base font-black text-slate-800 truncate">{new Intl.NumberFormat('id-ID').format(metrics.cust)}</span>
+                  </div>
+                  <div>
+                    <div className="text-[9px] sm:text-[10px] text-slate-500 font-medium leading-tight">Pelanggan</div>
+                    <div className={`text-[9px] sm:text-[10px] font-bold mt-0.5 ${metrics.custGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.custGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.custGrowth).toFixed(1)}%</div>
+                  </div>
+                </div>
+                {/* Metric 3: Pelanggan Baru */}
+                <div className="bg-white rounded-xl p-2 sm:p-3 shadow-sm border border-emerald-50 flex flex-col justify-between">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className="bg-emerald-50 p-1 rounded-md text-emerald-600">
+                      <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg>
+                    </div>
+                    <span className="text-sm sm:text-base font-black text-slate-800 truncate">{new Intl.NumberFormat('id-ID').format(metrics.newCust)}</span>
+                  </div>
+                  <div>
+                    <div className="text-[9px] sm:text-[10px] text-slate-500 font-medium leading-tight truncate">Pel. Baru</div>
+                    <div className={`text-[9px] sm:text-[10px] font-bold mt-0.5 ${metrics.newCustGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.newCustGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.newCustGrowth).toFixed(1)}%</div>
+                  </div>
                 </div>
               </div>
-              {/* Metric 2 */}
-              <div className="bg-white rounded-xl p-2 sm:p-3 shadow-sm border border-emerald-50 flex flex-col justify-between">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <div className="bg-emerald-50 p-1 rounded-md text-emerald-600">
-                    <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+              
+              {/* Baris 2: AOV, CLV */}
+              <div className="grid grid-cols-2 gap-2 sm:gap-3 w-full">
+                {/* Metric AOV */}
+                <div className="bg-white rounded-xl p-2 sm:p-3 shadow-sm border border-emerald-50 flex flex-col justify-between">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className="bg-emerald-50 p-1 rounded-md text-emerald-600">
+                      <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                    </div>
+                    <span className="text-xs sm:text-sm md:text-base font-black text-slate-800">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(metrics.avg)}</span>
                   </div>
-                  <span className="text-xs sm:text-sm font-black text-slate-800 truncate">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(metrics.avg)}</span>
-                </div>
-                <div>
-                  <div className="text-[9px] sm:text-[10px] text-slate-500 font-medium leading-tight truncate">Rata-rata</div>
-                  <div className={`text-[9px] sm:text-[10px] font-bold mt-0.5 ${metrics.avgGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.avgGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.avgGrowth).toFixed(1)}%</div>
-                </div>
-              </div>
-              {/* Metric 3 */}
-              <div className="bg-white rounded-xl p-2 sm:p-3 shadow-sm border border-emerald-50 flex flex-col justify-between">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <div className="bg-emerald-50 p-1 rounded-md text-emerald-600">
-                    <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+                  <div>
+                    <div className="text-[9px] sm:text-[10px] text-slate-500 font-medium leading-tight truncate">AOV (Rata-rata Order)</div>
+                    <div className={`text-[9px] sm:text-[10px] font-bold mt-0.5 ${metrics.avgGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.avgGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.avgGrowth).toFixed(1)}%</div>
                   </div>
-                  <span className="text-sm sm:text-base font-black text-slate-800">{new Intl.NumberFormat('id-ID').format(metrics.cust)}</span>
                 </div>
-                <div>
-                  <div className="text-[9px] sm:text-[10px] text-slate-500 font-medium leading-tight">Pelanggan</div>
-                  <div className={`text-[9px] sm:text-[10px] font-bold mt-0.5 ${metrics.custGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.custGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.custGrowth).toFixed(1)}%</div>
-                </div>
-              </div>
-              {/* Metric 4 */}
-              <div className="bg-white rounded-xl p-2 sm:p-3 shadow-sm border border-emerald-50 flex flex-col justify-between">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <div className="bg-emerald-50 p-1 rounded-md text-emerald-600">
-                    <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg>
+                {/* Metric CLV */}
+                <div className="bg-white rounded-xl p-2 sm:p-3 shadow-sm border border-emerald-50 flex flex-col justify-between">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className="bg-emerald-50 p-1 rounded-md text-emerald-600">
+                      <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    </div>
+                    <span className="text-xs sm:text-sm md:text-base font-black text-slate-800">{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(metrics.clv)}</span>
                   </div>
-                  <span className="text-sm sm:text-base font-black text-slate-800">{new Intl.NumberFormat('id-ID').format(metrics.newCust)}</span>
-                </div>
-                <div>
-                  <div className="text-[9px] sm:text-[10px] text-slate-500 font-medium leading-tight truncate">Pel. Baru</div>
-                  <div className={`text-[9px] sm:text-[10px] font-bold mt-0.5 ${metrics.newCustGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.newCustGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.newCustGrowth).toFixed(1)}%</div>
+                  <div>
+                    <div className="text-[9px] sm:text-[10px] text-slate-500 font-medium leading-tight truncate">CLV (Customer Lifetime Value)</div>
+                    <div className={`text-[9px] sm:text-[10px] font-bold mt-0.5 ${metrics.clvGrowth >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{metrics.clvGrowth >= 0 ? '↑' : '↓'} {Math.abs(metrics.clvGrowth).toFixed(1)}%</div>
+                  </div>
                 </div>
               </div>
             </div>
