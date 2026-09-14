@@ -113,7 +113,7 @@ export async function POST(req: NextRequest) {
     
     if (!accurateHost) accurateHost = 'https://account.accurate.id'
 
-    let listUrl = `${accurateHost}/api/sales-order/list.do?sp.page=${page}&sp.pageSize=100`
+    let listUrl = `${accurateHost}/accurate/api/sales-order/list.do?sp.page=${page}&sp.pageSize=100`
     
     // Add date filter if it's the second sync onwards
     if (config.last_sync_date) {
@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
 
     // Fetch detail sequentially to avoid hitting 8 requests/sec limit
     for (const orderSummary of orders) {
-      const detailRes = await fetch(`${accurateHost}/api/sales-order/detail.do?id=${orderSummary.id}`, {
+      const detailRes = await fetch(`${accurateHost}/accurate/api/sales-order/detail.do?id=${orderSummary.id}`, {
         headers: generateAccurateHeaders()
       })
       
