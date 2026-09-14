@@ -38,11 +38,14 @@ export async function POST(req: NextRequest) {
 
       const tokenData = await tokenRes.json()
       if (tokenRes.ok && tokenData.s) {
-        const dbData = tokenData.d?.["data usaha"]
+        const dbData = tokenData.d?.database || tokenData.d?.["data usaha"]
         const dbAlias = dbData?.alias || "Unknown"
+        const dbIntegerId = dbData?.id // the 2871875 number
+        
         return NextResponse.json({ 
           success: true, 
-          message: `Koneksi berhasil! (Metode API Token) Terhubung dengan database: ${dbAlias}` 
+          message: `Koneksi berhasil! (Metode API Token) Terhubung dengan database: ${dbAlias}`,
+          db_integer_id: dbIntegerId
         })
       } else {
         return NextResponse.json({ error: `Koneksi API Token gagal: ${JSON.stringify(tokenData.d || tokenData)}` }, { status: 400 })

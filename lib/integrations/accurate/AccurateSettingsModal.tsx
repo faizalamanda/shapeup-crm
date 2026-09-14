@@ -43,6 +43,31 @@ export default function AccurateSettingsModal({
     e.preventDefault()
     setSaving(true)
     try {
+      // 1. Get db_integer_id silently first
+      let fetchedDbIntegerId = null;
+      try {
+        const testRes = await fetch('/api/integrations/accurate/test-connection', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ access_token: accurateAccessToken, db_id: accurateDbId })
+        })
+        const testData = await testRes.json()
+        if (testData.success && testData.db_integer_id) {
+          fetchedDbIntegerId = testData.db_integer_id
+        }
+      } catch (e) {
+        console.error("Failed to fetch integer DB id", e)
+      }
+
+      // 2. Save config
+      const configToSave: any = {
+        access_token: accurateAccessToken,
+        db_id: accurateDbId
+      }
+      if (fetchedDbIntegerId) {
+        configToSave.db_integer_id = fetchedDbIntegerId
+      }
+
       const res = await fetch('/api/integrations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -50,10 +75,7 @@ export default function AccurateSettingsModal({
           business_id: activeBusinessId,
           provider: 'accurate',
           name: 'Accurate Online',
-          config: {
-            access_token: accurateAccessToken,
-            db_id: accurateDbId
-          },
+          config: configToSave,
           is_active: true
         })
       })

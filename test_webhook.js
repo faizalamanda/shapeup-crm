@@ -9,10 +9,8 @@ const supabaseAdmin = createClient(
 async function check() {
   const { data, error } = await supabaseAdmin
     .from('business_integrations')
-    .select('config')
+    .select('id, is_active, config')
     .eq('provider', 'accurate')
-    .eq('is_active', true)
-    .limit(1)
 
   if (error) {
     console.error(error)
@@ -20,8 +18,12 @@ async function check() {
   }
 
   if (data && data.length > 0) {
-    console.log(JSON.stringify(data[0].config.last_webhook_payload, null, 2))
-    console.log("Time:", data[0].config.last_webhook_time)
+    console.log(`Found ${data.length} accurate integrations:`)
+    for (const item of data) {
+      console.log(`ID: ${item.id}, Active: ${item.is_active}`)
+      console.log(`Webhook Time:`, item.config?.last_webhook_time)
+      console.log(`Payload:`, item.config?.last_webhook_payload ? JSON.stringify(item.config.last_webhook_payload, null, 2) : 'NONE')
+    }
   } else {
     console.log("No integrations found")
   }

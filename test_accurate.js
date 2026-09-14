@@ -25,6 +25,7 @@ async function test() {
   console.log("Token Status:", tokenRes.status);
   
   const tokenData = JSON.parse(text);
+  console.log("Token Data:", JSON.stringify(tokenData, null, 2));
   const host = tokenData.d.database.host;
   
   console.log("Fetching orders from", host);
