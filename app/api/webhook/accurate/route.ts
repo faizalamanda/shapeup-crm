@@ -18,10 +18,16 @@ export async function POST(req: NextRequest) {
       payload = [payload]
     }
 
+    console.log('[Accurate Webhook] Received payload:', JSON.stringify(payload, null, 2))
+
     // Filter relevant events
     const relevantEvents = payload.filter((e: any) => 
-      e.type === 'SALES_INVOICE' || e.type === 'SALES_RECEIPT'
+      e.type === 'SALES_INVOICE' || e.type === 'SALES_RECEIPT' || 
+      e.type === 'SALESINVOICE' || e.type === 'SALESRECEIPT' ||
+      e.module === 'SALES_INVOICE' || e.module === 'salesInvoice'
     )
+    
+    console.log('[Accurate Webhook] Relevant events:', relevantEvents)
 
     if (relevantEvents.length === 0) {
       return NextResponse.json({ success: true, message: 'No relevant events' })
