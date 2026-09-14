@@ -17,6 +17,7 @@ export default function AccurateSettingsModal({
   const [accurateClientSecret, setAccurateClientSecret] = useState('')
   const [accurateAccessToken, setAccurateAccessToken] = useState('')
   const [accurateDbId, setAccurateDbId] = useState('')
+  const [isTestingConnection, setIsTestingConnection] = useState(false)
   const [isSyncingAccurate, setIsSyncingAccurate] = useState(false)
   const [saving, setSaving] = useState(false)
   const [accurateSaved, setAccurateSaved] = useState<any>(null)
@@ -71,6 +72,31 @@ export default function AccurateSettingsModal({
       alert('Error: ' + (err.message || 'Gagal menyimpan pengaturan Accurate.'))
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleTestConnection = async () => {
+    if (!accurateAccessToken || !accurateDbId) {
+      alert('Access Token dan Database ID wajib diisi untuk test koneksi.')
+      return
+    }
+    setIsTestingConnection(true)
+    try {
+      const res = await fetch('/api/integrations/accurate/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          access_token: accurateAccessToken,
+          db_id: accurateDbId
+        })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Gagal test koneksi')
+      alert('Koneksi berhasil! Kredensial valid.')
+    } catch (err: any) {
+      alert('Error: ' + err.message)
+    } finally {
+      setIsTestingConnection(false)
     }
   }
 
@@ -232,6 +258,14 @@ export default function AccurateSettingsModal({
               className="px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
             >
               Batal
+            </button>
+            <button
+              type="button"
+              onClick={handleTestConnection}
+              disabled={isTestingConnection || saving}
+              className="px-5 py-2.5 text-sm font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isTestingConnection ? 'Testing...' : 'Test Koneksi'}
             </button>
             <button
               type="submit"
