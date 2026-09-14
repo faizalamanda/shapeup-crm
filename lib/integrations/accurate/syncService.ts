@@ -168,69 +168,99 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
     const uniqueCustomersMap = new Map()
     const allOrdersToProcess: any[] = []
 
-    // Fetch detail sequentially to avoid hitting 8 requests/sec limit
-    for (const orderSummary of orders) {
-      const detailRes = await fetch(`${accurateHost}/accurate/api/sales-invoice/detail.do?id=${orderSummary.id}`, {
-        headers: generateAccurateHeaders()
-      })
-      
-      // Delay 150ms between requests (max ~6.6 requests per second)
-      await delay(150)
+    // 1. FILTER EXISTING ORDERS
+    const orderIds = orders.map((o: any) => String(o.id))
+    let ordersToFetch = orders
 
-      if (!detailRes.ok) continue
-      
-      const detailData = await detailRes.json()
-      const order = detailData.d
+    if (orderIds.length > 0 && !(specificIds && (specificIds.invoiceIds.length > 0 || specificIds.receiptIds.length > 0))) {
+      // Hanya cek ke DB jika ini sinkronisasi manual (bukan webhook)
+      const { data: existingOrders } = await supabaseAdmin
+        .from('orders')
+        .select('external_id')
+        .eq('business_id', businessId)
+        .in('external_id', orderIds)
+        
+      const existingIds = new Set(existingOrders?.map(o => o.external_id) || [])
+      ordersToFetch = orders.filter((o: any) => !existingIds.has(String(o.id)))
+    }
 
-      if (!order) continue
+    // 2. CHUNKING
+    const chunkArray = (arr: any[], size: number) => Array.from({ length: Math.ceil(arr.length / size) }, (v, i) => arr.slice(i * size, i * size + size))
+    const chunks = chunkArray(ordersToFetch, 5)
 
-      // Customer Processing
-      const custId = order.customer?.id || order.customerNo || orderSummary.id
-      const custName = order.customer?.name || order.customerName || `Accurate Customer ${custId}`
-      const dummyPhone = `000${String(custId).replace(/\D/g, '')}`
-
-      uniqueCustomersMap.set(dummyPhone, {
-        business_id: businessId,
-        phone: dummyPhone,
-        name: custName,
-        email: '',
-        address_data: {}
-      })
-
-      // Items Processing
-      let calculatedSubtotal = 0
-      let totalQty = 0
-      const itemsJson = []
-
-      if (order.detailItem) {
-        for (const item of order.detailItem) {
-          uniqueItemsMap.set(item.itemNo, item)
-          
-          const itemTotal = toNum(item.totalPrice || 0)
-          const itemQty = toNum(item.quantity || 0)
-          
-          calculatedSubtotal += itemTotal
-          totalQty += itemQty
-          
-          itemsJson.push({
-            name: item.detailName || item.itemNo,
-            quantity: itemQty,
-            subtotal: itemTotal,
-            sku: item.itemNo,
-            price: toNum(item.unitPrice || 0)
+    for (const chunk of chunks) {
+      const promises = chunk.map(async (orderSummary: any) => {
+        try {
+          const detailRes = await fetch(`${accurateHost}/accurate/api/sales-invoice/detail.do?id=${orderSummary.id}`, {
+            headers: generateAccurateHeaders()
           })
+          if (!detailRes.ok) return null
+          const detailData = await detailRes.json()
+          return { order: detailData.d, orderSummary }
+        } catch (err) {
+          console.error('[Accurate Sync] Error fetching detail for', orderSummary.id, err)
+          return null
         }
+      })
+
+      const results = await Promise.all(promises)
+
+      for (const res of results) {
+        if (!res || !res.order) continue
+        const { order, orderSummary } = res
+
+        // Customer Processing
+        const custId = order.customer?.id || order.customerNo || orderSummary.id
+        const custName = order.customer?.name || order.customerName || `Accurate Customer ${custId}`
+        const dummyPhone = `000${String(custId).replace(/\D/g, '')}`
+
+        uniqueCustomersMap.set(dummyPhone, {
+          business_id: businessId,
+          phone: dummyPhone,
+          name: custName,
+          email: '',
+          address_data: {}
+        })
+
+        // Items Processing
+        let calculatedSubtotal = 0
+        let totalQty = 0
+        const itemsJson = []
+
+        if (order.detailItem) {
+          for (const item of order.detailItem) {
+            uniqueItemsMap.set(item.itemNo, item)
+            
+            const itemTotal = toNum(item.totalPrice || 0)
+            const itemQty = toNum(item.quantity || 0)
+            
+            calculatedSubtotal += itemTotal
+            totalQty += itemQty
+            
+            itemsJson.push({
+              name: item.detailName || item.itemNo,
+              quantity: itemQty,
+              subtotal: itemTotal,
+              sku: item.itemNo,
+              price: toNum(item.unitPrice || 0)
+            })
+          }
+        }
+
+        allOrdersToProcess.push({
+          ...order,
+          extractedCustomerPhone: dummyPhone,
+          totalQty,
+          calculatedSubtotal,
+          itemsJson
+        })
+
+        processedOrders++
       }
 
-      allOrdersToProcess.push({
-        ...order,
-        extractedCustomerPhone: dummyPhone,
-        totalQty,
-        calculatedSubtotal,
-        itemsJson
-      })
-
-      processedOrders++
+      if (chunks.length > 1) {
+        await delay(1000)
+      }
     }
 
     // 1. UPSERT CUSTOMERS
