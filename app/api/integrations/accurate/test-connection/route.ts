@@ -19,10 +19,12 @@ export async function POST(req: NextRequest) {
     
     // --- 1. Try API Token Method ---
     if (cleanSecret) {
+      // Try API Token Method
       const pad = (n: number) => n.toString().padStart(2, '0')
-      const now = new Date()
-      // format: dd/MM/yyyy HH:mm:ss
+      // Ensure we get the time in Jakarta timezone (UTC+7) since Vercel runs in UTC
+      const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"}))
       const tsStr = `${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+      
       const signature = crypto.createHmac('sha256', cleanSecret).update(tsStr).digest('base64')
 
       const tokenRes = await fetch(`${accurateHost}/api/api-token.do`, {

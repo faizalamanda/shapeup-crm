@@ -82,7 +82,8 @@ export async function POST(req: NextRequest) {
       if (activeSecret) {
         // API Token Method requires Signature
         const pad = (n: number) => n.toString().padStart(2, '0')
-        const now = new Date()
+        // Ensure we get the time in Jakarta timezone (UTC+7) since Vercel runs in UTC
+        const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"}))
         const tsStr = `${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
         headers['X-Api-Timestamp'] = tsStr
         headers['X-Api-Signature'] = crypto.createHmac('sha256', activeSecret).update(tsStr).digest('base64')
