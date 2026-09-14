@@ -63,15 +63,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Database ID wajib diisi jika tidak menggunakan metode API Token.' }, { status: 400 })
     }
 
-    const accurateHost = config.host || 'https://account.accurate.id' 
-    
-    let listUrl = `${accurateHost}/api/sales-order/list.do?sp.page=${page}&sp.pageSize=100`
-    
-    // Add date filter if it's the second sync onwards
-    if (config.last_sync_date) {
-      listUrl += `&filter.transDate.gte=${config.last_sync_date}`
-    }
-
     const generateAccurateHeaders = () => {
       const headers: Record<string, string> = {
         'Authorization': `Bearer ${config.access_token}`
@@ -94,10 +85,43 @@ export async function POST(req: NextRequest) {
       return headers
     }
 
+    let accurateHost = config.host || ''
+    const headers = generateAccurateHeaders()
+    
+    // Fetch dynamic host if not known, or always fetch it to be safe
+    if (!accurateHost) {
+      if (activeSecret) {
+        const tokenRes = await fetch(`https://account.accurate.id/api/api-token.do`, {
+          method: 'POST',
+          headers
+        })
+        const tokenData = await tokenRes.json()
+        if (tokenRes.ok && tokenData.s) {
+          accurateHost = tokenData.d?.database?.hostUrl || tokenData.d?.database?.host || 'https://account.accurate.id'
+        } else {
+          return NextResponse.json({ error: `Gagal mendapatkan host Accurate: ${JSON.stringify(tokenData.d || tokenData)}` }, { status: 400 })
+        }
+      } else {
+        const testRes = await fetch(`https://account.accurate.id/api/db-list.do`, { headers })
+        const testData = await testRes.json()
+        if (testRes.ok && testData.s) {
+          const db = testData.d.find((d: any) => d.id.toString() === config.db_id)
+          if (db) accurateHost = db.hostUrl || db.host
+        }
+      }
+    }
+    
+    if (!accurateHost) accurateHost = 'https://account.accurate.id'
+
+    let listUrl = `${accurateHost}/api/sales-order/list.do?sp.page=${page}&sp.pageSize=100`
+    
+    // Add date filter if it's the second sync onwards
+    if (config.last_sync_date) {
+      listUrl += `&filter.transDate.gte=${config.last_sync_date}`
+    }
+
     // Fetch with pagination.
-    const listRes = await fetch(listUrl, {
-      headers: generateAccurateHeaders()
-    })
+    const listRes = await fetch(listUrl, { headers })
 
     if (!listRes.ok) {
       const errText = await listRes.text()
