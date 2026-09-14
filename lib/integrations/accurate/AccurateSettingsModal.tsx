@@ -201,6 +201,7 @@ export default function AccurateSettingsModal({
             </div>
           </div>
 
+          {accurateSaved?.is_active && (
             <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col gap-2">
               <div className="flex justify-between items-center mb-2">
                 <p className="text-xs text-slate-500 font-semibold">Tarik pesanan terbaru dari Accurate secara manual:</p>
