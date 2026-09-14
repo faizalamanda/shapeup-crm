@@ -203,7 +203,14 @@ export default function AccurateSettingsModal({
 
           {accurateSaved?.is_active && (
             <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col gap-2">
-              <p className="text-xs text-slate-500 mb-2">Tarik pesanan terbaru dari Accurate secara manual:</p>
+              <div className="flex justify-between items-center mb-2">
+                <p className="text-xs text-slate-500">Tarik pesanan terbaru dari Accurate secara manual:</p>
+                {(accurateSaved?.config?.last_sync_time_str || accurateSaved?.config?.last_sync_date) && (
+                  <p className="text-[11px] text-slate-400 font-medium">
+                    Sinkronisasi Terakhir: {accurateSaved.config.last_sync_time_str || accurateSaved.config.last_sync_date}
+                  </p>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={handleSyncAccurate}

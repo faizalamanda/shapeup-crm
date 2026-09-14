@@ -28,7 +28,7 @@ async function test() {
   const host = tokenData.d.database.host;
   
   console.log("Fetching orders from", host);
-  const listRes = await fetch(`${host}/accurate/api/sales-order/list.do?sp.page=1&sp.pageSize=10`, {
+  const listRes = await fetch(`${host}/accurate/api/sales-invoice/detail.do?id=50`, {
     headers: {
       'Authorization': `Bearer ${cleanToken}`,
       'X-Api-Timestamp': tsStr,
@@ -38,7 +38,7 @@ async function test() {
   });
   const listText = await listRes.text();
   console.log("List Status:", listRes.status);
-  console.log("List Body:", listText.substring(0, 100));
+  console.log("List Body:", listText.substring(0, 1500));
 }
 
 test().catch(console.error);

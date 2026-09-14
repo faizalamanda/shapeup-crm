@@ -113,7 +113,7 @@ export async function POST(req: NextRequest) {
     
     if (!accurateHost) accurateHost = 'https://account.accurate.id'
 
-    let listUrl = `${accurateHost}/accurate/api/sales-order/list.do?sp.page=${page}&sp.pageSize=100`
+    let listUrl = `${accurateHost}/accurate/api/sales-invoice/list.do?sp.page=${page}&sp.pageSize=100`
     
     // Add date filter if it's the second sync onwards
     if (config.last_sync_date) {
@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
 
     // Fetch detail sequentially to avoid hitting 8 requests/sec limit
     for (const orderSummary of orders) {
-      const detailRes = await fetch(`${accurateHost}/accurate/api/sales-order/detail.do?id=${orderSummary.id}`, {
+      const detailRes = await fetch(`${accurateHost}/accurate/api/sales-invoice/detail.do?id=${orderSummary.id}`, {
         headers: generateAccurateHeaders()
       })
       
@@ -325,12 +325,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // If this is the last page, update last_sync_date to today
+    // If this is the last page, update last_sync_date to today (Jakarta time)
     if (!hasNextPage) {
-      const today = new Date()
+      const today = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"}))
       const formattedToday = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`
       
-      const newConfig = { ...config, last_sync_date: formattedToday }
+      const timeStr = today.toLocaleString('id-ID', {
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta'
+      }) + ' WIB'
+      
+      const newConfig = { ...config, last_sync_date: formattedToday, last_sync_time_str: timeStr }
       
       await supabase.from('business_integrations')
         .update({ config: newConfig })
