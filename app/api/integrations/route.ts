@@ -37,10 +37,34 @@ export async function GET(req: Request) {
 
     if (fetchErr) throw fetchErr
 
+    const { data: bizRows } = await admin
+      .from('business_integrations')
+      .select('*')
+      .eq('business_id', profile.active_business_id)
+
+    const integrations = rows || []
+    
+    // Merge business_integrations into the list
+    if (bizRows) {
+      bizRows.forEach(br => {
+        integrations.push({
+          id: br.id,
+          platform_name: br.provider, // For page.tsx map
+          provider: br.provider,      // For AccurateSettingsModal
+          is_active: br.is_active,
+          config: br.config,          // For AccurateSettingsModal
+          api_credentials: {
+            business_id: br.business_id,
+            config: br.config
+          }
+        })
+      })
+    }
+
     return NextResponse.json({
       success: true,
       activeBusinessId: profile.active_business_id,
-      integrations: rows || []
+      integrations: integrations
     })
 
   } catch (err: any) {
@@ -68,7 +92,7 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json()
-    const { provider, store_url, consumer_key, consumer_secret, api_key, whatsapp_number, is_active = true, ...extraFields } = body
+    const { provider, store_url, consumer_key, consumer_secret, api_key, whatsapp_number, is_active = true, config, name, ...extraFields } = body
 
     if (!provider) {
       return NextResponse.json({ error: 'Provider wajib ditentukan.' }, { status: 400 })
@@ -76,6 +100,29 @@ export async function POST(req: Request) {
 
     const admin = getAdminSupabase()
     const activeBid = profile.active_business_id
+
+    // Check if it's a plugin using business_integrations table
+    if (provider === 'accurate' || config !== undefined) {
+      const { data: updated, error: updateErr } = await admin
+        .from('business_integrations')
+        .upsert({
+          business_id: activeBid,
+          provider: provider,
+          name: name || provider,
+          config: config || {},
+          is_active: is_active
+        }, { onConflict: 'business_id,provider' })
+        .select()
+        .single()
+
+      if (updateErr) throw updateErr
+
+      return NextResponse.json({
+        success: true,
+        message: 'Pengaturan integrasi berhasil disimpan!',
+        integration: updated
+      })
+    }
 
     // Check if record already exists for this business & provider
     const { data: existingRows } = await admin
