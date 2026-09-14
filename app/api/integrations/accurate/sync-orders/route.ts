@@ -64,12 +64,29 @@ export async function POST(req: NextRequest) {
       listUrl += `&filter.transDate.gte=${config.last_sync_date}`
     }
 
+    const generateAccurateHeaders = () => {
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${config.access_token}`
+      }
+      
+      if (config.client_secret) {
+        // API Token Method requires Signature
+        const crypto = require('crypto')
+        const pad = (n: number) => n.toString().padStart(2, '0')
+        const now = new Date()
+        const tsStr = `${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+        headers['X-Api-Timestamp'] = tsStr
+        headers['X-Api-Signature'] = crypto.createHmac('sha256', config.client_secret).update(tsStr).digest('base64')
+      } else if (config.db_id) {
+        // Fallback for OAuth Method
+        headers['X-Session-ID'] = config.db_id
+      }
+      return headers
+    }
+
     // Fetch with pagination.
     const listRes = await fetch(listUrl, {
-      headers: {
-        'Authorization': `Bearer ${config.access_token}`,
-        'X-Session-ID': config.db_id
-      }
+      headers: generateAccurateHeaders()
     })
 
     if (!listRes.ok) {
@@ -93,10 +110,7 @@ export async function POST(req: NextRequest) {
     // Fetch detail sequentially to avoid hitting 8 requests/sec limit
     for (const orderSummary of orders) {
       const detailRes = await fetch(`${accurateHost}/api/sales-order/detail.do?id=${orderSummary.id}`, {
-        headers: {
-          'Authorization': `Bearer ${config.access_token}`,
-          'X-Session-ID': config.db_id
-        }
+        headers: generateAccurateHeaders()
       })
       
       // Delay 150ms between requests (max ~6.6 requests per second)

@@ -111,11 +111,14 @@ export async function POST(req: Request) {
           name: name || provider,
           config: config || {},
           is_active: is_active
-        }, { onConflict: 'business_id,provider' })
+        }, { onConflict: 'business_integrations_biz_provider_unique' })
         .select()
         .single()
 
-      if (updateErr) throw updateErr
+      if (updateErr) {
+        console.error("Upsert Error: ", updateErr)
+        return NextResponse.json({ error: updateErr.message || 'Gagal menyimpan ke database' }, { status: 500 })
+      }
 
       return NextResponse.json({
         success: true,

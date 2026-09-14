@@ -1,33 +1,82 @@
 import { NextRequest, NextResponse } from 'next/server'
+import crypto from 'crypto'
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { access_token, db_id } = body
+    const { access_token, db_id, client_secret } = body
 
-    if (!access_token || !db_id) {
-      return NextResponse.json({ error: 'Access token dan Database ID (X-Session-ID) wajib diisi.' }, { status: 400 })
+    if (!access_token) {
+      return NextResponse.json({ error: 'Access token wajib diisi.' }, { status: 400 })
     }
 
+    const cleanToken = access_token.trim()
+    const cleanDbId = db_id?.trim() || ''
+    const cleanSecret = client_secret?.trim() || ''
+
     const accurateHost = 'https://account.accurate.id' 
-    const testUrl = `${accurateHost}/api/sales-order/list.do?sp.page=1&sp.pageSize=1`
+    
+    // --- 1. Try API Token Method ---
+    if (cleanSecret) {
+      const pad = (n: number) => n.toString().padStart(2, '0')
+      const now = new Date()
+      // format: dd/MM/yyyy HH:mm:ss
+      const tsStr = `${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+      const signature = crypto.createHmac('sha256', cleanSecret).update(tsStr).digest('base64')
+
+      const tokenRes = await fetch(`${accurateHost}/api/api-token.do`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${cleanToken}`,
+          'X-Api-Timestamp': tsStr,
+          'X-Api-Signature': signature
+        }
+      })
+
+      if (tokenRes.ok) {
+        const tokenData = await tokenRes.json()
+        if (tokenData.s) {
+          const dbData = tokenData.d?.["data usaha"]
+          const dbAlias = dbData?.alias || "Unknown"
+          return NextResponse.json({ 
+            success: true, 
+            message: `Koneksi berhasil! (Metode API Token) Terhubung dengan database: ${dbAlias}` 
+          })
+        }
+      }
+    }
+
+    // --- 2. Fallback to OAuth Method ---
+    if (!cleanDbId) {
+      return NextResponse.json({ error: 'Database ID wajib diisi untuk metode OAuth.' }, { status: 400 })
+    }
+
+    const testUrl = `${accurateHost}/api/db-list.do`
     
     const testRes = await fetch(testUrl, {
       headers: {
-        'Authorization': `Bearer ${access_token}`,
-        'X-Session-ID': db_id
+        'Authorization': `Bearer ${cleanToken}`
       }
     })
 
     if (!testRes.ok) {
       const errText = await testRes.text()
-      console.error('Accurate API Error:', errText)
-      return NextResponse.json({ error: `Gagal terhubung ke Accurate: ${testRes.status}. Cek kembali kredensial Anda.` }, { status: testRes.status })
+      console.error('Accurate API Error (db-list):', errText)
+      return NextResponse.json({ error: `Gagal terhubung ke Accurate: ${testRes.status}. Pastikan Access Token valid.` }, { status: testRes.status })
+    }
+
+    const data = await testRes.json()
+    // data.d is usually an array of databases
+    const dbList = data.d || []
+    const dbFound = dbList.find((db: any) => db.id.toString() === cleanDbId)
+
+    if (!dbFound) {
+      return NextResponse.json({ error: `Koneksi token berhasil, namun Database ID ${cleanDbId} tidak ditemukan di akun ini. Cek kembali Database ID.` }, { status: 400 })
     }
 
     return NextResponse.json({ 
       success: true, 
-      message: `Koneksi berhasil!` 
+      message: `Koneksi berhasil! Terhubung dengan database: ${dbFound.alias}` 
     })
 
   } catch (err: any) {

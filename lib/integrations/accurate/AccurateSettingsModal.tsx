@@ -181,7 +181,7 @@ export default function AccurateSettingsModal({
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-semibold text-[#1C1C1A] mb-1.5">
-                Client ID (OAuth)
+                Client ID (OAuth) / App Key (API Token)
               </label>
               <input
                 type="text"
@@ -195,7 +195,7 @@ export default function AccurateSettingsModal({
 
             <div>
               <label className="block text-sm font-semibold text-[#1C1C1A] mb-1.5">
-                Client Secret (OAuth)
+                Client Secret (OAuth) / Signature Secret (API Token)
               </label>
               <input
                 type="password"
@@ -209,7 +209,7 @@ export default function AccurateSettingsModal({
 
             <div>
               <label className="block text-sm font-semibold text-[#1C1C1A] mb-1.5">
-                Access Token
+                Access Token / API Token
               </label>
               <input
                 type="password"
@@ -223,7 +223,7 @@ export default function AccurateSettingsModal({
 
             <div>
               <label className="block text-sm font-semibold text-[#1C1C1A] mb-1.5">
-                Database ID (X-Session-ID)
+                Database ID (Opsional jika menggunakan API Token)
               </label>
               <input
                 type="text"
