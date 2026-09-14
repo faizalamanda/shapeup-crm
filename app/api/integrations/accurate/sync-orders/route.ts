@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabaseServer'
 import crypto from 'crypto'
 
@@ -207,10 +208,19 @@ export async function POST(req: NextRequest) {
     }
 
     // 1. UPSERT CUSTOMERS
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!serviceRoleKey) {
+      throw new Error('SUPABASE_SERVICE_ROLE_KEY is not defined in env')
+    }
+    const supabaseAdmin = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      serviceRoleKey
+    )
+
     let customerIdMap = new Map<string, string>() // phone -> id
     const customersArray = Array.from(uniqueCustomersMap.values())
     if (customersArray.length > 0) {
-      const { data: upsertedCustomers, error: custErr } = await supabase
+      const { data: upsertedCustomers, error: custErr } = await supabaseAdmin
         .from('customers')
         .upsert(customersArray, { onConflict: 'business_id, phone' })
         .select('id, phone')
@@ -225,7 +235,7 @@ export async function POST(req: NextRequest) {
     // 2. UPSERT PRODUCTS
     if (uniqueItemsMap.size > 0) {
       const uniqueSkus = Array.from(uniqueItemsMap.keys())
-      const { data: existingProducts } = await supabase
+      const { data: existingProducts } = await supabaseAdmin
         .from('products')
         .select('sku')
         .eq('business_id', businessId)
@@ -254,7 +264,7 @@ export async function POST(req: NextRequest) {
       }
 
       if (productsToInsert.length > 0) {
-        const { error: insertError } = await supabase.from('products').insert(productsToInsert)
+        const { error: insertError } = await supabaseAdmin.from('products').insert(productsToInsert)
         if (insertError) {
           console.error('Error inserting products:', insertError)
         } else {
@@ -303,7 +313,7 @@ export async function POST(req: NextRequest) {
     })
 
     if (ordersToInsert.length > 0) {
-      const { data: upsertedOrders, error: orderErr } = await supabase
+      const { data: upsertedOrders, error: orderErr } = await supabaseAdmin
         .from('orders')
         .upsert(ordersToInsert, { onConflict: 'source_platform, external_id' })
         .select('id')
@@ -315,7 +325,7 @@ export async function POST(req: NextRequest) {
         const { syncOrderToLedger } = await import('@/lib/orderLedger')
         for (const uo of upsertedOrders || []) {
           try {
-            await syncOrderToLedger(uo.id, supabase)
+            await syncOrderToLedger(uo.id, supabaseAdmin)
           } catch (ledgerErr) {
             console.error(`Ledger sync failed for order ${uo.id}`, ledgerErr)
           }
