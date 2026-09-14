@@ -11,7 +11,7 @@ const toNum = (val: any) => {
 
 const pad = (n: number) => n.toString().padStart(2, '0')
 
-export async function executeAccurateSync(businessId: string, page = 1): Promise<{ success: boolean; hasNextPage?: boolean; error?: string; processedOrders?: number; newProducts?: number; message?: string }> {
+export async function executeAccurateSync(businessId: string, page = 1, specificIds?: { invoiceIds: number[], receiptIds: number[] }): Promise<{ success: boolean; hasNextPage?: boolean; error?: string; processedOrders?: number; newProducts?: number; message?: string }> {
   try {
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!serviceRoleKey) {
@@ -101,37 +101,65 @@ export async function executeAccurateSync(businessId: string, page = 1): Promise
     
     if (!accurateHost) accurateHost = 'https://account.accurate.id'
 
-    let listUrl = `${accurateHost}/accurate/api/sales-invoice/list.do?sp.page=${page}&sp.pageSize=100`
-    
-    // Add date filter if it's the second sync onwards
-    if (config.last_sync_date) {
-      // To catch late updates (e.g. an order from 5 days ago just paid today),
-      // we don't just query from last_sync_date. We query from 14 days BEFORE last_sync_date.
-      const parts = String(config.last_sync_date).split('/')
-      if (parts.length === 3) {
-        const syncDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00+07:00`)
-        syncDate.setDate(syncDate.getDate() - 14) // Rollback 14 days
-        
-        const filterDateStr = `${pad(syncDate.getDate())}/${pad(syncDate.getMonth() + 1)}/${syncDate.getFullYear()}`
-        listUrl += `&filter.transDate.gte=${filterDateStr}`
-      } else {
-        listUrl += `&filter.transDate.gte=${config.last_sync_date}`
+    let orders = []
+    let hasNextPage = false
+
+    if (specificIds && (specificIds.invoiceIds.length > 0 || specificIds.receiptIds.length > 0)) {
+      const finalInvoiceIds = new Set<number>(specificIds.invoiceIds)
+      
+      // If there are receipt IDs, fetch them to find which invoice they pay
+      for (const receiptId of specificIds.receiptIds) {
+        try {
+          const receiptRes = await fetch(`${accurateHost}/accurate/api/sales-receipt/detail.do?id=${receiptId}`, { headers })
+          if (receiptRes.ok) {
+            const receiptData = await receiptRes.json()
+            if (receiptData.s && receiptData.d && receiptData.d.detailItem) {
+              for (const item of receiptData.d.detailItem) {
+                if (item.salesInvoiceId) finalInvoiceIds.add(item.salesInvoiceId)
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[Accurate Webhook] Failed to fetch sales-receipt details for id', receiptId, e)
+        }
       }
+
+      // Map IDs to the same format as list.do
+      orders = Array.from(finalInvoiceIds).map(id => ({ id }))
+      hasNextPage = false
+    } else {
+      let listUrl = `${accurateHost}/accurate/api/sales-invoice/list.do?sp.page=${page}&sp.pageSize=100`
+      
+      // Add date filter if it's the second sync onwards
+      if (config.last_sync_date) {
+        // To catch late updates (e.g. an order from 5 days ago just paid today),
+        // we don't just query from last_sync_date. We query from 14 days BEFORE last_sync_date.
+        const parts = String(config.last_sync_date).split('/')
+        if (parts.length === 3) {
+          const syncDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00+07:00`)
+          syncDate.setDate(syncDate.getDate() - 14) // Rollback 14 days
+          
+          const filterDateStr = `${pad(syncDate.getDate())}/${pad(syncDate.getMonth() + 1)}/${syncDate.getFullYear()}`
+          listUrl += `&filter.transDate.gte=${filterDateStr}`
+        } else {
+          listUrl += `&filter.transDate.gte=${config.last_sync_date}`
+        }
+      }
+
+      // Fetch with pagination.
+      const listRes = await fetch(listUrl, { headers })
+
+      if (!listRes.ok) {
+        const errText = await listRes.text()
+        console.error('Accurate API Error:', errText)
+        return { success: false, error: `Gagal mengambil data dari Accurate: ${listRes.status}` }
+      }
+
+      const listData = await listRes.json()
+      orders = listData.d || []
+      const sp = listData.sp || {}
+      hasNextPage = sp.pageCount > page
     }
-
-    // Fetch with pagination.
-    const listRes = await fetch(listUrl, { headers })
-
-    if (!listRes.ok) {
-      const errText = await listRes.text()
-      console.error('Accurate API Error:', errText)
-      return { success: false, error: `Gagal mengambil data dari Accurate: ${listRes.status}` }
-    }
-
-    const listData = await listRes.json()
-    const orders = listData.d || []
-    const sp = listData.sp || {}
-    const hasNextPage = sp.pageCount > page
 
     let processedOrders = 0
     let newProducts = 0

@@ -58,11 +58,27 @@ export async function POST(req: NextRequest) {
       })
 
       if (integration) {
-        // Run sync! (Awaited so Vercel doesn't kill it before it finishes)
-        // We only fetch page 1 because webhooks trigger immediately after a transaction,
-        // so the transaction is guaranteed to be in the first 10 most recent results!
-        console.log(`[Accurate Webhook] Triggering sync for Business ${integration.business_id} (DB: ${dbId})`)
-        await executeAccurateSync(integration.business_id, 1)
+        // Find all invoice IDs for this DB
+        const specificInvoiceIds: number[] = []
+        const specificReceiptIds: number[] = []
+        
+        relevantEvents.filter((e: any) => e.databaseId == dbId).forEach((event: any) => {
+          if (event.data && Array.isArray(event.data)) {
+            event.data.forEach((item: any) => {
+              if (item.salesInvoiceId) specificInvoiceIds.push(item.salesInvoiceId)
+              if (item.salesReceiptId) specificReceiptIds.push(item.salesReceiptId)
+            })
+          }
+        })
+
+        if (specificInvoiceIds.length > 0 || specificReceiptIds.length > 0) {
+          console.log(`[Accurate Webhook] Triggering sync for Business ${integration.business_id} (DB: ${dbId}) with Invoices:`, specificInvoiceIds, 'Receipts:', specificReceiptIds)
+          await executeAccurateSync(integration.business_id, 1, { invoiceIds: specificInvoiceIds, receiptIds: specificReceiptIds })
+        } else {
+          // Fallback to normal sync if no specific IDs found
+          console.log(`[Accurate Webhook] Triggering sync for Business ${integration.business_id} (DB: ${dbId}) without specific IDs`)
+          await executeAccurateSync(integration.business_id, 1)
+        }
       } else {
         console.log(`[Accurate Webhook] Unknown DB ID: ${dbId}`)
       }
