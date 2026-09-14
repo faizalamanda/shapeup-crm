@@ -282,7 +282,9 @@ export async function POST(req: NextRequest) {
         // else fallback to new Date() if valid.
         const parts = String(o.transDate).split('/')
         if (parts.length === 3) {
-          orderDateUtc = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00Z`).toISOString()
+          // Accurate returns date only. We assume midnight in Jakarta time (+07:00) 
+          // to ensure it stores correctly in UTC without bleeding into the next/previous day.
+          orderDateUtc = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00+07:00`).toISOString()
         } else {
           // Attempt standard parse
           const d = new Date(o.transDate)
@@ -296,7 +298,7 @@ export async function POST(req: NextRequest) {
         external_id: o.id.toString(),
         source_platform: 'Accurate Online',
         order_number: o.number || o.id.toString(),
-        order_date: o.transDate,
+        order_date: orderDateUtc,
         order_date_utc: orderDateUtc,
         status: o.status || 'CLOSED', // Fallback status
         total_qty: o.totalQty,
