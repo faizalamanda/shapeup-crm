@@ -48,6 +48,7 @@ export async function GET(req: Request) {
       settings: {
         global_stock_reduction_status: creds.global_stock_reduction_status || ['shipped', 'completed'],
         global_journal_hpp_status: creds.global_journal_hpp_status || ['shipped', 'completed'],
+        global_default_hpp_percentage: typeof creds.global_default_hpp_percentage === 'number' ? creds.global_default_hpp_percentage : 0,
         updated_at: creds.updated_at || null
       }
     })
@@ -77,7 +78,7 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json()
-    const { global_stock_reduction_status, global_journal_hpp_status } = body
+    const { global_stock_reduction_status, global_journal_hpp_status, global_default_hpp_percentage } = body
 
     const admin = getAdminSupabase()
     const activeBid = profile.active_business_id
@@ -100,6 +101,9 @@ export async function POST(req: Request) {
       global_journal_hpp_status: Array.isArray(global_journal_hpp_status) && global_journal_hpp_status.length > 0
         ? global_journal_hpp_status 
         : ['shipped', 'completed'],
+      global_default_hpp_percentage: typeof global_default_hpp_percentage === 'number' && !isNaN(global_default_hpp_percentage)
+        ? Math.max(0, Math.min(100, global_default_hpp_percentage))
+        : 0,
       updated_at: new Date().toISOString()
     }
 

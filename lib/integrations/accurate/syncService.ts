@@ -329,12 +329,25 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
 
       const existingSkus = new Set(existingProducts?.map(p => p.sku) || [])
 
+      let defaultHppPct = 0
+      try {
+        const { data: globalInt } = await supabaseAdmin
+          .from('integrations')
+          .select('api_credentials')
+          .eq('platform_name', 'global')
+          .filter('api_credentials->>business_id', 'eq', businessId)
+          .limit(1)
+        if (globalInt && globalInt.length > 0 && typeof globalInt[0].api_credentials?.global_default_hpp_percentage === 'number') {
+          defaultHppPct = Math.max(0, Math.min(100, globalInt[0].api_credentials.global_default_hpp_percentage))
+        }
+      } catch (_) {}
+
       const productsToInsert = []
       for (const item of uniqueItemsMap.values()) {
         if (item.itemNo && !existingSkus.has(item.itemNo)) {
           const detailName = item.detailName || item.itemNo
           const unitPrice = item.unitPrice || 0
-          const hpp = item.unitPrice || 0
+          const hpp = item.costPrice || (unitPrice * (defaultHppPct / 100))
           
           productsToInsert.push({
             business_id: businessId,

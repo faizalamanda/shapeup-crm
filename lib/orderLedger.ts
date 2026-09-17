@@ -84,6 +84,20 @@ export async function syncOrderToLedger(
     let totalCogs = 0
     const matchedProducts: { item: any; dbProduct: any }[] = []
 
+    // Fetch default HPP percentage from global integration settings for this business (default 0%)
+    let defaultHppPct = 0
+    try {
+      const { data: globalInt } = await supabase
+        .from('integrations')
+        .select('api_credentials')
+        .eq('platform_name', 'global')
+        .filter('api_credentials->>business_id', 'eq', businessId)
+        .limit(1)
+      if (globalInt && globalInt.length > 0 && typeof globalInt[0].api_credentials?.global_default_hpp_percentage === 'number') {
+        defaultHppPct = Math.max(0, Math.min(100, globalInt[0].api_credentials.global_default_hpp_percentage))
+      }
+    } catch (_) {}
+
     for (const item of items) {
       let dbProd = null
       const sku = item.sku ? String(item.sku).trim() : ''
@@ -124,7 +138,7 @@ export async function syncOrderToLedger(
         }
       }
 
-      // Resolve HPP/cost price from WooCommerce metadata, item fields, or default to 50%
+      // Resolve HPP/cost price from WooCommerce/integration metadata, item fields, or default HPP ratio setting (default 0%)
       let extractedCostPrice = 0
       let isFallback = false
 
@@ -149,7 +163,7 @@ export async function syncOrderToLedger(
 
       const itemPrice = parseFloat(item.price || item.total || 0) || 0
       if (extractedCostPrice <= 0) {
-        extractedCostPrice = itemPrice * 0.5
+        extractedCostPrice = itemPrice * (defaultHppPct / 100)
         isFallback = true
       }
 

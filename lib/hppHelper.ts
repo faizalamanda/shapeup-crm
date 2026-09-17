@@ -124,8 +124,9 @@ export async function generateItemizedHppJournalLines(
 
       if (effectiveCost <= 0) {
         const itemPrice = parseFloat(String(item.price || item.total || 0)) || 0
-        if (itemPrice > 0) {
-          effectiveCost = itemPrice * 0.5
+        const fallbackPct = typeof (item as any)?.defaultHppPct === 'number' ? (item as any).defaultHppPct : 0
+        if (itemPrice > 0 && fallbackPct > 0) {
+          effectiveCost = itemPrice * (fallbackPct / 100)
         }
       }
     }

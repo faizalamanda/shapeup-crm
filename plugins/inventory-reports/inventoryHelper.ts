@@ -157,7 +157,7 @@ export function buildUnifiedMoveHistory(
       const prodId = item.product_id || item.id
       const prod = prodMap.get(prodId)
       const qty = parseFloat(String(item.quantity || item.qty || 1)) || 1
-      const unitCost = prod?.cost_price || parseFloat(String(item.price || 0)) * 0.5
+      const unitCost = prod?.cost_price || 0
 
       moves.push({
         id: `order-${o.id}-${prodId || Math.random()}`,

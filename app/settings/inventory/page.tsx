@@ -20,9 +20,11 @@ export default function GlobalInventorySettingsPage() {
   const [globalForm, setGlobalForm] = useState<{
     global_stock_reduction_status: string[]
     global_journal_hpp_status: string[]
+    global_default_hpp_percentage: number
   }>({
     global_stock_reduction_status: ['shipped', 'completed'],
     global_journal_hpp_status: ['shipped', 'completed'],
+    global_default_hpp_percentage: 0
   })
 
   // Fetch Active Business Profile
@@ -57,6 +59,9 @@ export default function GlobalInventorySettingsPage() {
               global_journal_hpp_status: Array.isArray(json.settings.global_journal_hpp_status)
                 ? json.settings.global_journal_hpp_status
                 : ['shipped', 'completed'],
+              global_default_hpp_percentage: typeof json.settings.global_default_hpp_percentage === 'number'
+                ? json.settings.global_default_hpp_percentage
+                : 0
             })
           }
         } catch (err) {
@@ -220,6 +225,44 @@ export default function GlobalInventorySettingsPage() {
                 </div>
                 <span className="text-[11px] text-blue-700/80 block">
                   Jurnal HPP akan merinci setiap barang beserta SKU, Qty, dan HPP per unit secara terpisah.
+                </span>
+              </div>
+
+              {/* Persentase Default HPP / HAP Produk Baru (Integrasi) */}
+              <div className="p-5 bg-amber-50/50 border border-amber-200 rounded-xl space-y-3">
+                <div>
+                  <h3 className="font-bold text-xs text-amber-900 uppercase tracking-wider">
+                    3. Persentase Default HPP / HAP Produk Baru (Integrasi)
+                  </h3>
+                  <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                    Tentukan persentase acuan HPP/HAP dari harga jual ketika produk baru dibuat secara otomatis saat transaksi ditarik dari integrasi (seperti Accurate, WooCommerce, TikTok, Shopee, dll.). Default: <b>0%</b>.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 pt-1">
+                  <div className="relative w-36">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={globalForm.global_default_hpp_percentage}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value)
+                        setGlobalForm({
+                          ...globalForm,
+                          global_default_hpp_percentage: isNaN(val) ? 0 : Math.max(0, Math.min(100, val))
+                        })
+                      }}
+                      className="w-full px-4 py-2 pr-8 border border-amber-300 rounded-xl text-sm font-bold text-amber-900 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    />
+                    <span className="absolute right-3 top-2.5 text-xs font-bold text-amber-700">%</span>
+                  </div>
+                  <span className="text-xs text-amber-800 font-medium">
+                    dari harga jual
+                  </span>
+                </div>
+                <span className="text-[11px] text-amber-700/80 block">
+                  Contoh: Jika diset 0%, produk baru dari integrasi akan ber-HPP Rp 0. Jika diset 60% dan harga jual Rp 100.000, HPP awal otomatis terisi Rp 60.000.
                 </span>
               </div>
 
