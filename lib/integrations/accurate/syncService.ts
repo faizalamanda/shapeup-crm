@@ -168,21 +168,60 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
     const uniqueCustomersMap = new Map()
     const allOrdersToProcess: any[] = []
 
-    // 1. FILTER EXISTING ORDERS
-    const orderIds = orders.map((o: any) => String(o.id))
-    let ordersToFetch = orders
-
-    if (orderIds.length > 0 && !(specificIds && (specificIds.invoiceIds.length > 0 || specificIds.receiptIds.length > 0))) {
-      // Hanya cek ke DB jika ini sinkronisasi manual (bukan webhook)
-      const { data: existingOrders } = await supabaseAdmin
-        .from('orders')
-        .select('external_id')
-        .eq('business_id', businessId)
-        .in('external_id', orderIds)
-        
-      const existingIds = new Set(existingOrders?.map(o => o.external_id) || [])
-      ordersToFetch = orders.filter((o: any) => !existingIds.has(String(o.id)))
+    // Helper to normalize Accurate Online invoice status to standard CRM status
+    const normalizeAccurateStatus = (o: any): string => {
+      const statusStr = String(o.status || '').toUpperCase().trim()
+      const statusNameStr = String(o.statusName || o.statusOutstanding || '').toLowerCase().trim()
+      
+      if (
+        statusStr === 'CANCELLED' || 
+        statusStr === 'VOID' || 
+        statusStr === 'REJECTED' ||
+        statusNameStr.includes('batal') ||
+        statusNameStr.includes('void')
+      ) {
+        return 'cancelled'
+      }
+      
+      if (
+        statusStr === 'UNPAID' || 
+        statusNameStr.includes('belum lunas') || 
+        (o.outstanding === true && (o.primeReceipt || 0) === 0)
+      ) {
+        return 'processing'
+      }
+      
+      if (
+        statusStr === 'PARTIAL' || 
+        statusNameStr.includes('sebagian')
+      ) {
+        return 'processing'
+      }
+      
+      if (statusStr === 'DRAFT' || o.approvalStatus === 'PENDING') {
+        return 'draft'
+      }
+      
+      if (
+        statusStr === 'PAID' || 
+        statusStr === 'CLOSED' || 
+        statusStr === 'CLOSED_MANUAL' || 
+        statusNameStr.includes('lunas') || 
+        o.outstanding === false
+      ) {
+        return 'completed'
+      }
+      
+      const rawLower = (o.status || '').toLowerCase()
+      if (['completed', 'processing', 'pending', 'cancelled', 'failed', 'shipped'].includes(rawLower)) {
+        return rawLower
+      }
+      
+      return 'completed'
     }
+
+    // 1. FETCH ALL ORDERS FOR THIS BATCH
+    const ordersToFetch = orders
 
     // 2. CHUNKING
     const chunkArray = (arr: any[], size: number) => Array.from({ length: Math.ceil(arr.length / size) }, (v, i) => arr.slice(i * size, i * size + size))
@@ -347,7 +386,7 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
         order_number: o.number || o.id.toString(),
         order_date: orderDateUtc,
         order_date_utc: orderDateUtc,
-        status: o.status || 'CLOSED', // Fallback status
+        status: normalizeAccurateStatus(o),
         total_qty: o.totalQty,
         subtotal: o.calculatedSubtotal,
         discount_amount: toNum(o.itemDiscountAmount || 0) + toNum(o.discountAmount || 0),
