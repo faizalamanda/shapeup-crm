@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 
 import { createBrowserClient } from '@supabase/ssr'
 import { CustomerAddressForm, AddressData, EMPTY_ADDRESS } from '@/components/CustomerAddressForm'
+import { CustomerLoyaltyTab } from '@/plugins/loyalty/components/CustomerLoyaltyTab'
 
 interface CustomerDetailProps {
   customer: any
@@ -27,7 +28,7 @@ function getTagColors(tag: string) {
 
 export function CustomerDetail({ customer, onClose, onUpdate }: CustomerDetailProps) {
   const [mounted, setMounted] = useState(false)
-  const [activeTab, setActiveTab] = useState<'order' | 'contact' | 'notes'>('order')
+  const [activeTab, setActiveTab] = useState<'order' | 'contact' | 'notes' | 'loyalty'>('order')
   const [orders, setOrders] = useState<any[]>([])
   const [loadingOrders, setLoadingOrders] = useState(false)
 
@@ -341,7 +342,7 @@ export function CustomerDetail({ customer, onClose, onUpdate }: CustomerDetailPr
               
               {/* Tabs */}
               <div className="flex gap-6 border-b border-slate-200 mb-6 font-black text-[10px] uppercase tracking-widest">
-                {['order', 'contact', 'notes'].map((tab) => (
+                {(['order', 'contact', 'notes', 'loyalty'] as const).map((tab) => (
                   <button 
                     key={tab}
                     onClick={() => setActiveTab(tab as any)}
@@ -351,7 +352,7 @@ export function CustomerDetail({ customer, onClose, onUpdate }: CustomerDetailPr
                         : 'border-transparent text-slate-400 hover:text-slate-600'
                     }`}
                   >
-                    {tab === 'order' ? 'Riwayat Belanja' : tab === 'contact' ? 'Interaksi & CRM' : 'Catatan'}
+                    {tab === 'order' ? 'Riwayat Belanja' : tab === 'contact' ? 'Interaksi & CRM' : tab === 'notes' ? 'Catatan' : '⭐ Loyalty'}
                   </button>
                 ))}
               </div>
@@ -476,6 +477,15 @@ export function CustomerDetail({ customer, onClose, onUpdate }: CustomerDetailPr
                 <div className="bg-amber-50/50 p-6 border-l-4 border-amber-400 rounded-r-xl text-xs text-slate-750 leading-relaxed shadow-sm whitespace-pre-wrap">
                   {fullCustomer?.metadata?.notes ? `"${fullCustomer.metadata.notes}"` : '"Tidak ada catatan khusus mengenai pelanggan ini."'}
                 </div>
+              )}
+
+              {/* Loyalty Tab */}
+              {activeTab === 'loyalty' && customer.customer_id && customer.business_id && (
+                <CustomerLoyaltyTab
+                  customerId={customer.customer_id}
+                  businessId={customer.business_id}
+                  customerName={customer.name || 'Customer'}
+                />
               )}
             </div>
 

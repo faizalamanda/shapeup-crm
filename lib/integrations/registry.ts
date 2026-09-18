@@ -1,5 +1,5 @@
 export type IntegrationStatus = 'available' | 'coming_soon' | 'beta'
-export type IntegrationCategory = 'e-commerce' | 'payment' | 'shipping' | 'messaging' | 'inventory'
+export type IntegrationCategory = 'e-commerce' | 'payment' | 'shipping' | 'messaging' | 'inventory' | 'crm'
 
 export interface IntegrationField {
   key: string
@@ -43,6 +43,16 @@ export const INTEGRATION_PLUGINS: IntegrationPlugin[] = [
     category: 'inventory',
     status: 'available',
     badge: 'Plugin Resmi',
+    fields: [],
+  },
+  {
+    id: 'loyalty',
+    name: 'Loyalty Member Program',
+    description: 'Program poin loyalitas pelanggan otomatis: earn poin dari setiap pembelian, sistem tier Bronze/Silver/Gold/Platinum, histori poin lengkap, dan redeem poin sebagai diskon.',
+    icon: '⭐',
+    category: 'crm',
+    status: 'available',
+    badge: '💎 Premium',
     fields: [],
   },
   {

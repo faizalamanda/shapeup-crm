@@ -302,7 +302,7 @@ function CustomerDesktopRow({
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '200px 1.1fr 1.3fr 95px 65px 120px 110px 95px 64px',
+        gridTemplateColumns: '200px 1.1fr 1.3fr 95px 65px 95px 120px 110px 95px 64px',
         alignItems: 'center',
         gap: 0,
         cursor: 'pointer',
@@ -363,6 +363,20 @@ function CustomerDesktopRow({
         <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--su-text)' }}>
           {c.total_order_count || 0}
         </span>
+      </div>
+
+      {/* Loyalty */}
+      <div style={{ padding: '0 8px', textAlign: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--su-text)' }}>
+            {(c.loyalty_points || 0).toLocaleString('id-ID')} pt
+          </span>
+          {c.loyalty_tier && c.loyalty_tier !== 'Bronze' && (
+            <span style={{ fontSize: '9px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--su-primary)' }}>
+              {c.loyalty_tier}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* LTV */}
@@ -499,6 +513,11 @@ function CustomerMobileCard({
       <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-gray-100/80">
         <div className="flex items-center gap-1 flex-wrap">
           <CustomerBadges c={c} />
+          {c.loyalty_points > 0 && (
+            <span className="text-[9px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600">
+              ⭐ {c.loyalty_points.toLocaleString('id-ID')} pt {c.loyalty_tier !== 'Bronze' ? `(${c.loyalty_tier})` : ''}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1 flex-wrap">
           <CustomerTagList c={c} onTagUpdate={onTagUpdate} />
@@ -687,6 +706,7 @@ export function CustomerTable({
                 {colHeader('Tag / Label')}
                 {colHeader('Bergabung', 'joined_at', 'center')}
                 {colHeader('Orders', 'total_order_count', 'center')}
+                {colHeader('Loyalty', 'loyalty_points', 'center')}
                 {colHeader('LTV Total', 'ltv', 'right')}
                 {colHeader('AOV', 'aov', 'right')}
                 {colHeader('Terakhir', 'last_order_date', 'center')}

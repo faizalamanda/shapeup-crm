@@ -158,6 +158,7 @@ const menuItems: MenuItem[] = [
       { name: 'Customer List',      href: '/customers' },
       { name: 'Returning Cohort',   href: '/customers/cohorts/returning' },
       { name: 'Product Retention',  href: '/customers/product-retention' },
+      { name: '⭐ Loyalty Program',  href: '/customers/loyalty' },
     ],
   },
   {

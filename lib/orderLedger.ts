@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { calculateProductHpp } from './recipeHelper'
 import { generateItemizedHppJournalLines } from './hppHelper'
+import { earnPointsForOrder, reversePointsForOrder } from '@/plugins/loyalty/helpers/loyaltyApi'
 
 // Memory caches to optimize performance during batch operations
 const accountCache: Record<string, Record<string, string>> = {}
@@ -760,6 +761,36 @@ export async function syncOrderToLedger(
         if (insRevPayLinesErr) throw insRevPayLinesErr
       }
     }
+
+    // ─── Loyalty Plugin Hook ────────────────────────────────────────────────
+    // Earn poin saat order completed (per-order, bukan kumulatif)
+    // Reverse poin saat order dibatalkan/refund/retur
+    // Semua operasi loyalty bersifat idempotent (aman dipanggil ulang)
+    if (order.customer_id) {
+      try {
+        if (status === 'completed') {
+          await earnPointsForOrder(supabase, {
+            businessId,
+            customerId: order.customer_id,
+            orderId,
+            orderAmount: Math.round(parseFloat(grand_total) || 0),
+            orderNumber: order.order_number || orderId,
+          })
+        } else if (status === 'cancelled' || status === 'failed' || status === 'refunded' || status === 'returned') {
+          await reversePointsForOrder(supabase, {
+            businessId,
+            customerId: order.customer_id,
+            orderId,
+            orderNumber: order.order_number || orderId,
+            reverseType: 'reversed',
+          })
+        }
+      } catch (loyaltyErr) {
+        // Loyalty errors should NEVER block the main ledger sync
+        console.warn('[LoyaltyPlugin] Non-critical error during loyalty hook:', loyaltyErr)
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     return { success: true, message: 'Sync complete' }
   } catch (err: any) {
