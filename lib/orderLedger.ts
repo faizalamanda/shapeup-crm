@@ -138,11 +138,13 @@ export async function syncOrderToLedger(
         }
       }
 
-      // Resolve HPP/cost price from WooCommerce/integration metadata, item fields, or default HPP ratio setting (default 0%)
+      // Resolve HPP/cost price dari data order platform (untuk produk baru saja)
+      // Prioritas: (1) cost_of_goods_sold dari platform → (2) metadata item → (3) % default setting → (4) 0
+      // CATATAN: HPP dari platform HANYA dipakai untuk produk BARU yang di-auto-create.
+      // Produk yang sudah ada di ShapeUp TIDAK akan di-update HPP-nya dari integrasi.
       let extractedCostPrice = 0
-      let isFallback = false
 
-      // 1. Check if cost_of_goods_sold object exists on the item
+      // 1. Cek field cost_of_goods_sold (WooCommerce COG plugin)
       if (item.cost_of_goods_sold && typeof item.cost_of_goods_sold === 'object') {
         const val = parseFloat(item.cost_of_goods_sold.value)
         if (!isNaN(val) && val > 0) {
@@ -150,7 +152,7 @@ export async function syncOrderToLedger(
         }
       }
 
-      // 2. Check metadata
+      // 2. Cek metadata item (_wc_cog_item_cost, _cog_item_cost, cost_price, cost, hpp)
       if (extractedCostPrice <= 0 && Array.isArray(item.meta_data)) {
         const cogMeta = item.meta_data.find((m: any) => 
           ['_wc_cog_item_cost', '_cog_item_cost', 'cost_price', 'cost', 'hpp'].includes(m.key)
@@ -161,15 +163,14 @@ export async function syncOrderToLedger(
         }
       }
 
+      // 3. Fallback: gunakan persentase default dari settings global (default 0%)
       const itemPrice = parseFloat(item.price || item.total || 0) || 0
-      if (extractedCostPrice <= 0) {
+      if (extractedCostPrice <= 0 && defaultHppPct > 0) {
         extractedCostPrice = itemPrice * (defaultHppPct / 100)
-        isFallback = true
       }
 
-      // 3.3. Auto-creation if not found
+      // 3.3. Auto-create produk baru jika belum ada di database ShapeUp
       if (!dbProd && name) {
-        // Create new product
         const { data: newProd, error: newProdErr } = await supabase
           .from('products')
           .insert({
@@ -177,7 +178,7 @@ export async function syncOrderToLedger(
             name: name,
             sku: sku || null,
             price: itemPrice,
-            cost_price: extractedCostPrice,
+            cost_price: extractedCostPrice, // HPP dari platform, atau % setting, atau 0
             type: 'physical',
             stock_type: 'tracked',
             stock_quantity: 0
@@ -190,30 +191,9 @@ export async function syncOrderToLedger(
         } else {
           dbProd = newProd
         }
-      } else if (
-        dbProd && 
-        !isFallback && 
-        (dbProd.cost_price <= 0 || dbProd.cost_price === dbProd.price * 0.5) && 
-        extractedCostPrice > 0
-      ) {
-        // Update product in DB if its cost_price was 0 OR was exactly the 50% fallback price, 
-        // and we have found a valid real cost_price.
-        const { error: updErr } = await supabase
-          .from('products')
-          .update({ cost_price: extractedCostPrice })
-          .eq('id', dbProd.id)
-        
-        if (!updErr) {
-          dbProd.cost_price = extractedCostPrice
-          // Update cache so subsequent loops for this product use the corrected real HPP
-          if (dbProd.sku && productCacheBySku[businessId]?.[dbProd.sku]) {
-            productCacheBySku[businessId][dbProd.sku].cost_price = extractedCostPrice
-          }
-          if (dbProd.name && productCacheByName[businessId]?.[dbProd.name.toLowerCase()]) {
-            productCacheByName[businessId][dbProd.name.toLowerCase()].cost_price = extractedCostPrice
-          }
-        }
       }
+      // Produk existing: tidak di-update HPP-nya dari integrasi.
+      // ShapeUp adalah source of truth untuk HPP produk yang sudah ada.
 
       if (dbProd) {
         // Add/Update Cache

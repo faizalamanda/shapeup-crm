@@ -432,6 +432,14 @@ export default function PurchasesPage() {
       return
     }
 
+    // Validasi: setiap item WAJIB terhubung ke produk di database
+    const itemWithoutProduct = formItems.findIndex(i => !i.product_id)
+    if (itemWithoutProduct !== -1) {
+      alert(`Baris barang ke-${itemWithoutProduct + 1} ("${formItems[itemWithoutProduct].name || 'kosong'}") belum terhubung ke produk.\n\nSilakan pilih produk dari daftar, atau buat produk baru terlebih dahulu di menu Produk.`)
+      return
+    }
+
+
     const paidAmt = parseFloat(formAmountPaid) || 0
     if (paidAmt > 0 && !formPaymentAccountId) {
       alert('Pilih Kas/Bank untuk uang muka/pembayaran awal!')
@@ -850,15 +858,12 @@ export default function PurchasesPage() {
                         selectedProductId={item.product_id || null}
                         selectedProductName={item.name}
                         showCostPrice={true}
-                        placeholder="Cari produk / ketik nama barang..."
+                        placeholder="Pilih produk dari daftar..."
                         onSelectProduct={p => {
                           handleItemChange(idx, 'product_id', p.id)
                         }}
                         onClearProduct={() => {
                           handleItemChange(idx, 'product_id', null)
-                        }}
-                        onChangeCustomName={customName => {
-                          handleItemChange(idx, 'custom_name', customName)
                         }}
                       />
                     </div>

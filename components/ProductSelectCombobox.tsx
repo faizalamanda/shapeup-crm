@@ -58,11 +58,16 @@ export function ProductSelectCombobox({
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setIsOpen(false)
         setSearchQuery('')
+        // Strict-select mode: if no valid product is linked (no ID) and custom names
+        // are not allowed, clear the dangling text so invalid data can't be saved.
+        if (!onChangeCustomName && !selectedProductId) {
+          onClearProduct()
+        }
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
+  }, [selectedProductId, onChangeCustomName, onClearProduct])
 
   const filteredProducts = products.filter(p => {
     const q = searchQuery.trim().toLowerCase()
