@@ -408,7 +408,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   }
 
   // Intercept layout to display onboarding if user is logged in but has no businesses
-  if (!bizLoading && userProfile && businesses.length === 0) {
+  if (!bizLoading && businesses.length === 0) {
     return (
       <html lang="en" suppressHydrationWarning>
         <head>
