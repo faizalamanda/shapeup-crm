@@ -143,7 +143,13 @@ const menuItems: MenuItem[] = [
   { name: 'Onboarding',   href: '/onboarding',        icon: Icons.onboarding },
   { name: 'Overview',     href: '/dashboard',         icon: Icons.overview },
   { name: 'Pipeline',     href: '/pipeline',          icon: Icons.pipeline },
-  { name: 'Inbox / Chat', href: '/inbox',             icon: Icons.inbox },
+  {
+    name: 'Inbox / Chat', href: '/inbox', icon: Icons.inbox,
+    children: [
+      { name: 'WABA Official',  href: '/inbox' },
+      { name: 'kirim.dev',      href: '/inbox/kirimdev' },
+    ],
+  },
   {
     name: 'Pemasukan',    href: '/orders',            icon: Icons.pemasukan,
     children: [

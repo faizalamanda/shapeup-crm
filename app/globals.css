@@ -226,3 +226,6 @@ body[style*="overflow:hidden"] main {
   color: var(--su-primary) !important;
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

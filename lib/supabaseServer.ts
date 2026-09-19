@@ -1,4 +1,5 @@
 import { createServerClient } from '@supabase/ssr'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { parseJwtUserFromCookies, isInvalidTokenError } from './auth'
@@ -17,6 +18,13 @@ function fetchWithTimeout(url: RequestInfo | URL, options?: RequestInit): Promis
 
   return fetch(url, { ...options, signal: controller.signal })
     .finally(() => clearTimeout(timeoutId))
+}
+
+export function getAdminSupabase() {
+  return createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
 }
 
 export async function createClient() {

@@ -173,6 +173,46 @@ export const INTEGRATION_PLUGINS: IntegrationPlugin[] = [
     ],
   },
   {
+    id: 'kirimdev',
+    name: 'kirim.dev (WhatsApp Business API)',
+    description:
+      'WhatsApp Business API via kirim.dev — autentikasi API key sederhana (`kd_live_...`), inbox percakapan real-time, dan pengiriman pesan teks langsung dari ShapeUp CRM.',
+    icon: '💬',
+    category: 'messaging' satisfies IntegrationCategory,
+    status: 'available' satisfies IntegrationStatus,
+    badge: 'Plugin Baru',
+    getWebhookUrl: (businessId: string, origin: string) => {
+      const baseUrl = origin || (typeof window !== 'undefined' ? window.location.origin : '')
+      return `${baseUrl}/api/plugin/kirimdev/webhook?bid=${businessId}`
+    },
+    fields: [
+      {
+        key: 'api_key',
+        label: 'kirim.dev API Key',
+        type: 'password' as const,
+        placeholder: 'kd_live_a1B2c3D4...',
+        description: 'Dapatkan dari dashboard kirim.dev › API Keys. Format: kd_live_... atau kd_test_...',
+        required: true,
+      },
+      {
+        key: 'phone_number_id',
+        label: 'Phone Number ID',
+        type: 'text' as const,
+        placeholder: '123456789012345',
+        description: 'ID nomor WhatsApp yang terhubung di dashboard kirim.dev.',
+        required: true,
+      },
+      {
+        key: 'webhook_secret',
+        label: 'Webhook Signing Secret',
+        type: 'password' as const,
+        placeholder: 'Secret dari halaman Webhooks kirim.dev',
+        description: 'Digunakan untuk verifikasi signature Standard Webhooks. Salin dari dashboard kirim.dev › Webhooks.',
+        required: false,
+      },
+    ],
+  },
+  {
     id: 'shopify',
     name: 'Shopify',
     description: 'Integrasi otomatis produk dan pesanan dari toko Shopify Anda ke ShapeUp CRM.',

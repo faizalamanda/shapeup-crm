@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import AccurateSettingsModal from '@/lib/integrations/accurate/AccurateSettingsModal'
+import KirimDevSettingsModal from '@/plugins/kirim-dev/components/KirimDevSettingsModal'
 import { createBrowserClient } from '@supabase/ssr'
 import Link from 'next/link'
 import SettingsLayout from '@/components/SettingsLayout'
@@ -76,6 +77,15 @@ export default function IntegrationsSettingsPage() {
     webhook_verify_token: '',
     is_active: true,
   })
+
+  // kirim.dev Form State
+  const [kirimdevForm, setKirimdevForm] = useState({
+    api_key: '',
+    phone_number_id: '',
+    webhook_secret: '',
+    is_active: false,   // default NOT active
+  })
+  const [showKirimDevModal, setShowKirimDevModal] = useState(false)
 
   const [testingConnection, setTestingConnection] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
@@ -172,6 +182,18 @@ export default function IntegrationsSettingsPage() {
             waba_id: creds.waba_id || '',
             webhook_verify_token: creds.webhook_verify_token || '',
             is_active: waba.is_active ?? true,
+          })
+        }
+
+        // Populate kirim.dev form if exists
+        const kirimdev = json.integrations?.find?.((i: any) => i.provider === 'kirimdev')
+        if (kirimdev) {
+          const cfg = kirimdev.config || {}
+          setKirimdevForm({
+            api_key: cfg.api_key || '',
+            phone_number_id: cfg.phone_number_id || '',
+            webhook_secret: cfg.webhook_secret || '',
+            is_active: kirimdev.is_active ?? false,
           })
         }
       }
@@ -586,6 +608,11 @@ export default function IntegrationsSettingsPage() {
   const pipelineSaved = integrationsData['pipeline']
   const isPipelineActive = Boolean(pipelineSaved && pipelineSaved.is_active === true)
 
+  const kirimdevPlugin = INTEGRATION_PLUGINS.find(p => p.id === 'kirimdev')!
+  const kirimdevWebhookUrl = kirimdevPlugin?.getWebhookUrl ? kirimdevPlugin.getWebhookUrl(activeBusinessId, origin) : ''
+  const isKirimDevConfigured = Boolean(kirimdevForm.api_key && kirimdevForm.phone_number_id)
+  const isKirimDevActive = kirimdevForm.is_active
+
   return (
     <SettingsLayout title="Integrasi & Plugin" subtitle="Hubungkan WooCommerce, YCloud WhatsApp, dan API pihak ketiga.">
 
@@ -942,6 +969,62 @@ export default function IntegrationsSettingsPage() {
                   <span>{saving ? 'Mengaktifkan...' : 'Aktifkan Plugin ⚡'}</span>
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+
+        {/* kirim.dev PLUGIN CARD */}
+        <div className="bg-white rounded-xl border border-[#E2E2DC] p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between space-y-6">
+          <div>
+            <div className="flex items-start justify-between mb-4">
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
+                style={{ background: 'linear-gradient(135deg, #dcfce7, #bbf7d0)', border: '1px solid #86efac' }}>
+                💬
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                {isKirimDevActive ? (
+                  <span className="text-[10px] font-bold uppercase bg-green-50 text-green-700 border border-green-200 px-2.5 py-0.5 rounded-full">
+                    ✓ Terhubung &amp; Aktif
+                  </span>
+                ) : isKirimDevConfigured ? (
+                  <span className="text-[10px] font-bold uppercase bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-0.5 rounded-full">
+                    ⏸️ Dinonaktifkan
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold uppercase bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-0.5 rounded-full">
+                    Plugin Baru
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <h3 className="text-base font-bold text-[#1C1C1A]">kirim.dev (WhatsApp Business API)</h3>
+            <p className="text-xs text-[#6B6B63] mt-1.5 leading-relaxed">
+              Inbox WhatsApp real-time via kirim.dev — autentikasi API key sederhana, tanpa perlu Meta token. Pesan masuk dan keluar langsung dari ShapeUp CRM.
+            </p>
+
+            {isKirimDevActive && (
+              <div className="mt-3 flex items-center gap-2">
+                <Link
+                  href="/inbox/kirimdev"
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-700"
+                >
+                  <span>💬</span> Buka Inbox kirim.dev →
+                </Link>
+              </div>
+            )}
+          </div>
+
+          <div className="pt-4 border-t border-[#E2E2DC] flex items-center justify-between gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#A8A89E]">Plugin Messaging</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowKirimDevModal(true)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                {isKirimDevConfigured ? 'Kelola kirim.dev ⚙️' : 'Atur Integrasi 🔌'}
+              </button>
             </div>
           </div>
         </div>
@@ -1700,6 +1783,17 @@ export default function IntegrationsSettingsPage() {
 
           </div>
         </div>,
+        document.body
+      )}
+
+      {/* KIRIM.DEV SETTINGS MODAL */}
+      {showKirimDevModal && activeBusinessId && mounted && createPortal(
+        <KirimDevSettingsModal
+          businessId={activeBusinessId}
+          initialData={kirimdevForm}
+          onClose={() => setShowKirimDevModal(false)}
+          onSaved={fetchIntegrations}
+        />,
         document.body
       )}
 
