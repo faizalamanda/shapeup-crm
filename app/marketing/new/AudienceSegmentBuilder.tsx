@@ -106,6 +106,24 @@ const AUDIENCE_FIELDS: AudienceFieldConfig[] = [
     defaultValue: 'on-hold',
   },
   {
+    key: 'payment_method',
+    label: 'ORDER: METODE PEMBAYARAN',
+    type: 'select',
+    column: 'o.payment_method',
+    options: [
+      'cod',
+      'bacs',
+      'bank_transfer',
+      'midtrans',
+      'manual',
+      'cash',
+      'qris',
+      'credit_card',
+      'ewallet',
+    ],
+    defaultValue: 'cod',
+  },
+  {
     key: 'customer_city',
     label: 'CUSTOMER: KOTA',
     type: 'text',
@@ -244,12 +262,33 @@ export const generateSQLFilter = (filters: AudienceFilter[]) => {
           sqlPart = `${col}::date = '${val}'`;
         } else if (field.type === 'number') {
           sqlPart = `${col} = ${numericVal}`;
+        } else if (f.key === 'payment_method') {
+          const pmVal = val.toLowerCase();
+          if (pmVal === 'bacs' || pmVal === 'bank_transfer' || pmVal === 'transfer') {
+            sqlPart = `(LOWER(${col}) IN ('bacs', 'bank_transfer', 'transfer') OR ${col} ILIKE '%bacs%' OR ${col} ILIKE '%bank%' OR ${col} ILIKE '%transfer%')`;
+          } else if (pmVal === 'cod') {
+            sqlPart = `(LOWER(${col}) IN ('cod', 'cash_on_delivery') OR ${col} ILIKE '%cod%' OR ${col} ILIKE '%cash%delivery%')`;
+          } else {
+            sqlPart = `(LOWER(${col}) = '${pmVal}' OR ${col} ILIKE '%${pmVal}%')`;
+          }
         } else {
           sqlPart = `${col} = '${val}'`;
         }
         break;
       case 'is not': 
-        sqlPart = `${col} != '${val}'`; break;
+        if (f.key === 'payment_method') {
+          const pmVal = val.toLowerCase();
+          if (pmVal === 'bacs' || pmVal === 'bank_transfer' || pmVal === 'transfer') {
+            sqlPart = `NOT (LOWER(${col}) IN ('bacs', 'bank_transfer', 'transfer') OR ${col} ILIKE '%bacs%' OR ${col} ILIKE '%bank%' OR ${col} ILIKE '%transfer%')`;
+          } else if (pmVal === 'cod') {
+            sqlPart = `NOT (LOWER(${col}) IN ('cod', 'cash_on_delivery') OR ${col} ILIKE '%cod%' OR ${col} ILIKE '%cash%delivery%')`;
+          } else {
+            sqlPart = `NOT (LOWER(${col}) = '${pmVal}' OR ${col} ILIKE '%${pmVal}%')`;
+          }
+        } else {
+          sqlPart = `${col} != '${val}'`;
+        }
+        break;
       case 'contains': 
         sqlPart = `${col} ILIKE '%${val}%'`; break;
       case 'more than': 

@@ -11,6 +11,7 @@ export type MarketingOrderPreview = {
   order_date_utc?: string | null
   order_date?: string | null
   updated_at?: string | null
+  payment_method?: string | null
   items_json?: OrderItem[] | string | null
   raw_source_data?: {
     date_completed_gmt?: string | null
@@ -241,6 +242,23 @@ export const compareNumberValue = (sourceValue: string | number | null | undefin
   }
 }
 
+export const comparePaymentMethod = (sourceValue: string, filterValue: string, operator: string) => {
+  const pmVal = filterValue.toLowerCase()
+  const source = sourceValue.toLowerCase()
+  let isMatch = false
+
+  if (pmVal === 'bacs' || pmVal === 'bank_transfer' || pmVal === 'transfer') {
+    isMatch = ['bacs', 'bank_transfer', 'transfer'].includes(source) || source.includes('bacs') || source.includes('bank') || source.includes('transfer')
+  } else if (pmVal === 'cod') {
+    isMatch = ['cod', 'cash_on_delivery'].includes(source) || source.includes('cod') || (source.includes('cash') && source.includes('delivery'))
+  } else {
+    isMatch = source === pmVal || source.includes(pmVal)
+  }
+
+  if (operator === 'is not' || operator === 'not_in') return !isMatch
+  return isMatch
+}
+
 export const isCustomerMatchFilter = (
   customer: any,
   orders: MarketingOrderPreview[],
@@ -263,6 +281,10 @@ export const isCustomerMatchFilter = (
     case 'order_status': {
       if (compareTextValue(customer.last_order_status || '', filter.value || '', filter.op)) return true
       return orders.some(o => compareTextValue(o.status || '', filter.value || '', filter.op))
+    }
+
+    case 'payment_method': {
+      return orders.some(o => comparePaymentMethod(o.payment_method || (parseRecord(o.raw_source_data) || {})?.payment_method || '', filter.value || '', filter.op))
     }
 
     case 'customer_city': {
@@ -337,6 +359,8 @@ export const isOrderMatchFilter = (
   switch (filter.key) {
     case 'order_status':
       return compareTextValue(order.status || '', filter.value || '', filter.op)
+    case 'payment_method':
+      return comparePaymentMethod(order.payment_method || (parseRecord(order.raw_source_data) || {})?.payment_method || '', filter.value || '', filter.op)
     case 'customer_city':
       return compareTextValue(String(billing?.city || ''), filter.value || '', filter.op)
     case 'product_name':
