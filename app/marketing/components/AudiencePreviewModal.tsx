@@ -33,6 +33,7 @@ export default function AudiencePreviewModal({
 }: AudiencePreviewModalProps) {
   const [previewList, setPreviewList] = useState<PreviewPerson[]>([])
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH_SIZE)
   const [mounted, setMounted] = useState(false)
   const [totalCount, setTotalCount] = useState<number | null>(null)
@@ -48,6 +49,7 @@ export default function AudiencePreviewModal({
       setVisibleCount(INITIAL_BATCH_SIZE)
       setPreviewList([])
       setTotalCount(null)
+      setPreviewError(null)
       setPreviewLoading(true)
     } else {
       document.body.style.overflow = ''
@@ -89,6 +91,9 @@ export default function AudiencePreviewModal({
         // Check if any filter requires fetching order level data
         const sqlFilter = generateSQLFilter(filters)
 
+        console.log('[AudiencePreview] activeBid:', activeBid)
+        console.log('[AudiencePreview] sqlFilter:', sqlFilter)
+
         // Fetch Count
         const { data: countData, error: countErr } = await supabase.rpc('count_marketing_audience', {
           p_business_id: activeBid,
@@ -96,8 +101,9 @@ export default function AudiencePreviewModal({
         })
 
         if (countErr) {
-          console.error('Failed to get audience count:', countErr)
+          console.error('[AudiencePreview] count error:', countErr)
         } else {
+          console.log('[AudiencePreview] countData:', countData)
           if (isMounted) setTotalCount(Number(countData || 0))
         }
 
@@ -108,6 +114,9 @@ export default function AudiencePreviewModal({
           p_limit: 1000,
           p_offset: 0
         })
+
+        console.log('[AudiencePreview] audienceData:', audienceData)
+        console.log('[AudiencePreview] audienceErr:', audienceErr)
 
         if (audienceErr) throw audienceErr
 
@@ -127,8 +136,9 @@ export default function AudiencePreviewModal({
             }
           })
         )
-      } catch (err) {
-        console.error('Audience Preview Error:', err)
+      } catch (err: any) {
+        console.error('[AudiencePreview] ERROR:', err)
+        if (isMounted) setPreviewError(err?.message || JSON.stringify(err) || 'Unknown error')
       } finally {
         if (isMounted) setPreviewLoading(false)
       }
@@ -230,7 +240,14 @@ export default function AudiencePreviewModal({
                 </div>
               )}
 
-              {previewList.length === 0 && (
+              {previewError && (
+                <div className="p-6 mx-4 mt-4 bg-red-50 border border-red-200 rounded-xl">
+                  <p className="text-[10px] font-black text-red-600 uppercase tracking-widest">⚠ Error dari Database:</p>
+                  <p className="text-[11px] font-mono text-red-700 mt-1 break-all">{previewError}</p>
+                </div>
+              )}
+
+              {!previewError && previewList.length === 0 && (
                 <div className="p-16 text-center">
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-relaxed">
                     Tidak ada customer ditemukan<br />dengan kriteria filter ini.
