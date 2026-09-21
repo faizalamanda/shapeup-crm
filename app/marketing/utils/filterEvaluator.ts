@@ -173,7 +173,18 @@ export const isDateKeyMatch = (orderDateKey: string, orderIsoDate: string, filte
     if (!Number.isFinite(orderTime)) return false
 
     const thresholdTime = Date.now() - (hourCount * 3600 * 1000)
-    return orderTime <= thresholdTime
+    return orderTime >= thresholdTime
+  }
+
+  if (operator === 'before_x_hours') {
+    const hourCount = Number(filterValue)
+    if (!Number.isFinite(hourCount) || hourCount < 0) return false
+
+    const orderTime = new Date(orderIsoDate || orderDateKey).getTime()
+    if (!Number.isFinite(orderTime)) return false
+
+    const thresholdTime = Date.now() - (hourCount * 3600 * 1000)
+    return orderTime < thresholdTime
   }
 
   switch (operator) {

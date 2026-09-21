@@ -156,6 +156,7 @@ const OPERATOR_GROUPS = {
     { id: 'after', label: 'SESUDAH' },
     { id: 'after_x_days', label: 'SETELAH X HARI' },
     { id: 'after_x_hours', label: 'SETELAH X JAM' },
+    { id: 'before_x_hours', label: 'SEBELUM X JAM' },
   ],
   number: [
     { id: 'equal to', label: 'EQUAL TO (=)' },
@@ -279,8 +280,10 @@ export const generateSQLFilter = (filters: AudienceFilter[]) => {
         sqlPart = `${col}::date = (${currentBusinessTime} - INTERVAL '${positiveNumericVal} days')::date`;
         break;
       case 'after_x_hours': 
-        // Sapu semua yang umurnya SUDAH LEBIH dari X jam
-        sqlPart = `${col} <= (${currentBusinessTime} - INTERVAL '${positiveNumericVal} hours')`;
+        sqlPart = `${col} >= (${currentBusinessTime} - INTERVAL '${positiveNumericVal} hours')`;
+        break;
+      case 'before_x_hours': 
+        sqlPart = `${col} < (${currentBusinessTime} - INTERVAL '${positiveNumericVal} hours')`;
         break;
       default: sqlPart = "TRUE";
     }
@@ -325,7 +328,7 @@ export const generateScheduling = (filters: AudienceFilter[], schedule?: Schedul
     ) + TIME '${time}'`
   }
 
-  const timeFilter = filters.find(f => f.op === 'after_x_days' || f.op === 'after_x_hours');
+  const timeFilter = filters.find(f => f.op === 'after_x_days' || f.op === 'after_x_hours' || f.op === 'before_x_hours');
   
   if (timeFilter) {
     const field = getAudienceField(timeFilter.key)
@@ -411,11 +414,11 @@ export default function AudienceSegmentBuilder({ filters, setFilters }: Audience
                 </select>
               ) : (
                 <input 
-                  type={f.op.includes('after_x') || currentVar?.type === 'number' ? 'number' : (currentVar?.type === 'date' ? 'date' : 'text')} 
+                  type={f.op.includes('after_x') || f.op.includes('before_x') || currentVar?.type === 'number' ? 'number' : (currentVar?.type === 'date' ? 'date' : 'text')} 
                   value={f.value} 
                   onChange={(e) => updateFilter(f.id, 'value', e.target.value)} 
                   className="px-4 py-2.5 text-[11px] font-bold outline-none md:w-40 uppercase placeholder:text-slate-300" 
-                  placeholder={f.op.includes('after_x') ? "NILAI" : (currentVar?.placeholder || "NILAI")} 
+                  placeholder={f.op.includes('after_x') || f.op.includes('before_x') ? "NILAI" : (currentVar?.placeholder || "NILAI")} 
                 />
               )}
 
