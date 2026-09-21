@@ -42,7 +42,12 @@ import PipelineStats from './PipelineStats';
 import PipelineSettings from './PipelineSettings';
 import CardModal from './CardModal';
 
-export default function PipelineMain() {
+interface PipelineMainProps {
+  initialPipelineId?: string;
+  onBackToHub?: () => void;
+}
+
+export default function PipelineMain({ initialPipelineId, onBackToHub }: PipelineMainProps = {}) {
   const { activeBusiness, userProfile } = useUserContext();
   
   const supabase = useMemo(() => {
@@ -54,7 +59,7 @@ export default function PipelineMain() {
 
   // Pipelines state
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
-  const [selectedPipelineId, setSelectedPipelineId] = useState<string>('');
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string>(initialPipelineId || '');
   const [activePipeline, setActivePipeline] = useState<Pipeline | null>(null);
   
   // Board Data state
@@ -106,9 +111,13 @@ export default function PipelineMain() {
         setPipelines(pipeList || []);
         if (pipeList && pipeList.length > 0) {
           // Select first pipeline by default if none selected
-          if (!selectedPipelineId || !pipeList.some((p) => p.id === selectedPipelineId)) {
-            setSelectedPipelineId(pipeList[0].id);
-          }
+          // But respect initialPipelineId prop
+          const targetId = initialPipelineId && pipeList.some(p => p.id === initialPipelineId)
+            ? initialPipelineId
+            : selectedPipelineId && pipeList.some(p => p.id === selectedPipelineId)
+              ? selectedPipelineId
+              : pipeList[0].id;
+          setSelectedPipelineId(targetId);
         } else {
           setSelectedPipelineId('');
           setActivePipeline(null);
@@ -405,6 +414,27 @@ export default function PipelineMain() {
       
       {/* Top Header & Filter Toolbar */}
       <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 p-3 sm:px-6 shrink-0 space-y-3">
+
+        {/* Breadcrumb + back button */}
+        {onBackToHub && (
+          <div className="flex items-center gap-2 pb-2 border-b border-gray-100 dark:border-gray-800 mb-1">
+            <button
+              type="button"
+              onClick={onBackToHub}
+              className="flex items-center gap-1.5 text-xs font-bold text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors group"
+            >
+              <svg className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+              </svg>
+              Pipeline Hub
+            </button>
+            <svg className="w-3 h-3 text-gray-300 dark:text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+            <span className="text-xs font-black text-gray-900 dark:text-gray-100 truncate max-w-xs">
+              {activePipeline?.name || '...'}
+            </span>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center justify-between gap-3">
           
           {/* Pipeline Dropdown & Title */}

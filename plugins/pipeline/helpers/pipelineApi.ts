@@ -37,14 +37,21 @@ export async function fetchPipelines(
     const { data, error } = await query;
     if (error) return { data: null, error };
 
-    // Filter visibility if members_only and userId is specified
+    // Filter visibility: 
+    // - 'everyone' → always show
+    // - creator (created_by === userId) → always show regardless of visibility setting
+    // - 'members_only' → show only if user is in pipeline_members
+    // If no userId provided, show all (server-side admin context)
     let filteredData = data as Pipeline[];
     if (userId && filteredData) {
       filteredData = filteredData.filter((p) => {
-        if (p.visibility === 'everyone') return true;
+        // Creator always has access, regardless of visibility
         if (p.created_by === userId) return true;
-        const isMember = p.members && p.members.some((m) => m.user_id === userId);
-        return isMember;
+        // Public pipelines visible to everyone
+        if (p.visibility === 'everyone') return true;
+        // Members-only: check membership
+        const isMember = p.members && p.members.some((m: any) => m.user_id === userId);
+        return !!isMember;
       });
     }
 
