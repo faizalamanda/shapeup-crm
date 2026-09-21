@@ -13,12 +13,13 @@ DECLARE
     v_sql TEXT;
 BEGIN
     v_sql := format('
-        SELECT count(DISTINCT COALESCE(o.customer_id::text, ''guest''))
+        SELECT count(DISTINCT o.customer_id)
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN businesses b ON b.id = o.business_id
         WHERE o.business_id = %L
         AND (%s)
+        AND o.customer_id IS NOT NULL
     ', p_business_id, COALESCE(NULLIF(trim(p_sql_filter), ''), 'TRUE'));
     
     EXECUTE v_sql INTO v_count;
@@ -57,18 +58,18 @@ BEGIN
             AND o.customer_id IS NOT NULL
         )
         SELECT 
-            c.id AS customer_id,
-            c.name,
+            mc.customer_id,
+            COALESCE(c.name, ''Customer'') AS name,
             cm.ltv,
             cm.total_order_count,
             cm.last_order_status,
             cm.last_order_date,
             c.created_at AS joined_at
         FROM matched_customers mc
-        JOIN customers c ON c.id = mc.customer_id
+        LEFT JOIN customers c ON c.id = mc.customer_id
         LEFT JOIN customer_metrics cm ON cm.customer_id = mc.customer_id AND cm.business_id = %L
         ORDER BY cm.ltv DESC NULLS LAST
-        LIMIT %L OFFSET %L
+        LIMIT %s OFFSET %s
     ', p_business_id, COALESCE(NULLIF(trim(p_sql_filter), ''), 'TRUE'), p_business_id, p_limit, p_offset);
     
     RETURN QUERY EXECUTE v_sql;
