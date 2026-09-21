@@ -35,6 +35,7 @@ export default function AudiencePreviewModal({
   const [previewLoading, setPreviewLoading] = useState(false)
   const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH_SIZE)
   const [mounted, setMounted] = useState(false)
+  const [totalCount, setTotalCount] = useState<number | null>(null)
 
   useEffect(() => {
     setMounted(true)
@@ -46,6 +47,7 @@ export default function AudiencePreviewModal({
       document.body.style.overflow = 'hidden'
       setVisibleCount(INITIAL_BATCH_SIZE)
       setPreviewList([])
+      setTotalCount(null)
       setPreviewLoading(true)
     } else {
       document.body.style.overflow = ''

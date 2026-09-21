@@ -204,15 +204,15 @@ const getAudienceField = (key: string) => {
 
 const getOps = (key: string) => OPERATOR_GROUPS[getAudienceField(key).type]
 
-const escapeSQLValue = (value: string) => String(value ?? '').replace(/'/g, "''")
+const escapeSQLValue = (value?: string) => String(value ?? '').replace(/'/g, "''")
 
-const toNumericValue = (value: string) => {
-  const numericValue = Number(value)
+const toNumericValue = (value?: string) => {
+  const numericValue = Number(value ?? '')
   return Number.isFinite(numericValue) ? String(numericValue) : '0'
 }
 
-const toPositiveNumericValue = (value: string, fallback = '0') => {
-  const numericValue = Number(value)
+const toPositiveNumericValue = (value?: string, fallback = '0') => {
+  const numericValue = Number(value ?? '')
   return Number.isFinite(numericValue) && numericValue >= 0 ? String(numericValue) : fallback
 }
 
@@ -241,7 +241,7 @@ const buildDefaultFilter = (): AudienceFilter => {
 /**
  * FUNGSI GENERATOR SQL: Menghasilkan string untuk kolom sql_filter
  */
-export const generateSQLFilter = (filters: AudienceFilter[]) => {
+export const generateSQLFilter = (filters: { key: string; op: string; value?: string; logic?: 'AND' | 'OR' }[]) => {
   if (!filters || filters.length === 0) return "TRUE";
 
   return filters.map((f, idx) => {
@@ -334,7 +334,7 @@ export const generateSQLFilter = (filters: AudienceFilter[]) => {
 /**
  * FUNGSI GENERATOR JADWAL: Menghasilkan string untuk kolom scheduling_logic
  */
-export const generateScheduling = (filters: AudienceFilter[], schedule?: ScheduleConfig, oneTime?: OneTimeConfig) => {
+export const generateScheduling = (filters: { key: string; op: string; value?: string; logic?: 'AND' | 'OR' }[], schedule?: ScheduleConfig, oneTime?: OneTimeConfig) => {
   if (oneTime) {
     if (oneTime.mode === 'IMMEDIATE' || !oneTime.date) return "NOW()"
 
