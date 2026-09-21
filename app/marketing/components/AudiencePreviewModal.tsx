@@ -9,6 +9,7 @@ import {
   type MarketingOrderPreview,
   type PreviewPerson,
 } from '../utils/filterEvaluator'
+import { generateSQLFilter } from '../new/AudienceSegmentBuilder'
 
 type AudiencePreviewModalProps = {
   isOpen: boolean
@@ -84,146 +85,46 @@ export default function AudiencePreviewModal({
         }
 
         // Check if any filter requires fetching order level data
-        const requiresOrders = filters.some((f) =>
-          ['product_name', 'customer_city', 'date_completed'].includes(f.key)
-        )
+        const sqlFilter = generateSQLFilter(filters)
 
-        // Server-Side Pushdown Query for customer_metrics with targeted lightweight columns
-        let query = supabase
-          .from('customer_metrics')
-          .select('customer_id, name, phone, email, ltv, aov, total_order_count, completed_order_count, last_order_date, last_order_status, joined_at')
-          .eq('business_id', activeBid)
+        // Fetch Count
+        const { data: countData, error: countErr } = await supabase.rpc('count_marketing_audience', {
+          p_business_id: activeBid,
+          p_sql_filter: sqlFilter
+        })
 
-        const hasOrLogic = filters.some((f) => f.logic === 'OR')
-
-        if (!hasOrLogic && filters.length > 0) {
-          filters.forEach((f) => {
-            const key = f.key
-            const op = f.op
-            const val = f.value || ''
-            const numVal = Number(val)
-
-            if (key === 'customer_ltv' || key === 'ltv') {
-              if (Number.isFinite(numVal)) {
-                if (op === 'greater_or_equal' || op === 'greater than or equal to' || op === 'at_least') {
-                  query = query.gte('ltv', numVal)
-                } else if (op === 'less_or_equal' || op === 'less than or equal to' || op === 'at_most') {
-                  query = query.lte('ltv', numVal)
-                } else if (op === 'more than' || op === 'greater') {
-                  query = query.gt('ltv', numVal)
-                } else if (op === 'less than' || op === 'less') {
-                  query = query.lt('ltv', numVal)
-                } else if (op === 'equal to' || op === 'equal' || op === 'is') {
-                  query = query.eq('ltv', numVal)
-                }
-              }
-            } else if (key === 'customer_aov' || key === 'aov') {
-              if (Number.isFinite(numVal)) {
-                if (op === 'greater_or_equal' || op === 'greater than or equal to' || op === 'at_least') {
-                  query = query.gte('aov', numVal)
-                } else if (op === 'less_or_equal' || op === 'less than or equal to' || op === 'at_most') {
-                  query = query.lte('aov', numVal)
-                } else if (op === 'more than' || op === 'greater') {
-                  query = query.gt('aov', numVal)
-                } else if (op === 'less than' || op === 'less') {
-                  query = query.lt('aov', numVal)
-                } else if (op === 'equal to' || op === 'equal' || op === 'is') {
-                  query = query.eq('aov', numVal)
-                }
-              }
-            } else if (key === 'customer_total_orders' || key === 'total_order_count') {
-              if (Number.isFinite(numVal)) {
-                if (op === 'greater_or_equal' || op === 'greater than or equal to' || op === 'at_least') {
-                  query = query.gte('total_order_count', numVal)
-                } else if (op === 'less_or_equal' || op === 'less than or equal to' || op === 'at_most') {
-                  query = query.lte('total_order_count', numVal)
-                } else if (op === 'more than' || op === 'greater') {
-                  query = query.gt('total_order_count', numVal)
-                } else if (op === 'less than' || op === 'less') {
-                  query = query.lt('total_order_count', numVal)
-                } else if (op === 'equal to' || op === 'equal' || op === 'is') {
-                  query = query.eq('total_order_count', numVal)
-                }
-              }
-            } else if (key === 'order_status' && (op === 'is' || op === 'equal')) {
-              query = query.ilike('last_order_status', val)
-            }
-          })
+        if (countErr) {
+          console.error('Failed to get audience count:', countErr)
+        } else {
+          if (isMounted) setTotalCount(Number(countData || 0))
         }
 
-        // Fast metric fetch: fetch first chunk (0..999). Only fetch page 2 if page 1 returned 1000 items!
-        const fetchMetricsPromise = (async () => {
-          const res1 = await query.order('customer_id', { ascending: true }).range(0, 999)
-          const c1 = res1.data || []
-          if (c1.length < 1000) return c1
+        // Fetch paginated preview
+        const { data: audienceData, error: audienceErr } = await supabase.rpc('preview_marketing_audience', {
+          p_business_id: activeBid,
+          p_sql_filter: sqlFilter,
+          p_limit: 1000,
+          p_offset: 0
+        })
 
-          const res2 = await query.order('customer_id', { ascending: true }).range(1000, 1999)
-          const c2 = res2.data || []
-          return [...c1, ...c2]
-        })()
-
-        const fetchOrdersPromise = requiresOrders
-          ? (async () => {
-              const { data: oData } = await supabase
-                .from('orders')
-                .select('id, customer_id, status, created_at, order_date, order_date_utc, updated_at, items_json, raw_source_data')
-                .eq('business_id', activeBid)
-                .order('created_at', { ascending: false })
-                .limit(1000)
-              return (oData || []) as MarketingOrderPreview[]
-            })()
-          : Promise.resolve([])
-
-        const [rawCustomers, previewOrders] = await Promise.all([
-          fetchMetricsPromise,
-          fetchOrdersPromise,
-        ])
+        if (audienceErr) throw audienceErr
 
         if (!isMounted) return
 
-        // Deduplicate customer metrics by customer_id or phone
-        const uniqueCustomersMap = new Map<string, any>()
-        rawCustomers.forEach((c: any) => {
-          const key = c.customer_id || c.phone || c.email || c.name
-          if (key && !uniqueCustomersMap.has(key)) {
-            uniqueCustomersMap.set(key, c)
-          }
-        })
-        const allCustomers = Array.from(uniqueCustomersMap.values())
-
-        const customerOrdersMap = new Map<string, MarketingOrderPreview[]>()
-        previewOrders.forEach((o) => {
-          if (!o.customer_id) return
-          const existing = customerOrdersMap.get(o.customer_id) || []
-          existing.push(o)
-          customerOrdersMap.set(o.customer_id, existing)
-        })
-
-        // Filter customers using isCustomerMatchFilters
-        const filteredCustomers = allCustomers.filter((c: any) => {
-          const cOrders = customerOrdersMap.get(c.customer_id) || []
-          return isCustomerMatchFilters(c, cOrders, filters, timezone)
-        })
-
-        // Sort by LTV descending
-        const sorted = filteredCustomers.sort((a: any, b: any) => Number(b.ltv || 0) - Number(a.ltv || 0))
-
-        if (isMounted) {
-          setPreviewList(
-            sorted.map((c: any) => {
-              const ltvFormatted = `Rp ${Number(c.ltv || 0).toLocaleString('id-ID')}`
-              const countText = `${c.total_order_count || c.completed_order_count || 0} ORDER`
-              return {
-                name: c.name || 'Customer',
-                orderId: `LTV: ${ltvFormatted} (${countText})`,
-                status: (c.last_order_status || 'CUSTOMER').toUpperCase(),
-                time: c.last_order_date
-                  ? formatDateKeyID(c.last_order_date, timezone)
-                  : (c.joined_at ? formatDateKeyID(c.joined_at, timezone) : '-'),
-              }
-            })
-          )
-        }
+        setPreviewList(
+          (audienceData || []).map((c: any) => {
+            const ltvFormatted = `Rp ${Number(c.ltv || 0).toLocaleString('id-ID')}`
+            const countText = `${c.total_order_count || 0} ORDER`
+            return {
+              name: c.name || 'Customer',
+              orderId: `LTV: ${ltvFormatted} (${countText})`,
+              status: (c.last_order_status || 'CUSTOMER').toUpperCase(),
+              time: c.last_order_date
+                ? formatDateKeyID(c.last_order_date, timezone, true)
+                : (c.joined_at ? formatDateKeyID(c.joined_at, timezone, true) : '-'),
+            }
+          })
+        )
       } catch (err) {
         console.error('Audience Preview Error:', err)
       } finally {
@@ -265,7 +166,7 @@ export default function AudiencePreviewModal({
                 </span>
               ) : (
                 <span className="bg-blue-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full shadow-sm tracking-wider">
-                  {displayedList.length} DARI {previewList.length} MATCH
+                  {displayedList.length} DARI {totalCount !== null ? totalCount : previewList.length} MATCH
                 </span>
               )}
             </div>
@@ -344,7 +245,7 @@ export default function AudiencePreviewModal({
             {previewLoading
               ? 'MENGHITUNG TARGET AUDIENCE...'
               : previewList.length > 0
-              ? `MENAMPILKAN ${displayedList.length} DARI ${previewList.length} CUSTOMER`
+              ? `MENAMPILKAN ${displayedList.length} DARI ${totalCount !== null ? totalCount : previewList.length} CUSTOMER`
               : ''}
           </span>
           <button
