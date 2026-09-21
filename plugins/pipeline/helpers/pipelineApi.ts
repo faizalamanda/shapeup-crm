@@ -28,7 +28,6 @@ export async function fetchPipelines(
       .from('pipelines')
       .select(`
         *,
-        stages:pipeline_stages(id, name, color, display_order),
         members:pipeline_members(id, user_id, role)
       `)
       .eq('business_id', businessId)

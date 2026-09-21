@@ -117,6 +117,13 @@ export default function PipelineMain({ initialPipelineId, onBackToHub }: Pipelin
               ? currentSelectedId
               : pipeList[0].id;
             setSelectedPipelineId(targetId);
+
+            // Optimistic UI for instant layout render
+            const targetPipe = pipeList.find((p: any) => p.id === targetId);
+            if (targetPipe) {
+              setActivePipeline(targetPipe);
+              setStages(targetPipe.stages || []);
+            }
           } else {
             setSelectedPipelineId('');
             setActivePipeline(null);
@@ -145,6 +152,13 @@ export default function PipelineMain({ initialPipelineId, onBackToHub }: Pipelin
             ? initialPipelineId
             : pipeList[0].id;
           setSelectedPipelineId(targetId);
+
+          // Optimistic UI for instant layout render
+          const targetPipe = pipeList.find((p: any) => p.id === targetId);
+          if (targetPipe) {
+            setActivePipeline(targetPipe);
+            setStages(targetPipe.stages || []);
+          }
         } else if (pipeList.length === 0) {
           setSelectedPipelineId('');
           setActivePipeline(null);
@@ -514,7 +528,18 @@ export default function PipelineMain({ initialPipelineId, onBackToHub }: Pipelin
               <div className="flex items-center gap-2">
                 <select
                   value={selectedPipelineId}
-                  onChange={(e) => setSelectedPipelineId(e.target.value)}
+                  onChange={(e) => {
+                    const newId = e.target.value;
+                    setSelectedPipelineId(newId);
+                    
+                    // Optimistic update for instant layout switch
+                    const targetPipe = pipelines.find((p) => p.id === newId);
+                    if (targetPipe) {
+                      setActivePipeline(targetPipe);
+                      setStages(targetPipe.stages || []);
+                      setCards([]); // Clear cards until sync completes
+                    }
+                  }}
                   disabled={pipelines.length === 0}
                   className="text-base font-black text-gray-900 dark:text-gray-100 bg-transparent border-none focus:outline-hidden cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 p-0"
                 >
@@ -674,17 +699,29 @@ export default function PipelineMain({ initialPipelineId, onBackToHub }: Pipelin
           </div>
         </div>
       ) : activePipeline ? (
-        <KanbanBoard
-          stages={stages}
-          cards={filteredCards}
-          currency={activePipeline.currency || 'IDR'}
-          onUpdateStage={handleUpdateStage}
-          onDeleteStage={handleDeleteStage}
-          onCreateStage={handleCreateStage}
-          onCreateCard={handleCreateCard}
-          onCardClick={(card) => setSelectedCardForModal(card)}
-          onMoveCard={handleMoveCard}
-        />
+        stages.length === 0 && isSyncing ? (
+          <div className="flex-1 flex items-start gap-4 p-4 overflow-x-auto custom-scrollbar">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="min-w-[300px] w-[300px] bg-gray-100/50 dark:bg-gray-800/50 rounded-2xl h-full p-3 space-y-3 animate-pulse border border-gray-200 dark:border-gray-800">
+                <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded-lg w-1/2"></div>
+                <div className="h-24 bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800"></div>
+                <div className="h-24 bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800"></div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <KanbanBoard
+            stages={stages}
+            cards={filteredCards}
+            currency={activePipeline.currency || 'IDR'}
+            onUpdateStage={handleUpdateStage}
+            onDeleteStage={handleDeleteStage}
+            onCreateStage={handleCreateStage}
+            onCreateCard={handleCreateCard}
+            onCardClick={(card) => setSelectedCardForModal(card)}
+            onMoveCard={handleMoveCard}
+          />
+        )
       ) : (
         /* Empty State (No Pipelines created yet) */
         <div className="flex-1 flex items-center justify-center p-6">
