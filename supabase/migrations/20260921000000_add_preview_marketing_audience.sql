@@ -27,7 +27,10 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.preview_marketing_audience(uuid, text, integer, integer);
+
 CREATE OR REPLACE FUNCTION public.preview_marketing_audience(
+
     p_business_id UUID,
     p_sql_filter TEXT,
     p_limit INT DEFAULT 10,
