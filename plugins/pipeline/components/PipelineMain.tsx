@@ -36,6 +36,7 @@ import {
   addPipelineMember,
   removePipelineMember,
 } from '../helpers/pipelineApi';
+import { getCache, setCache } from '../helpers/cacheUtils';
 import { filterCards, calculatePipelineStats } from '../helpers/kanbanUtils';
 import KanbanBoard from './KanbanBoard';
 import PipelineStats from './PipelineStats';
@@ -101,29 +102,57 @@ export default function PipelineMain({ initialPipelineId, onBackToHub }: Pipelin
     setLoading(true);
 
     const initData = async () => {
-      // 1. Fetch staff profiles
-      const { data: staff } = await fetchBusinessStaffProfiles(supabase, activeBusiness.id);
-      if (isMounted && staff) setStaffProfiles(staff);
+      const cacheKeyInit = `pipeline_init_${activeBusiness.id}_${userProfile?.id || 'anon'}`;
+      const cachedInit = getCache<any>(cacheKeyInit);
 
-      // 2. Fetch pipelines accessible to user
-      const { data: pipeList } = await fetchPipelines(supabase, activeBusiness.id, userProfile?.id);
-      if (isMounted) {
-        setPipelines(pipeList || []);
-        if (pipeList && pipeList.length > 0) {
-          // Select first pipeline by default if none selected
-          // But respect initialPipelineId prop
-          const targetId = initialPipelineId && pipeList.some(p => p.id === initialPipelineId)
-            ? initialPipelineId
-            : selectedPipelineId && pipeList.some(p => p.id === selectedPipelineId)
-              ? selectedPipelineId
+      if (cachedInit) {
+        if (isMounted) {
+          setStaffProfiles(cachedInit.staff || []);
+          const pipeList = cachedInit.pipeList || [];
+          setPipelines(pipeList);
+          
+          if (pipeList.length > 0) {
+            const currentSelectedId = selectedPipelineId || initialPipelineId;
+            const targetId = currentSelectedId && pipeList.some((p: any) => p.id === currentSelectedId)
+              ? currentSelectedId
               : pipeList[0].id;
+            setSelectedPipelineId(targetId);
+          } else {
+            setSelectedPipelineId('');
+            setActivePipeline(null);
+            setStages([]);
+            setCards([]);
+          }
+          setLoading(false);
+        }
+      }
+
+      // Background Sync
+      const staffReq = fetchBusinessStaffProfiles(supabase, activeBusiness.id);
+      const pipeReq = fetchPipelines(supabase, activeBusiness.id, userProfile?.id);
+
+      const [staffRes, pipeRes] = await Promise.all([staffReq, pipeReq]);
+
+      if (isMounted) {
+        const staff = staffRes.data || [];
+        const pipeList = pipeRes.data || [];
+
+        setStaffProfiles(staff);
+        setPipelines(pipeList);
+
+        if (pipeList.length > 0 && !selectedPipelineId) {
+          const targetId = initialPipelineId && pipeList.some((p: any) => p.id === initialPipelineId)
+            ? initialPipelineId
+            : pipeList[0].id;
           setSelectedPipelineId(targetId);
-        } else {
+        } else if (pipeList.length === 0) {
           setSelectedPipelineId('');
           setActivePipeline(null);
           setStages([]);
           setCards([]);
         }
+
+        setCache(cacheKeyInit, { staff, pipeList });
         setLoading(false);
       }
     };
@@ -141,21 +170,41 @@ export default function PipelineMain({ initialPipelineId, onBackToHub }: Pipelin
 
     let isMounted = true;
     const loadPipelineDetail = async () => {
-      setIsSyncing(true);
+      const cacheKey = `pipeline_detail_${selectedPipelineId}`;
+      const cached = getCache<any>(cacheKey);
+
+      if (cached) {
+        if (isMounted) {
+          setActivePipeline(cached.pipe || null);
+          setStages(cached.pipe?.stages || []);
+          setCards(cached.cards || []);
+          setMembers(cached.members || []);
+        }
+      } else {
+        if (isMounted) setIsSyncing(true);
+      }
+
       try {
-        const { data: pipe } = await fetchPipelineById(supabase, selectedPipelineId);
-        if (!isMounted || !pipe) return;
+        const pipeReq = fetchPipelineById(supabase, selectedPipelineId);
+        const cardReq = fetchPipelineCards(supabase, selectedPipelineId);
+        const memberReq = fetchPipelineMembers(supabase, selectedPipelineId);
 
-        setActivePipeline(pipe);
-        setStages(pipe.stages || []);
+        const [pipeRes, cardRes, memberRes] = await Promise.all([pipeReq, cardReq, memberReq]);
 
-        // Fetch cards
-        const { data: cardList } = await fetchPipelineCards(supabase, selectedPipelineId);
-        if (isMounted) setCards(cardList || []);
+        if (!isMounted) return;
 
-        // Fetch members
-        const { data: memberList } = await fetchPipelineMembers(supabase, selectedPipelineId);
-        if (isMounted) setMembers(memberList || []);
+        const pipe = pipeRes.data;
+        const cardList = cardRes.data || [];
+        const memberList = memberRes.data || [];
+
+        if (pipe) {
+          setActivePipeline(pipe);
+          setStages(pipe.stages || []);
+        }
+        setCards(cardList);
+        setMembers(memberList);
+
+        setCache(cacheKey, { pipe, cards: cardList, members: memberList });
       } finally {
         if (isMounted) setIsSyncing(false);
       }
@@ -168,20 +217,29 @@ export default function PipelineMain({ initialPipelineId, onBackToHub }: Pipelin
     };
   }, [selectedPipelineId, supabase]);
 
-  // Manual sync handler
   const handleManualSync = async () => {
     if (!selectedPipelineId) return;
     setIsSyncing(true);
     try {
-      const { data: pipe } = await fetchPipelineById(supabase, selectedPipelineId);
+      const pipeReq = fetchPipelineById(supabase, selectedPipelineId);
+      const cardReq = fetchPipelineCards(supabase, selectedPipelineId);
+      const memberReq = fetchPipelineMembers(supabase, selectedPipelineId);
+
+      const [pipeRes, cardRes, memberRes] = await Promise.all([pipeReq, cardReq, memberReq]);
+
+      const pipe = pipeRes.data;
+      const cardList = cardRes.data || [];
+      const memberList = memberRes.data || [];
+
       if (pipe) {
         setActivePipeline(pipe);
         setStages(pipe.stages || []);
       }
-      const { data: cardList } = await fetchPipelineCards(supabase, selectedPipelineId);
-      if (cardList) setCards(cardList || []);
-      const { data: memberList } = await fetchPipelineMembers(supabase, selectedPipelineId);
-      if (memberList) setMembers(memberList || []);
+      setCards(cardList);
+      setMembers(memberList);
+
+      const cacheKey = `pipeline_detail_${selectedPipelineId}`;
+      setCache(cacheKey, { pipe, cards: cardList, members: memberList });
     } catch (err) {
       console.error('Manual sync error', err);
     } finally {
@@ -189,24 +247,33 @@ export default function PipelineMain({ initialPipelineId, onBackToHub }: Pipelin
     }
   };
 
-  // Auto sync effect
   useEffect(() => {
     if (!autoSyncEnabled || !selectedPipelineId) return;
     const intervalId = setInterval(async () => {
       try {
-        const { data: pipe } = await fetchPipelineById(supabase, selectedPipelineId);
+        const pipeReq = fetchPipelineById(supabase, selectedPipelineId);
+        const cardReq = fetchPipelineCards(supabase, selectedPipelineId);
+        const memberReq = fetchPipelineMembers(supabase, selectedPipelineId);
+
+        const [pipeRes, cardRes, memberRes] = await Promise.all([pipeReq, cardReq, memberReq]);
+
+        const pipe = pipeRes.data;
+        const cardList = cardRes.data || [];
+        const memberList = memberRes.data || [];
+
         if (pipe) {
           setActivePipeline(pipe);
           setStages(pipe.stages || []);
         }
-        const { data: cardList } = await fetchPipelineCards(supabase, selectedPipelineId);
-        if (cardList) setCards(cardList || []);
-        const { data: memberList } = await fetchPipelineMembers(supabase, selectedPipelineId);
-        if (memberList) setMembers(memberList || []);
+        setCards(cardList);
+        setMembers(memberList);
+
+        const cacheKey = `pipeline_detail_${selectedPipelineId}`;
+        setCache(cacheKey, { pipe, cards: cardList, members: memberList });
       } catch (err) {
         console.error('Auto sync error', err);
       }
-    }, 60000); // sync every 60 seconds (1 menit) untuk menghemat resource (CPU/RAM/Supabase Free Tier)
+    }, 60000); // sync every 60 seconds
 
     return () => clearInterval(intervalId);
   }, [autoSyncEnabled, selectedPipelineId, supabase]);

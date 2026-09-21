@@ -4,6 +4,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import { useUserContext } from '@/components/UserContext'
 import PipelineMain from '@/plugins/pipeline'
 import PipelineHub from '@/plugins/pipeline/components/PipelineHub'
+import { getCache, setCache } from '@/plugins/pipeline/helpers/cacheUtils'
 import Link from 'next/link'
 import { Pipeline } from '@/plugins/pipeline/types'
 
@@ -23,54 +24,28 @@ export default function PipelinePage() {
   const checkAccess = useCallback(async () => {
     if (!activeBusiness?.id || !userProfile?.id) return
 
-    setView('loading')
+    const cacheKeyPipes = `pipeline_hub_${activeBusiness.id}_${userProfile.id}`
+    const cacheKeyStatus = `pipeline_status_${activeBusiness.id}`
 
-    try {
-      // Step 1: Check plugin activation status
-      let pluginActive = false
-      try {
-        const res = await fetch('/api/integrations')
-        const json = await res.json()
-        if (json.success && Array.isArray(json.integrations)) {
-          const pipelineRecord = json.integrations.find(
-            (i: any) => i.platform_name === 'pipeline' || i.provider === 'pipeline'
-          )
-          // Plugin dianggap aktif jika ada record dengan is_active=true
-          pluginActive = Boolean(pipelineRecord && pipelineRecord.is_active === true)
-        }
-      } catch {
-        // API gagal — akan fallback ke cek pipeline langsung
-      }
+    // 1. Instant Load from Cache
+    const cachedPipes = getCache<Pipeline[]>(cacheKeyPipes)
+    const cachedStatus = getCache<boolean>(cacheKeyStatus)
 
-      // Step 2: Fallback — cek apakah ada pipeline di database
-      // Jika ada pipeline yang bisa diakses → plugin dianggap aktif (sudah disetup)
-      if (!pluginActive) {
-        const { data: pipeList, error } = await supabase
-          .from('pipelines')
-          .select('id, name, visibility, created_by, members:pipeline_members(user_id)')
-          .eq('business_id', activeBusiness.id)
-          .limit(10)
-
-        if (!error && pipeList && pipeList.length > 0) {
-          // Ada pipeline di DB → plugin sudah aktif (walau belum di-toggle di settings)
-          const accessible = pipeList.filter((p: any) => {
-            if (p.visibility === 'everyone') return true
-            if (p.created_by === userProfile.id) return true
-            return p.members?.some((m: any) => m.user_id === userProfile.id)
-          })
-          if (accessible.length > 0) {
-            pluginActive = true
-          }
-        }
-      }
-
-      if (!pluginActive) {
+    if (cachedStatus !== null && cachedPipes !== null) {
+      if (!cachedStatus && cachedPipes.length === 0) {
         setView('disabled')
-        return
+      } else {
+        setPipelines(cachedPipes)
+        setView(prev => (prev === 'loading' ? 'hub' : prev))
       }
+    } else {
+      setView('loading')
+    }
 
-      // Step 3: Fetch pipelines accessible to user
-      const { data: pipes, error: pipeErr } = await supabase
+    // 2. Background Sync (Concurrent Fetch)
+    try {
+      const fetchIntegrations = fetch('/api/integrations').then(res => res.json()).catch(() => null)
+      const fetchSupabase = supabase
         .from('pipelines')
         .select(`
           *,
@@ -80,23 +55,42 @@ export default function PipelinePage() {
         .eq('business_id', activeBusiness.id)
         .order('created_at', { ascending: true })
 
-      if (pipeErr) {
-        setView('hub')
-        setPipelines([])
-        return
+      const [json, pipeRes] = await Promise.all([fetchIntegrations, fetchSupabase])
+
+      let pluginActive = false
+      if (json && json.success && Array.isArray(json.integrations)) {
+        const pipelineRecord = json.integrations.find(
+          (i: any) => i.platform_name === 'pipeline' || i.provider === 'pipeline'
+        )
+        pluginActive = Boolean(pipelineRecord && pipelineRecord.is_active === true)
       }
 
-      // Filter by accessibility
+      const pipes = pipeRes.data || []
+      
       const accessiblePipes = ((pipes as Pipeline[]) || []).filter((p: Pipeline) => {
         if (p.visibility === 'everyone') return true
         if (p.created_by === userProfile.id) return true
         return p.members?.some((m: any) => m.user_id === userProfile.id)
       })
 
-      setPipelines(accessiblePipes)
-      setView('hub')
+      // Fallback: If there are accessible pipelines, the plugin is active (even if not explicitly activated in settings)
+      if (accessiblePipes.length > 0) {
+        pluginActive = true
+      }
+
+      // 3. Seamless Update & Cache Write
+      setCache(cacheKeyStatus, pluginActive)
+      setCache(cacheKeyPipes, accessiblePipes)
+
+      if (!pluginActive) {
+        setView('disabled')
+      } else {
+        setPipelines(accessiblePipes)
+        setView(prev => (prev === 'loading' || prev === 'disabled' ? 'hub' : prev))
+      }
     } catch {
-      setView('hub')
+      // Fallback in case of error, if we were loading, go to hub (if we have cached pipelines, they are shown)
+      setView(prev => (prev === 'loading' ? 'hub' : prev))
     }
   }, [activeBusiness?.id, userProfile?.id, supabase])
 
