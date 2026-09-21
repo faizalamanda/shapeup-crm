@@ -33,7 +33,7 @@ CREATE OR REPLACE FUNCTION public.preview_marketing_audience(
     p_limit INT DEFAULT 10,
     p_offset INT DEFAULT 0
 ) RETURNS TABLE (
-    customer_id UUID,
+    customer_id TEXT,
     name TEXT,
     ltv NUMERIC,
     total_order_count BIGINT,
@@ -49,7 +49,7 @@ DECLARE
 BEGIN
     v_sql := format('
         WITH matched_customers AS (
-            SELECT DISTINCT o.customer_id
+            SELECT DISTINCT o.customer_id::text AS customer_id
             FROM orders o
             LEFT JOIN customers c ON c.id = o.customer_id
             LEFT JOIN businesses b ON b.id = o.business_id
@@ -57,21 +57,22 @@ BEGIN
             AND (%s)
             AND o.customer_id IS NOT NULL
         )
-        SELECT 
-            mc.customer_id,
-            COALESCE(c.name, ''Customer'') AS name,
-            cm.ltv,
-            cm.total_order_count,
-            cm.last_order_status,
-            cm.last_order_date,
-            c.created_at AS joined_at
+        SELECT
+            mc.customer_id::text,
+            COALESCE(c.name, ''Customer'')::text AS name,
+            COALESCE(cm.ltv, 0)::numeric AS ltv,
+            COALESCE(cm.total_order_count, 0)::bigint AS total_order_count,
+            COALESCE(cm.last_order_status, ''CUSTOMER'')::text AS last_order_status,
+            cm.last_order_date::timestamptz,
+            COALESCE(c.created_at, NOW())::timestamptz AS joined_at
         FROM matched_customers mc
-        LEFT JOIN customers c ON c.id = mc.customer_id
-        LEFT JOIN customer_metrics cm ON cm.customer_id = mc.customer_id AND cm.business_id = %L
+        LEFT JOIN customers c ON c.id::text = mc.customer_id
+        LEFT JOIN customer_metrics cm ON cm.customer_id::text = mc.customer_id AND cm.business_id = %L
         ORDER BY cm.ltv DESC NULLS LAST
         LIMIT %s OFFSET %s
     ', p_business_id, COALESCE(NULLIF(trim(p_sql_filter), ''), 'TRUE'), p_business_id, p_limit, p_offset);
-    
+
+    RAISE NOTICE 'preview_marketing_audience SQL: %', v_sql;
     RETURN QUERY EXECUTE v_sql;
 END;
 $$;
