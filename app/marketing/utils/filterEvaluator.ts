@@ -284,7 +284,10 @@ export const isCustomerMatchFilter = (
     }
 
     case 'payment_method': {
-      return orders.some(o => comparePaymentMethod(o.payment_method || (parseRecord(o.raw_source_data) || {})?.payment_method || '', filter.value || '', filter.op))
+      return orders.some(o => {
+        const pm = o.payment_method || (parseRecord(o.raw_source_data) as any)?.payment_method || ''
+        return comparePaymentMethod(String(pm), filter.value || '', filter.op)
+      })
     }
 
     case 'customer_city': {
@@ -359,8 +362,10 @@ export const isOrderMatchFilter = (
   switch (filter.key) {
     case 'order_status':
       return compareTextValue(order.status || '', filter.value || '', filter.op)
-    case 'payment_method':
-      return comparePaymentMethod(order.payment_method || (parseRecord(order.raw_source_data) || {})?.payment_method || '', filter.value || '', filter.op)
+    case 'payment_method': {
+      const pm = order.payment_method || (parseRecord(order.raw_source_data) as any)?.payment_method || ''
+      return comparePaymentMethod(String(pm), filter.value || '', filter.op)
+    }
     case 'customer_city':
       return compareTextValue(String(billing?.city || ''), filter.value || '', filter.op)
     case 'product_name':
