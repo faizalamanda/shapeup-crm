@@ -354,11 +354,9 @@ export async function POST(req: Request) {
     if (insertErr) throw insertErr
 
     // 5. Accounting Ledger Integration & Stock Reduction
-    if (status === 'processing' || status === 'completed') {
-      const syncRes = await syncOrderToLedger(order.id, supabaseAdmin)
-      if (!syncRes.success) {
-        throw new Error(syncRes.message)
-      }
+    const syncRes = await syncOrderToLedger(order.id, supabaseAdmin)
+    if (!syncRes.success) {
+      throw new Error(syncRes.message)
     }
 
     invalidateInvoicesCache(businessId)
