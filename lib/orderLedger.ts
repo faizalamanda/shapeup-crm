@@ -194,8 +194,7 @@ export async function syncOrderToLedger(
             transaction_id: salesTx.id,
             account_id: line.account_id,
             debit: line.debit || 0,
-            credit: line.credit || 0,
-            description: line.description || null
+            credit: line.credit || 0
           }))
           await supabase.from('journal_lines').insert(dbJournalLines)
         } else {
@@ -226,8 +225,7 @@ export async function syncOrderToLedger(
               transaction_id: salesTx.id,
               account_id: line.account_id,
               debit: line.debit || 0,
-              credit: line.credit || 0,
-              description: line.description || null
+              credit: line.credit || 0
             }))
             await supabase.from('journal_lines').insert(dbHppLines)
           }
@@ -257,8 +255,7 @@ export async function syncOrderToLedger(
           const reversalLines = paymentTx.journal_lines.map((line: any) => ({
             account_id: line.account_id,
             debit: line.credit,
-            credit: line.debit,
-            description: line.description || null
+            credit: line.debit
           }))
           await postJournalTransaction(
             businessId,
@@ -278,8 +275,7 @@ export async function syncOrderToLedger(
         const reversalLines = salesTx.journal_lines.map((line: any) => ({
           account_id: line.account_id,
           debit: line.credit,
-          credit: line.debit,
-          description: line.description || null
+          credit: line.debit
         }))
         await postJournalTransaction(
           businessId, orderId, new Date().toISOString(), `Pembatalan Penjualan ${platform} #${orderNumber}`, reversalLines, supabase
@@ -289,8 +285,7 @@ export async function syncOrderToLedger(
         const reversalLines = paymentTx.journal_lines.map((line: any) => ({
           account_id: line.account_id,
           debit: line.credit,
-          credit: line.debit,
-          description: line.description || null
+          credit: line.debit
         }))
         await postJournalTransaction(
           businessId, orderId, new Date().toISOString(), `Pembatalan Pembayaran ${platform} #${orderNumber}`, reversalLines, supabase
@@ -306,8 +301,7 @@ export async function syncOrderToLedger(
         const reversalLines = nonCogsLines.map((line: any) => ({
           account_id: line.account_id,
           debit: line.credit,
-          credit: line.debit,
-          description: line.description || null
+          credit: line.debit
         }))
         await postJournalTransaction(
           businessId, orderId, new Date().toISOString(), `Refund Penjualan ${platform} #${orderNumber}`, reversalLines, supabase
@@ -317,8 +311,7 @@ export async function syncOrderToLedger(
         const reversalLines = paymentTx.journal_lines.map((line: any) => ({
           account_id: line.account_id,
           debit: line.credit,
-          credit: line.debit,
-          description: line.description || null
+          credit: line.debit
         }))
         await postJournalTransaction(
           businessId, orderId, new Date().toISOString(), `Refund Pembayaran ${platform} #${orderNumber}`, reversalLines, supabase
@@ -332,8 +325,7 @@ export async function syncOrderToLedger(
         const reversalLines = salesTx.journal_lines.map((line: any) => ({
           account_id: line.account_id,
           debit: line.credit,
-          credit: line.debit,
-          description: line.description || null
+          credit: line.debit
         }))
         await postJournalTransaction(
           businessId, orderId, new Date().toISOString(), `Retur Penjualan ${platform} #${orderNumber}`, reversalLines, supabase
@@ -343,8 +335,7 @@ export async function syncOrderToLedger(
         const reversalLines = paymentTx.journal_lines.map((line: any) => ({
           account_id: line.account_id,
           debit: line.credit,
-          credit: line.debit,
-          description: line.description || null
+          credit: line.debit
         }))
         await postJournalTransaction(
           businessId, orderId, new Date().toISOString(), `Retur Pembayaran ${platform} #${orderNumber}`, reversalLines, supabase

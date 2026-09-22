@@ -56,8 +56,7 @@ export async function postJournalTransaction(
       transaction_id: transactionId,
       account_id: line.account_id,
       debit: line.debit || 0,
-      credit: line.credit || 0,
-      description: line.description || null
+      credit: line.credit || 0
     }))
 
     const { error: insLinesErr } = await supabase.from('journal_lines').insert(dbJournalLines)
