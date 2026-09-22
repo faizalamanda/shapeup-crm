@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabaseServer'
+import { createClient, getAuthUser } from '@/lib/supabaseServer'
 import { NextResponse } from 'next/server'
 import { processOrderInventoryRestock } from '@/lib/recipeHelper'
 
@@ -7,7 +7,7 @@ export async function POST(req: Request) {
 
   try {
     // 1. Get logged-in user and active business ID
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

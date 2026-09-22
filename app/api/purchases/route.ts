@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabaseServer'
+import { createClient, getAuthUser } from '@/lib/supabaseServer'
 import { NextResponse } from 'next/server'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
 import { syncPurchaseStatus } from '@/lib/expenseSync'
@@ -7,7 +7,7 @@ export async function GET(req: Request) {
   const supabase = await createClient()
 
   try {
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -124,7 +124,7 @@ export async function POST(req: Request) {
   const supabase = await createClient()
 
   try {
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -385,7 +385,7 @@ export async function PUT(req: Request) {
   const supabase = await createClient()
 
   try {
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -692,7 +692,7 @@ export async function DELETE(req: Request) {
   const supabase = await createClient()
 
   try {
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

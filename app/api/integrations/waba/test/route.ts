@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabaseServer'
+import { createClient, getAuthUser } from '@/lib/supabaseServer'
 import { testWabaConnection } from '@/lib/integrations/waba'
 
 export async function POST(req: Request) {
   try {
     const supabase = await createClient()
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
 
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

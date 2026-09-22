@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabaseServer'
+import { createClient, getAuthUser } from '@/lib/supabaseServer'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { invalidateInvoicesCache } from '../route'
@@ -12,7 +12,7 @@ export async function GET(
   const supabase = await createClient()
 
   try {
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -81,7 +81,7 @@ export async function PUT(
   const supabase = await createClient()
 
   try {
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -695,7 +695,7 @@ export async function DELETE(
   const supabase = await createClient()
 
   try {
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

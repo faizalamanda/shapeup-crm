@@ -1,9 +1,9 @@
-import { createClient } from '@/lib/supabaseServer'
+import { createClient, getAuthUser } from '@/lib/supabaseServer'
 import { NextResponse } from 'next/server'
 
 // Secure check for employee management permission
 async function verifyAccess(supabase: any) {
-  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  const { user, error: authErr } = await getAuthUser(supabase)
   if (authErr || !user) {
     return { error: 'Sesi tidak valid, silakan login kembali.', status: 401 }
   }

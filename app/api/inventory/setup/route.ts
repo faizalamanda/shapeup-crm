@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabaseServer'
+import { createClient, getAuthUser } from '@/lib/supabaseServer'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { ensureInventoryTablesExist } from '@/plugins/inventory-reports/db/dbInit'
 import { syncInventoryStockSummary } from '@/plugins/inventory-reports/inventoryHelper'
@@ -14,7 +14,7 @@ function getAdminSupabase() {
 export async function POST(req: Request) {
   try {
     const supabase = await createClient()
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

@@ -308,7 +308,7 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     }, 2000)
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      async (event, session) => {
         clearTimeout(safetyTimeoutId)
         if (session?.user?.id) {
           const force = event === 'SIGNED_IN' || event === 'USER_UPDATED' || session.user.id !== loadedUserIdRef.current
@@ -316,7 +316,19 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
         } else if (event === 'SIGNED_OUT') {
           handleUnauthenticatedSession('SIGNED_OUT')
         } else if (event === 'INITIAL_SESSION' && !session) {
-          handleUnauthenticatedSession('INITIAL_SESSION')
+          // Double-check session asynchronously to avoid premature logout on cold boot
+          try {
+            const { data: { session: fetchedSession } } = await supabase.auth.getSession()
+            if (fetchedSession?.user?.id) {
+              loadProfileAndBusinesses(fetchedSession.user.id, true)
+            } else if (!userProfile) {
+              handleUnauthenticatedSession('INITIAL_SESSION')
+            } else {
+              setBizLoading(false)
+            }
+          } catch {
+            setBizLoading(false)
+          }
         }
       }
     )

@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
+import { getAuthUser } from '@/lib/supabaseServer'
 
 // Helper to initialize Supabase Admin Client
 function getSupabaseAdmin() {
@@ -24,7 +25,7 @@ async function checkAdminSession(cookieStore: any) {
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
+  const { user } = await getAuthUser(supabase)
   if (!user) return { isAdmin: false, error: "Sesi tidak valid, silakan login ulang." }
 
   const { data: profile } = await supabase

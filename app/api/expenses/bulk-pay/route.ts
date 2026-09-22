@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabaseServer'
+import { createClient, getAuthUser } from '@/lib/supabaseServer'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
 import { NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
@@ -8,7 +8,7 @@ export async function POST(req: Request) {
 
   try {
     // 1. Authenticate user
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

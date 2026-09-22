@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { seedDefaultCOA } from '@/lib/coa'
+import { getAuthUser } from '@/lib/supabaseServer'
 
 export async function POST(req: Request) {
   const cookieStore = await cookies()
@@ -30,7 +31,7 @@ export async function POST(req: Request) {
     const { name, address, phone, timezone } = body
     
     // 1. Cek User
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    const { user, error: authError } = await getAuthUser(supabase)
     if (authError || !user) {
       return NextResponse.json({ error: "Sesi habis, silakan login ulang" }, { status: 401 })
     }

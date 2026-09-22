@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server'
-import { createClient, getAdminSupabase } from '@/lib/supabaseServer'
+import { createClient, getAdminSupabase, getAuthUser } from '@/lib/supabaseServer'
 import { sendKirimDevTextMessage } from '@/lib/integrations/kirimdev'
 
 async function getAuthenticatedUser() {
   const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
+  const { user, error } = await getAuthUser(supabase)
   if (error || !user) return { user: null, profile: null, supabase }
 
   const { data: profile } = await supabase

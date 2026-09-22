@@ -1,5 +1,5 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { createClient } from '@/lib/supabaseServer'
+import { createClient, getAuthUser } from '@/lib/supabaseServer'
 import { NextResponse } from 'next/server'
 
 export async function GET() {
@@ -7,7 +7,7 @@ export async function GET() {
 
   try {
     // 1. Get logged-in user and active business ID
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -58,7 +58,7 @@ export async function POST(req: Request) {
 
   try {
     // 1. Get logged-in user and active business ID
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    const { user, error: authErr } = await getAuthUser(supabase)
     if (authErr || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

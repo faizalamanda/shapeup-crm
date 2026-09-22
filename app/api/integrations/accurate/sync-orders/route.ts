@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabaseServer'
+import { createClient, getAuthUser } from '@/lib/supabaseServer'
 import { executeAccurateSync } from '@/lib/integrations/accurate/syncService'
 
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
 
-    const { data: userData, error: userError } = await supabase.auth.getUser()
-    if (userError || !userData.user) {
+    const { user, error: userError } = await getAuthUser(supabase)
+    if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { data: profile } = await supabase
       .from('profiles')
       .select('active_business_id')
-      .eq('id', userData.user.id)
+      .eq('id', user.id)
       .single()
 
     const businessId = profile?.active_business_id

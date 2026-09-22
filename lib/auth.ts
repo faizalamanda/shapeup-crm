@@ -42,47 +42,19 @@ export function isInvalidTokenError(error: any): boolean {
   return false
 }
 
-/**
- * Fast-path JWT decoder for cookies. Parses and validates JWT payload expiration offline
- * without hitting Supabase Auth network endpoints when token is unexpired.
- */
-export function parseJwtUserFromCookies(cookiesList: Array<{ name: string; value: string }>): { user: ExtractedUser | null; isExpired: boolean } {
+function parseJwtString(tokenStr: string): { user: ExtractedUser | null; isExpired: boolean } {
   try {
-    const authChunks = cookiesList
-      .filter(c => (c.name.startsWith('sb-') || c.name.includes('auth-token') || c.name.includes('supabase')) && Boolean(c.value))
-      .sort((a, b) => a.name.localeCompare(b.name))
-
-    if (authChunks.length === 0) return { user: null, isExpired: true }
-
-    const rawVal = authChunks.map(c => c.value).join('')
-    if (!rawVal) return { user: null, isExpired: true }
-
-    let sessionData: any = null
-
-    if (rawVal.startsWith('{') || rawVal.startsWith('[')) {
-      try { sessionData = JSON.parse(rawVal) } catch {}
-    }
-
-    if (!sessionData && (rawVal.startsWith('base64-') || !rawVal.startsWith('{'))) {
-      const cleanB64 = rawVal.startsWith('base64-') ? rawVal.slice(7) : rawVal
-      try {
-        const decoded = typeof atob === 'function' ? atob(cleanB64) : Buffer.from(cleanB64, 'base64').toString('utf-8')
-        sessionData = JSON.parse(decoded)
-      } catch {}
-    }
-
-    if (!sessionData) return { user: null, isExpired: true }
-
-    const accessToken = Array.isArray(sessionData) ? sessionData[0] : sessionData?.access_token
-    if (!accessToken || typeof accessToken !== 'string') return { user: null, isExpired: true }
-
-    const parts = accessToken.split('.')
+    const parts = tokenStr.split('.')
     if (parts.length !== 3) return { user: null, isExpired: true }
 
-    const payloadB64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
-    const payloadJson = typeof atob === 'function' ? atob(payloadB64) : Buffer.from(payloadB64, 'base64').toString('utf-8')
-    const payload = JSON.parse(payloadJson)
+    let payloadB64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    while (payloadB64.length % 4 !== 0) payloadB64 += '='
 
+    const payloadJson = typeof atob === 'function'
+      ? atob(payloadB64)
+      : Buffer.from(payloadB64, 'base64').toString('utf-8')
+
+    const payload = JSON.parse(payloadJson)
     if (!payload || !payload.sub) return { user: null, isExpired: true }
 
     const nowSec = Math.floor(Date.now() / 1000)
@@ -99,6 +71,97 @@ export function parseJwtUserFromCookies(cookiesList: Array<{ name: string; value
     }
 
     return { user, isExpired }
+  } catch {
+    return { user: null, isExpired: true }
+  }
+}
+
+/**
+ * Fast-path JWT decoder for cookies. Parses and validates JWT payload expiration offline
+ * without hitting Supabase Auth network endpoints when token is unexpired.
+ */
+export function parseJwtUserFromCookies(cookiesList: Array<{ name: string; value: string }>): { user: ExtractedUser | null; isExpired: boolean } {
+  try {
+    if (!cookiesList || cookiesList.length === 0) return { user: null, isExpired: true }
+
+    const jwtRegex = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g
+
+    // Extract all candidate values from auth cookies
+    const candidateStrings: string[] = []
+
+    for (const c of cookiesList) {
+      if ((c.name.startsWith('sb-') || c.name.includes('auth-token') || c.name.includes('supabase') || c.name.includes('token')) && c.value) {
+        candidateStrings.push(c.value)
+        try {
+          candidateStrings.push(decodeURIComponent(c.value))
+        } catch {}
+      }
+    }
+
+    // Also join chunked cookies by sorting cookie names
+    const authChunks = cookiesList
+      .filter(c => (c.name.startsWith('sb-') || c.name.includes('auth-token') || c.name.includes('supabase')) && Boolean(c.value))
+      .sort((a, b) => a.name.localeCompare(b.name))
+
+    if (authChunks.length > 0) {
+      const joinedVal = authChunks.map(c => c.value).join('')
+      candidateStrings.push(joinedVal)
+      try {
+        candidateStrings.push(decodeURIComponent(joinedVal))
+      } catch {}
+    }
+
+    let lastExpiredUser: ExtractedUser | null = null
+
+    for (const rawStr of candidateStrings) {
+      if (!rawStr) continue
+
+      // 1. Try finding JWT via Regex
+      const matches = rawStr.match(jwtRegex)
+      if (matches) {
+        for (const token of matches) {
+          const res = parseJwtString(token)
+          if (res.user && !res.isExpired) {
+            return res // Found valid unexpired user!
+          }
+          if (res.user) {
+            lastExpiredUser = res.user
+          }
+        }
+      }
+
+      // 2. Try JSON parsing (session object with access_token)
+      let sessionData: any = null
+      if (rawStr.startsWith('{') || rawStr.startsWith('[')) {
+        try { sessionData = JSON.parse(rawStr) } catch {}
+      }
+      if (!sessionData && rawStr.startsWith('base64-')) {
+        try {
+          const cleanB64 = rawStr.slice(7)
+          const decoded = typeof atob === 'function' ? atob(cleanB64) : Buffer.from(cleanB64, 'base64').toString('utf-8')
+          sessionData = JSON.parse(decoded)
+        } catch {}
+      }
+
+      if (sessionData) {
+        const accessToken = Array.isArray(sessionData) ? sessionData[0] : sessionData?.access_token
+        if (typeof accessToken === 'string') {
+          const res = parseJwtString(accessToken)
+          if (res.user && !res.isExpired) {
+            return res
+          }
+          if (res.user) {
+            lastExpiredUser = res.user
+          }
+        }
+      }
+    }
+
+    if (lastExpiredUser) {
+      return { user: lastExpiredUser, isExpired: true }
+    }
+
+    return { user: null, isExpired: true }
   } catch {
     return { user: null, isExpired: true }
   }
