@@ -191,23 +191,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Gagal membuat pesanan: ' + orderInsertErr.message }, { status: 500 })
     }
 
-    // 7. Update Stock for tracked items
-    for (const item of items) {
-      if (String(item.id).startsWith('custom-')) continue
-      const dbProd = productMap.get(item.id)
-      if (dbProd && dbProd.stock_type === 'tracked') {
-        const { error: stockUpdErr } = await supabase
-          .from('products')
-          .update({ stock_quantity: dbProd.stock_quantity - item.quantity })
-          .eq('id', item.id)
-
-        if (stockUpdErr) {
-          console.error(`Gagal update stok produk ${item.id}:`, stockUpdErr.message)
-        }
-      }
-    }
-
-    // 8. Record Ledger transaction & journal lines using unified service
+    // 7. Record Ledger transaction, stock reduction & journal lines using unified service
     const syncRes = await syncOrderToLedger(order.id, supabase)
     if (!syncRes.success) {
       return NextResponse.json({ error: 'Gagal mencatat transaksi akuntansi: ' + syncRes.message }, { status: 500 })

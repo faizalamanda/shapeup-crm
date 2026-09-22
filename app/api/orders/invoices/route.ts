@@ -353,29 +353,8 @@ export async function POST(req: Request) {
 
     if (insertErr) throw insertErr
 
-    // 5. Accounting Ledger Integration
+    // 5. Accounting Ledger Integration & Stock Reduction
     if (status === 'processing' || status === 'completed') {
-      // Adjust stock if tracked
-      const productIds = items.map((i: any) => i.product_id).filter(Boolean)
-      if (productIds.length > 0) {
-        const { data: dbProducts } = await supabaseAdmin
-          .from('products')
-          .select('id, stock_type, stock_quantity')
-          .in('id', productIds)
-
-        if (dbProducts) {
-          for (const item of items) {
-            const dbProd = dbProducts.find((p: any) => p.id === item.product_id)
-            if (dbProd && dbProd.stock_type === 'tracked') {
-              await supabaseAdmin
-                .from('products')
-                .update({ stock_quantity: Math.max(0, dbProd.stock_quantity - Number(item.quantity)) })
-                .eq('id', dbProd.id)
-            }
-          }
-        }
-      }
-
       const syncRes = await syncOrderToLedger(order.id, supabaseAdmin)
       if (!syncRes.success) {
         throw new Error(syncRes.message)
