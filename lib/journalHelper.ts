@@ -2,19 +2,26 @@ import { SupabaseClient } from '@supabase/supabase-js'
 
 export async function postJournalTransaction(
   businessId: string,
-  orderId: string,
+  orderId: string | null,
   date: string,
   description: string,
   journalLines: any[],
   supabase: SupabaseClient
 ) {
   // 1. Check if transaction already exists for this order + description
-  const { data: existingTx, error: fetchErr } = await supabase
+  let fetchQuery = supabase
     .from('transactions')
     .select('id, journal_lines(id)')
-    .eq('order_id', orderId)
+    .eq('business_id', businessId)
     .eq('description', description)
-    .limit(1)
+
+  if (orderId) {
+    fetchQuery = fetchQuery.eq('order_id', orderId)
+  } else {
+    fetchQuery = fetchQuery.is('order_id', null)
+  }
+
+  const { data: existingTx, error: fetchErr } = await fetchQuery.limit(1)
 
   if (fetchErr) throw fetchErr
 

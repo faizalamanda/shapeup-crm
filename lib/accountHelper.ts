@@ -12,8 +12,10 @@ export async function getOrCreateDefaultAccounts(
 
   const defaultAccounts = [
     { code: '101000', name: 'Kas POS (Tunai)', type: 'ASSET', business_id: businessId },
+    { code: '101100', name: 'Kas Utama / Rekening Bank Utama', type: 'ASSET', business_id: businessId },
     { code: '101200', name: 'Bank / QRIS POS', type: 'ASSET', business_id: businessId },
     { code: '103000', name: 'Piutang Usaha', type: 'ASSET', business_id: businessId },
+    { code: '301000', name: 'Modal Pemilik', type: 'EQUITY', business_id: businessId },
     { code: '401000', name: 'Pendapatan Penjualan POS', type: 'REVENUE', business_id: businessId },
     { code: '401100', name: 'Potongan Penjualan / Diskon', type: 'REVENUE', business_id: businessId },
     { code: '402000', name: 'Pendapatan Ongkir', type: 'REVENUE', business_id: businessId },

@@ -124,11 +124,29 @@ export async function POST(req: Request) {
       const isCustom = String(item.id).startsWith('custom-')
       const name = isCustom ? (item.name || 'Biaya Kustom') : productMap.get(item.id).name
       const sku = isCustom ? 'CUSTOM' : (productMap.get(item.id).sku || '')
+      
+      const metaData: any[] = []
+      if (item.discount > 0) {
+        metaData.push({ key: 'Discount', value: String(item.discount) })
+      }
+      if (item.variantName) {
+        metaData.push({ key: 'Variant', value: String(item.variantName) })
+      }
+      if (item.modifiers && Array.isArray(item.modifiers) && item.modifiers.length > 0) {
+        metaData.push({ key: 'Modifiers', value: item.modifiers.map((m: any) => `${m.group}: ${m.name}`).join(', ') })
+      }
+      if (item.note) {
+        metaData.push({ key: 'Note', value: String(item.note) })
+      }
+
       return {
         id: idx + 1,
         name: name,
         product_id: item.id,
-        variation_id: 0,
+        variation_id: item.variantId || 0,
+        variant_name: item.variantName || null,
+        modifiers: item.modifiers || [],
+        note: item.note || '',
         quantity: item.quantity,
         tax_class: '',
         subtotal: String(item.price * item.quantity),
@@ -136,7 +154,7 @@ export async function POST(req: Request) {
         total: String((item.price - (item.discount || 0)) * item.quantity),
         total_tax: '0.00',
         taxes: [],
-        meta_data: item.discount > 0 ? [{ key: 'Discount', value: String(item.discount) }] : [],
+        meta_data: metaData,
         sku: sku,
         price: item.price
       }
