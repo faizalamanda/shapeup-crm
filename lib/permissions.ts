@@ -57,7 +57,7 @@ export function canAccessPath(href: string, context: AccessContext): boolean {
   }
 
   // 9. Pemasukan (Orders, Invoices, POS) & Customers
-  if (href.startsWith('/orders') || href.startsWith('/customers')) {
+  if (href.startsWith('/pos') || href.startsWith('/orders') || href.startsWith('/customers')) {
     return (
       permissions.includes('manage_invoices') ||
       permissions.includes('view_financials_no_salary')

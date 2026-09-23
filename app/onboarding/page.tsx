@@ -19,7 +19,7 @@ type ShortcutItem = {
 }
 
 const AVAILABLE_SHORTCUTS: ShortcutItem[] = [
-  { id: 'pos', name: 'POS Kasir', href: '/orders/pos', category: 'Penjualan', description: 'Transaksi kasir instan & cetak struk', icon: '💻', badge: 'Kasir' },
+  { id: 'pos', name: 'POS Kasir', href: '/pos', category: 'Penjualan', description: 'Transaksi kasir instan & cetak struk', icon: '💻', badge: 'Kasir' },
   { id: 'orders', name: 'Orders', href: '/orders', category: 'Penjualan', description: 'Daftar & status riwayat pesanan', icon: '🛒' },
   { id: 'invoices', name: 'Invoices', href: '/orders/invoices', category: 'Penjualan', description: 'Faktur & penagihan pembayaran', icon: '🧾' },
   { id: 'products', name: 'Produk', href: '/products', category: 'Katalog', description: 'Kelola harga, stok, & variasi', icon: '📦' },
@@ -127,7 +127,7 @@ const ONBOARDING_STAGES: OnboardingTask[] = [
     title: 'Buat Transaksi Penjualan / POS Kasir',
     desc: 'Lakukan pencatatan transaksi penjualan harian pertama Anda via POS atau Orders.',
     actionLabel: 'Buka POS Kasir',
-    href: '/orders/pos',
+    href: '/pos',
     dbCheckKey: 'orders',
     icon: '💻',
   },
@@ -797,8 +797,8 @@ export default function OnboardingPage() {
           
           <div className="flex overflow-x-auto pb-4 -mx-4 px-4 sm:mx-0 sm:px-0 gap-3 sm:gap-4 no-scrollbar snap-x">
             {/* Kasir (POS) */}
-            {canAccessPath('/orders/pos', { role: currentUserRole, permissions: currentUserPermissions, isWabaActive }) && (
-            <Link href="/orders/pos" className="snap-start shrink-0 w-24 sm:w-28 flex flex-col items-center justify-center gap-3 p-4 rounded-3xl bg-[#7C5A48] text-white hover:bg-[#684b3c] transition-all transform active:scale-95 shadow-md">
+            {canAccessPath('/pos', { role: currentUserRole, permissions: currentUserPermissions, isWabaActive }) && (
+            <Link href="/pos" className="snap-start shrink-0 w-24 sm:w-28 flex flex-col items-center justify-center gap-3 p-4 rounded-3xl bg-[#7C5A48] text-white hover:bg-[#684b3c] transition-all transform active:scale-95 shadow-md">
               <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2z"/></svg>
               <span className="text-[11px] sm:text-xs font-bold text-center leading-tight">Kasir (POS)</span>
             </Link>

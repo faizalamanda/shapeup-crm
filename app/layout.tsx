@@ -155,7 +155,7 @@ const menuItems: MenuItem[] = [
     children: [
       { name: 'Orders',   href: '/orders' },
       { name: 'Invoices', href: '/orders/invoices' },
-      { name: 'POS',      href: '/orders/pos' },
+      { name: 'POS',      href: '/pos' },
     ],
   },
   {
