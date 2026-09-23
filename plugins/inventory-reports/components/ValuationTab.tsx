@@ -1,5 +1,5 @@
 "use client"
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { StockReportItem, StockMove } from '../types'
 import { calculateValuation } from '../inventoryHelper'
 
@@ -9,19 +9,67 @@ interface ValuationTabProps {
   loading: boolean
 }
 
+type SortField =
+  | 'productName'
+  | 'qtyOnHand'
+  | 'standardCost'
+  | 'unitCostCalculated'
+  | 'totalValueCalculated'
+  | 'varianceVsStandard'
+
 export default function ValuationTab({ stockItems, moves, loading }: ValuationTabProps) {
   const [selectedMethod, setSelectedMethod] = useState<'FIFO' | 'LIFO' | 'AVCO' | 'STANDARD'>('FIFO')
+  const [sortField, setSortField] = useState<SortField>('totalValueCalculated')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
-  const valuationResult = calculateValuation(selectedMethod, stockItems, moves)
+  const valuationResult = useMemo(
+    () => calculateValuation(selectedMethod, stockItems, moves),
+    [selectedMethod, stockItems, moves]
+  )
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortOrder('asc')
+    }
+  }
+
+  const sortedBreakdown = useMemo(() => {
+    return [...valuationResult.itemBreakdown].sort((a, b) => {
+      let valA: any = a[sortField]
+      let valB: any = b[sortField]
+
+      if (typeof valA === 'string') {
+        valA = valA.toLowerCase()
+        valB = (valB || '').toString().toLowerCase()
+        return sortOrder === 'asc'
+          ? valA.localeCompare(valB)
+          : valB.localeCompare(valA)
+      }
+
+      valA = Number(valA || 0)
+      valB = Number(valB || 0)
+      return sortOrder === 'asc' ? valA - valB : valB - valA
+    })
+  }, [valuationResult.itemBreakdown, sortField, sortOrder])
 
   // Calculate comparison results for all 4 methods side-by-side
-  const fifoVal = calculateValuation('FIFO', stockItems, moves).totalValuation
-  const lifoVal = calculateValuation('LIFO', stockItems, moves).totalValuation
-  const avcoVal = calculateValuation('AVCO', stockItems, moves).totalValuation
-  const standardVal = calculateValuation('STANDARD', stockItems, moves).totalValuation
+  const fifoVal = useMemo(() => calculateValuation('FIFO', stockItems, moves).totalValuation, [stockItems, moves])
+  const lifoVal = useMemo(() => calculateValuation('LIFO', stockItems, moves).totalValuation, [stockItems, moves])
+  const avcoVal = useMemo(() => calculateValuation('AVCO', stockItems, moves).totalValuation, [stockItems, moves])
+  const standardVal = useMemo(() => calculateValuation('STANDARD', stockItems, moves).totalValuation, [stockItems, moves])
 
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val)
+
+  const renderSortArrow = (field: SortField) => {
+    if (sortField !== field) {
+      return <span className="ml-1 text-slate-300 opacity-60">↕</span>
+    }
+    return <span className="ml-1 text-blue-600 font-bold">{sortOrder === 'asc' ? '↑' : '↓'}</span>
+  }
 
   return (
     <div className="space-y-6">
@@ -85,29 +133,74 @@ export default function ValuationTab({ stockItems, moves, loading }: ValuationTa
           <table className="w-full text-left text-xs text-[#2D2D2A]">
             <thead className="bg-[#F7F7F5] text-[#6B6B63] uppercase tracking-wider font-bold border-b border-[#E2E2DC]">
               <tr>
-                <th className="py-3 px-4">Nama Produk & SKU</th>
-                <th className="py-3 px-4 text-right">Stok Fisik (Qty)</th>
-                <th className="py-3 px-4 text-right">Harga Modal Standar</th>
-                <th className="py-3 px-4 text-right">Unit Cost {valuationResult.method}</th>
-                <th className="py-3 px-4 text-right">Total Nilai {valuationResult.method}</th>
-                <th className="py-3 px-4 text-right">Selisih / Varians</th>
+                <th
+                  onClick={() => handleSort('productName')}
+                  className="py-3 px-4 cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center">
+                    Nama Produk & SKU {renderSortArrow('productName')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('qtyOnHand')}
+                  className="py-3 px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center justify-end">
+                    Stok Fisik (Qty) {renderSortArrow('qtyOnHand')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('standardCost')}
+                  className="py-3 px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center justify-end">
+                    Harga Modal Standar {renderSortArrow('standardCost')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('unitCostCalculated')}
+                  className="py-3 px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center justify-end">
+                    Unit Cost {valuationResult.method} {renderSortArrow('unitCostCalculated')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('totalValueCalculated')}
+                  className="py-3 px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center justify-end">
+                    Total Nilai {valuationResult.method} {renderSortArrow('totalValueCalculated')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('varianceVsStandard')}
+                  className="py-3 px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center justify-end">
+                    Selisih / Varians {renderSortArrow('varianceVsStandard')}
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E2E2DC]">
               {loading ? (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-[#82827A]">
-                    Menghitung penilaian persediaan...
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                      <span>Menghitung penilaian persediaan...</span>
+                    </div>
                   </td>
                 </tr>
-              ) : valuationResult.itemBreakdown.length === 0 ? (
+              ) : sortedBreakdown.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-[#82827A]">
                     Tidak ada item persediaan untuk dinilai.
                   </td>
                 </tr>
               ) : (
-                valuationResult.itemBreakdown.map(item => (
+                sortedBreakdown.map(item => (
                   <tr key={item.productId} className="hover:bg-[#F9F9F8] transition-colors">
                     <td className="py-3 px-4">
                       <div className="font-bold text-[#1C1C1A]">{item.productName}</div>

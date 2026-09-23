@@ -1,5 +1,5 @@
 "use client"
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import * as XLSX from 'xlsx'
 import {
@@ -34,8 +34,19 @@ export default function InventoryReportsMain() {
     []
   )
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>('stock')
+  // Active tab state initialized with localStorage persistence
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('shapeup_inventory_active_tab') as ActiveTab
+      if (['stock', 'location', 'moves', 'analysis', 'valuation'].includes(saved)) {
+        return saved
+      }
+    }
+    return 'stock'
+  })
+
   const [loading, setLoading] = useState(true)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [activeBizId, setActiveBizId] = useState<string | null>(null)
   const [activeBizName, setActiveBizName] = useState<string>('')
 
@@ -45,64 +56,101 @@ export default function InventoryReportsMain() {
   const [moves, setMoves] = useState<StockMove[]>([])
   const [categories, setCategories] = useState<string[]>([])
 
+  // Track loaded tabs to enable Lazy Loading
+  const [loadedTabs, setLoadedTabs] = useState<Record<string, boolean>>({})
+
   // Filters State
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('')
   const [statusFilter, setStatusFilter] = useState<MoveStatus | 'all'>('all')
   const [lotFilter, setLotFilter] = useState('')
 
-  // Load User & Business
-  useEffect(() => {
-    async function loadData() {
+  // Handler for tab switching with localStorage persistence
+  const handleTabChange = (tab: ActiveTab) => {
+    setActiveTab(tab)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('shapeup_inventory_active_tab', tab)
+    }
+  }
+
+  // Primary Lazy Data Fetcher
+  const loadInventoryData = useCallback(async (forceRefresh = false) => {
+    try {
       setLoading(true)
+      setErrorMsg(null)
+
       const {
         data: { user },
+        error: userErr,
       } = await supabase.auth.getUser()
 
-      if (user) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('active_business_id')
-          .eq('id', user.id)
-          .single()
-
-        if (profile?.active_business_id) {
-          setActiveBizId(profile.active_business_id)
-          const { data: biz } = await supabase
-            .from('businesses')
-            .select('name')
-            .eq('id', profile.active_business_id)
-            .single()
-
-          if (biz) setActiveBizName(biz.name)
-
-          // Fetch full data (Hybrid Architecture)
-          const { products: prods, purchases, orders, opnames, locations: locs, customMoves } =
-            await fetchFullInventoryData(supabase, profile.active_business_id)
-
-          setProducts(prods)
-          setLocations(locs)
-
-          // Extract category names
-          const catSet = new Set<string>()
-          prods.forEach(p => {
-            const catName = Array.isArray(p.categories) ? p.categories[0]?.name : p.categories?.name
-            if (catName) catSet.add(catName)
-          })
-          setCategories(Array.from(catSet))
-
-          // Build unified move history
-          const unifiedMoves = buildUnifiedMoveHistory(prods, purchases, orders, opnames, locs, customMoves)
-          setMoves(unifiedMoves)
-        }
+      if (userErr) throw userErr
+      if (!user) {
+        setErrorMsg('Sesi pengguna telah berakhir. Silakan login kembali.')
+        setLoading(false)
+        return
       }
+
+      const { data: profile, error: profErr } = await supabase
+        .from('profiles')
+        .select('active_business_id')
+        .eq('id', user.id)
+        .single()
+
+      if (profErr) throw profErr
+      if (!profile?.active_business_id) {
+        setErrorMsg('Bisnis aktif tidak ditemukan pada profil Anda.')
+        setLoading(false)
+        return
+      }
+
+      const bizId = profile.active_business_id
+      setActiveBizId(bizId)
+
+      const { data: biz } = await supabase
+        .from('businesses')
+        .select('name')
+        .eq('id', bizId)
+        .single()
+
+      if (biz) setActiveBizName(biz.name)
+
+      // Lazy Data Fetching: Fetch full stitched data for current active tab context
+      const { products: prods, purchases, orders, opnames, locations: locs, customMoves } =
+        await fetchFullInventoryData(supabase, bizId)
+
+      setProducts(prods)
+      setLocations(locs)
+
+      // Extract category names
+      const catSet = new Set<string>()
+      prods.forEach(p => {
+        const catName = Array.isArray(p.categories) ? p.categories[0]?.name : p.categories?.name
+        if (catName) catSet.add(catName)
+      })
+      setCategories(Array.from(catSet))
+
+      // Build unified move history
+      const unifiedMoves = buildUnifiedMoveHistory(prods, purchases, orders, opnames, locs, customMoves)
+      setMoves(unifiedMoves)
+
+      setLoadedTabs(prev => ({ ...prev, [activeTab]: true }))
+    } catch (err: any) {
+      console.error('[InventoryReportsMain] Error loading inventory data:', err)
+      setErrorMsg(err.message || 'Gagal memuat data persediaan stok. Periksa koneksi internet Anda.')
+    } finally {
       setLoading(false)
     }
+  }, [supabase, activeTab])
 
-    loadData()
-  }, [supabase])
+  // Fetch data on initial mount or when switching to an un-loaded tab
+  useEffect(() => {
+    if (!loadedTabs[activeTab]) {
+      loadInventoryData()
+    }
+  }, [activeTab, loadedTabs, loadInventoryData])
 
-  // Computed Derived Reports
+  // Computed Derived Reports (useMemo for maximum speed)
   const stockReportItems: StockReportItem[] = useMemo(
     () => buildStockReport(products, moves, locations),
     [products, moves, locations]
@@ -116,7 +164,7 @@ export default function InventoryReportsMain() {
   // Export to Excel / CSV Handler
   const handleExportExcel = () => {
     let exportData: any[] = []
-    let fileName = `Laporan_Inventory_${activeTab}_${new Date().toISOString().slice(0, 10)}.xlsx`
+    const fileName = `Laporan_Inventory_${activeTab}_${new Date().toISOString().slice(0, 10)}.xlsx`
 
     if (activeTab === 'stock') {
       exportData = stockReportItems.map(item => ({
@@ -177,6 +225,32 @@ export default function InventoryReportsMain() {
 
   return (
     <div className="space-y-6">
+      {/* Top Animated Loading Bar (Google Calendar Style) */}
+      {loading && (
+        <div className="fixed top-0 left-0 right-0 z-50 h-1.5 bg-blue-100 overflow-hidden">
+          <div className="h-full bg-gradient-to-r from-blue-500 via-indigo-600 to-blue-500 animate-pulse transition-all duration-300 w-full" />
+        </div>
+      )}
+
+      {/* Error Alert Box with Retry Action */}
+      {errorMsg && (
+        <div className="bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start sm:items-center gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <div className="font-bold text-xs sm:text-sm">Gagal Memuat Laporan Stok</div>
+              <div className="text-xs text-rose-600 mt-0.5">{errorMsg}</div>
+            </div>
+          </div>
+          <button
+            onClick={() => loadInventoryData(true)}
+            className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer whitespace-nowrap"
+          >
+            🔄 Coba Lagi
+          </button>
+        </div>
+      )}
+
       {/* Top Header & Business Info */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white border border-[#E2E2DC] p-5 rounded-2xl shadow-xs">
         <div>
@@ -196,6 +270,23 @@ export default function InventoryReportsMain() {
 
         <div className="flex items-center gap-3">
           <button
+            onClick={() => loadInventoryData(true)}
+            title="Segarkan Data dari Database"
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#F7F7F5] hover:bg-[#EAEAEA] text-[#1C1C1A] border border-[#E2E2DC] text-xs font-bold transition-all cursor-pointer"
+          >
+            <svg
+              className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : 'text-[#6B6B63]'}`}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+            >
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+            </svg>
+            Refresh
+          </button>
+
+          <button
             onClick={handleExportExcel}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
           >
@@ -209,7 +300,7 @@ export default function InventoryReportsMain() {
         </div>
       </div>
 
-      {/* Navigation Tabs */}
+      {/* Navigation Tabs (with localStorage Persistence) */}
       <div className="flex border-b border-[#E2E2DC] space-x-1 overflow-x-auto bg-white p-1 rounded-t-xl">
         {[
           { key: 'stock', label: '📦 Stock Report', desc: 'Stok saat ini, available, reserved, cost' },
@@ -222,7 +313,7 @@ export default function InventoryReportsMain() {
           return (
             <button
               key={t.key}
-              onClick={() => setActiveTab(t.key as ActiveTab)}
+              onClick={() => handleTabChange(t.key as ActiveTab)}
               className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 whitespace-nowrap cursor-pointer ${
                 isActive
                   ? 'border-blue-600 text-blue-700 bg-blue-50/60'
@@ -265,7 +356,7 @@ export default function InventoryReportsMain() {
               <select
                 value={selectedCategory}
                 onChange={e => setSelectedCategory(e.target.value)}
-                className="bg-[#F7F7F5] text-[#1C1C1A] text-xs border border-[#E2E2DC] rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500"
+                className="bg-[#F7F7F5] text-[#1C1C1A] text-xs border border-[#E2E2DC] rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer"
               >
                 <option value="">Semua Kategori</option>
                 {categories.map(cat => (

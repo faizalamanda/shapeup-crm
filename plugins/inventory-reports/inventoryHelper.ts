@@ -8,6 +8,24 @@ import {
   PivotGroupRow,
 } from './types'
 
+export async function fetchLocations(supabase: SupabaseClient, businessId: string) {
+  const { data: locationsDataRaw } = await supabase
+    .from('inventory_locations')
+    .select('*')
+    .eq('business_id', businessId)
+
+  let locationsData = locationsDataRaw
+  if (!locationsData || locationsData.length === 0) {
+    locationsData = [
+      { id: 'wh-main', business_id: businessId, name: 'Gudang Utama (WH-MAIN)', type: 'internal', code: 'WH-MAIN', is_default: true, created_at: new Date().toISOString() },
+      { id: 'wh-store', business_id: businessId, name: 'Toko / Display Outlet', type: 'internal', code: 'STORE-1', is_default: false, created_at: new Date().toISOString() },
+      { id: 'wh-vendor', business_id: businessId, name: 'Pemasok / Vendor', type: 'vendor', code: 'VENDOR', is_default: false, created_at: new Date().toISOString() },
+      { id: 'wh-customer', business_id: businessId, name: 'Transit Pelanggan', type: 'customer', code: 'CUSTOMER', is_default: false, created_at: new Date().toISOString() },
+    ]
+  }
+  return locationsData as InventoryLocation[]
+}
+
 export async function fetchFullInventoryData(supabase: SupabaseClient, businessId: string) {
   // Execute independent Supabase queries in parallel using Promise.all (Hybrid Architecture)
   const [

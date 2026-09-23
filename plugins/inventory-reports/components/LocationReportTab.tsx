@@ -1,5 +1,5 @@
 "use client"
-import React from 'react'
+import React, { useState, useMemo } from 'react'
 import { LocationReportSummary } from '../types'
 
 interface LocationReportTabProps {
@@ -7,7 +7,47 @@ interface LocationReportTabProps {
   loading: boolean
 }
 
+type SortField =
+  | 'locationName'
+  | 'locationType'
+  | 'totalProductsCount'
+  | 'totalQty'
+  | 'reservedQty'
+  | 'availableQty'
+  | 'totalValue'
+
 export default function LocationReportTab({ locations, loading }: LocationReportTabProps) {
+  const [sortField, setSortField] = useState<SortField>('locationName')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortOrder('asc')
+    }
+  }
+
+  const sortedLocations = useMemo(() => {
+    return [...locations].sort((a, b) => {
+      let valA: any = a[sortField]
+      let valB: any = b[sortField]
+
+      if (typeof valA === 'string') {
+        valA = valA.toLowerCase()
+        valB = (valB || '').toString().toLowerCase()
+        return sortOrder === 'asc'
+          ? valA.localeCompare(valB)
+          : valB.localeCompare(valA)
+      }
+
+      valA = Number(valA || 0)
+      valB = Number(valB || 0)
+      return sortOrder === 'asc' ? valA - valB : valB - valA
+    })
+  }, [locations, sortField, sortOrder])
+
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val)
 
@@ -22,6 +62,13 @@ export default function LocationReportTab({ locations, loading }: LocationReport
       default:
         return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">Lainnya</span>
     }
+  }
+
+  const renderSortArrow = (field: SortField) => {
+    if (sortField !== field) {
+      return <span className="ml-1 text-slate-300 opacity-60">↕</span>
+    }
+    return <span className="ml-1 text-blue-600 font-bold">{sortOrder === 'asc' ? '↑' : '↓'}</span>
   }
 
   return (
@@ -69,24 +116,76 @@ export default function LocationReportTab({ locations, loading }: LocationReport
           <table className="w-full text-left text-xs text-[#2D2D2A]">
             <thead className="bg-[#F7F7F5] text-[#6B6B63] uppercase tracking-wider font-bold border-b border-[#E2E2DC]">
               <tr>
-                <th className="py-3 px-4">Kode & Nama Lokasi</th>
-                <th className="py-3 px-4">Tipe Lokasi</th>
-                <th className="py-3 px-4 text-center">Varian Produk</th>
-                <th className="py-3 px-4 text-right">Stok Fisik</th>
-                <th className="py-3 px-4 text-right">Stok Terpesan</th>
-                <th className="py-3 px-4 text-right">Stok Tersedia</th>
-                <th className="py-3 px-4 text-right">Total Nilai Finansial</th>
+                <th
+                  onClick={() => handleSort('locationName')}
+                  className="py-3 px-4 cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center">
+                    Kode & Nama Lokasi {renderSortArrow('locationName')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('locationType')}
+                  className="py-3 px-4 cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center">
+                    Tipe Lokasi {renderSortArrow('locationType')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('totalProductsCount')}
+                  className="py-3 px-4 text-center cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center justify-center">
+                    Varian Produk {renderSortArrow('totalProductsCount')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('totalQty')}
+                  className="py-3 px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center justify-end">
+                    Stok Fisik {renderSortArrow('totalQty')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('reservedQty')}
+                  className="py-3 px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center justify-end">
+                    Stok Terpesan {renderSortArrow('reservedQty')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('availableQty')}
+                  className="py-3 px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center justify-end">
+                    Stok Tersedia {renderSortArrow('availableQty')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('totalValue')}
+                  className="py-3 px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
+                >
+                  <div className="flex items-center justify-end">
+                    Total Nilai Finansial {renderSortArrow('totalValue')}
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E2E2DC]">
               {loading ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-[#82827A]">
-                    Memuat data lokasi...
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                      <span>Memuat data lokasi...</span>
+                    </div>
                   </td>
                 </tr>
               ) : (
-                locations.map(loc => (
+                sortedLocations.map(loc => (
                   <tr key={loc.locationId} className="hover:bg-[#F9F9F8] transition-colors">
                     <td className="py-3 px-4 font-bold text-[#1C1C1A]">
                       <div>{loc.locationName}</div>
