@@ -214,7 +214,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   } = useUserContext()
 
   const pathname = usePathname()
-  const noSidebar = ["/login", "/register", "/"].includes(pathname)
+  const noSidebar = ["/login", "/register", "/"].includes(pathname) || pathname.startsWith("/pos") || pathname === "/orders/pos"
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({})
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
