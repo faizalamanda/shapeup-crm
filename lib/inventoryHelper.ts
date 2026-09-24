@@ -1,8 +1,9 @@
 import { SupabaseClient } from '@supabase/supabase-js'
-import { calculateProductHpp } from './recipeHelper'
+import { calculateProductHpp, calculateProductsHppBatch } from './recipeHelper'
 
 const productCacheBySku: Record<string, Record<string, any>> = {}
 const productCacheByName: Record<string, Record<string, any>> = {}
+const productCacheById: Record<string, Record<string, any>> = {}
 
 export async function resolveOrderProducts(
   items: any[],
@@ -11,40 +12,97 @@ export async function resolveOrderProducts(
   supabase: SupabaseClient
 ) {
   const matchedProducts: { item: any; dbProduct: any }[] = []
+  if (!items || items.length === 0) return matchedProducts
+
+  if (!productCacheBySku[businessId]) productCacheBySku[businessId] = {}
+  if (!productCacheByName[businessId]) productCacheByName[businessId] = {}
+  if (!productCacheById[businessId]) productCacheById[businessId] = {}
+
+  // 1. Identify what needs to be fetched from DB
+  const unCachedIds: string[] = []
+  const unCachedSkus: string[] = []
+  const unCachedNames: string[] = []
 
   for (const item of items) {
-    let dbProd = null
+    const rawId = item.id || item.product_id
+    const id = (rawId && !String(rawId).startsWith('custom-')) ? String(rawId) : ''
     const sku = item.sku ? String(item.sku).trim() : ''
     const name = item.name ? String(item.name).trim() : ''
 
-    // Check cache first
-    if (sku && productCacheBySku[businessId]?.[sku]) {
-      dbProd = productCacheBySku[businessId][sku]
+    let cached = null
+    if (id && productCacheById[businessId]?.[id]) {
+      cached = productCacheById[businessId][id]
+    } else if (sku && productCacheBySku[businessId]?.[sku]) {
+      cached = productCacheBySku[businessId][sku]
     } else if (name && productCacheByName[businessId]?.[name.toLowerCase()]) {
-      dbProd = productCacheByName[businessId][name.toLowerCase()]
+      cached = productCacheByName[businessId][name.toLowerCase()]
     }
 
-    // Priority 1: SKU
-    if (sku) {
-      const { data } = await supabase
-        .from('products')
-        .select('*')
-        .eq('business_id', businessId)
-        .eq('sku', sku)
-        .limit(1)
-      if (data && data.length > 0) dbProd = data[0]
+    if (!cached) {
+      if (id && !unCachedIds.includes(id)) unCachedIds.push(id)
+      if (sku && !unCachedSkus.includes(sku)) unCachedSkus.push(sku)
+      if (name && !unCachedNames.includes(name)) unCachedNames.push(name)
     }
+  }
 
-    // Priority 2: Name
-    if (!dbProd && name) {
-      const { data } = await supabase
-        .from('products')
-        .select('*')
-        .eq('business_id', businessId)
-        .ilike('name', name)
-        .limit(1)
-      if (data && data.length > 0) dbProd = data[0]
+  // 2. Batch fetch by ID, SKU, and Name
+  if (unCachedIds.length > 0) {
+    const { data: idProds } = await supabase
+      .from('products')
+      .select('*')
+      .eq('business_id', businessId)
+      .in('id', unCachedIds)
+    if (idProds) {
+      idProds.forEach(p => {
+        if (p.sku) productCacheBySku[businessId][p.sku] = p
+        if (p.name) productCacheByName[businessId][p.name.toLowerCase()] = p
+        productCacheById[businessId][p.id] = p
+      })
     }
+  }
+
+  const remainingSkus = unCachedSkus.filter(s => !productCacheBySku[businessId][s])
+  if (remainingSkus.length > 0) {
+    const { data: skuProds } = await supabase
+      .from('products')
+      .select('*')
+      .eq('business_id', businessId)
+      .in('sku', remainingSkus)
+    if (skuProds) {
+      skuProds.forEach(p => {
+        if (p.sku) productCacheBySku[businessId][p.sku] = p
+        if (p.name) productCacheByName[businessId][p.name.toLowerCase()] = p
+        productCacheById[businessId][p.id] = p
+      })
+    }
+  }
+
+  const remainingNames = unCachedNames.filter(n => !productCacheByName[businessId][n.toLowerCase()])
+  if (remainingNames.length > 0) {
+    const { data: nameProds } = await supabase
+      .from('products')
+      .select('*')
+      .eq('business_id', businessId)
+      .in('name', remainingNames)
+    if (nameProds) {
+      nameProds.forEach(p => {
+        if (p.sku) productCacheBySku[businessId][p.sku] = p
+        if (p.name) productCacheByName[businessId][p.name.toLowerCase()] = p
+        productCacheById[businessId][p.id] = p
+      })
+    }
+  }
+
+  // 3. Match items with DB products
+  for (const item of items) {
+    const rawId = item.id || item.product_id
+    const id = (rawId && !String(rawId).startsWith('custom-')) ? String(rawId) : ''
+    const sku = item.sku ? String(item.sku).trim() : ''
+    const name = item.name ? String(item.name).trim() : ''
+
+    let dbProd = (id && productCacheById[businessId]?.[id]) ||
+                 (sku && productCacheBySku[businessId]?.[sku]) ||
+                 (name && productCacheByName[businessId]?.[name.toLowerCase()]) || null
 
     let extractedCostPrice = 0
     if (item.cost_of_goods_sold && typeof item.cost_of_goods_sold === 'object') {
@@ -52,7 +110,7 @@ export async function resolveOrderProducts(
       if (!isNaN(val) && val > 0) extractedCostPrice = val
     }
     if (extractedCostPrice <= 0 && Array.isArray(item.meta_data)) {
-      const cogMeta = item.meta_data.find((m: any) => 
+      const cogMeta = item.meta_data.find((m: any) =>
         ['_wc_cog_item_cost', '_cog_item_cost', 'cost_price', 'cost', 'hpp'].includes(m.key)
       )
       if (cogMeta) {
@@ -65,7 +123,6 @@ export async function resolveOrderProducts(
       extractedCostPrice = itemPrice * (defaultHppPct / 100)
     }
 
-    // Auto-create product
     if (!dbProd && name) {
       const { data: newProd, error: newProdErr } = await supabase
         .from('products')
@@ -81,6 +138,7 @@ export async function resolveOrderProducts(
         })
         .select('*')
         .single()
+
       if (newProdErr) {
         console.error(`Failed to auto-create product: ${newProdErr.message}`)
       } else {
@@ -89,11 +147,9 @@ export async function resolveOrderProducts(
     }
 
     if (dbProd) {
-      // Add/Update Cache
-      if (!productCacheBySku[businessId]) productCacheBySku[businessId] = {}
-      if (!productCacheByName[businessId]) productCacheByName[businessId] = {}
       if (dbProd.sku) productCacheBySku[businessId][dbProd.sku] = dbProd
       if (dbProd.name) productCacheByName[businessId][dbProd.name.toLowerCase()] = dbProd
+      productCacheById[businessId][dbProd.id] = dbProd
 
       matchedProducts.push({ item, dbProduct: dbProd })
     }
@@ -109,93 +165,119 @@ export async function applyStockMovement(
   reference: string,
   supabase: SupabaseClient
 ) {
-  // Determine move type
+  if (!matchedProducts || matchedProducts.length === 0) return
+
   const moveType = direction === 'deduct' ? 'delivery' : 'receipt'
+
+  // 1. Batch fetch recipes for all matched products
+  const productIds = matchedProducts.map(m => m.dbProduct.id)
+  const hppMap = await calculateProductsHppBatch(productIds, supabase)
+
+  // 2. Build target stock movements list
+  const targetMoves = new Map<string, { dbProduct: any; qty: number }>()
 
   for (const { item, dbProduct } of matchedProducts) {
     const itemQty = parseFloat(item.quantity) || 1
+    const hppInfo = hppMap.get(dbProduct.id)
 
-    // Check if product has Variable HPP (Recipe / Ingredients)
-    const { isVariable, ingredients } = await calculateProductHpp(dbProduct.id, supabase)
-
-    if (isVariable && ingredients.length > 0) {
-      // Move ingredients
-      for (const recipe of ingredients) {
+    if (hppInfo?.isVariable && hppInfo.ingredients.length > 0) {
+      for (const recipe of hppInfo.ingredients) {
         const ingProd = recipe.ingredient
         if (ingProd && ingProd.stock_type === 'tracked') {
           const neededQty = Number(recipe.quantity) * itemQty
-          await recordStockMove(businessId, ingProd, neededQty, direction, reference, moveType, supabase)
+          const current = targetMoves.get(ingProd.id)
+          if (current) {
+            current.qty += neededQty
+          } else {
+            targetMoves.set(ingProd.id, { dbProduct: ingProd, qty: neededQty })
+          }
         }
       }
     } else if (dbProduct.stock_type === 'tracked') {
-      // Move physical product
-      await recordStockMove(businessId, dbProduct, itemQty, direction, reference, moveType, supabase)
+      const current = targetMoves.get(dbProduct.id)
+      if (current) {
+        current.qty += itemQty
+      } else {
+        targetMoves.set(dbProduct.id, { dbProduct, qty: itemQty })
+      }
     }
   }
-}
 
-async function recordStockMove(
-  businessId: string,
-  dbProduct: any,
-  qty: number,
-  direction: 'deduct' | 'restore',
-  reference: string,
-  moveType: string,
-  supabase: SupabaseClient
-) {
-  if (qty <= 0) return
+  if (targetMoves.size === 0) return
 
-  // Idempotency Check: check if stock_move already exists for this reference + product + moveType
+  const targetProductIds = Array.from(targetMoves.keys())
+
+  // 3. Batch Idempotency Check
   const { data: existingMoves } = await supabase
     .from('stock_moves')
-    .select('id')
+    .select('product_id')
     .eq('business_id', businessId)
-    .eq('product_id', dbProduct.id)
     .eq('reference', reference)
     .eq('type', moveType)
-    .limit(1)
+    .in('product_id', targetProductIds)
 
-  if (existingMoves && existingMoves.length > 0) {
-    // Stock already moved for this order, skip to prevent double deduction
-    return
+  const existingSet = new Set((existingMoves || []).map(m => m.product_id))
+  const remainingTargetIds = targetProductIds.filter(id => !existingSet.has(id))
+
+  if (remainingTargetIds.length === 0) return
+
+  // 4. Batch fetch current stock_quantity for remaining products
+  const { data: currentProds } = await supabase
+    .from('products')
+    .select('id, stock_quantity, cost_price')
+    .in('id', remainingTargetIds)
+
+  const stockMap = new Map<string, { stock_quantity: number; cost_price: number }>()
+  if (currentProds) {
+    currentProds.forEach(p => {
+      stockMap.set(p.id, {
+        stock_quantity: Number(p.stock_quantity || 0),
+        cost_price: Number(p.cost_price || 0)
+      })
+    })
   }
 
-  const delta = direction === 'deduct' ? -qty : qty
-  const unitCost = Number(dbProduct.cost_price) || 0
+  // 5. Build parallel updates and batch insert records
+  const updatePromises: Promise<any>[] = []
+  const stockMoveInserts: any[] = []
 
-  const { data: currentProd } = await supabase
-    .from('products')
-    .select('stock_quantity')
-    .eq('id', dbProduct.id)
-    .single()
-  
-  const currentStock = currentProd ? Number(currentProd.stock_quantity || 0) : 0
-  const newStock = Math.max(0, currentStock + delta)
+  for (const pId of remainingTargetIds) {
+    const moveInfo = targetMoves.get(pId)
+    if (!moveInfo || moveInfo.qty <= 0) continue
 
-  const { error: stockErr } = await supabase
-    .from('products')
-    .update({ stock_quantity: newStock })
-    .eq('id', dbProduct.id)
+    const currentData = stockMap.get(pId) || { stock_quantity: 0, cost_price: Number(moveInfo.dbProduct.cost_price || 0) }
+    const delta = direction === 'deduct' ? -moveInfo.qty : moveInfo.qty
+    const newStock = Math.max(0, currentData.stock_quantity + delta)
 
-  if (stockErr) {
-    console.error(`Failed to adjust stock for product ${dbProduct.id}: ${stockErr.message}`)
-    return
-  }
+    updatePromises.push(
+      supabase
+        .from('products')
+        .update({ stock_quantity: newStock })
+        .eq('id', pId)
+    )
 
-  // 2. Insert into stock_moves
-  const { error: moveErr } = await supabase
-    .from('stock_moves')
-    .insert({
+    stockMoveInserts.push({
       business_id: businessId,
-      product_id: dbProduct.id,
+      product_id: pId,
       reference: reference,
-      qty: qty,
-      unit_cost: unitCost,
+      qty: moveInfo.qty,
+      unit_cost: currentData.cost_price,
       status: 'done',
       type: moveType
     })
+  }
 
-  if (moveErr) {
-    console.error(`Failed to insert stock move for ${dbProduct.id}: ${moveErr.message}`)
+  if (updatePromises.length > 0) {
+    await Promise.all(updatePromises)
+  }
+
+  if (stockMoveInserts.length > 0) {
+    const { error: batchMoveErr } = await supabase
+      .from('stock_moves')
+      .insert(stockMoveInserts)
+
+    if (batchMoveErr) {
+      console.error('Failed batch inserting stock moves:', batchMoveErr.message)
+    }
   }
 }

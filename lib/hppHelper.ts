@@ -1,5 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js'
-import { calculateProductHpp } from './recipeHelper'
+import { calculateProductHpp, calculateProductsHppBatch } from './recipeHelper'
+
 
 export interface ItemizedHppInput {
   item: {
@@ -83,6 +84,17 @@ export async function generateItemizedHppJournalLines(
     return { journalLines: [], totalCogs: 0, itemizedBreakdown: [] }
   }
 
+  // Batch fetch recipes for physical items
+  let hppMap = new Map<string, any>()
+  if (supabase) {
+    const pIds = itemsWithProducts
+      .filter(i => i.dbProduct?.id && (i.dbProduct.type || 'physical') === 'physical')
+      .map(i => i.dbProduct!.id)
+    if (pIds.length > 0) {
+      hppMap = await calculateProductsHppBatch(pIds, supabase)
+    }
+  }
+
   for (const { item, dbProduct } of itemsWithProducts) {
     const qty = Math.max(1, parseFloat(String(item.quantity || 1)) || 1)
     const prodName = dbProduct?.name || item.name || 'Produk'
@@ -98,9 +110,9 @@ export async function generateItemizedHppJournalLines(
 
     // Check if dynamic recipe / Variable HPP calculation applies
     if (dbProduct?.id && supabase) {
-      const { isVariable, unitHpp } = await calculateProductHpp(dbProduct.id, supabase)
-      if (isVariable && unitHpp > 0) {
-        effectiveCost = unitHpp
+      const hppInfo = hppMap.get(dbProduct.id)
+      if (hppInfo?.isVariable && hppInfo.unitHpp > 0) {
+        effectiveCost = hppInfo.unitHpp
         isVariableHpp = true
       }
     }

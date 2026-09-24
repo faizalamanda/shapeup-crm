@@ -18,10 +18,92 @@ export type RecipeIngredient = {
   }
 }
 
+export type ProductHppResult = {
+  isVariable: boolean
+  unitHpp: number
+  ingredients: RecipeIngredient[]
+}
+
+/**
+ * Calculates dynamic HPP for multiple products in a SINGLE batch query.
+ * Returns Map<productId, ProductHppResult>
+ */
+export async function calculateProductsHppBatch(
+  productIds: string[],
+  supabase: SupabaseClient
+): Promise<Map<string, ProductHppResult>> {
+  const result = new Map<string, ProductHppResult>()
+  const validIds = Array.from(new Set(productIds.filter(Boolean)))
+  if (validIds.length === 0) return result
+
+  try {
+    const { data: recipes, error } = await supabase
+      .from('product_recipes')
+      .select('id, business_id, product_id, ingredient_product_id, quantity, unit, notes, ingredient:products!ingredient_product_id(id, name, cost_price, stock_type, stock_quantity, unit)')
+      .in('product_id', validIds)
+
+    if (error || !recipes) {
+      console.error('Error in calculateProductsHppBatch:', error)
+      return result
+    }
+
+    const grouped = new Map<string, any[]>()
+    for (const r of recipes) {
+      const pId = r.product_id
+      if (!grouped.has(pId)) grouped.set(pId, [])
+      grouped.get(pId)!.push(r)
+    }
+
+    for (const pId of validIds) {
+      const pRecipes = grouped.get(pId)
+      if (!pRecipes || pRecipes.length === 0) {
+        result.set(pId, { isVariable: false, unitHpp: 0, ingredients: [] })
+        continue
+      }
+
+      let unitHpp = 0
+      const formattedRecipes: RecipeIngredient[] = []
+
+      for (const r of pRecipes) {
+        const ingObj = Array.isArray(r.ingredient) ? r.ingredient[0] : r.ingredient
+        const ingCost = Number(ingObj?.cost_price || 0)
+        const qty = Number(r.quantity || 0)
+        unitHpp += ingCost * qty
+
+        formattedRecipes.push({
+          id: r.id,
+          business_id: r.business_id,
+          product_id: r.product_id,
+          ingredient_product_id: r.ingredient_product_id,
+          quantity: qty,
+          unit: r.unit || 'pcs',
+          notes: r.notes,
+          ingredient: ingObj ? {
+            id: ingObj.id,
+            name: ingObj.name,
+            cost_price: Number(ingObj.cost_price || 0),
+            stock_type: ingObj.stock_type,
+            stock_quantity: Number(ingObj.stock_quantity || 0),
+            unit: ingObj.unit || 'pcs'
+          } : undefined
+        })
+      }
+
+      result.set(pId, { isVariable: true, unitHpp, ingredients: formattedRecipes })
+    }
+
+    return result
+  } catch (err) {
+    console.error('Error in calculateProductsHppBatch execution:', err)
+    return result
+  }
+}
+
 /**
  * Calculates dynamic HPP for a product based on its recipe ingredients.
  * Returns { isVariable: boolean, unitHpp: number, ingredients: RecipeIngredient[] }
  */
+
 export async function calculateProductHpp(
   productId: string,
   supabase: SupabaseClient

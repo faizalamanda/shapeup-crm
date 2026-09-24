@@ -181,27 +181,28 @@ export async function POST(req: Request) {
       line_items: lineItems
     }
 
-    // 6. Insert Order
+    const orderPayload = {
+      business_id: businessId,
+      customer_id: resolvedCustomerId,
+      order_number: orderNumber,
+      source_platform: 'POS',
+      order_date: new Date().toISOString(),
+      order_date_utc: new Date().toISOString(),
+      total_qty: items.reduce((acc: number, item: any) => acc + item.quantity, 0),
+      subtotal: subtotal || grand_total + discount_amount,
+      shipping_cost: 0,
+      discount_amount: discount_amount,
+      other_fees: 0,
+      grand_total: grand_total,
+      payment_method: payment_method === 'cash' ? 'Cash' : 'Bank/QRIS',
+      status: 'completed',
+      items_json: lineItems,
+      raw_source_data: rawSourceData
+    }
+
     const { data: order, error: orderInsertErr } = await supabase
       .from('orders')
-      .insert({
-        business_id: businessId,
-        customer_id: resolvedCustomerId,
-        order_number: orderNumber,
-        source_platform: 'POS',
-        order_date: new Date().toISOString(),
-        order_date_utc: new Date().toISOString(),
-        total_qty: items.reduce((acc, item) => acc + item.quantity, 0),
-        subtotal: subtotal || grand_total + discount_amount,
-        shipping_cost: 0,
-        discount_amount: discount_amount,
-        other_fees: 0,
-        grand_total: grand_total,
-        payment_method: payment_method === 'cash' ? 'Cash' : 'Bank/QRIS',
-        status: 'completed',
-        items_json: lineItems,
-        raw_source_data: rawSourceData
-      })
+      .insert(orderPayload)
       .select('id')
       .single()
 
@@ -209,8 +210,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Gagal membuat pesanan: ' + orderInsertErr.message }, { status: 500 })
     }
 
+    const fullOrder = { id: order.id, ...orderPayload }
+
     // 7. Record Ledger transaction, stock reduction & journal lines using unified service
-    const syncRes = await syncOrderToLedger(order.id, supabase)
+    const syncRes = await syncOrderToLedger(order.id, supabase, fullOrder)
     if (!syncRes.success) {
       return NextResponse.json({ error: 'Gagal mencatat transaksi akuntansi: ' + syncRes.message }, { status: 500 })
     }

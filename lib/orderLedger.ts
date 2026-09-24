@@ -9,20 +9,95 @@ const isCodOrder = (order: any) => {
   return (order.payment_method || '').toUpperCase().includes('COD')
 }
 
+// In-memory cache for integration settings per businessId
+const integrationConfigCache: Record<string, {
+  defaultHppPct: number
+  stockReductionStatuses: Record<string, string[]>
+  journalHppStatuses: Record<string, string[]>
+  timestamp: number
+}> = {}
+
+async function getIntegrationConfigs(businessId: string, platform: string, supabase: SupabaseClient) {
+  const now = Date.now()
+  const pKey = platform.toLowerCase()
+  const cached = integrationConfigCache[businessId]
+  if (cached && (now - cached.timestamp < 60000) && cached.stockReductionStatuses[pKey]) {
+    return {
+      defaultHppPct: cached.defaultHppPct,
+      stockReductionStatuses: cached.stockReductionStatuses[pKey] || ['shipped', 'completed'],
+      journalHppStatuses: cached.journalHppStatuses[pKey] || ['shipped', 'completed']
+    }
+  }
+
+  let defaultHppPct = 0
+  let stockReductionStatuses = ['shipped', 'completed']
+  let journalHppStatuses = ['shipped', 'completed']
+
+  try {
+    const { data: configRows } = await supabase
+      .from('integrations')
+      .select('platform_name, api_credentials')
+      .filter('api_credentials->>business_id', 'eq', businessId)
+
+    const mapConfig: Record<string, any> = {}
+    if (Array.isArray(configRows)) {
+      configRows.forEach((row) => {
+        mapConfig[row.platform_name] = row.api_credentials || {}
+      })
+    }
+
+    const globalCreds = mapConfig['global'] || {}
+    if (typeof globalCreds.global_default_hpp_percentage === 'number') {
+      defaultHppPct = Math.max(0, Math.min(100, globalCreds.global_default_hpp_percentage))
+    }
+
+    const platformCreds = mapConfig[pKey] || {}
+    const useGlobal = platformCreds.use_global_settings !== false
+
+    if (!useGlobal && Array.isArray(platformCreds.stock_reduction_status) && platformCreds.stock_reduction_status.length > 0) {
+      stockReductionStatuses = platformCreds.stock_reduction_status
+    } else if (Array.isArray(globalCreds.global_stock_reduction_status) && globalCreds.global_stock_reduction_status.length > 0) {
+      stockReductionStatuses = globalCreds.global_stock_reduction_status
+    }
+
+    if (!useGlobal && Array.isArray(platformCreds.journal_hpp_status) && platformCreds.journal_hpp_status.length > 0) {
+      journalHppStatuses = platformCreds.journal_hpp_status
+    } else if (Array.isArray(globalCreds.global_journal_hpp_status) && globalCreds.global_journal_hpp_status.length > 0) {
+      journalHppStatuses = globalCreds.global_journal_hpp_status
+    }
+
+    integrationConfigCache[businessId] = {
+      defaultHppPct,
+      stockReductionStatuses: { ...(cached?.stockReductionStatuses || {}), [pKey]: stockReductionStatuses },
+      journalHppStatuses: { ...(cached?.journalHppStatuses || {}), [pKey]: journalHppStatuses },
+      timestamp: now
+    }
+  } catch (err) {
+    console.warn('Failed to load integration config:', err)
+  }
+
+  return { defaultHppPct, stockReductionStatuses, journalHppStatuses }
+}
+
 export async function syncOrderToLedger(
   orderId: string,
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  preloadedOrder?: any
 ): Promise<{ success: boolean; message: string }> {
   try {
-    // 1. Fetch the order
-    const { data: order, error: orderErr } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('id', orderId)
-      .single()
+    // 1. Fetch the order if not preloaded
+    let order = preloadedOrder
+    if (!order) {
+      const { data: fetchedOrder, error: orderErr } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .single()
 
-    if (orderErr || !order) {
-      throw new Error(`Order not found or error: ${orderErr?.message || 'unknown'}`)
+      if (orderErr || !fetchedOrder) {
+        throw new Error(`Order not found or error: ${orderErr?.message || 'unknown'}`)
+      }
+      order = fetchedOrder
     }
 
     const { business_id: businessId, order_number: orderNumber, status, grand_total } = order
@@ -33,52 +108,50 @@ export async function syncOrderToLedger(
     // 2. Resolve Accounts
     const accountMap = await getOrCreateDefaultAccounts(businessId, supabase)
 
-    // 3. Resolve Products (Auto-create & Cache)
-    let defaultHppPct = 0
-    try {
-      const { data: globalInt } = await supabase
-        .from('integrations')
-        .select('api_credentials')
-        .eq('platform_name', 'global')
-        .filter('api_credentials->>business_id', 'eq', businessId)
-        .limit(1)
-      if (globalInt && globalInt.length > 0 && typeof globalInt[0].api_credentials?.global_default_hpp_percentage === 'number') {
-        defaultHppPct = Math.max(0, Math.min(100, globalInt[0].api_credentials.global_default_hpp_percentage))
-      }
-    } catch (_) {}
+    // 3. Resolve Products & Integration Configs
+    const { defaultHppPct, stockReductionStatuses, journalHppStatuses } =
+      await getIntegrationConfigs(businessId, platform, supabase)
 
     const matchedProducts = await resolveOrderProducts(items, businessId, defaultHppPct, supabase)
 
-    // 4. Fetch existing transactions
-    const { data: txs, error: txsErr } = await supabase
-      .from('transactions')
-      .select('*, journal_lines(*)')
-      .eq('order_id', orderId)
+    // 4. Fetch existing transactions (Skip query for brand new orders!)
+    let salesTx: any = undefined
+    let paymentTx: any = undefined
+    let reversalSalesTx: any = undefined
+    let reversalPaymentTx: any = undefined
+    const isNewOrder = Boolean(preloadedOrder)
 
-    if (txsErr) {
-      throw new Error(`Failed to fetch existing transactions: ${txsErr.message}`)
+    if (!isNewOrder) {
+      const { data: txs, error: txsErr } = await supabase
+        .from('transactions')
+        .select('*, journal_lines(*)')
+        .eq('order_id', orderId)
+
+      if (txsErr) {
+        throw new Error(`Failed to fetch existing transactions: ${txsErr.message}`)
+      }
+
+      const isSalesTx = (tx: any) => 
+        (tx.description.includes('Penjualan') || tx.description.includes('Penerbitan') || tx.description.includes('Sales')) && 
+        !tx.description.includes('Pembatalan') && !tx.description.includes('Retur') && !tx.description.includes('Refund') && !tx.description.includes('Reversal')
+
+      const isPaymentTx = (tx: any) => 
+        (tx.description.includes('Pelunasan') || tx.description.includes('Pembayaran') || tx.description.includes('Payment')) && 
+        !tx.description.includes('Pembatalan') && !tx.description.includes('Retur') && !tx.description.includes('Refund') && !tx.description.includes('Reversal')
+
+      const isReversalSalesTx = (tx: any) => 
+        (tx.description.includes('Pembatalan') || tx.description.includes('Retur') || tx.description.includes('Refund') || tx.description.includes('Reversal')) && 
+        (tx.description.includes('Penjualan') || tx.description.includes('Penerbitan') || tx.description.includes('Sales'))
+
+      const isReversalPaymentTx = (tx: any) => 
+        (tx.description.includes('Pembatalan') || tx.description.includes('Retur') || tx.description.includes('Refund') || tx.description.includes('Reversal')) && 
+        (tx.description.includes('Pelunasan') || tx.description.includes('Pembayaran') || tx.description.includes('Payment'))
+
+      salesTx = txs?.find(isSalesTx)
+      paymentTx = txs?.find(isPaymentTx)
+      reversalSalesTx = txs?.find(isReversalSalesTx)
+      reversalPaymentTx = txs?.find(isReversalPaymentTx)
     }
-
-    const isSalesTx = (tx: any) => 
-      (tx.description.includes('Penjualan') || tx.description.includes('Penerbitan') || tx.description.includes('Sales')) && 
-      !tx.description.includes('Pembatalan') && !tx.description.includes('Retur') && !tx.description.includes('Refund') && !tx.description.includes('Reversal')
-
-    const isPaymentTx = (tx: any) => 
-      (tx.description.includes('Pelunasan') || tx.description.includes('Pembayaran') || tx.description.includes('Payment')) && 
-      !tx.description.includes('Pembatalan') && !tx.description.includes('Retur') && !tx.description.includes('Refund') && !tx.description.includes('Reversal')
-
-    const isReversalSalesTx = (tx: any) => 
-      (tx.description.includes('Pembatalan') || tx.description.includes('Retur') || tx.description.includes('Refund') || tx.description.includes('Reversal')) && 
-      (tx.description.includes('Penjualan') || tx.description.includes('Penerbitan') || tx.description.includes('Sales'))
-
-    const isReversalPaymentTx = (tx: any) => 
-      (tx.description.includes('Pembatalan') || tx.description.includes('Retur') || tx.description.includes('Refund') || tx.description.includes('Reversal')) && 
-      (tx.description.includes('Pelunasan') || tx.description.includes('Pembayaran') || tx.description.includes('Payment'))
-
-    let salesTx = txs?.find(isSalesTx)
-    const paymentTx = txs?.find(isPaymentTx)
-    const reversalSalesTx = txs?.find(isReversalSalesTx)
-    const reversalPaymentTx = txs?.find(isReversalPaymentTx)
 
     // Determine payment date
     let paymentDate = new Date().toISOString()
@@ -93,42 +166,6 @@ export async function syncOrderToLedger(
         else if (raw.date_paid) paymentDate = new Date(raw.date_paid).toISOString()
         else paymentDate = order.order_date_utc || order.order_date || new Date().toISOString()
       }
-    }
-
-    // 5. Fetch Integration trigger settings
-    let stockReductionStatuses = ['shipped', 'completed']
-    let journalHppStatuses = ['shipped', 'completed']
-
-    try {
-      const { data: configRows } = await supabase
-        .from('integrations')
-        .select('platform_name, api_credentials')
-        .in('platform_name', ['global', platform.toLowerCase()])
-        .filter('api_credentials->>business_id', 'eq', businessId)
-
-      const mapConfig: Record<string, any> = {}
-      if (Array.isArray(configRows)) {
-        configRows.forEach((row) => {
-          mapConfig[row.platform_name] = row.api_credentials || {}
-        })
-      }
-      const globalCreds = mapConfig['global'] || {}
-      const platformCreds = mapConfig[platform.toLowerCase()] || {}
-      const useGlobal = platformCreds.use_global_settings !== false
-
-      if (!useGlobal && Array.isArray(platformCreds.stock_reduction_status) && platformCreds.stock_reduction_status.length > 0) {
-        stockReductionStatuses = platformCreds.stock_reduction_status
-      } else if (Array.isArray(globalCreds.global_stock_reduction_status) && globalCreds.global_stock_reduction_status.length > 0) {
-        stockReductionStatuses = globalCreds.global_stock_reduction_status
-      }
-
-      if (!useGlobal && Array.isArray(platformCreds.journal_hpp_status) && platformCreds.journal_hpp_status.length > 0) {
-        journalHppStatuses = platformCreds.journal_hpp_status
-      } else if (Array.isArray(globalCreds.global_journal_hpp_status) && globalCreds.global_journal_hpp_status.length > 0) {
-        journalHppStatuses = globalCreds.global_journal_hpp_status
-      }
-    } catch (cfgErr) {
-      console.warn('Failed to load trigger settings hierarchy:', cfgErr)
     }
 
     const isSalesTriggered = stockReductionStatuses.includes(status) || 
@@ -189,7 +226,6 @@ export async function syncOrderToLedger(
         }
 
         if (isPartialCommit && salesTx) {
-          // Self heal: inject the missing lines directly to the existing transaction
           const dbJournalLines = journalLines.map(line => ({
             transaction_id: salesTx.id,
             account_id: line.account_id,
@@ -198,14 +234,14 @@ export async function syncOrderToLedger(
           }))
           await supabase.from('journal_lines').insert(dbJournalLines)
         } else {
-          // Normal creation
           await postJournalTransaction(
             businessId, 
             orderId, 
             order.order_date_utc || order.order_date || new Date().toISOString(), 
             `Penjualan ${platform} #${orderNumber}`, 
             journalLines, 
-            supabase
+            supabase,
+            isNewOrder
           )
         }
       } else {
@@ -247,7 +283,8 @@ export async function syncOrderToLedger(
             paymentDate,
             `Pembayaran ${platform} #${orderNumber}`,
             paymentLines,
-            supabase
+            supabase,
+            isNewOrder
           )
         }
       } else if (isCod && status !== 'completed') {
