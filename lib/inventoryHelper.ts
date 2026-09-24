@@ -250,10 +250,12 @@ export async function applyStockMovement(
     const newStock = Math.max(0, currentData.stock_quantity + delta)
 
     updatePromises.push(
-      supabase
-        .from('products')
-        .update({ stock_quantity: newStock })
-        .eq('id', pId)
+      Promise.resolve(
+        supabase
+          .from('products')
+          .update({ stock_quantity: newStock })
+          .eq('id', pId)
+      )
     )
 
     stockMoveInserts.push({
