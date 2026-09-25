@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
 import { StatsPanel } from './components/StatsPanel'
 import { FilterBar, FilterRule } from './components/FilterBar'
@@ -141,10 +141,7 @@ function applyCustomerFilters(query: any, search: string, rules: FilterRule[], p
 }
 
 export default function CustomerPage() {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   const [customers, setCustomers]         = useState<any[]>([])
   const [statsCustomers, setStatsCustomers] = useState<any[]>([])

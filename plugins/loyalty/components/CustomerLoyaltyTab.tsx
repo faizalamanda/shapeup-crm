@@ -1,7 +1,7 @@
 // ─── CustomerLoyaltyTab — Tab Poin & Loyalty di Customer Detail ───────────────
 "use client"
 import { useState, useEffect, useCallback } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import {
   CustomerPoints,
   LoyaltyPointLedger,
@@ -38,10 +38,7 @@ interface CustomerLoyaltyTabProps {
 }
 
 export function CustomerLoyaltyTab({ customerId, businessId, customerName }: CustomerLoyaltyTabProps) {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   const [settings, setSettings] = useState<LoyaltySettings | null>(null)
   const [points, setPoints] = useState<CustomerPoints | null>(null)

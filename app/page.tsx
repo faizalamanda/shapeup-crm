@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 
 export default function Home() {
   const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null)
@@ -14,10 +14,7 @@ export default function Home() {
   const [avgOrderValue, setAvgOrderValue] = useState(250000)
   const [repeatRate, setRepeatRate] = useState(25) // %
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   useEffect(() => {
     async function checkAuth() {

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { canAccessPath } from '@/lib/permissions'
 import { useUserContext } from '@/components/UserContext'
 import { getLocalDateRangeLimits, localDateToUtcBounds } from '@/lib/localzone'
@@ -234,10 +234,7 @@ const ONBOARDING_STAGES: OnboardingTask[] = [
 ]
 
 export default function OnboardingPage() {
-  const supabase = useMemo(() => createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ), [])
+  // Using singleton supabase client from @/lib/supabase
 
   // Consume instant UserContext state (0ms delay via cache)
   const { currentUserRole, currentUserPermissions, isWabaActive, bizLoading: isRoleLoading, userProfile, activeBusiness } = useUserContext()

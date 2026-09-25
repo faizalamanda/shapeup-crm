@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
@@ -30,10 +30,7 @@ export default function CustomerImportPage() {
   const router = useRouter()
   
   // Supabase & Context State
-  const [supabase] = useState(() => createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ))
+  // Using singleton supabase client from @/lib/supabase
   const [activeBizName, setActiveBizName] = useState<string | null>(null)
   const [activeBizId, setActiveBizId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)

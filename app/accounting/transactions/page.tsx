@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { formatCurrencyIDR, getDateRangeLimits, DateRangeKey } from '../utils'
 import { sortTransactionsNewestFirst, formatDisplayDate } from '@/lib/timeUtils'
 import * as XLSX from 'xlsx'
@@ -285,10 +285,7 @@ function parseHistoryList(description?: string | null): any[] {
 }
 
 export default function TransactionsPage() {
-  const supabase = useMemo(() => createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ), [])
+  // Using singleton supabase client from @/lib/supabase
 
   const [mounted, setMounted] = useState<boolean>(false)
   useEffect(() => {

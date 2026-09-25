@@ -7,7 +7,7 @@ import {
   useRef,
   useMemo,
 } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import type { KirimDevConversation, KirimDevMessage } from '../types'
 
@@ -171,10 +171,7 @@ export default function KirimDevInbox({
   initialConfigured = true,
   initialActive = true,
 }: KirimDevInboxProps) {
-  const supabase = useMemo(() => createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ), [])
+  // Using singleton supabase client from @/lib/supabase
 
   // ── State ───────────────────────────────────────────────────
   const [activeBusinessId, setActiveBusinessId] = useState<string | null>(null)

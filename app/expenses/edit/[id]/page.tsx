@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { getAccounts } from '@/lib/services/accountService'
 import { getSuppliers } from '@/lib/services/supplierService'
 
@@ -55,10 +55,7 @@ type Supplier = {
 }
 
 export default function EditExpensePage() {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
   const router = useRouter()
   const params = useParams()
   const expenseId = params.id as string

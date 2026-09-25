@@ -1,6 +1,6 @@
 "use client"
 import { useState, useMemo } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { seedDefaultCOA } from '@/lib/coa'
 
 const TIMEZONE_OPTIONS = [
@@ -25,10 +25,7 @@ type OnboardingProps = {
 }
 
 export default function BusinessOnboarding({ onLogout }: OnboardingProps) {
-  const supabase = useMemo(() => createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ), [])
+  // Using singleton supabase client from @/lib/supabase
 
   const [step, setStep] = useState(1)
   const [formData, setFormData] = useState({

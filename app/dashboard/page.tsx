@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
 import Link from 'next/link'
 
@@ -94,13 +94,7 @@ const normalizeStatus = (status?: string | null) => (
 const isCountedOrderStatus = (status?: string | null) => countedStatuses.has(normalizeStatus(status))
 
 export default function DashboardPage() {
-  const supabase = useMemo(
-    () => createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    ),
-    []
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   // Helper to format Date to local YYYY-MM-DD string to avoid timezone offset shifts
   const formatDateToLocalYYYYMMDD = useCallback((d: Date) => {

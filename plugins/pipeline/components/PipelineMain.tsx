@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { supabase } from '@/lib/supabase';
 import { useUserContext } from '@/components/UserContext';
 import {
   Pipeline,
@@ -51,12 +51,7 @@ interface PipelineMainProps {
 export default function PipelineMain({ initialPipelineId, onBackToHub }: PipelineMainProps = {}) {
   const { activeBusiness, userProfile } = useUserContext();
   
-  const supabase = useMemo(() => {
-    return createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-    );
-  }, []);
+  // Using imported singleton supabase client
 
   // Pipelines state
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);

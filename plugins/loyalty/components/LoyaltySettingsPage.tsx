@@ -1,6 +1,6 @@
 "use client"
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
 import {
   LoyaltySettings,
@@ -125,10 +125,7 @@ function TierRow({
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function LoyaltySettingsPage() {
-  const supabase = useMemo(() => createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ), [])
+  // Using singleton supabase client from @/lib/supabase
 
   const { activeBusiness } = useUserContext()
   const businessId = activeBusiness?.id ?? null

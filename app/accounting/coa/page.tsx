@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { formatCurrencyIDR } from '../utils'
 
 // Dynamic classification rules based on account type and code prefixes (WaveApps classification style)
@@ -97,10 +97,7 @@ type Toast = {
 }
 
 export default function ChartOfAccountsPage() {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   // Profile and Business context
   const [activeBizId, setActiveBizId] = useState<string | null>(null)

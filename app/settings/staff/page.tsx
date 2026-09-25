@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import SettingsLayout from '@/components/SettingsLayout'
 
@@ -12,10 +12,7 @@ export default function StaffSettings() {
     setMounted(true)
   }, [])
 
-  const supabase = useMemo(() => createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ), [])
+  // Using singleton supabase client from @/lib/supabase
 
   const [staffList, setStaffList] = useState<any[]>([])
   const [loading, setLoading] = useState(true)

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { createPortal } from 'react-dom'
 
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { CustomerAddressForm, AddressData, EMPTY_ADDRESS } from '@/components/CustomerAddressForm'
 import { CustomerLoyaltyTab } from '@/plugins/loyalty/components/CustomerLoyaltyTab'
 
@@ -59,10 +59,7 @@ export function CustomerDetail({ customer, onClose, onUpdate }: CustomerDetailPr
   const [editTags, setEditTags] = useState<string[]>([])
   const [newTagInput, setNewTagInput] = useState('')
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   useEffect(() => {
     setMounted(true)

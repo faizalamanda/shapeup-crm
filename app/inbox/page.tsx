@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 
 interface CustomerInfo {
@@ -45,10 +45,7 @@ interface Message {
 }
 
 export default function InboxPage() {
-  const supabase = useMemo(() => createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ), [])
+  // Using singleton supabase client from @/lib/supabase
 
   const [activeBusinessId, setActiveBusinessId] = useState<string | null>(null)
   const [activeBusinessName, setActiveBusinessName] = useState<string>('')

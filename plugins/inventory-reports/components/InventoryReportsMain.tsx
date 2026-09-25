@@ -1,6 +1,6 @@
 "use client"
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import * as XLSX from 'xlsx'
 import {
   StockReportItem,
@@ -25,14 +25,7 @@ import ValuationTab from './ValuationTab'
 type ActiveTab = 'stock' | 'location' | 'moves' | 'analysis' | 'valuation'
 
 export default function InventoryReportsMain() {
-  const supabase = useMemo(
-    () =>
-      createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   // Active tab state initialized with localStorage persistence
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {

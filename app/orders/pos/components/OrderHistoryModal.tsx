@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 
 type Order = {
   id: string
@@ -25,10 +25,7 @@ type OrderHistoryModalProps = {
 }
 
 export default function OrderHistoryModal({ isOpen, onClose, businessId, onRefundCompleted }: OrderHistoryModalProps) {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   const [mounted, setMounted] = useState(false)
   const [orders, setOrders] = useState<Order[]>([])

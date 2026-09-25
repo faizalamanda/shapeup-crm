@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import QuickAddProductModal from '@/components/QuickAddProductModal'
@@ -58,13 +58,7 @@ const formatAddress = (addr: any) => {
 }
 
 export default function NewInvoicePage() {
-  const supabase = useMemo(
-    () => createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    ),
-    []
-  )
+  // Using singleton supabase client from @/lib/supabase
   const router = useRouter()
 
   // Master Data States

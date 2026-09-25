@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 
@@ -164,13 +164,7 @@ const formatAddress = (addr: any) => {
 }
 
 export default function InvoiceDetailPage() {
-  const supabase = useMemo(
-    () => createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    ),
-    []
-  )
+  // Using singleton supabase client from @/lib/supabase
   const params = useParams()
   const router = useRouter()
   const invoiceId = params.id as string

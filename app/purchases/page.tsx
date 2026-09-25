@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { PurchaseDetailModal } from './components/PurchaseDetailModal'
 import { SupplierSelectCombobox } from '@/components/SupplierSelectCombobox'
 import { ProductSelectCombobox } from '@/components/ProductSelectCombobox'
@@ -68,10 +68,7 @@ type Purchase = {
 }
 
 export default function PurchasesPage() {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   const [purchases, setPurchases] = useState<Purchase[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])

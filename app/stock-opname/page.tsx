@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 
 type Product = {
   id: string
@@ -49,10 +49,7 @@ type StockOpname = {
 }
 
 export default function StockOpnamePage() {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   const [opnames, setOpnames] = useState<StockOpname[]>([])
   const [products, setProducts] = useState<Product[]>([])

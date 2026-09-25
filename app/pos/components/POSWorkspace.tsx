@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import VariantSelectorModal from './VariantSelectorModal'
 import CashPaymentModal from './CashPaymentModal'
 import ReceiptPreviewModal from './ReceiptPreviewModal'
@@ -27,10 +27,7 @@ const getPastelBadge = (name: string) => {
 }
 
 export default function POSWorkspace() {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   // Auth & Profile State
   const [loadingInit, setLoadingInit] = useState(true)

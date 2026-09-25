@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, Suspense } from 'react'
 import { createPortal } from 'react-dom'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import SettingsLayout from '@/components/SettingsLayout'
@@ -112,10 +112,7 @@ function BusinessSettingsInner() {
   const searchParams = useSearchParams()
   const currentTab = searchParams.get('tab') || 'profile'
 
-  const supabase = useMemo(() => createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ), [])
+  // Using singleton supabase client from @/lib/supabase
   
   const [loading, setLoading] = useState(true)
   const [isCreating, setIsCreating] = useState(false)

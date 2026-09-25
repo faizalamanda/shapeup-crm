@@ -1,7 +1,7 @@
 "use client"
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import { ExpenseDetailModal } from './components/ExpenseDetailModal'
 import { Pagination } from '../components/Pagination'
@@ -70,10 +70,7 @@ type Expense = {
 
 export default function ExpensesPage() {
   const { activeBusiness } = useUserContext()
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])

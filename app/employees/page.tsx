@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
 import { formatCurrencyIDR } from '../accounting/utils'
 
@@ -50,10 +50,7 @@ type Account = {
 }
 
 export default function EmployeesPage() {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
   const router = useRouter()
 
   const [activeTab, setActiveTab] = useState<'directory' | 'payroll'>('directory')

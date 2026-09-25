@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { logoutAction } from '@/app/auth/actions'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { canAccessPath } from '@/lib/permissions'
 import "./globals.css"
 import BusinessOnboarding from '@/components/BusinessOnboarding'

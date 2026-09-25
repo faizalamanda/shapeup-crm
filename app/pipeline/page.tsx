@@ -1,6 +1,6 @@
 "use client"
 import React, { useEffect, useState, useCallback } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
 import PipelineMain from '@/plugins/pipeline'
 import PipelineHub from '@/plugins/pipeline/components/PipelineHub'
@@ -16,10 +16,7 @@ export default function PipelinePage() {
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null)
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
 
-  const supabase = React.useMemo(() => createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-  ), [])
+  // Using singleton supabase client from @/lib/supabase
 
   const checkAccess = useCallback(async () => {
     if (!activeBusiness?.id || !userProfile?.id) return

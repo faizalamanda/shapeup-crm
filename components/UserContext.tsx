@@ -283,7 +283,19 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  const isLoggingOutRef = useRef(false)
+
   const handleUnauthenticatedSession = useCallback((reason = 'INITIAL_SESSION') => {
+    // If reason is not explicit logout, check if user has local cached profile
+    if (reason !== 'EXPLICIT_LOGOUT' && !isLoggingOutRef.current) {
+      const hasCachedProfile = typeof window !== 'undefined' && Boolean(localStorage.getItem('su_cached_user_profile'))
+      if (hasCachedProfile) {
+        console.warn('[UserContext] Suppressing unauthenticated redirect due to existing cached profile.')
+        setBizLoading(false)
+        return
+      }
+    }
+
     loadedUserIdRef.current = null
     setUserProfile(null)
     setBusinesses([])
@@ -343,7 +355,21 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
           const force = event === 'SIGNED_IN' || event === 'USER_UPDATED' || session.user.id !== loadedUserIdRef.current
           loadProfileAndBusinesses(session.user.id, force)
         } else if (event === 'SIGNED_OUT') {
-          handleUnauthenticatedSession('SIGNED_OUT')
+          if (isLoggingOutRef.current) {
+            handleUnauthenticatedSession('EXPLICIT_LOGOUT')
+          } else {
+            // Verify if user is truly unauthenticated or if it was a transient auth error
+            try {
+              const { data: { user } } = await supabase.auth.getUser()
+              if (user?.id) {
+                loadProfileAndBusinesses(user.id, false)
+              } else {
+                handleUnauthenticatedSession('SIGNED_OUT')
+              }
+            } catch {
+              setBizLoading(false)
+            }
+          }
         } else if (event === 'INITIAL_SESSION' && !session) {
           try {
             const { data: { user } } = await supabase.auth.getUser()
@@ -351,7 +377,8 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
               loadProfileAndBusinesses(user.id, true)
             } else {
               const lastUserId = typeof window !== 'undefined' ? localStorage.getItem('su_last_logged_in_user_id') : null
-              if (!lastUserId && !userProfile) {
+              const cachedProfile = typeof window !== 'undefined' ? localStorage.getItem('su_cached_user_profile') : null
+              if (!lastUserId && !cachedProfile && !userProfile) {
                 handleUnauthenticatedSession('INITIAL_SESSION')
               } else {
                 setBizLoading(false)
@@ -404,6 +431,7 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
   }
 
   const handleLogout = async () => {
+    isLoggingOutRef.current = true
     setIsLoggingOut(true)
 
     try {

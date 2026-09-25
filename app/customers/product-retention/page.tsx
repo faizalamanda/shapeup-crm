@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 
 type OrderItem = {
   name?: string | null
@@ -441,13 +441,7 @@ type RpcRetentionResult = {
 }
 
 export default function ProductRetentionPage() {
-  const supabase = useMemo(
-    () => createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    ),
-    []
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   const [orders, setOrders] = useState<FlowOrder[]>([])
   const [loading, setLoading] = useState(true)

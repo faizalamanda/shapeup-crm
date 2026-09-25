@@ -1,6 +1,6 @@
 "use client"
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
 import { OrderStats } from './components/OrderStats'
 import { OrderTable } from './components/OrderTable'
@@ -51,10 +51,7 @@ function writeCache(bid: string, payloadData: { metrics: any; orders: any[]; tot
 }
 
 export default function OrderPage() {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   const [orders, setOrders]                     = useState<any[]>([])
   const [totalCount, setTotalCount]             = useState<number>(0)

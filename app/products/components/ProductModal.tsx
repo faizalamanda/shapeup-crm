@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 
 type Category = {
   id: string
@@ -174,10 +174,7 @@ function IngredientSearchCombobox({ options, selectedId, onSelect, placeholder =
 }
 
 export default function ProductModal({ isOpen, onClose, onSave, product, businessId }: ProductModalProps) {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Using singleton supabase client from @/lib/supabase
 
   const [mounted, setMounted] = useState(false)
   const [categories, setCategories] = useState<Category[]>([])
