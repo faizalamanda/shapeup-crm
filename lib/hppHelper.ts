@@ -70,7 +70,8 @@ export async function generateItemizedHppJournalLines(
   itemsWithProducts: ItemizedHppInput[],
   accountMap: Record<string, string>,
   transactionId: string,
-  supabase?: SupabaseClient
+  supabase?: SupabaseClient,
+  precomputedHppMap?: Map<string, any>  // FIX: terima shared hppMap dari orderLedger, hindari double query
 ): Promise<ItemizedHppLineResult> {
   const hppAccountId = accountMap['501000']
   const inventoryAccountId = accountMap['102000']
@@ -84,9 +85,10 @@ export async function generateItemizedHppJournalLines(
     return { journalLines: [], totalCogs: 0, itemizedBreakdown: [] }
   }
 
-  // Batch fetch recipes for physical items
-  let hppMap = new Map<string, any>()
-  if (supabase) {
+  // Gunakan precomputed map jika tersedia (dari orderLedger yang sudah query duluan)
+  // Jika tidak ada, fetch sendiri via batch query seperti sebelumnya
+  let hppMap = precomputedHppMap ?? new Map<string, any>()
+  if (!precomputedHppMap && supabase) {
     const pIds = itemsWithProducts
       .filter(i => i.dbProduct?.id && (i.dbProduct.type || 'physical') === 'physical')
       .map(i => i.dbProduct!.id)

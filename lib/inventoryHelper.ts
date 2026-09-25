@@ -163,15 +163,16 @@ export async function applyStockMovement(
   matchedProducts: { item: any; dbProduct: any }[],
   direction: 'deduct' | 'restore',
   reference: string,
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  precomputedHppMap?: Map<string, any>  // FIX: terima shared hppMap dari orderLedger, hindari double query
 ) {
   if (!matchedProducts || matchedProducts.length === 0) return
 
   const moveType = direction === 'deduct' ? 'delivery' : 'receipt'
 
-  // 1. Batch fetch recipes for all matched products
+  // 1. Batch fetch recipes — gunakan precomputed map jika tersedia (hindari double query)
   const productIds = matchedProducts.map(m => m.dbProduct.id)
-  const hppMap = await calculateProductsHppBatch(productIds, supabase)
+  const hppMap = precomputedHppMap ?? await calculateProductsHppBatch(productIds, supabase)
 
   // 2. Build target stock movements list
   const targetMoves = new Map<string, { dbProduct: any; qty: number }>()
