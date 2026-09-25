@@ -43,3 +43,6 @@ next-env.d.ts
 # supabase temp
 supabase/.temp/
 
+# scratch debug scripts
+/scratch/
+

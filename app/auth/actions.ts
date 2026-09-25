@@ -4,13 +4,14 @@ import { createClient } from '@/lib/supabaseServer'
 import { redirect } from 'next/navigation'
 
 export async function loginAction(formData: FormData) {
-  const email = formData.get('email') as string
+  const rawEmail = formData.get('email') as string
   const password = formData.get('password') as string
 
-  if (!email || !password) {
+  if (!rawEmail || !password) {
     return { error: 'Email dan password harus diisi.' }
   }
 
+  const email = rawEmail.trim().toLowerCase()
   const supabase = await createClient()
   const { error } = await supabase.auth.signInWithPassword({
     email,
@@ -25,14 +26,15 @@ export async function loginAction(formData: FormData) {
 }
 
 export async function registerAction(formData: FormData) {
-  const email = formData.get('email') as string
+  const rawEmail = formData.get('email') as string
   const password = formData.get('password') as string
   const fullName = formData.get('fullName') as string
 
-  if (!email || !password || !fullName) {
+  if (!rawEmail || !password || !fullName) {
     return { error: 'Semua bidang harus diisi.' }
   }
 
+  const email = rawEmail.trim().toLowerCase()
   const supabase = await createClient()
   const { error } = await supabase.auth.signUp({
     email,

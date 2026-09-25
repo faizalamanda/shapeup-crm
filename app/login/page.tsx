@@ -25,10 +25,11 @@ function LoginForm() {
 
     try {
       // 1. Direct Supabase client authentication (with retry for transient 500 server errors)
+      const sanitizedEmail = email.trim().toLowerCase()
       let authErr: any = null
       for (let attempt = 1; attempt <= 3; attempt++) {
         const res = await supabase.auth.signInWithPassword({
-          email,
+          email: sanitizedEmail,
           password,
         })
         authErr = res.error
