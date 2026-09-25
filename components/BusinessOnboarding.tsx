@@ -56,59 +56,34 @@ export default function BusinessOnboarding({ onLogout }: OnboardingProps) {
     try {
       // Step 3-1: Get user session
       setCurrentProgressText("Menghubungkan sesi pengguna...")
-      await delay(800)
+      await delay(600)
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error("Sesi habis, silakan login ulang.")
       setInitProgress(prev => [...prev, 'user'])
 
-      // Step 3-2: Insert Business
-      setCurrentProgressText("Mendaftarkan unit bisnis baru...")
-      await delay(1000)
-      const { data: newBiz, error: bizError } = await supabase
-        .from('businesses')
-        .insert([{ 
-          name: formData.name.trim(), 
+      // Step 3-2: Call API route to register business, update role, staff, and seed COA
+      setCurrentProgressText("Mendaftarkan unit bisnis & menyusun sistem admin...")
+      await delay(600)
+      const response = await fetch('/api/business', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.name.trim(),
           phone: formData.phone.trim() || null,
           timezone: formData.timezone,
-          owner_id: user.id
-        }])
-        .select()
-        .single()
-
-      if (bizError) throw bizError
-      setInitProgress(prev => [...prev, 'biz'])
-
-      // Step 3-3: Setup staff/admin role
-      setCurrentProgressText("Menyusun sistem staff & admin...")
-      await delay(1000)
-      const { error: bsError } = await supabase
-        .from('business_staff')
-        .insert({
-          business_id: newBiz.id,
-          profile_id: user.id,
-          role: 'admin'
+          industry: formData.industry,
         })
-      if (bsError) throw bsError
-      setInitProgress(prev => [...prev, 'staff'])
+      })
 
-      // Step 3-4: Sync active business ID to profile
-      setCurrentProgressText("Menyinkronkan data profil...")
-      await delay(800)
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({ active_business_id: newBiz.id })
-        .eq('id', user.id)
-      if (profileError) throw profileError
-      setInitProgress(prev => [...prev, 'profile'])
+      const resData = await response.json()
+      if (!response.ok || resData.error) {
+        throw new Error(resData.error || "Gagal membuat bisnis, silakan coba lagi.")
+      }
 
-      // Step 3-5: Seed Default Chart of Accounts (COA)
-      setCurrentProgressText("Membuat Chart of Accounts (COA) default...")
-      await delay(800)
-      await seedDefaultCOA(newBiz.id, supabase)
-      setInitProgress(prev => [...prev, 'coa'])
+      setInitProgress(prev => [...prev, 'biz', 'staff', 'profile', 'coa'])
 
       setCurrentProgressText("Semua siap! Mengalihkan ke dashboard...")
-      await delay(1200)
+      await delay(800)
 
       // Reload page to refresh all layouts and context
       window.location.reload()

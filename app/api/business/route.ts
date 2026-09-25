@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { seedDefaultCOA } from '@/lib/coa'
-import { getAuthUser } from '@/lib/supabaseServer'
+import { getAuthUser, getAdminSupabase } from '@/lib/supabaseServer'
 
 export async function POST(req: Request) {
   const cookieStore = await cookies()
@@ -14,11 +14,14 @@ export async function POST(req: Request) {
       cookies: {
         getAll() { return cookieStore.getAll() },
         setAll(cookiesToSet) {
-          // Di Route Handler, setAll seringkali menyebabkan error jika header sudah dikirim
-          // Kita biarkan kosong atau pakai try-catch sederhana
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
+              cookieStore.set(name, value, {
+                ...options,
+                maxAge: 31536000,
+                sameSite: 'lax',
+                path: '/'
+              })
             )
           } catch { /* Ignore */ }
         },
@@ -30,20 +33,25 @@ export async function POST(req: Request) {
     const body = await req.json()
     const { name, address, phone, timezone } = body
     
-    // 1. Cek User
+    // 1. Authenticate user from session/cookies
     const { user, error: authError } = await getAuthUser(supabase)
     if (authError || !user) {
-      return NextResponse.json({ error: "Sesi habis, silakan login ulang" }, { status: 401 })
+      return NextResponse.json({ error: "Sesi habis, silakan login ulang." }, { status: 401 })
     }
 
-    // 2. Simpan Bisnis ke Tabel
-    // Pastikan kolom owner_id ada di tabel businesses
-    const { data: biz, error: bizError } = await supabase
+    if (!name || !name.trim()) {
+      return NextResponse.json({ error: "Nama bisnis wajib diisi." }, { status: 400 })
+    }
+
+    // 2. Use Admin Client (service role) to bypass RLS for business setup
+    const adminSupabase = getAdminSupabase()
+
+    const { data: biz, error: bizError } = await adminSupabase
       .from('businesses')
       .insert({ 
-        name, 
+        name: name.trim(), 
         address: address || '', 
-        phone: phone || '', 
+        phone: phone?.trim() || null, 
         timezone: timezone || 'Asia/Jakarta',
         owner_id: user.id 
       })
@@ -55,12 +63,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Gagal simpan bisnis: ${bizError.message}` }, { status: 400 })
     }
 
-    // 3. Update Profile User: Pasang business_id DAN jadikan role 'admin'
-    const { error: profileError } = await supabase
+    // 3. Update User Profile: set active_business_id, business_id, and promote role to 'admin'
+    const { error: profileError } = await adminSupabase
       .from('profiles')
       .update({ 
         business_id: biz.id,
-        role: 'admin' // Tambahkan ini agar sistem tahu dia bos-nya
+        active_business_id: biz.id,
+        role: 'admin'
       })
       .eq('id', user.id)
 
@@ -69,8 +78,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Gagal update profil: ${profileError.message}` }, { status: 400 })
     }
 
-    // 4. Hubungkan Owner ke business_staff
-    const { error: bsError } = await supabase
+    // 4. Register Owner in business_staff table as Admin
+    const { error: bsError } = await adminSupabase
       .from('business_staff')
       .insert({
         business_id: biz.id,
@@ -78,17 +87,22 @@ export async function POST(req: Request) {
         role: 'admin'
       })
 
-    if (bsError) {
+    if (bsError && !bsError.message.includes('duplicate')) {
       console.error("Business Staff Assignment Error:", bsError)
-      return NextResponse.json({ error: `Gagal mendaftarkan hak akses bisnis: ${bsError.message}` }, { status: 400 })
     }
 
     // 5. Seed Default Chart of Accounts (COA)
-    await seedDefaultCOA(biz.id, supabase)
+    try {
+      await seedDefaultCOA(biz.id, adminSupabase)
+    } catch (e) {
+      console.error("COA Seeding warning:", e)
+    }
 
     return NextResponse.json({ success: true, business: biz })
   } catch (err: unknown) {
-    console.error("Server Error:", err)
-    return NextResponse.json({ error: "Terjadi kesalahan server internal" }, { status: 500 })
+    const msg = err instanceof Error ? err.message : "Terjadi kesalahan server internal"
+    console.error("Server Error in POST /api/business:", err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
+

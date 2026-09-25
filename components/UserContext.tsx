@@ -291,21 +291,34 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
   }, [clearCachedUserData])
 
   useEffect(() => {
-    // Safety timeout (2 seconds): If session resolution takes longer than 2s during cold boot,
-    // evaluate whether user is logged in or offline, releasing loading spinner gracefully.
+    // Safety timeout (3.5 seconds): Release loading state gracefully without kicking user out
     const safetyTimeoutId = setTimeout(async () => {
-      if (loadedUserIdRef.current) return // Already loaded user profile
+      if (loadedUserIdRef.current) return
       try {
         const { data: { session } } = await supabase.auth.getSession()
         if (session?.user?.id) {
           loadProfileAndBusinesses(session.user.id, true)
         } else {
-          handleUnauthenticatedSession('SAFETY_TIMEOUT')
+          setBizLoading(false)
         }
       } catch (e) {
         setBizLoading(false)
       }
-    }, 2000)
+    }, 3500)
+
+    const handleBusinessUpdated = () => {
+      if (loadedUserIdRef.current) {
+        loadProfileAndBusinesses(loadedUserIdRef.current, true)
+      } else {
+        supabase.auth.getUser().then(({ data: { user } }) => {
+          if (user?.id) loadProfileAndBusinesses(user.id, true)
+        })
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('shapeup:business_updated', handleBusinessUpdated)
+    }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
@@ -316,7 +329,6 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
         } else if (event === 'SIGNED_OUT') {
           handleUnauthenticatedSession('SIGNED_OUT')
         } else if (event === 'INITIAL_SESSION' && !session) {
-          // Double-check session asynchronously to avoid premature logout on cold boot
           try {
             const { data: { session: fetchedSession } } = await supabase.auth.getSession()
             if (fetchedSession?.user?.id) {
@@ -335,9 +347,12 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       clearTimeout(safetyTimeoutId)
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('shapeup:business_updated', handleBusinessUpdated)
+      }
       subscription.unsubscribe()
     }
-  }, [supabase, loadProfileAndBusinesses, handleUnauthenticatedSession])
+  }, [supabase, loadProfileAndBusinesses, handleUnauthenticatedSession, userProfile])
 
 
   const handleSwitchBusiness = async (bizId: string) => {
@@ -360,6 +375,11 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
         }
       }
       keysToRemove.forEach(k => localStorage.removeItem(k))
+      
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('shapeup:business_updated'))
+      }
+      await loadProfileAndBusinesses(user.id, true)
       window.location.reload()
     }
   }
@@ -421,13 +441,14 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     isLoggingOut,
     isOffline,
     refreshProfile: async (forceRefresh = true) => {
-      if (loadedUserIdRef.current) {
-        await loadProfileAndBusinesses(loadedUserIdRef.current, forceRefresh)
+      const uid = loadedUserIdRef.current || (await supabase.auth.getUser()).data.user?.id
+      if (uid) {
+        await loadProfileAndBusinesses(uid, forceRefresh)
       }
     },
     handleLogout,
     handleSwitchBusiness,
-  }), [userProfile, activeBusiness, businesses, currentUserRole, currentUserPermissions, isWabaActive, bizLoading, isLoggingOut, isOffline, loadProfileAndBusinesses])
+  }), [userProfile, activeBusiness, businesses, currentUserRole, currentUserPermissions, isWabaActive, bizLoading, isLoggingOut, isOffline, loadProfileAndBusinesses, supabase])
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>
 }

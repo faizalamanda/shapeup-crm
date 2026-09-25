@@ -7,6 +7,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import SettingsLayout from '@/components/SettingsLayout'
 import { seedDefaultCOA } from '@/lib/coa'
+import { useUserContext } from '@/components/UserContext'
 
 const TIMEZONE_OPTIONS = [
   { value: 'Asia/Jakarta', label: 'Indonesia Barat (WIB)' },
@@ -100,6 +101,7 @@ function parseBusinessProfile(biz: any): Business {
 }
 
 function BusinessSettingsInner() {
+  const { refreshProfile } = useUserContext()
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -230,6 +232,10 @@ function BusinessSettingsInner() {
     const { data: { user } } = await supabase.auth.getUser()
     await supabase.from('profiles').update({ active_business_id: bid }).eq('id', user?.id)
     setActiveBid(bid)
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('shapeup:business_updated'))
+    }
+    await refreshProfile(true)
     window.location.reload()
   }
 
@@ -307,6 +313,10 @@ function BusinessSettingsInner() {
 
       setSaveSuccessMsg('Profil bisnis berhasil diperbarui!')
       await fetchData()
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('shapeup:business_updated'))
+      }
+      await refreshProfile(true)
       setTimeout(() => setSaveSuccessMsg(''), 4000)
 
     } catch (err: unknown) {
@@ -323,44 +333,28 @@ function BusinessSettingsInner() {
     setSubmitting(true)
     
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error("Sesi habis, silakan login ulang.")
-
-      const { data: newBiz, error: bizError } = await supabase
-        .from('businesses')
-        .insert([{ 
-          name: formData.name.trim(), 
+      const response = await fetch('/api/business', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.name.trim(),
           phone: formData.phone.trim() || null,
           timezone: formData.timezone,
-          owner_id: user.id
-        }])
-        .select()
-        .single()
-
-      if (bizError) throw bizError
-
-      const { error: bsError } = await supabase
-        .from('business_staff')
-        .insert({
-          business_id: newBiz.id,
-          profile_id: user.id,
-          role: 'admin'
         })
-      if (bsError) throw bsError
+      })
 
-      if (!activeBid) {
-        await supabase
-          .from('profiles')
-          .update({ active_business_id: newBiz.id })
-          .eq('id', user.id)
+      const resData = await response.json()
+      if (!response.ok || resData.error) {
+        throw new Error(resData.error || "Gagal membuat bisnis")
       }
-
-      // Seed default Chart of Accounts (COA)
-      await seedDefaultCOA(newBiz.id, supabase)
 
       setIsCreating(false)
       setFormData({ name: '', phone: '', timezone: 'Asia/Jakarta' })
-      fetchData()
+      await fetchData()
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('shapeup:business_updated'))
+      }
+      await refreshProfile(true)
       alert("Unit bisnis baru berhasil dibuat!")
 
     } catch (err: unknown) {

@@ -73,7 +73,12 @@ export async function middleware(request: NextRequest) {
           // Then write to the response so the browser gets them
           supabaseResponse = NextResponse.next({ request })
           cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
+            supabaseResponse.cookies.set(name, value, {
+              ...options,
+              maxAge: 31536000,
+              sameSite: 'lax',
+              path: '/'
+            })
           )
         },
       },
