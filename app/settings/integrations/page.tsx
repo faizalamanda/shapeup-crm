@@ -3,10 +3,10 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import AccurateSettingsModal from '@/lib/integrations/accurate/AccurateSettingsModal'
 import KirimDevSettingsModal from '@/plugins/kirim-dev/components/KirimDevSettingsModal'
-import { createBrowserClient } from '@supabase/ssr'
 import Link from 'next/link'
 import SettingsLayout from '@/components/SettingsLayout'
 import { INTEGRATION_PLUGINS, IntegrationPlugin } from '@/lib/integrations/registry'
+import { useUserContext } from '@/components/UserContext'
 
 export default function IntegrationsSettingsPage() {
   const [mounted, setMounted] = useState(false)
@@ -15,21 +15,18 @@ export default function IntegrationsSettingsPage() {
     setMounted(true)
   }, [])
 
-  const supabase = useMemo(() => createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  ), [])
+  const { activeBusiness, bizLoading, refreshProfile } = useUserContext()
+  const activeBusinessId = activeBusiness?.id || null
+  const activeBusinessName = activeBusiness?.name || ''
+  const loadingActiveBusiness = bizLoading
 
-  const [activeBusinessId, setActiveBusinessId] = useState<string | null>(null)
-  const [activeBusinessName, setActiveBusinessName] = useState<string>('')
-  const [loadingActiveBusiness, setLoadingActiveBusiness] = useState(true)
-
-  // Integrations data state
-  const [integrationsData, setIntegrationsData] = useState<Record<string, any>>({})
-  const [loadingIntegrations, setLoadingIntegrations] = useState(false)
+  // Integrations summary status map directly from DB (lightweight & fast)
+  const [integrationStatuses, setIntegrationStatuses] = useState<Record<string, { is_active: boolean; is_configured: boolean; store_url?: string }>>({})
+  const [loadingStatuses, setLoadingStatuses] = useState(true)
 
   // Selected plugin drawer / modal for editing
   const [selectedPlugin, setSelectedPlugin] = useState<IntegrationPlugin | null>(null)
+  const [loadingPluginConfig, setLoadingPluginConfig] = useState(false)
 
   // Lock body scroll when modal is open
   useEffect(() => {
@@ -83,7 +80,7 @@ export default function IntegrationsSettingsPage() {
     api_key: '',
     phone_number_id: '',
     webhook_secret: '',
-    is_active: false,   // default NOT active
+    is_active: false,
   })
   const [showKirimDevModal, setShowKirimDevModal] = useState(false)
 
@@ -96,52 +93,34 @@ export default function IntegrationsSettingsPage() {
   const [showYcloudKey, setShowYcloudKey] = useState(false)
   const [showWabaToken, setShowWabaToken] = useState(false)
 
-  // Fetch active business profile
-  const checkActiveBusiness = useCallback(async () => {
-    setLoadingActiveBusiness(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('active_business_id')
-        .eq('id', user.id)
-        .single()
-
-      if (profile?.active_business_id) {
-        setActiveBusinessId(profile.active_business_id)
-        const { data: biz } = await supabase
-          .from('businesses')
-          .select('name')
-          .eq('id', profile.active_business_id)
-          .single()
-        if (biz) setActiveBusinessName(biz.name)
-      }
-    }
-    setLoadingActiveBusiness(false)
-  }, [supabase])
-
-  // Fetch saved integrations from API
-  const fetchIntegrations = useCallback(async () => {
+  // Fetch summary statuses from database (lightweight & fast)
+  const fetchIntegrationStatuses = useCallback(async () => {
     if (!activeBusinessId) return
-    setLoadingIntegrations(true)
+    setLoadingStatuses(true)
     try {
-      const res = await fetch('/api/integrations')
+      const res = await fetch('/api/integrations?summary=true')
       const json = await res.json()
-      if (json.success && Array.isArray(json.integrations)) {
-        const map: Record<string, any> = {}
-        json.integrations.forEach((item: any) => {
-          map[item.platform_name] = item
-        })
-        setIntegrationsData(map)
+      if (json.success && json.statuses) {
+        setIntegrationStatuses(json.statuses)
+      }
+    } catch (err) {
+      console.error('Failed to load integration statuses:', err)
+    } finally {
+      setLoadingStatuses(false)
+    }
+  }, [activeBusinessId])
 
-
-        // Populate Accurate form if exists
-        // (Moved to AccurateSettingsModal)
-
-        // Populate WooCommerce form if exists
-        const woo = map['woocommerce']
-        if (woo) {
-          const creds = woo.api_credentials || {}
+  // Lazy-load detailed configuration ONLY when a plugin is opened
+  const loadPluginConfig = useCallback(async (pluginId: string) => {
+    if (!activeBusinessId || !pluginId) return
+    setLoadingPluginConfig(true)
+    try {
+      const res = await fetch(`/api/integrations?provider=${pluginId}`)
+      const json = await res.json()
+      if (json.success && json.integration) {
+        const item = json.integration
+        if (pluginId === 'woocommerce') {
+          const creds = item.api_credentials || {}
           let stockStatuses = creds.stock_reduction_status
           if (!Array.isArray(stockStatuses)) {
             stockStatuses = creds.stock_reduction_status ? [creds.stock_reduction_status] : ['shipped', 'completed']
@@ -151,70 +130,58 @@ export default function IntegrationsSettingsPage() {
             journalStatuses = creds.journal_hpp_status ? [creds.journal_hpp_status] : ['shipped', 'completed']
           }
           setWooForm({
-            store_url: woo.store_url || '',
+            store_url: item.store_url || '',
             consumer_key: creds.consumer_key || '',
             consumer_secret: creds.consumer_secret || '',
-            is_active: woo.is_active ?? true,
+            is_active: item.is_active ?? true,
             use_global_settings: creds.use_global_settings ?? true,
             stock_reduction_status: stockStatuses,
             journal_hpp_status: journalStatuses
           })
-        }
-
-        // Populate YCloud form if exists
-        const ycloud = map['ycloud']
-        if (ycloud) {
-          const creds = ycloud.api_credentials || {}
+        } else if (pluginId === 'ycloud') {
+          const creds = item.api_credentials || {}
           setYcloudForm({
             api_key: creds.api_key || '',
             whatsapp_number: creds.whatsapp_number || '',
-            is_active: ycloud.is_active ?? true,
+            is_active: item.is_active ?? true,
           })
-        }
-
-        // Populate WABA Official form if exists
-        const waba = map['waba_official']
-        if (waba) {
-          const creds = waba.api_credentials || {}
+        } else if (pluginId === 'waba_official') {
+          const creds = item.api_credentials || {}
           setWabaForm({
             access_token: creds.access_token || '',
             phone_number_id: creds.phone_number_id || '',
             waba_id: creds.waba_id || '',
             webhook_verify_token: creds.webhook_verify_token || '',
-            is_active: waba.is_active ?? true,
+            is_active: item.is_active ?? true,
           })
-        }
-
-        // Populate kirim.dev form if exists
-        const kirimdev = json.integrations?.find?.((i: any) => i.provider === 'kirimdev')
-        if (kirimdev) {
-          const cfg = kirimdev.config || {}
+        } else if (pluginId === 'kirimdev') {
+          const cfg = item.config || item.api_credentials?.config || {}
           setKirimdevForm({
             api_key: cfg.api_key || '',
             phone_number_id: cfg.phone_number_id || '',
             webhook_secret: cfg.webhook_secret || '',
-            is_active: kirimdev.is_active ?? false,
+            is_active: item.is_active ?? false,
           })
         }
       }
     } catch (err) {
-      console.error('Failed to load integrations:', err)
+      console.error(`Failed to load config for ${pluginId}:`, err)
     } finally {
-      setLoadingIntegrations(false)
+      setLoadingPluginConfig(false)
     }
   }, [activeBusinessId])
 
   useEffect(() => {
-    checkActiveBusiness()
-  }, [checkActiveBusiness])
+    if (activeBusinessId) {
+      fetchIntegrationStatuses()
+    }
+  }, [activeBusinessId, fetchIntegrationStatuses])
 
   useEffect(() => {
-    if (activeBusinessId) {
-      fetchIntegrations()
+    if (selectedPlugin?.id) {
+      loadPluginConfig(selectedPlugin.id)
     }
-  }, [activeBusinessId, fetchIntegrations])
-
-
+  }, [selectedPlugin, loadPluginConfig])
 
   // Handle Save WooCommerce Integration
   const handleSaveWooCommerce = async (e: React.FormEvent) => {
@@ -245,7 +212,7 @@ export default function IntegrationsSettingsPage() {
       }
 
       setSaveSuccess(true)
-      await fetchIntegrations()
+      await fetchIntegrationStatuses()
       setTimeout(() => setSaveSuccess(false), 3000)
     } catch (err: any) {
       alert('Error: ' + (err.message || 'Terjadi kesalahan saat menyimpan.'))
@@ -279,7 +246,7 @@ export default function IntegrationsSettingsPage() {
       }
 
       setSaveSuccess(true)
-      await fetchIntegrations()
+      await fetchIntegrationStatuses()
       setTimeout(() => setSaveSuccess(false), 3000)
     } catch (err: any) {
       alert('Error: ' + (err.message || 'Terjadi kesalahan saat menyimpan YCloud.'))
@@ -397,7 +364,8 @@ export default function IntegrationsSettingsPage() {
       }
 
       setSaveSuccess(true)
-      await fetchIntegrations()
+      await fetchIntegrationStatuses()
+      if (refreshProfile) refreshProfile(true)
       setTimeout(() => setSaveSuccess(false), 3000)
     } catch (err: any) {
       alert('Error: ' + (err.message || 'Terjadi kesalahan saat menyimpan WABA Official.'))
@@ -470,8 +438,8 @@ export default function IntegrationsSettingsPage() {
       }
 
       setWabaForm(prev => ({ ...prev, is_active: newActiveState }))
-      await fetchIntegrations()
-      window.location.reload()
+      await fetchIntegrationStatuses()
+      if (refreshProfile) refreshProfile(true)
     } catch (err: any) {
       alert('Error: ' + (err.message || 'Terjadi kesalahan saat mengubah status plugin WABA.'))
     } finally {
@@ -502,8 +470,7 @@ export default function IntegrationsSettingsPage() {
         await fetch('/api/inventory/setup', { method: 'POST' })
       }
 
-      await fetchIntegrations()
-      window.location.reload()
+      await fetchIntegrationStatuses()
     } catch (err: any) {
       alert('Error: ' + (err.message || 'Terjadi kesalahan saat mengubah status plugin Inventory.'))
     } finally {
@@ -529,8 +496,7 @@ export default function IntegrationsSettingsPage() {
         throw new Error(json.error || 'Gagal mengubah status plugin Pipeline')
       }
 
-      await fetchIntegrations()
-      window.location.reload()
+      await fetchIntegrationStatuses()
     } catch (err: any) {
       alert('Error: ' + (err.message || 'Terjadi kesalahan saat mengubah status plugin Pipeline.'))
     } finally {
@@ -583,35 +549,39 @@ export default function IntegrationsSettingsPage() {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   
   // Plugin references
-
   const accuratePlugin = INTEGRATION_PLUGINS.find(p => p.id === 'accurate')!
-  const accurateSaved = integrationsData['accurate']
+  const accurateStatus = integrationStatuses['accurate']
+  const isAccurateActive = Boolean(accurateStatus?.is_active)
 
   const wooPlugin = INTEGRATION_PLUGINS.find(p => p.id === 'woocommerce')!
-  const wooWebhookUrl = wooPlugin?.getWebhookUrl ? wooPlugin.getWebhookUrl(activeBusinessId, origin) : ''
-  const wooSaved = integrationsData['woocommerce']
-  const isWooConfigured = Boolean(wooSaved && wooSaved.store_url)
+  const wooWebhookUrl = wooPlugin?.getWebhookUrl ? wooPlugin.getWebhookUrl(activeBusinessId || '', origin) : ''
+  const wooStatus = integrationStatuses['woocommerce']
+  const isWooConfigured = Boolean(wooStatus?.is_configured)
+  const isWooActive = Boolean(wooStatus?.is_active)
 
   const ycloudPlugin = INTEGRATION_PLUGINS.find(p => p.id === 'ycloud')!
-  const ycloudWebhookUrl = ycloudPlugin?.getWebhookUrl ? ycloudPlugin.getWebhookUrl(activeBusinessId, origin) : ''
-  const ycloudSaved = integrationsData['ycloud']
-  const isYcloudConfigured = Boolean(ycloudSaved && ycloudSaved.api_credentials?.api_key)
+  const ycloudWebhookUrl = ycloudPlugin?.getWebhookUrl ? ycloudPlugin.getWebhookUrl(activeBusinessId || '', origin) : ''
+  const ycloudStatus = integrationStatuses['ycloud']
+  const isYcloudConfigured = Boolean(ycloudStatus?.is_configured)
+  const isYcloudActive = Boolean(ycloudStatus?.is_active)
 
   const wabaPlugin = INTEGRATION_PLUGINS.find(p => p.id === 'waba_official')!
-  const wabaWebhookUrl = wabaPlugin?.getWebhookUrl ? wabaPlugin.getWebhookUrl(activeBusinessId, origin) : ''
-  const wabaSaved = integrationsData['waba_official']
-  const isWabaConfigured = Boolean(wabaSaved && wabaSaved.api_credentials?.access_token && wabaSaved.api_credentials?.phone_number_id)
+  const wabaWebhookUrl = wabaPlugin?.getWebhookUrl ? wabaPlugin.getWebhookUrl(activeBusinessId || '', origin) : ''
+  const wabaStatus = integrationStatuses['waba_official']
+  const isWabaConfigured = Boolean(wabaStatus?.is_configured)
+  const isWabaActive = Boolean(wabaStatus?.is_active)
 
-  const inventorySaved = integrationsData['inventory_reports']
-  const isInventoryActive = inventorySaved ? inventorySaved.is_active !== false : true
+  const inventoryStatus = integrationStatuses['inventory_reports']
+  const isInventoryActive = inventoryStatus ? inventoryStatus.is_active !== false : true
 
-  const pipelineSaved = integrationsData['pipeline']
-  const isPipelineActive = Boolean(pipelineSaved && pipelineSaved.is_active === true)
+  const pipelineStatus = integrationStatuses['pipeline']
+  const isPipelineActive = Boolean(pipelineStatus?.is_active)
 
   const kirimdevPlugin = INTEGRATION_PLUGINS.find(p => p.id === 'kirimdev')!
-  const kirimdevWebhookUrl = kirimdevPlugin?.getWebhookUrl ? kirimdevPlugin.getWebhookUrl(activeBusinessId, origin) : ''
-  const isKirimDevConfigured = Boolean(kirimdevForm.api_key && kirimdevForm.phone_number_id)
-  const isKirimDevActive = kirimdevForm.is_active
+  const kirimdevWebhookUrl = kirimdevPlugin?.getWebhookUrl ? kirimdevPlugin.getWebhookUrl(activeBusinessId || '', origin) : ''
+  const kirimdevStatus = integrationStatuses['kirimdev']
+  const isKirimDevConfigured = Boolean(kirimdevStatus?.is_configured)
+  const isKirimDevActive = Boolean(kirimdevStatus?.is_active)
 
   return (
     <SettingsLayout title="Integrasi & Plugin" subtitle="Hubungkan WooCommerce, YCloud WhatsApp, dan API pihak ketiga.">
@@ -774,7 +744,7 @@ export default function IntegrationsSettingsPage() {
         {/* ACCURATE PLUGIN CARD */}
         {accuratePlugin && (
           <div
-            className={`group relative bg-white border ${accurateSaved?.is_active ? 'border-green-300' : 'border-slate-200'} rounded-2xl p-5 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer overflow-hidden`}
+            className={`group relative bg-white border ${isAccurateActive ? 'border-green-300' : 'border-slate-200'} rounded-2xl p-5 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer overflow-hidden`}
             onClick={() => setSelectedPlugin(accuratePlugin)}
           >
             <div className="absolute top-0 right-0 w-32 h-32 bg-slate-50 rounded-full blur-3xl -mr-10 -mt-10 transition-colors group-hover:bg-blue-50"></div>
@@ -784,7 +754,7 @@ export default function IntegrationsSettingsPage() {
                 {accuratePlugin.icon}
               </div>
               <div className="flex flex-col items-end gap-2">
-                {accurateSaved?.is_active ? (
+                {isAccurateActive ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
                     <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
                     Terkoneksi
@@ -809,7 +779,7 @@ export default function IntegrationsSettingsPage() {
             
             <div className="relative z-10 mt-6 pt-4 border-t border-slate-100 flex items-center justify-between">
               <span className="text-xs font-medium text-slate-400 group-hover:text-blue-600 transition-colors">
-                {accurateSaved?.is_active ? 'Kelola Pengaturan →' : 'Hubungkan Sekarang →'}
+                {isAccurateActive ? 'Kelola Pengaturan →' : 'Hubungkan Sekarang →'}
               </span>
             </div>
           </div>
@@ -825,11 +795,11 @@ export default function IntegrationsSettingsPage() {
               <div>
                 {isWooConfigured ? (
                   <span className={`text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full border ${
-                    wooSaved.is_active 
+                    isWooActive 
                       ? 'bg-green-50 text-green-700 border-green-200' 
                       : 'bg-amber-50 text-amber-700 border-amber-200'
                   }`}>
-                    {wooSaved.is_active ? '✓ Terhubung & Aktif' : '⏸️ Dinonaktifkan'}
+                    {isWooActive ? '✓ Terhubung & Aktif' : '⏸️ Dinonaktifkan'}
                   </span>
                 ) : (
                   <span className="text-[10px] font-bold uppercase bg-slate-100 text-slate-600 px-2.5 py-0.5 rounded-full border border-slate-200">
@@ -869,11 +839,11 @@ export default function IntegrationsSettingsPage() {
               <div>
                 {isYcloudConfigured ? (
                   <span className={`text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full border ${
-                    ycloudSaved.is_active 
+                    isYcloudActive 
                       ? 'bg-green-50 text-green-700 border-green-200' 
                       : 'bg-amber-50 text-amber-700 border-amber-200'
                   }`}>
-                    {ycloudSaved.is_active ? '✓ Terhubung & Aktif' : '⏸️ Dinonaktifkan'}
+                    {isYcloudActive ? '✓ Terhubung & Aktif' : '⏸️ Dinonaktifkan'}
                   </span>
                 ) : (
                   <span className="text-[10px] font-bold uppercase bg-slate-100 text-slate-600 px-2.5 py-0.5 rounded-full border border-slate-200">
@@ -911,7 +881,7 @@ export default function IntegrationsSettingsPage() {
                 📱
               </div>
               <div className="flex flex-col items-end gap-1">
-                {wabaSaved?.is_active ? (
+                {isWabaActive ? (
                   <span className="text-[10px] font-bold uppercase bg-green-50 text-green-700 border border-green-200 px-2.5 py-0.5 rounded-full">
                     ✓ Plugin Aktif
                   </span>
@@ -920,7 +890,7 @@ export default function IntegrationsSettingsPage() {
                     ⏸️ Belum Diaktifkan
                   </span>
                 )}
-                {!isWabaConfigured && wabaSaved?.is_active && (
+                {!isWabaConfigured && isWabaActive && (
                   <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                     ⚠️ Belum Dikonfigurasi
                   </span>
@@ -938,7 +908,7 @@ export default function IntegrationsSettingsPage() {
             <span className="text-[10px] font-bold uppercase tracking-wider text-[#A8A89E]">Plugin Messaging</span>
 
             <div className="flex items-center gap-2">
-              {wabaSaved?.is_active ? (
+              {isWabaActive ? (
                 <>
                   <button
                     type="button"
@@ -1067,7 +1037,7 @@ export default function IntegrationsSettingsPage() {
           selectedPlugin={selectedPlugin}
           setSelectedPlugin={setSelectedPlugin}
           activeBusinessId={activeBusinessId || ''}
-          onSaveSuccess={fetchIntegrations}
+          onSaveSuccess={fetchIntegrationStatuses}
         />,
         document.body
       )}
@@ -1103,7 +1073,13 @@ export default function IntegrationsSettingsPage() {
             </div>
 
             {/* Scrollable Modal Body */}
-            <form id="wooFormEl" onSubmit={handleSaveWooCommerce} className="flex-1 overflow-y-auto p-6 space-y-5">
+            {loadingPluginConfig ? (
+              <div className="p-12 text-center flex flex-col items-center justify-center gap-3">
+                <div className="w-8 h-8 border-3 border-[#E2E2DC] border-t-purple-600 rounded-full animate-spin mx-auto" />
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Memuat Konfigurasi WooCommerce...</p>
+              </div>
+            ) : (
+              <form id="wooFormEl" onSubmit={handleSaveWooCommerce} className="flex-1 overflow-y-auto p-6 space-y-5">
               
               {/* Webhook Notice Section */}
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
@@ -1363,6 +1339,7 @@ export default function IntegrationsSettingsPage() {
 
               <button type="submit" className="hidden" />
             </form>
+            )}
 
             {/* Modal Footer (Fixed Bottom) */}
             <div className="px-6 py-4 border-t border-[#E2E2DC] bg-[#F9F9F8] flex flex-col sm:flex-row gap-3 shrink-0">
@@ -1424,7 +1401,13 @@ export default function IntegrationsSettingsPage() {
             </div>
 
             {/* Scrollable Modal Body */}
-            <form id="ycloudFormEl" onSubmit={handleSaveYCloud} className="flex-1 overflow-y-auto p-6 space-y-5">
+            {loadingPluginConfig ? (
+              <div className="p-12 text-center flex flex-col items-center justify-center gap-3">
+                <div className="w-8 h-8 border-3 border-[#E2E2DC] border-t-emerald-600 rounded-full animate-spin mx-auto" />
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Memuat Konfigurasi YCloud...</p>
+              </div>
+            ) : (
+              <form id="ycloudFormEl" onSubmit={handleSaveYCloud} className="flex-1 overflow-y-auto p-6 space-y-5">
               
               {/* Webhook Notice Section */}
               <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
@@ -1541,6 +1524,7 @@ export default function IntegrationsSettingsPage() {
 
               <button type="submit" className="hidden" />
             </form>
+            )}
 
             {/* Modal Footer (Fixed Bottom) */}
             <div className="px-6 py-4 border-t border-[#E2E2DC] bg-[#F9F9F8] flex flex-col sm:flex-row gap-3 shrink-0">
@@ -1602,7 +1586,13 @@ export default function IntegrationsSettingsPage() {
             </div>
 
             {/* Scrollable Modal Body */}
-            <form id="wabaFormEl" onSubmit={handleSaveWaba} className="flex-1 overflow-y-auto p-6 space-y-5">
+            {loadingPluginConfig ? (
+              <div className="p-12 text-center flex flex-col items-center justify-center gap-3">
+                <div className="w-8 h-8 border-3 border-[#E2E2DC] border-t-green-600 rounded-full animate-spin mx-auto" />
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Memuat Konfigurasi WABA Official...</p>
+              </div>
+            ) : (
+              <form id="wabaFormEl" onSubmit={handleSaveWaba} className="flex-1 overflow-y-auto p-6 space-y-5">
               
               {/* Webhook Notice Section */}
               <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-3">
@@ -1756,6 +1746,7 @@ export default function IntegrationsSettingsPage() {
 
               <button type="submit" className="hidden" />
             </form>
+            )}
 
             {/* Modal Footer (Fixed Bottom) */}
             <div className="px-6 py-4 border-t border-[#E2E2DC] bg-[#F9F9F8] flex flex-col sm:flex-row gap-3 shrink-0">
@@ -1792,7 +1783,7 @@ export default function IntegrationsSettingsPage() {
           businessId={activeBusinessId}
           initialData={kirimdevForm}
           onClose={() => setShowKirimDevModal(false)}
-          onSaved={fetchIntegrations}
+          onSaved={fetchIntegrationStatuses}
         />,
         document.body
       )}

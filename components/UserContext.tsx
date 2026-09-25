@@ -152,8 +152,8 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
       if (loadId !== loadIdRef.current) return
 
       const profile = profileResult.data
-      setUserProfile(profile || null)
       if (profile) {
+        setUserProfile(profile)
         loadedUserIdRef.current = userId
       }
 
@@ -166,7 +166,9 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
       })
 
       const combined = Array.from(bizMap.values())
-      setBusinesses(combined)
+      if (combined.length > 0) {
+        setBusinesses(combined)
+      }
 
       const activeBizId = profile?.active_business_id || combined[0]?.id
       let selectedActiveBiz: any = null
@@ -181,6 +183,10 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
           if (loadId === loadIdRef.current && fallbackBiz) {
             setActiveBusiness(fallbackBiz)
             selectedActiveBiz = fallbackBiz
+            if (!combined.some(b => b.id === fallbackBiz.id)) {
+              combined.push(fallbackBiz)
+              setBusinesses(combined)
+            }
           } else if (combined.length > 0) {
             setActiveBusiness(combined[0])
             selectedActiveBiz = combined[0]
@@ -189,16 +195,26 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
       } else if (combined.length > 0) {
         setActiveBusiness(combined[0])
         selectedActiveBiz = combined[0]
-      } else {
-        setActiveBusiness(null)
       }
 
-      if (activeBizId) {
+      // Auto-heal missing active_business_id in profiles table
+      if (profile && !profile.active_business_id && selectedActiveBiz?.id) {
+        supabase
+          .from('profiles')
+          .update({ active_business_id: selectedActiveBiz.id })
+          .eq('id', userId)
+          .then(({ error }) => {
+            if (error) console.error('[UserContext] Auto-heal active_business_id error:', error)
+          })
+      }
+
+      const targetBizId = activeBizId || selectedActiveBiz?.id
+      if (targetBizId) {
         const { data: wabaInt } = await supabase
           .from('integrations')
           .select('is_active, api_credentials')
           .eq('platform_name', 'waba_official')
-          .filter('api_credentials->>business_id', 'eq', activeBizId)
+          .filter('api_credentials->>business_id', 'eq', targetBizId)
           .maybeSingle()
 
         setIsWabaActive(Boolean(wabaInt && wabaInt.is_active === true))
@@ -207,8 +223,8 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Resolve role and permissions (Business Owners & Admins always get full_access)
-      const activeBs = bsResult.data?.find((item: any) => item.businesses?.id === activeBizId)
-      const isUserOwner = Boolean(ownedResult.data && ownedResult.data.some((b: any) => b.id === activeBizId))
+      const activeBs = bsResult.data?.find((item: any) => item.businesses?.id === targetBizId)
+      const isUserOwner = Boolean(ownedResult.data && ownedResult.data.some((b: any) => b.id === targetBizId))
       const isGlobalAdmin = profile?.role === 'admin'
       const isBsAdmin = activeBs?.role === 'admin'
       const isUserAdmin = isGlobalAdmin || isBsAdmin || isUserOwner
@@ -233,7 +249,7 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
       try {
         if (typeof window !== 'undefined' && window.localStorage) {
           if (profile) localStorage.setItem('su_cached_user_profile', JSON.stringify(profile))
-          if (combined) localStorage.setItem('su_cached_businesses', JSON.stringify(combined))
+          if (combined && combined.length > 0) localStorage.setItem('su_cached_businesses', JSON.stringify(combined))
           if (selectedActiveBiz) localStorage.setItem('su_cached_active_biz', JSON.stringify(selectedActiveBiz))
           localStorage.setItem('su_cached_role', resolvedRole)
           localStorage.setItem('su_cached_perms', JSON.stringify(resolvedPerms))
@@ -330,13 +346,16 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
           handleUnauthenticatedSession('SIGNED_OUT')
         } else if (event === 'INITIAL_SESSION' && !session) {
           try {
-            const { data: { session: fetchedSession } } = await supabase.auth.getSession()
-            if (fetchedSession?.user?.id) {
-              loadProfileAndBusinesses(fetchedSession.user.id, true)
-            } else if (!userProfile) {
-              handleUnauthenticatedSession('INITIAL_SESSION')
+            const { data: { user } } = await supabase.auth.getUser()
+            if (user?.id) {
+              loadProfileAndBusinesses(user.id, true)
             } else {
-              setBizLoading(false)
+              const lastUserId = typeof window !== 'undefined' ? localStorage.getItem('su_last_logged_in_user_id') : null
+              if (!lastUserId && !userProfile) {
+                handleUnauthenticatedSession('INITIAL_SESSION')
+              } else {
+                setBizLoading(false)
+              }
             }
           } catch {
             setBizLoading(false)

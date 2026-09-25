@@ -27,32 +27,121 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Unit bisnis aktif tidak terdeteksi.' }, { status: 400 })
     }
 
+    const activeBid = profile.active_business_id
     const admin = getAdminSupabase()
 
-    // Fetch integrations for this active business
+    const url = new URL(req.url)
+    const isSummary = url.searchParams.get('summary') === 'true'
+    const providerParam = url.searchParams.get('provider')
+
+    // Mode 1: Summary mode (lightweight query for catalog statuses directly from DB)
+    if (isSummary) {
+      const [rowsRes, bizRowsRes] = await Promise.all([
+        admin
+          .from('integrations')
+          .select('id, platform_name, is_active, api_credentials, store_url')
+          .filter('api_credentials->>business_id', 'eq', activeBid),
+        admin
+          .from('business_integrations')
+          .select('id, provider, is_active, config')
+          .eq('business_id', activeBid)
+      ])
+
+      const statuses: Record<string, { is_active: boolean; is_configured: boolean; store_url?: string }> = {}
+
+      rowsRes.data?.forEach(row => {
+        statuses[row.platform_name] = {
+          is_active: Boolean(row.is_active),
+          is_configured: Boolean(row.api_credentials && Object.keys(row.api_credentials).length > 1),
+          store_url: row.store_url || undefined
+        }
+      })
+
+      bizRowsRes.data?.forEach(br => {
+        statuses[br.provider] = {
+          is_active: Boolean(br.is_active),
+          is_configured: Boolean(br.config && Object.keys(br.config).length > 0)
+        }
+      })
+
+      return NextResponse.json({
+        success: true,
+        activeBusinessId: activeBid,
+        statuses
+      })
+    }
+
+    // Mode 2: Single provider detailed config mode (loaded on click when configuring)
+    if (providerParam) {
+      const { data: bizRow } = await admin
+        .from('business_integrations')
+        .select('*')
+        .eq('business_id', activeBid)
+        .eq('provider', providerParam)
+        .maybeSingle()
+
+      if (bizRow) {
+        return NextResponse.json({
+          success: true,
+          activeBusinessId: activeBid,
+          integration: {
+            id: bizRow.id,
+            platform_name: bizRow.provider,
+            provider: bizRow.provider,
+            is_active: bizRow.is_active,
+            config: bizRow.config,
+            api_credentials: {
+              business_id: bizRow.business_id,
+              config: bizRow.config
+            }
+          }
+        })
+      }
+
+      const { data: intRow } = await admin
+        .from('integrations')
+        .select('*')
+        .eq('platform_name', providerParam)
+        .filter('api_credentials->>business_id', 'eq', activeBid)
+        .maybeSingle()
+
+      return NextResponse.json({
+        success: true,
+        activeBusinessId: activeBid,
+        integration: intRow ? {
+          id: intRow.id,
+          platform_name: intRow.platform_name,
+          provider: intRow.platform_name,
+          is_active: intRow.is_active,
+          store_url: intRow.store_url,
+          api_credentials: intRow.api_credentials
+        } : null
+      })
+    }
+
+    // Mode 3: Default full list (for fallback/backwards compatibility)
     const { data: rows, error: fetchErr } = await admin
       .from('integrations')
       .select('*')
-      .filter('api_credentials->>business_id', 'eq', profile.active_business_id)
+      .filter('api_credentials->>business_id', 'eq', activeBid)
 
     if (fetchErr) throw fetchErr
 
     const { data: bizRows } = await admin
       .from('business_integrations')
       .select('*')
-      .eq('business_id', profile.active_business_id)
+      .eq('business_id', activeBid)
 
     const integrations = rows || []
-    
-    // Merge business_integrations into the list
+
     if (bizRows) {
       bizRows.forEach(br => {
         integrations.push({
           id: br.id,
-          platform_name: br.provider, // For page.tsx map
-          provider: br.provider,      // For AccurateSettingsModal
+          platform_name: br.provider,
+          provider: br.provider,
           is_active: br.is_active,
-          config: br.config,          // For AccurateSettingsModal
+          config: br.config,
           api_credentials: {
             business_id: br.business_id,
             config: br.config
@@ -63,8 +152,8 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       success: true,
-      activeBusinessId: profile.active_business_id,
-      integrations: integrations
+      activeBusinessId: activeBid,
+      integrations
     })
 
   } catch (err: any) {

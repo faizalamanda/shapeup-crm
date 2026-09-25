@@ -21,21 +21,21 @@ export default function AccurateSettingsModal({
   const [accurateSaved, setAccurateSaved] = useState<any>(null)
 
   useEffect(() => {
-    // Fetch initial config
+    // Fetch initial config for Accurate on demand
     if (activeBusinessId) {
-      fetch(`/api/integrations?bid=${activeBusinessId}`)
+      fetch('/api/integrations?provider=accurate')
         .then(res => res.json())
         .then(data => {
-          if (data.integrations) {
-            const accurate = data.integrations.find((i: any) => i.provider === 'accurate')
-            if (accurate?.config) {
+          if (data.integration) {
+            const accurate = data.integration
+            if (accurate.config) {
               setAccurateSaved(accurate)
               setAccurateAccessToken(accurate.config.access_token || '')
               setAccurateDbId(accurate.config.db_id || '')
             }
           }
         })
-        .catch(err => console.error('Failed to fetch config', err))
+        .catch(err => console.error('Failed to fetch Accurate config', err))
     }
   }, [activeBusinessId])
 
