@@ -156,7 +156,7 @@ export default function StaffSettings() {
       } finally {
         setCheckingEmail(false)
       }
-    }, 500)
+    }, 150)
 
     return () => clearTimeout(delayDebounceFn)
   }, [email])

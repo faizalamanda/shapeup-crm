@@ -50,35 +50,14 @@ export async function GET(req: Request) {
     if (email) {
       const trimmedEmail = email.trim().toLowerCase()
       
-      // Fast-path profile lookup by email
-      let { data: existingProfile, error: profileError } = await supabaseAdmin
+      // Fast-path profile lookup by email (indexed query, ~15ms)
+      const { data: existingProfile, error: profileError } = await supabaseAdmin
         .from('profiles')
         .select('id, full_name, email, business_id')
         .eq('email', trimmedEmail)
         .maybeSingle()
 
       if (profileError) throw profileError
-
-      // Fallback to auth admin listUsers if not in profiles table
-      if (!existingProfile) {
-        const { data: { users }, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
-        if (listError) throw listError
-
-        const existingAuthUser = users?.find(u => u.email?.toLowerCase() === trimmedEmail)
-        if (existingAuthUser) {
-          const { data: newProfile } = await supabaseAdmin
-            .from('profiles')
-            .upsert({
-              id: existingAuthUser.id,
-              email: existingAuthUser.email,
-              full_name: existingAuthUser.user_metadata?.full_name || email.split('@')[0],
-              role: 'staff'
-            }, { onConflict: 'id' })
-            .select('id, full_name, email, business_id')
-            .single()
-          existingProfile = newProfile
-        }
-      }
 
       if (!existingProfile) {
         return NextResponse.json({ exists: false })
@@ -105,7 +84,7 @@ export async function GET(req: Request) {
 
     const activeBid = adminProfile.active_business_id
 
-    // Fetch staff list directly
+    // Fetch staff list directly with profile join in 1 query
     let { data: bsData, error: staffError } = await supabaseAdmin
       .from('business_staff')
       .select('role, permissions, profiles (*)')
@@ -139,39 +118,16 @@ export async function GET(req: Request) {
       if (reFetched) bsData = reFetched
     }
 
-    // Auto-heal unpopulated profile details (full_name / email) from auth users if null/empty
-    const unpopulatedStaff = bsData?.filter((item: any) => item.profiles && (!item.profiles.full_name || !item.profiles.email)) || []
-    if (unpopulatedStaff.length > 0) {
-      const { data: { users } } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
-      const healPromises = unpopulatedStaff.map((item: any) => {
-        const pid = item.profiles.id
-        const authUser = users?.find(u => u.id === pid)
-        if (authUser) {
-          const resolvedName = item.profiles.full_name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Staff'
-          const resolvedEmail = item.profiles.email || authUser.email || ''
-          item.profiles.full_name = resolvedName
-          item.profiles.email = resolvedEmail
-          return supabaseAdmin.from('profiles').upsert({
-            id: pid,
-            full_name: resolvedName,
-            email: resolvedEmail
-          }, { onConflict: 'id' })
-        }
-        return Promise.resolve()
-      })
-      await Promise.allSettled(healPromises)
-    }
-
     const staff = bsData?.map((item: any) => {
       const p = item.profiles || {}
       return {
         ...p,
-        full_name: p.full_name || p.email?.split('@')[0] || 'Staff',
+        full_name: p.full_name || (p.email ? p.email.split('@')[0] : 'Staff'),
         email: p.email || '',
         role: item.role || 'staff',
         permissions: item.permissions || []
       }
-    }).filter(s => Boolean(s.id)) || []
+    }).filter((s: any) => Boolean(s.id)) || []
 
     return NextResponse.json({ staff })
 
@@ -191,7 +147,7 @@ export async function POST(req: Request) {
 
     const trimmedEmail = email.trim().toLowerCase()
 
-    // 1. Fast-path lookup by email in profiles table
+    // 1. Fast-path lookup by email in profiles table (indexed query)
     let { data: existingProfile, error: fastProfileError } = await supabaseAdmin
       .from('profiles')
       .select('id, business_id, email, full_name')
@@ -199,29 +155,6 @@ export async function POST(req: Request) {
       .maybeSingle()
 
     if (fastProfileError) throw fastProfileError
-
-    if (!existingProfile) {
-      // Fallback search in auth users
-      const { data: { users }, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
-      if (listError) throw listError
-
-      const existingAuthUser = users?.find(u => u.email?.toLowerCase() === trimmedEmail)
-      if (existingAuthUser) {
-        const { data: newProfile, error: insertProfileError } = await supabaseAdmin
-          .from('profiles')
-          .upsert({
-            id: existingAuthUser.id,
-            email: existingAuthUser.email,
-            full_name: existingAuthUser.user_metadata?.full_name || email.split('@')[0],
-            role: role || 'staff'
-          }, { onConflict: 'id' })
-          .select('id, business_id, email, full_name')
-          .single()
-
-        if (insertProfileError) throw insertProfileError
-        existingProfile = newProfile
-      }
-    }
 
     if (existingProfile) {
       // Cek apakah sudah ditugaskan ke bisnis ini
@@ -259,42 +192,57 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, message: "Staf yang ada berhasil ditambahkan ke unit bisnis ini." })
     }
 
-    // 2. Jika belum terdaftar, buat User Baru di Auth Supabase (Tanpa konfirmasi email)
+    // 2. Jika belum terdaftar, buat User Baru di Auth Supabase
+    let targetUserId: string | null = null
     const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-      email,
+      email: trimmedEmail,
       password,
       email_confirm: true,
       user_metadata: { full_name }
     })
 
-    if (createError) throw createError
+    if (createError) {
+      // Fallback edge-case if user already exists in auth
+      if (createError.message?.toLowerCase().includes('already') || createError.message?.toLowerCase().includes('registered')) {
+        const { data: { users } } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 })
+        const existingAuthUser = users?.find(u => u.email?.toLowerCase() === trimmedEmail)
+        if (existingAuthUser) {
+          targetUserId = existingAuthUser.id
+        } else {
+          throw createError
+        }
+      } else {
+        throw createError
+      }
+    } else {
+      targetUserId = newUser.user.id
+    }
 
-    // 3. Tambahkan relasi many-to-many ke business_staff FIRST
+    // 3. Upsert Profile Staff FIRST to satisfy foreign key constraint
+    const { error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .upsert({ 
+        id: targetUserId,
+        email: trimmedEmail,
+        full_name,
+        business_id: adminProfile.active_business_id,
+        active_business_id: adminProfile.active_business_id,
+        role: role || 'staff'
+      }, { onConflict: 'id' })
+
+    if (profileError) throw profileError
+
+    // 4. Tambahkan relasi ke business_staff SECOND
     const { error: bsError } = await supabaseAdmin
       .from('business_staff')
       .insert({
         business_id: adminProfile.active_business_id,
-        profile_id: newUser.user.id,
+        profile_id: targetUserId,
         role: role || 'staff',
         permissions: permissions || []
       })
 
     if (bsError) throw bsError
-
-    // 4. Update Profile Staff tersebut agar nyambung ke Bisnis Admin dan Role yang dipilih SECOND
-    const { error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .update({ 
-        full_name,
-        business_id: adminProfile.active_business_id,
-        // Only set active_business_id if none exists yet (don't override their current context)
-        active_business_id: adminProfile.active_business_id,
-        role: role || 'staff'
-      })
-      .eq('id', newUser.user.id)
-      .is('active_business_id', null)
-
-    if (profileError) throw profileError
 
     return NextResponse.json({ success: true, message: "Staff berhasil didaftarkan" })
 
