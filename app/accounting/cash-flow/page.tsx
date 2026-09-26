@@ -7,6 +7,7 @@ import {
   DateRangeKey,
   getUtcTimestamp,
 } from '../utils'
+import { useUserContext } from '@/components/UserContext'
 
 type CashFlowItem = {
   account_id?: string
@@ -63,43 +64,20 @@ export default function CashFlowPage() {
     setEndDate(limits.end)
   }, [dateRangeType, activeBizTimezone])
 
-  // Load Active Business Profile
+  const { activeBusiness, bizLoading } = useUserContext()
+
+  // Load Active Business Profile from UserContext
   useEffect(() => {
-    async function loadProfile() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          setErrorMsg('Sesi pengguna tidak ditemukan. Silakan login kembali.')
-          setLoading(false)
-          return
-        }
-
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name, timezone)')
-          .eq('id', user.id)
-          .single()
-
-        if (error) throw error
-
-        const businessId = profile?.active_business_id
-        if (businessId) {
-          setActiveBizId(businessId)
-          const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
-          setActiveBizName(biz?.name || 'Bisnis Saya')
-          setActiveBizTimezone(biz?.timezone || 'Asia/Jakarta')
-        } else {
-          setErrorMsg('Belum ada unit bisnis aktif yang dipilih.')
-          setLoading(false)
-        }
-      } catch (err: any) {
-        console.error('Error loading profile:', err)
-        setErrorMsg(err.message || 'Gagal memuat profil bisnis')
-        setLoading(false)
-      }
+    if (bizLoading) return
+    if (activeBusiness?.id) {
+      setActiveBizId(activeBusiness.id)
+      setActiveBizName(activeBusiness.name || 'Bisnis Saya')
+      setActiveBizTimezone(activeBusiness.timezone || 'Asia/Jakarta')
+    } else {
+      setErrorMsg('Belum ada unit bisnis aktif yang dipilih.')
+      setLoading(false)
     }
-    loadProfile()
-  }, [supabase])
+  }, [activeBusiness, bizLoading])
 
   // Fetch server-side cash flow summary based on local business timezone
   const loadData = useCallback(async (businessId: string, startD: string, endD: string, timezone: string) => {

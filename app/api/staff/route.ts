@@ -139,11 +139,39 @@ export async function GET(req: Request) {
       if (reFetched) bsData = reFetched
     }
 
-    const staff = bsData?.map((item: any) => ({
-      ...item.profiles,
-      role: item.role || 'staff',
-      permissions: item.permissions || []
-    })).filter(s => Boolean(s.id)) || []
+    // Auto-heal unpopulated profile details (full_name / email) from auth users if null/empty
+    const unpopulatedStaff = bsData?.filter((item: any) => item.profiles && (!item.profiles.full_name || !item.profiles.email)) || []
+    if (unpopulatedStaff.length > 0) {
+      const { data: { users } } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+      const healPromises = unpopulatedStaff.map((item: any) => {
+        const pid = item.profiles.id
+        const authUser = users?.find(u => u.id === pid)
+        if (authUser) {
+          const resolvedName = item.profiles.full_name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Staff'
+          const resolvedEmail = item.profiles.email || authUser.email || ''
+          item.profiles.full_name = resolvedName
+          item.profiles.email = resolvedEmail
+          return supabaseAdmin.from('profiles').upsert({
+            id: pid,
+            full_name: resolvedName,
+            email: resolvedEmail
+          }, { onConflict: 'id' })
+        }
+        return Promise.resolve()
+      })
+      await Promise.allSettled(healPromises)
+    }
+
+    const staff = bsData?.map((item: any) => {
+      const p = item.profiles || {}
+      return {
+        ...p,
+        full_name: p.full_name || p.email?.split('@')[0] || 'Staff',
+        email: p.email || '',
+        role: item.role || 'staff',
+        permissions: item.permissions || []
+      }
+    }).filter(s => Boolean(s.id)) || []
 
     return NextResponse.json({ staff })
 

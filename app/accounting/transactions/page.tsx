@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import { formatCurrencyIDR, getDateRangeLimits, DateRangeKey } from '../utils'
+import { useUserContext } from '@/components/UserContext'
 import { sortTransactionsNewestFirst, formatDisplayDate } from '@/lib/timeUtils'
 import * as XLSX from 'xlsx'
 
@@ -293,7 +294,7 @@ export default function TransactionsPage() {
   }, [])
 
   // Business state
-  const [activeBusiness, setActiveBusiness] = useState<any>(null)
+  const [activeBusinessState, setActiveBusiness] = useState<any>(null)
 
   // Filter states
   const [datePreset, setDatePreset] = useState<DateRangeKey>('this-month')
@@ -474,45 +475,10 @@ export default function TransactionsPage() {
   }
 
 
-  // Resolve Business & Accounts
-  useEffect(() => {
-    async function init() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          setLoading(false)
-          return
-        }
-
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('active_business_id, business_id')
-          .eq('id', user.id)
-          .single()
-
-        let bizId = profile?.active_business_id || profile?.business_id
-
-        if (!bizId) {
-          const { data: biz } = await supabase.from('businesses').select('id').limit(1).single()
-          bizId = biz?.id
-        }
-
-        if (bizId) {
-          setActiveBusiness({ id: bizId })
-          fetchAccounts(bizId)
-        } else {
-          setLoading(false)
-        }
-      } catch (e) {
-        console.error('Failed to init profile/business', e)
-        setLoading(false)
-      }
-    }
-    init()
-  }, [supabase])
+  const { activeBusiness, bizLoading } = useUserContext()
 
   // Fetch Accounts
-  const fetchAccounts = async (bizId: string) => {
+  const fetchAccounts = useCallback(async (bizId: string) => {
     try {
       const { data, error } = await supabase
         .from('accounts')
@@ -526,7 +492,18 @@ export default function TransactionsPage() {
     } catch (e) {
       console.error('Failed to fetch accounts', e)
     }
-  }
+  }, [supabase])
+
+  // Resolve Business & Accounts from UserContext
+  useEffect(() => {
+    if (bizLoading) return
+    if (activeBusiness?.id) {
+      setActiveBusiness({ id: activeBusiness.id })
+      fetchAccounts(activeBusiness.id)
+    } else {
+      setLoading(false)
+    }
+  }, [activeBusiness, bizLoading, fetchAccounts])
 
   // Calculate Start & End Date
   const dateLimits = useMemo(() => {

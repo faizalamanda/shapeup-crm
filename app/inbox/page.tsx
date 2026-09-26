@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
+import { useUserContext } from '@/components/UserContext'
 
 interface CustomerInfo {
   id: string
@@ -76,29 +77,19 @@ export default function InboxPage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  // Check active business profile
-  const checkActiveBusiness = useCallback(async () => {
-    setLoadingBiz(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('active_business_id')
-        .eq('id', user.id)
-        .single()
+  const { activeBusiness, bizLoading } = useUserContext()
 
-      if (profile?.active_business_id) {
-        setActiveBusinessId(profile.active_business_id)
-        const { data: biz } = await supabase
-          .from('businesses')
-          .select('name')
-          .eq('id', profile.active_business_id)
-          .single()
-        if (biz) setActiveBusinessName(biz.name)
-      }
+  // Check active business profile from UserContext
+  const checkActiveBusiness = useCallback(async () => {
+    if (bizLoading) return
+    if (activeBusiness?.id) {
+      setActiveBusinessId(activeBusiness.id)
+      setActiveBusinessName(activeBusiness.name || '')
+      setLoadingBiz(false)
+    } else {
+      setLoadingBiz(false)
     }
-    setLoadingBiz(false)
-  }, [supabase])
+  }, [activeBusiness, bizLoading])
 
   // Fetch Conversations list
   const fetchConversations = useCallback(async (isSilent = false) => {

@@ -8,6 +8,7 @@ import {
   DateRangeKey, 
   Account 
 } from '../utils'
+import { useUserContext } from '@/components/UserContext'
 
 export default function ProfitLossPage() {
   // Using singleton supabase client from @/lib/supabase
@@ -39,49 +40,25 @@ export default function ProfitLossPage() {
     setEndDate(limits.end)
   }, [dateRangeType, activeBizTimezone])
 
-  // Load Active Business Profile
+  const { activeBusiness, bizLoading } = useUserContext()
+
+  // Load Active Business Profile from UserContext
   useEffect(() => {
-    async function loadProfile() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          setErrorMsg('User session not found')
-          setLoading(false)
-          return
-        }
+    if (bizLoading) return
+    if (activeBusiness?.id) {
+      setActiveBizId(activeBusiness.id)
+      setActiveBizName(activeBusiness.name || 'Toko')
+      setActiveBizTimezone(activeBusiness.timezone || 'Asia/Jakarta')
 
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name, timezone)')
-          .eq('id', user.id)
-          .single()
-
-        if (error) throw error
-
-        const businessId = profile?.active_business_id
-        if (businessId) {
-          setActiveBizId(businessId)
-          const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
-          setActiveBizName(biz?.name || 'Toko')
-          setActiveBizTimezone(biz?.timezone || 'Asia/Jakarta')
-
-          // Load basis preference for this business
-          const savedBasis = localStorage.getItem(`su_pl_basis_${businessId}`)
-          if (savedBasis === 'accrual' || savedBasis === 'cash') {
-            setBasis(savedBasis)
-          }
-        } else {
-          setErrorMsg('No active business selected')
-          setLoading(false)
-        }
-      } catch (err: any) {
-        console.error('Error loading profile:', err)
-        setErrorMsg(err.message || 'Error loading profile')
-        setLoading(false)
+      const savedBasis = localStorage.getItem(`su_pl_basis_${activeBusiness.id}`)
+      if (savedBasis === 'accrual' || savedBasis === 'cash') {
+        setBasis(savedBasis)
       }
+    } else {
+      setErrorMsg('Belum ada unit bisnis aktif yang dipilih.')
+      setLoading(false)
     }
-    loadProfile()
-  }, [supabase])
+  }, [activeBusiness, bizLoading])
 
   // Fetch data from Ledger using server-side RPC
   const loadData = useCallback(async (businessId: string, startD: string, endD: string, timezone: string, reportBasis: 'accrual' | 'cash') => {

@@ -28,7 +28,33 @@ export async function fetchUserBusinessContext(
     supabase.from('businesses').select('*').eq('owner_id', userId)
   ])
 
-  const profile = profileRes.data || null
+  let profile = profileRes.data || null
+
+  // Auto-heal missing profile details (full_name / email) from auth user metadata if null or empty
+  if (!profile || !profile.full_name || !profile.email) {
+    try {
+      const { data: { user: authUser } } = await supabase.auth.getUser()
+      if (authUser?.id === userId) {
+        const resolvedName = profile?.full_name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User'
+        const resolvedEmail = profile?.email || authUser.email || ''
+        profile = {
+          ...(profile || {}),
+          id: userId,
+          full_name: resolvedName,
+          email: resolvedEmail,
+          role: profile?.role || 'admin'
+        }
+        supabase.from('profiles').upsert({
+          id: userId,
+          full_name: resolvedName,
+          email: resolvedEmail,
+          role: profile.role
+        }, { onConflict: 'id' }).then()
+      }
+    } catch (e) {
+      // Ignore auth getUser error
+    }
+  }
 
   const bizMap = new Map<string, any>()
   bsRes.data?.forEach((item: any) => {

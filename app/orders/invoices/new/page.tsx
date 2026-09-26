@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useUserContext } from '@/components/UserContext'
 import QuickAddProductModal from '@/components/QuickAddProductModal'
 import { QuickAddCustomerForm, NewCustomerFormData, EMPTY_CUSTOMER_FORM } from '@/components/QuickAddCustomerForm'
 import { CustomerSelectCombobox } from '@/components/CustomerSelectCombobox'
@@ -169,25 +170,18 @@ export default function NewInvoicePage() {
     setDueDate(`${yyyy}-${mm}-${dd}`)
   }, [invoiceDate, paymentTerms])
 
-  // Load Initial Data
+  const { activeBusiness, userProfile, bizLoading } = useUserContext()
+
+  // Load Initial Data from UserContext
   useEffect(() => {
     const loadData = async () => {
+      if (bizLoading) return
+      if (!activeBusiness?.id) return
       setLoadingData(true)
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
-
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('full_name, active_business_id, businesses!active_business_id(name)')
-          .eq('id', user.id)
-          .single()
-
-        if (!profile?.active_business_id) return
-
-        setBusinessId(profile.active_business_id)
-        setBusinessName((profile.businesses as { name?: string } | null)?.name || 'Bisnis Saya')
-        setStaffName(profile.full_name || 'Tidak diketahui')
+        setBusinessId(activeBusiness.id)
+        setBusinessName(activeBusiness.name || 'Bisnis Saya')
+        setStaffName(userProfile?.full_name || userProfile?.email?.split('@')[0] || 'Admin')
 
         // Fetch customers
         const custRes = await fetch('/api/customers')
@@ -202,7 +196,7 @@ export default function NewInvoicePage() {
         const { data: prodData } = await supabase
           .from('products')
           .select('id, name, price, sku, cost_price')
-          .eq('business_id', profile.active_business_id)
+          .eq('business_id', activeBusiness.id)
           .order('name', { ascending: true })
 
         if (prodData) setProducts(prodData)
@@ -214,7 +208,7 @@ export default function NewInvoicePage() {
     }
 
     loadData()
-  }, [supabase])
+  }, [activeBusiness, userProfile, bizLoading, supabase])
 
   // Items Handlers
   const handleAddItemRow = () => {

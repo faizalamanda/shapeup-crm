@@ -8,6 +8,7 @@ import { ProductSelectCombobox } from '@/components/ProductSelectCombobox'
 import QuickAddSupplierModal from '@/components/QuickAddSupplierModal'
 import { Pagination } from '../components/Pagination'
 import { useModalBackHandler } from '@/hooks/useModalBackHandler'
+import { useUserContext } from '@/components/UserContext'
 
 type Supplier = {
   id: string
@@ -213,34 +214,17 @@ export default function PurchasesPage() {
     }
   }, [supabase])
 
-  // Load Active Business Profile and Lookups in background
+  const { activeBusiness, bizLoading } = useUserContext()
+
+  // Load Active Business Profile and Lookups from UserContext
   useEffect(() => {
-    async function loadProfile() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
-
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name)')
-          .eq('id', user.id)
-          .single()
-
-        if (error) throw error
-
-        const businessId = profile?.active_business_id
-        if (businessId) {
-          setActiveBizId(businessId)
-          const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
-          setActiveBizName(biz?.name || 'Bisnis Saya')
-          fetchLookups(businessId)
-        }
-      } catch (err) {
-        console.error('Error loading profile:', err)
-      }
+    if (bizLoading) return
+    if (activeBusiness?.id) {
+      setActiveBizId(activeBusiness.id)
+      setActiveBizName(activeBusiness.name || 'Bisnis Saya')
+      fetchLookups(activeBusiness.id)
     }
-    loadProfile()
-  }, [supabase, fetchLookups])
+  }, [activeBusiness, bizLoading, fetchLookups])
 
   // Fetch purchases immediately on mount and when pagination/search changes
   useEffect(() => {

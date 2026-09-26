@@ -10,6 +10,7 @@ import HoldModal from './HoldModal'
 import AddCustomerModal from '../../orders/pos/components/AddCustomerModal'
 import OrderHistoryModal from '../../orders/pos/components/OrderHistoryModal'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
+import { useUserContext } from '@/components/UserContext'
 
 // Pastel badge colors for product cards
 const getPastelBadge = (name: string) => {
@@ -84,33 +85,27 @@ export default function POSWorkspace() {
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null)
   const [checkingOut, setCheckingOut] = useState(false)
 
+  const { activeBusiness, userProfile: ctxProfile, bizLoading } = useUserContext()
+
   // Initialize POS
   useEffect(() => {
     async function initPOS() {
+      if (!activeBusiness?.id) return
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (user) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('active_business_id, full_name')
-            .eq('id', user.id)
-            .single()
-
-          if (profile?.active_business_id) {
-            setUserProfile(profile)
-            setBusinessId(profile.active_business_id)
-            await loadCatalogAndCustomers(profile.active_business_id)
-            await checkActiveShift()
-          }
-        }
+        setBusinessId(activeBusiness.id)
+        if (ctxProfile) setUserProfile(ctxProfile)
+        await loadCatalogAndCustomers(activeBusiness.id)
+        await checkActiveShift()
       } catch (err) {
         console.error('POS Init Error:', err)
       } finally {
         setLoadingInit(false)
       }
     }
-    initPOS()
-  }, [])
+    if (!bizLoading) {
+      initPOS()
+    }
+  }, [activeBusiness?.id, ctxProfile, bizLoading])
 
   const loadCatalogAndCustomers = async (bId: string) => {
     // 1. Products

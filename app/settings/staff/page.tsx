@@ -7,7 +7,7 @@ import SettingsLayout from '@/components/SettingsLayout'
 import { useUserContext } from '@/components/UserContext'
 
 export default function StaffSettings() {
-  const { activeBusiness, userProfile, bizLoading } = useUserContext()
+  const { activeBusiness, userProfile, currentUserRole, bizLoading } = useUserContext()
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -371,7 +371,7 @@ export default function StaffSettings() {
     )
   }
 
-  const isAdmin = currentUserProfile?.role === 'admin'
+  const isAdmin = currentUserRole === 'admin' || userProfile?.role === 'admin' || currentUserProfile?.role === 'admin'
 
   return (
     <SettingsLayout title="Staf & Hak Akses" subtitle="Kelola anggota tim, tambahkan akun staf, dan atur hak akses modul.">

@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import ProductModal from './components/ProductModal'
+import { useUserContext } from '@/components/UserContext'
 
 type Category = {
   id: string
@@ -117,52 +118,34 @@ export default function ProductsPage() {
     }
   }, [supabase])
 
-  // Fetch initial profile & active business ID
+  const { activeBusiness, bizLoading } = useUserContext()
+
+  // Fetch initial profile & active business ID from UserContext
   useEffect(() => {
-    async function loadProfile() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
+    if (bizLoading) return
+    if (activeBusiness?.id) {
+      const businessId = activeBusiness.id
+      setActiveBizId(businessId)
+      setActiveBizName(activeBusiness.name || 'Bisnis Saya')
 
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name)')
-          .eq('id', user.id)
-          .single()
-
-        if (error) throw error
-
-        const businessId = profile?.active_business_id
-        if (businessId) {
-          setActiveBizId(businessId)
-          
-          const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
-          setActiveBizName(biz?.name || 'Bisnis Saya')
-
-          // Cache-first strategy
-          const cached = readCache(businessId)
-          if (cached) {
-            setProducts(cached.products)
-            setCategories(cached.categories)
-            setLoading(false)
-
-            // Revalidate in background if stale
-            const age = Date.now() - cached.ts
-            if (age > STALE_RECHECK) {
-              fetchProductsAndCategories(businessId, true)
-            }
-          } else {
-            // No cache - full fetch
-            await fetchProductsAndCategories(businessId, false)
-          }
-        }
-      } catch (err) {
-        console.error('Error loading profile:', err)
+      // Cache-first strategy
+      const cached = readCache(businessId)
+      if (cached) {
+        setProducts(cached.products)
+        setCategories(cached.categories)
         setLoading(false)
+
+        // Revalidate in background if stale
+        const age = Date.now() - cached.ts
+        if (age > STALE_RECHECK) {
+          fetchProductsAndCategories(businessId, true)
+        }
+      } else {
+        // No cache - full fetch
+        fetchProductsAndCategories(businessId, false)
       }
     }
-    loadProfile()
-  }, [fetchProductsAndCategories])
+  }, [activeBusiness, bizLoading, fetchProductsAndCategories])
 
   // Trigger refresh (e.g. after add/edit/delete)
   const refreshData = () => {

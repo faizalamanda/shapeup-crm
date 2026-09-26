@@ -6,9 +6,10 @@ import {
   fetchLedgerBalances, 
   Account 
 } from '../utils'
+import { useUserContext } from '@/components/UserContext'
 
 export default function BalanceSheetPage() {
-  // Using singleton supabase client from @/lib/supabase
+  const { activeBusiness, bizLoading } = useUserContext()
 
   const [activeBizId, setActiveBizId] = useState<string | null>(null)
   const [activeBizName, setActiveBizName] = useState<string | null>(null)
@@ -37,48 +38,22 @@ export default function BalanceSheetPage() {
   // Toggle for showing zero balance accounts
   const [showZeroBalances, setShowZeroBalances] = useState(false)
 
-  // Load Active Business Profile
+  // Load Active Business Profile from UserContext
   useEffect(() => {
-    async function loadProfile() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          setErrorMsg('User session not found')
-          setLoading(false)
-          return
-        }
-
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name, timezone)')
-          .eq('id', user.id)
-          .single()
-
-        if (error) throw error
-
-        const businessId = profile?.active_business_id
-        if (businessId) {
-          setActiveBizId(businessId)
-          const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
-          const tz = biz?.timezone || 'Asia/Jakarta'
-          setActiveBizName(biz?.name || 'Toko')
-          setActiveBizTimezone(tz)
-          // Update asOfDate to match business localzone
-          const d = new Date()
-          const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
-          setAsOfDate(formatter.format(d))
-        } else {
-          setErrorMsg('No active business selected')
-          setLoading(false)
-        }
-      } catch (err: any) {
-        console.error('Error loading profile:', err)
-        setErrorMsg(err.message || 'Error loading profile')
-        setLoading(false)
-      }
+    if (bizLoading) return
+    if (activeBusiness?.id) {
+      setActiveBizId(activeBusiness.id)
+      const tz = activeBusiness.timezone || 'Asia/Jakarta'
+      setActiveBizName(activeBusiness.name || 'Toko')
+      setActiveBizTimezone(tz)
+      const d = new Date()
+      const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
+      setAsOfDate(formatter.format(d))
+    } else {
+      setErrorMsg('Belum ada unit bisnis aktif yang dipilih.')
+      setLoading(false)
     }
-    loadProfile()
-  }, [supabase])
+  }, [activeBusiness, bizLoading])
 
   // Fetch ledger data up to snapshot date
   const loadData = useCallback(async (businessId: string, date: string, timezone: string) => {

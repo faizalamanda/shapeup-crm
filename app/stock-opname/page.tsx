@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
+import { useUserContext } from '@/components/UserContext'
 
 type Product = {
   id: string
@@ -133,35 +134,17 @@ export default function StockOpnamePage() {
     }
   }, [supabase])
 
-  // Load active profile
+  const { activeBusiness, bizLoading } = useUserContext()
+
+  // Load active profile from UserContext
   useEffect(() => {
-    async function loadProfile() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
-
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name)')
-          .eq('id', user.id)
-          .single()
-
-        if (error) throw error
-
-        const businessId = profile?.active_business_id
-        if (businessId) {
-          setActiveBizId(businessId)
-          const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
-          setActiveBizName(biz?.name || 'Bisnis Saya')
-          await fetchData(businessId)
-        }
-      } catch (err) {
-        console.error('Error loading profile:', err)
-        setLoading(false)
-      }
+    if (bizLoading) return
+    if (activeBusiness?.id) {
+      setActiveBizId(activeBusiness.id)
+      setActiveBizName(activeBusiness.name || 'Bisnis Saya')
+      fetchData(activeBusiness.id)
     }
-    loadProfile()
-  }, [supabase, fetchData])
+  }, [activeBusiness, bizLoading, fetchData])
 
   // Open creation modal
   const openAddModal = () => {

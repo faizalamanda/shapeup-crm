@@ -36,7 +36,7 @@ export async function registerAction(formData: FormData) {
 
   const email = rawEmail.trim().toLowerCase()
   const supabase = await createClient()
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
@@ -49,6 +49,18 @@ export async function registerAction(formData: FormData) {
 
   if (error) {
     return { error: error.message }
+  }
+
+  // Ensure profile record exists with full_name & email
+  if (data.user?.id) {
+    const { getAdminSupabase } = await import('@/lib/supabaseServer')
+    const admin = getAdminSupabase()
+    await admin.from('profiles').upsert({
+      id: data.user.id,
+      email: email,
+      full_name: fullName,
+      role: 'admin'
+    }, { onConflict: 'id' })
   }
 
   return { success: true }
