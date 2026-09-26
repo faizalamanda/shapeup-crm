@@ -1,32 +1,14 @@
-import { createClient } from '@supabase/supabase-js'
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/supabaseServer'
-
-// Helper to initialize Supabase Admin Client
-function getSupabaseAdmin() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
-}
+import { getApiContext } from '@/lib/apiContext'
 
 // Helper to check if the current user is an Admin
-async function checkAdminSession(cookieStore: any) {
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() { return cookieStore.getAll() },
-        setAll() {},
-      },
-    }
-  )
+async function checkAdminSession() {
+  const ctx = await getApiContext()
+  if (ctx.error) {
+    return { isAdmin: false, error: "Sesi tidak valid, silakan login ulang." }
+  }
 
-  const { user } = await getAuthUser(supabase)
-  if (!user) return { isAdmin: false, error: "Sesi tidak valid, silakan login ulang." }
+  const { user, businessId, supabase, supabaseAdmin } = ctx
 
   const { data: profile } = await supabase
     .from('profiles')
@@ -34,25 +16,51 @@ async function checkAdminSession(cookieStore: any) {
     .eq('id', user.id)
     .single()
 
-  if (!profile || profile.role !== 'admin') {
-    return { isAdmin: false, error: "Hanya Admin yang memiliki akses ke fitur ini." }
+  let isAdminUser = profile?.role === 'admin'
+  if (!isAdminUser && businessId) {
+    const { data: owned } = await supabaseAdmin
+      .from('businesses')
+      .select('id')
+      .eq('id', businessId)
+      .eq('owner_id', user.id)
+      .maybeSingle()
+
+    if (owned) {
+      isAdminUser = true
+    } else {
+      const { data: bs } = await supabaseAdmin
+        .from('business_staff')
+        .select('role')
+        .eq('business_id', businessId)
+        .eq('profile_id', user.id)
+        .maybeSingle()
+      if (bs?.role === 'admin') {
+        isAdminUser = true
+      }
+    }
   }
 
-  return { isAdmin: true, adminProfile: profile, user }
+  if (!isAdminUser) {
+    return { isAdmin: false, error: "Hanya Admin atau Pemilik Unit Bisnis yang memiliki akses ke fitur ini." }
+  }
+
+  const adminProfile = {
+    ...(profile || {}),
+    active_business_id: businessId || profile?.active_business_id
+  }
+
+  return { isAdmin: true, adminProfile, user, supabaseAdmin }
 }
 
 export async function GET(req: Request) {
-  const cookieStore = await cookies()
   const { searchParams } = new URL(req.url)
   const email = searchParams.get('email')
 
   try {
-    const { isAdmin, adminProfile, error: authError } = await checkAdminSession(cookieStore)
+    const { isAdmin, adminProfile, supabaseAdmin, error: authError } = await checkAdminSession()
     if (!isAdmin || !adminProfile || !adminProfile.active_business_id) {
       return NextResponse.json({ error: authError || "Akses ditolak" }, { status: 403 })
     }
-
-    const supabaseAdmin = getSupabaseAdmin()
 
     if (email) {
       const trimmedEmail = email.trim().toLowerCase()
@@ -159,16 +167,13 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const cookieStore = await cookies()
   const { email, password, full_name, role, permissions } = await req.json()
 
   try {
-    const { isAdmin, adminProfile, error: authError } = await checkAdminSession(cookieStore)
+    const { isAdmin, adminProfile, supabaseAdmin, error: authError } = await checkAdminSession()
     if (!isAdmin || !adminProfile || !adminProfile.active_business_id) {
       return NextResponse.json({ error: authError || "Akses ditolak atau bisnis aktif tidak ditemukan" }, { status: 403 })
     }
-
-    const supabaseAdmin = getSupabaseAdmin()
 
     const trimmedEmail = email.trim().toLowerCase()
 
@@ -312,7 +317,6 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
-  const cookieStore = await cookies()
   const { id, email, password, full_name, role, permissions } = await req.json()
 
   if (!id) {
@@ -320,12 +324,10 @@ export async function PUT(req: Request) {
   }
 
   try {
-    const { isAdmin, adminProfile, error: authError } = await checkAdminSession(cookieStore)
+    const { isAdmin, adminProfile, supabaseAdmin, error: authError } = await checkAdminSession()
     if (!isAdmin || !adminProfile || !adminProfile.active_business_id) {
       return NextResponse.json({ error: authError || "Akses ditolak" }, { status: 403 })
     }
-
-    const supabaseAdmin = getSupabaseAdmin()
 
     // Cek apakah staff yang diedit ditugaskan ke bisnis aktif admin
     const { data: targetAssignment, error: targetAssignmentError } = await supabaseAdmin
@@ -387,7 +389,6 @@ export async function PUT(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const cookieStore = await cookies()
   const { searchParams } = new URL(req.url)
   const id = searchParams.get('id')
 
@@ -396,12 +397,10 @@ export async function DELETE(req: Request) {
   }
 
   try {
-    const { isAdmin, adminProfile, error: authError } = await checkAdminSession(cookieStore)
+    const { isAdmin, adminProfile, supabaseAdmin, error: authError } = await checkAdminSession()
     if (!isAdmin || !adminProfile || !adminProfile.active_business_id) {
       return NextResponse.json({ error: authError || "Akses ditolak" }, { status: 403 })
     }
-
-    const supabaseAdmin = getSupabaseAdmin()
 
     // Hapus penugasan staff dari unit bisnis aktif admin saat ini
     const { error: deleteError } = await supabaseAdmin

@@ -531,14 +531,14 @@ export default function IntegrationsSettingsPage() {
           </div>
           <h2 className="text-xl font-bold text-[#1C1C1A]">Unit Bisnis Aktif Belum Dipilih</h2>
           <p className="text-xs text-[#6B6B63]">
-            Anda harus memilih atau mengaktifkan salah satu unit bisnis terlebih dahulu untuk mengelola Pengaturan Integrasi.
+            Anda harus memilih atau membuat salah satu unit bisnis terlebih dahulu untuk mengelola Pengaturan Integrasi.
           </p>
           <div className="pt-2">
             <Link 
               href="/settings/business" 
               className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs"
             >
-              Pilih Unit Bisnis &rarr;
+              Pilih / Buat Unit Bisnis &rarr;
             </Link>
           </div>
         </div>

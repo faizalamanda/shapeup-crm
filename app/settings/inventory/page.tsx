@@ -1,14 +1,15 @@
 "use client"
 
 import { useState, useEffect, useCallback } from 'react'
-import { supabase } from '@/lib/supabase'
 import SettingsLayout from '@/components/SettingsLayout'
+import { useUserContext } from '@/components/UserContext'
+import Link from 'next/link'
 
 export default function GlobalInventorySettingsPage() {
-  // Using singleton supabase client from @/lib/supabase
+  const { activeBusiness, bizLoading } = useUserContext()
+  const activeBusinessId = activeBusiness?.id || null
+  const activeBusinessName = activeBusiness?.name || ''
 
-  const [activeBusinessId, setActiveBusinessId] = useState<string | null>(null)
-  const [activeBusinessName, setActiveBusinessName] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
@@ -24,54 +25,41 @@ export default function GlobalInventorySettingsPage() {
     global_default_hpp_percentage: 0
   })
 
-  // Fetch Active Business Profile
-  const fetchActiveBusiness = useCallback(async () => {
-    setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('active_business_id')
-        .eq('id', user.id)
-        .single()
-
-      if (profile?.active_business_id) {
-        setActiveBusinessId(profile.active_business_id)
-        const { data: biz } = await supabase
-          .from('businesses')
-          .select('name')
-          .eq('id', profile.active_business_id)
-          .single()
-        if (biz) setActiveBusinessName(biz.name)
-
-        // Fetch saved global settings
-        try {
-          const res = await fetch('/api/settings/inventory')
-          const json = await res.json()
-          if (json.success && json.settings) {
-            setGlobalForm({
-              global_stock_reduction_status: Array.isArray(json.settings.global_stock_reduction_status)
-                ? json.settings.global_stock_reduction_status
-                : ['shipped', 'completed'],
-              global_journal_hpp_status: Array.isArray(json.settings.global_journal_hpp_status)
-                ? json.settings.global_journal_hpp_status
-                : ['shipped', 'completed'],
-              global_default_hpp_percentage: typeof json.settings.global_default_hpp_percentage === 'number'
-                ? json.settings.global_default_hpp_percentage
-                : 0
-            })
-          }
-        } catch (err) {
-          console.error('Failed to load global inventory settings:', err)
-        }
-      }
+  // Fetch Active Business Inventory Settings
+  const fetchInventorySettings = useCallback(async () => {
+    if (!activeBusinessId) {
+      setLoading(false)
+      return
     }
-    setLoading(false)
-  }, [supabase])
+    setLoading(true)
+    try {
+      const res = await fetch('/api/settings/inventory')
+      const json = await res.json()
+      if (json.success && json.settings) {
+        setGlobalForm({
+          global_stock_reduction_status: Array.isArray(json.settings.global_stock_reduction_status)
+            ? json.settings.global_stock_reduction_status
+            : ['shipped', 'completed'],
+          global_journal_hpp_status: Array.isArray(json.settings.global_journal_hpp_status)
+            ? json.settings.global_journal_hpp_status
+            : ['shipped', 'completed'],
+          global_default_hpp_percentage: typeof json.settings.global_default_hpp_percentage === 'number'
+            ? json.settings.global_default_hpp_percentage
+            : 0
+        })
+      }
+    } catch (err) {
+      console.error('Failed to load global inventory settings:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [activeBusinessId])
 
   useEffect(() => {
-    fetchActiveBusiness()
-  }, [fetchActiveBusiness])
+    if (activeBusinessId) {
+      fetchInventorySettings()
+    }
+  }, [activeBusinessId, fetchInventorySettings])
 
   // Save Settings Form
   const handleSave = async (e: React.FormEvent) => {
@@ -107,6 +95,41 @@ export default function GlobalInventorySettingsPage() {
     { id: 'processing', label: 'Processing (Diproses)' },
     { id: 'on-hold', label: 'On-Hold (Ditahan)' }
   ]
+
+  if (bizLoading) {
+    return (
+      <SettingsLayout title="Pengaturan Stok & Jurnal Global" subtitle="Konfigurasi default aturan pemotongan stok & jurnal HPP terpusat.">
+        <div className="bg-white rounded-2xl border border-[#E2E2DC] p-12 flex flex-col items-center justify-center min-h-[350px] gap-3">
+          <div className="w-8 h-8 border-3 border-[#E2E2DC] border-t-blue-600 rounded-full animate-spin" />
+          <p className="text-xs font-bold uppercase tracking-widest text-[#A8A89E]">Memeriksa Unit Bisnis Aktif...</p>
+        </div>
+      </SettingsLayout>
+    )
+  }
+
+  if (!bizLoading && !activeBusinessId) {
+    return (
+      <SettingsLayout title="Pengaturan Stok & Jurnal Global" subtitle="Konfigurasi default aturan pemotongan stok & jurnal HPP terpusat.">
+        <div className="bg-white border border-[#E2E2DC] rounded-xl p-8 text-center space-y-4 max-w-xl mx-auto shadow-sm">
+          <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center text-xl mx-auto">
+            ⚠️
+          </div>
+          <h2 className="text-xl font-bold text-[#1C1C1A]">Unit Bisnis Aktif Belum Dipilih</h2>
+          <p className="text-xs text-[#6B6B63]">
+            Anda harus memilih atau membuat salah satu unit bisnis terlebih dahulu untuk mengelola Pengaturan Stok & Jurnal Global.
+          </p>
+          <div className="pt-2">
+            <Link 
+              href="/settings/business" 
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs"
+            >
+              Pilih / Buat Unit Bisnis &rarr;
+            </Link>
+          </div>
+        </div>
+      </SettingsLayout>
+    )
+  }
 
   return (
     <SettingsLayout

@@ -1,34 +1,11 @@
 import { NextResponse } from 'next/server'
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
-
-function getAdminSupabase() {
-  return createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
-}
+import { getApiContext } from '@/lib/apiContext'
 
 export async function GET(req: Request) {
   try {
-    const supabase = await createClient()
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Unit bisnis aktif tidak terdeteksi.' }, { status: 400 })
-    }
-
-    const activeBid = profile.active_business_id
-    const admin = getAdminSupabase()
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { businessId: activeBid, supabaseAdmin: admin } = ctx
 
     const url = new URL(req.url)
     const isSummary = url.searchParams.get('summary') === 'true'
@@ -164,21 +141,9 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const supabase = await createClient()
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Unit bisnis aktif tidak terdeteksi.' }, { status: 400 })
-    }
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId: activeBid, supabaseAdmin: admin } = ctx
 
     const body = await req.json()
     const { provider, store_url, consumer_key, consumer_secret, api_key, whatsapp_number, is_active = true, config, name, ...extraFields } = body
@@ -186,9 +151,6 @@ export async function POST(req: Request) {
     if (!provider) {
       return NextResponse.json({ error: 'Provider wajib ditentukan.' }, { status: 400 })
     }
-
-    const admin = getAdminSupabase()
-    const activeBid = profile.active_business_id
 
     // Check if it's a plugin using business_integrations table
     if (provider === 'accurate' || config !== undefined) {

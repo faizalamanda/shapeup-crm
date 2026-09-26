@@ -4,8 +4,10 @@ import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import SettingsLayout from '@/components/SettingsLayout'
+import { useUserContext } from '@/components/UserContext'
 
 export default function StaffSettings() {
+  const { activeBusiness, userProfile, bizLoading } = useUserContext()
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -96,39 +98,32 @@ export default function StaffSettings() {
   const [myPasswordMessage, setMyPasswordMessage] = useState({ text: '', type: '' })
 
   const fetchStaff = useCallback(async () => {
+    if (!activeBusiness?.id) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        // Get logged in user's profile
-        const { data: myProfile } = await supabase
-          .from('profiles')
-          .select('id, business_id, active_business_id, role, full_name, email')
-          .eq('id', user.id)
-          .single()
-
-        setCurrentUserProfile(myProfile)
-
-        if (myProfile?.active_business_id) {
-          const res = await fetch('/api/staff')
-          if (!res.ok) {
-            const errData = await res.json()
-            throw new Error(errData.error || "Gagal mengambil data staff")
-          }
-          const { staff } = await res.json()
-          setStaffList(staff || [])
-        }
+      if (userProfile) {
+        setCurrentUserProfile(userProfile)
+      }
+      const res = await fetch('/api/staff')
+      if (res.ok) {
+        const { staff } = await res.json()
+        setStaffList(staff || [])
       }
     } catch (error) {
       console.error("Error fetching staff:", error)
     } finally {
       setLoading(false)
     }
-  }, [supabase])
+  }, [activeBusiness?.id, userProfile])
 
   useEffect(() => {
-    fetchStaff()
-  }, [fetchStaff])
+    if (activeBusiness?.id) {
+      fetchStaff()
+    }
+  }, [activeBusiness?.id, fetchStaff])
 
   // Debounce email check
   useEffect(() => {
@@ -341,7 +336,18 @@ export default function StaffSettings() {
     }
   }
 
-  if (!loading && !currentUserProfile?.active_business_id) {
+  if (bizLoading || (loading && activeBusiness?.id)) {
+    return (
+      <SettingsLayout title="Staf & Hak Akses" subtitle="Kelola anggota tim, tambahkan akun staf, dan atur hak akses modul.">
+        <div className="bg-white rounded-2xl border border-[#E2E2DC] p-12 flex flex-col items-center justify-center min-h-[350px] gap-3">
+          <div className="w-8 h-8 border-3 border-[#E2E2DC] border-t-blue-600 rounded-full animate-spin" />
+          <p className="text-xs font-bold uppercase tracking-widest text-[#A8A89E]">Memuat Data Tim & Hak Akses...</p>
+        </div>
+      </SettingsLayout>
+    )
+  }
+
+  if (!bizLoading && !activeBusiness?.id) {
     return (
       <SettingsLayout title="Staf & Hak Akses" subtitle="Kelola anggota tim, tambahkan akun staf, dan atur hak akses modul.">
         <div className="bg-white border border-[#E2E2DC] rounded-xl p-8 text-center space-y-4 max-w-xl mx-auto shadow-sm">
@@ -350,14 +356,14 @@ export default function StaffSettings() {
           </div>
           <h2 className="text-xl font-bold text-[#1C1C1A]">Unit Bisnis Aktif Belum Dipilih</h2>
           <p className="text-xs text-[#6B6B63]">
-            Anda harus memilih atau mengaktifkan salah satu unit bisnis terlebih dahulu untuk mengelola anggota tim.
+            Anda harus memilih atau membuat salah satu unit bisnis terlebih dahulu untuk mengelola anggota tim.
           </p>
           <div className="pt-2">
             <Link 
               href="/settings/business" 
               className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs"
             >
-              Pilih Unit Bisnis &rarr;
+              Pilih / Buat Unit Bisnis &rarr;
             </Link>
           </div>
         </div>

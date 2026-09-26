@@ -1,41 +1,19 @@
 import { NextResponse } from 'next/server'
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
-
-function getAdminSupabase() {
-  return createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
-}
+import { getApiContext } from '@/lib/apiContext'
 
 // GET: Fetch business global inventory & stock reduction settings
-export async function GET(req: Request) {
+export async function GET() {
   try {
-    const supabase = await createClient()
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Unit bisnis aktif tidak terdeteksi.' }, { status: 400 })
-    }
-
-    const admin = getAdminSupabase()
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { businessId: activeBid, supabaseAdmin: admin } = ctx
 
     // Fetch global integration setting
     const { data: rows, error: fetchErr } = await admin
       .from('integrations')
       .select('*')
       .eq('platform_name', 'global')
-      .filter('api_credentials->>business_id', 'eq', profile.active_business_id)
+      .filter('api_credentials->>business_id', 'eq', activeBid)
 
     if (fetchErr) throw fetchErr
 
@@ -44,7 +22,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       success: true,
-      activeBusinessId: profile.active_business_id,
+      activeBusinessId: activeBid,
       settings: {
         global_stock_reduction_status: creds.global_stock_reduction_status || ['shipped', 'completed'],
         global_journal_hpp_status: creds.global_journal_hpp_status || ['shipped', 'completed'],
@@ -61,27 +39,12 @@ export async function GET(req: Request) {
 // POST: Save business global inventory & stock reduction settings
 export async function POST(req: Request) {
   try {
-    const supabase = await createClient()
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Unit bisnis aktif tidak terdeteksi.' }, { status: 400 })
-    }
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId: activeBid, supabaseAdmin: admin } = ctx
 
     const body = await req.json()
     const { global_stock_reduction_status, global_journal_hpp_status, global_default_hpp_percentage } = body
-
-    const admin = getAdminSupabase()
-    const activeBid = profile.active_business_id
 
     // Check if record already exists
     const { data: existingRows } = await admin

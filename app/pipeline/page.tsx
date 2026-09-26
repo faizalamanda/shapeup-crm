@@ -41,7 +41,7 @@ export default function PipelinePage() {
 
     // 2. Background Sync (Concurrent Fetch)
     try {
-      const fetchIntegrations = fetch('/api/integrations').then(res => res.json()).catch(() => null)
+      const fetchIntegrations = fetch('/api/integrations?summary=true').then(res => res.json()).catch(() => null)
       const fetchSupabase = supabase
         .from('pipelines')
         .select(`
@@ -54,12 +54,18 @@ export default function PipelinePage() {
 
       const [json, pipeRes] = await Promise.all([fetchIntegrations, fetchSupabase])
 
-      let pluginActive = false
-      if (json && json.success && Array.isArray(json.integrations)) {
-        const pipelineRecord = json.integrations.find(
-          (i: any) => i.platform_name === 'pipeline' || i.provider === 'pipeline'
-        )
-        pluginActive = Boolean(pipelineRecord && pipelineRecord.is_active === true)
+      let pluginActive = true // Default active for all businesses unless explicitly disabled
+      if (json && json.success) {
+        if (json.statuses && json.statuses.pipeline) {
+          pluginActive = json.statuses.pipeline.is_active !== false
+        } else if (Array.isArray(json.integrations)) {
+          const pipelineRecord = json.integrations.find(
+            (i: any) => i.platform_name === 'pipeline' || i.provider === 'pipeline'
+          )
+          if (pipelineRecord) {
+            pluginActive = pipelineRecord.is_active !== false
+          }
+        }
       }
 
       const pipes = pipeRes.data || []
@@ -70,7 +76,7 @@ export default function PipelinePage() {
         return p.members?.some((m: any) => m.user_id === userProfile.id)
       })
 
-      // Fallback: If there are accessible pipelines, the plugin is active (even if not explicitly activated in settings)
+      // Fallback: If there are accessible pipelines, the plugin is active
       if (accessiblePipes.length > 0) {
         pluginActive = true
       }
@@ -86,7 +92,7 @@ export default function PipelinePage() {
         setView(prev => (prev === 'loading' || prev === 'disabled' ? 'hub' : prev))
       }
     } catch {
-      // Fallback in case of error, if we were loading, go to hub (if we have cached pipelines, they are shown)
+      // Fallback in case of error, if we were loading, go to hub
       setView(prev => (prev === 'loading' ? 'hub' : prev))
     }
   }, [activeBusiness?.id, userProfile?.id, supabase])
