@@ -112,13 +112,45 @@ export async function getApiContext(options?: {
     }
   }
 
-  const { data: profile, error: profErr } = await supabase
+  const { data: profile } = await supabase
     .from('profiles')
     .select('active_business_id')
     .eq('id', user.id)
     .single()
 
-  if (profErr || !profile?.active_business_id) {
+  let activeBusinessId = profile?.active_business_id || ''
+
+  if (!activeBusinessId) {
+    // Fallback/Auto-heal for new users or missing active_business_id
+    const admin = getAdmin()
+    const { data: owned } = await admin
+      .from('businesses')
+      .select('id')
+      .eq('owner_id', user.id)
+      .limit(1)
+
+    if (owned && owned.length > 0) {
+      activeBusinessId = owned[0].id
+    } else {
+      const { data: staff } = await admin
+        .from('business_staff')
+        .select('business_id')
+        .eq('profile_id', user.id)
+        .limit(1)
+
+      if (staff && staff.length > 0) {
+        activeBusinessId = staff[0].business_id
+      }
+    }
+
+    if (activeBusinessId) {
+      await admin
+        .from('profiles')
+        .upsert({ id: user.id, active_business_id: activeBusinessId }, { onConflict: 'id' })
+    }
+  }
+
+  if (!activeBusinessId) {
     return {
       error: NextResponse.json(
         { error: 'Active business not found for user profile' },
@@ -129,7 +161,7 @@ export async function getApiContext(options?: {
 
   // Cache the result
   profileCache.set(user.id, {
-    activeBusinessId: profile.active_business_id,
+    activeBusinessId,
     expiresAt: now + PROFILE_CACHE_TTL
   })
 
@@ -142,7 +174,7 @@ export async function getApiContext(options?: {
 
   return {
     user,
-    businessId: profile.active_business_id,
+    businessId: activeBusinessId,
     supabase,
     supabaseAdmin: getAdmin()
   }

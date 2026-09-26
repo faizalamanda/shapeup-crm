@@ -1,14 +1,12 @@
 import { NextResponse } from 'next/server';
-import { createClient, getAuthUser } from '@/lib/supabaseServer';
+import { getApiContext } from '@/lib/apiContext';
 import { createStage, updateStage, deleteStage, reorderStages } from '@/plugins/pipeline/helpers/pipelineApi';
 
 export async function POST(req: Request) {
   try {
-    const supabase = await createClient();
-    const { user, error: authErr } = await getAuthUser(supabase);
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const ctx = await getApiContext();
+    if (ctx.error) return ctx.error;
+    const { supabase } = ctx;
 
     const body = await req.json();
     const { data, error } = await createStage(supabase, body);
@@ -23,11 +21,9 @@ export async function POST(req: Request) {
 
 export async function PUT(req: Request) {
   try {
-    const supabase = await createClient();
-    const { user, error: authErr } = await getAuthUser(supabase);
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const ctx = await getApiContext();
+    if (ctx.error) return ctx.error;
+    const { supabase } = ctx;
 
     const body = await req.json();
 
@@ -55,11 +51,9 @@ export async function PUT(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
-    const supabase = await createClient();
-    const { user, error: authErr } = await getAuthUser(supabase);
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const ctx = await getApiContext();
+    if (ctx.error) return ctx.error;
+    const { supabase } = ctx;
 
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');

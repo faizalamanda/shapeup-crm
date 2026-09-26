@@ -1,38 +1,15 @@
 import { NextResponse } from 'next/server';
-import { createClient, getAuthUser } from '@/lib/supabaseServer';
-import { createClient as createAdminClient } from '@supabase/supabase-js';
+import { getApiContext } from '@/lib/apiContext';
 import { fetchPipelines, createPipeline } from '@/plugins/pipeline/helpers/pipelineApi';
 
-function getAdminSupabase() {
-  if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    return createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
-    );
-  }
-  return null;
-}
-
-export async function GET(req: Request) {
+export async function GET() {
   try {
-    const supabase = await createClient();
-    const { user, error: authErr } = await getAuthUser(supabase);
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const ctx = await getApiContext();
+    if (ctx.error) return ctx.error;
+    const { user, businessId, supabaseAdmin, supabase } = ctx;
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single();
-
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Unit bisnis aktif tidak terdeteksi.' }, { status: 400 });
-    }
-
-    const admin = getAdminSupabase() || supabase;
-    const { data, error } = await fetchPipelines(admin, profile.active_business_id, user.id);
+    const admin = supabaseAdmin || supabase;
+    const { data, error } = await fetchPipelines(admin, businessId, user.id);
     if (error) throw error;
 
     return NextResponse.json({ success: true, pipelines: data || [] });
@@ -44,32 +21,20 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const supabase = await createClient();
-    const { user, error: authErr } = await getAuthUser(supabase);
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single();
-
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Unit bisnis aktif tidak terdeteksi.' }, { status: 400 });
-    }
+    const ctx = await getApiContext();
+    if (ctx.error) return ctx.error;
+    const { user, businessId, supabaseAdmin, supabase } = ctx;
 
     const body = await req.json();
     if (!body.name) {
       return NextResponse.json({ error: 'Nama pipeline wajib diisi.' }, { status: 400 });
     }
 
-    const admin = getAdminSupabase() || supabase;
+    const admin = supabaseAdmin || supabase;
 
     const { data, error } = await createPipeline(admin, {
       ...body,
-      business_id: profile.active_business_id,
+      business_id: businessId,
       created_by: user.id,
     });
 

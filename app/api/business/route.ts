@@ -1,52 +1,21 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { seedDefaultCOA } from '@/lib/coa'
-import { getAuthUser, getAdminSupabase } from '@/lib/supabaseServer'
+import { getApiContext, invalidateProfileCache } from '@/lib/apiContext'
 
 export async function POST(req: Request) {
-  const cookieStore = await cookies()
-  
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, {
-                ...options,
-                maxAge: 31536000,
-                sameSite: 'lax',
-                path: '/'
-              })
-            )
-          } catch { /* Ignore */ }
-        },
-      },
-    }
-  )
-
   try {
+    const ctx = await getApiContext({ requireBusiness: false })
+    if (ctx.error) return ctx.error
+    const { user, supabaseAdmin } = ctx
+
     const body = await req.json()
     const { name, address, phone, timezone } = body
-    
-    // 1. Authenticate user from session/cookies
-    const { user, error: authError } = await getAuthUser(supabase)
-    if (authError || !user) {
-      return NextResponse.json({ error: "Sesi habis, silakan login ulang." }, { status: 401 })
-    }
 
     if (!name || !name.trim()) {
       return NextResponse.json({ error: "Nama bisnis wajib diisi." }, { status: 400 })
     }
 
-    // 2. Use Admin Client (service role) to bypass RLS for business setup
-    const adminSupabase = getAdminSupabase()
-
-    const { data: biz, error: bizError } = await adminSupabase
+    const { data: biz, error: bizError } = await supabaseAdmin
       .from('businesses')
       .insert({ 
         name: name.trim(), 
@@ -63,8 +32,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Gagal simpan bisnis: ${bizError.message}` }, { status: 400 })
     }
 
-    // 3. Update User Profile: set active_business_id, business_id, and promote role to 'admin'
-    const { error: profileError } = await adminSupabase
+    const { error: profileError } = await supabaseAdmin
       .from('profiles')
       .update({ 
         business_id: biz.id,
@@ -78,8 +46,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Gagal update profil: ${profileError.message}` }, { status: 400 })
     }
 
-    // 4. Register Owner in business_staff table as Admin
-    const { error: bsError } = await adminSupabase
+    const { error: bsError } = await supabaseAdmin
       .from('business_staff')
       .insert({
         business_id: biz.id,
@@ -91,12 +58,13 @@ export async function POST(req: Request) {
       console.error("Business Staff Assignment Error:", bsError)
     }
 
-    // 5. Seed Default Chart of Accounts (COA)
     try {
-      await seedDefaultCOA(biz.id, adminSupabase)
+      await seedDefaultCOA(biz.id, supabaseAdmin)
     } catch (e) {
       console.error("COA Seeding warning:", e)
     }
+
+    invalidateProfileCache(user.id)
 
     return NextResponse.json({ success: true, business: biz })
   } catch (err: unknown) {

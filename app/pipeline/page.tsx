@@ -11,7 +11,7 @@ import { Pipeline } from '@/plugins/pipeline/types'
 type PageView = 'loading' | 'disabled' | 'hub' | 'board'
 
 export default function PipelinePage() {
-  const { activeBusiness, userProfile } = useUserContext()
+  const { activeBusiness, userProfile, bizLoading } = useUserContext()
   const [view, setView] = useState<PageView>('loading')
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null)
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
@@ -118,8 +118,8 @@ export default function PipelinePage() {
     setView('board')
   }
 
-  // Loading state
-  if (view === 'loading' || (!activeBusiness?.id && view !== 'disabled')) {
+  // Loading state while resolving business / profile
+  if (bizLoading || (view === 'loading' && activeBusiness?.id)) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 flex items-center justify-center">
         <div className="text-center space-y-4">
@@ -128,6 +128,31 @@ export default function PipelinePage() {
             <div className="absolute inset-0 w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
           </div>
           <p className="text-sm font-semibold text-gray-500 dark:text-gray-400 animate-pulse">Memuat Pipeline...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // No active business selected state
+  if (!bizLoading && !activeBusiness?.id) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 flex items-center justify-center p-6">
+        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-3xl p-10 max-w-md w-full text-center shadow-2xl space-y-6">
+          <div className="w-20 h-20 bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 rounded-2xl flex items-center justify-center text-4xl mx-auto shadow-lg">
+            ⚠️
+          </div>
+          <div>
+            <h2 className="text-xl font-black text-gray-900 dark:text-gray-100 mb-2">Belum Ada Unit Bisnis Aktif</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
+              Silakan pilih atau buat unit bisnis aktif terlebih dahulu untuk mengakses fitur Pipeline & Kanban.
+            </p>
+          </div>
+          <Link
+            href="/settings/business"
+            className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold shadow-lg shadow-blue-500/25 transition-all hover:shadow-blue-500/40 w-full"
+          >
+            🏢 Pengaturan Unit Bisnis
+          </Link>
         </div>
       </div>
     )

@@ -175,8 +175,7 @@ function BusinessSettingsInner() {
         .single()
       
       setUserRole(profile?.role || 'staff')
-      const activeId = profile?.active_business_id || null
-      setActiveBid(activeId)
+      let activeId = profile?.active_business_id || null
 
       // Fetch assigned businesses
       const { data: bsData } = await supabase
@@ -204,12 +203,20 @@ function BusinessSettingsInner() {
       const parsedBizList = rawBizList.map(parseBusinessProfile)
       setBusinesses(parsedBizList)
 
-      if (activeId) {
-        const found = parsedBizList.find(b => b.id === activeId) || null
-        setActiveBusiness(found)
-        if (found) {
-          setProfileForm({ ...found })
+      let found = activeId ? (parsedBizList.find(b => b.id === activeId) || null) : null
+      if (!found && parsedBizList.length > 0) {
+        found = parsedBizList[0]
+        activeId = found.id
+        await supabase.from('profiles').upsert({ id: user.id, active_business_id: activeId }, { onConflict: 'id' })
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('shapeup:business_updated'))
         }
+      }
+
+      setActiveBid(activeId)
+      setActiveBusiness(found)
+      if (found) {
+        setProfileForm({ ...found })
       }
     }
     setLoading(false)

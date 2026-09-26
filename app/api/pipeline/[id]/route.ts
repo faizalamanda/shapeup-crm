@@ -1,15 +1,13 @@
 import { NextResponse } from 'next/server';
-import { createClient, getAuthUser } from '@/lib/supabaseServer';
+import { getApiContext } from '@/lib/apiContext';
 import { fetchPipelineById, updatePipeline, deletePipeline } from '@/plugins/pipeline/helpers/pipelineApi';
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const supabase = await createClient();
-    const { user, error: authErr } = await getAuthUser(supabase);
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const ctx = await getApiContext();
+    if (ctx.error) return ctx.error;
+    const { supabase } = ctx;
 
     const { data, error } = await fetchPipelineById(supabase, id);
     if (error) throw error;
@@ -25,11 +23,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const supabase = await createClient();
-    const { user, error: authErr } = await getAuthUser(supabase);
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const ctx = await getApiContext();
+    if (ctx.error) return ctx.error;
+    const { supabase } = ctx;
 
     const body = await req.json();
     const { data, error } = await updatePipeline(supabase, id, body);
@@ -45,11 +41,9 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const supabase = await createClient();
-    const { user, error: authErr } = await getAuthUser(supabase);
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const ctx = await getApiContext();
+    if (ctx.error) return ctx.error;
+    const { supabase } = ctx;
 
     const { error } = await deletePipeline(supabase, id);
     if (error) throw error;

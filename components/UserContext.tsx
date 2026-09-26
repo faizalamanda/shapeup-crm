@@ -198,11 +198,10 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Auto-heal missing active_business_id in profiles table
-      if (profile && !profile.active_business_id && selectedActiveBiz?.id) {
+      if (!profile?.active_business_id && selectedActiveBiz?.id) {
         supabase
           .from('profiles')
-          .update({ active_business_id: selectedActiveBiz.id })
-          .eq('id', userId)
+          .upsert({ id: userId, active_business_id: selectedActiveBiz.id }, { onConflict: 'id' })
           .then(({ error }) => {
             if (error) console.error('[UserContext] Auto-heal active_business_id error:', error)
           })

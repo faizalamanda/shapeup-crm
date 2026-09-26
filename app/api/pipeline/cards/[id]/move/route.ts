@@ -1,15 +1,13 @@
 import { NextResponse } from 'next/server';
-import { createClient, getAuthUser } from '@/lib/supabaseServer';
+import { getApiContext } from '@/lib/apiContext';
 import { moveCard } from '@/plugins/pipeline/helpers/pipelineApi';
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const supabase = await createClient();
-    const { user, error: authErr } = await getAuthUser(supabase);
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const ctx = await getApiContext();
+    if (ctx.error) return ctx.error;
+    const { user, supabase } = ctx;
 
     const body = await req.json();
     const { target_stage_id, new_display_order } = body;
