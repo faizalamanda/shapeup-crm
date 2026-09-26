@@ -8,37 +8,22 @@ async function checkAdminSession() {
     return { isAdmin: false, error: "Sesi tidak valid, silakan login ulang." }
   }
 
-  const { user, businessId, supabase, supabaseAdmin } = ctx
+  const { user, businessId, supabaseAdmin } = ctx
+  const activeBid = businessId
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('business_id, active_business_id, role')
-    .eq('id', user.id)
-    .single()
+  // Parallelize admin & owner verification in 1 round-trip
+  const [profileRes, ownedRes, bsRes] = await Promise.all([
+    supabaseAdmin.from('profiles').select('business_id, active_business_id, role, full_name, email').eq('id', user.id).maybeSingle(),
+    activeBid ? supabaseAdmin.from('businesses').select('id, owner_id').eq('id', activeBid).maybeSingle() : Promise.resolve({ data: null }),
+    activeBid ? supabaseAdmin.from('business_staff').select('role').eq('business_id', activeBid).eq('profile_id', user.id).maybeSingle() : Promise.resolve({ data: null })
+  ])
 
-  let isAdminUser = profile?.role === 'admin'
-  if (!isAdminUser && businessId) {
-    const { data: owned } = await supabaseAdmin
-      .from('businesses')
-      .select('id')
-      .eq('id', businessId)
-      .eq('owner_id', user.id)
-      .maybeSingle()
-
-    if (owned) {
-      isAdminUser = true
-    } else {
-      const { data: bs } = await supabaseAdmin
-        .from('business_staff')
-        .select('role')
-        .eq('business_id', businessId)
-        .eq('profile_id', user.id)
-        .maybeSingle()
-      if (bs?.role === 'admin') {
-        isAdminUser = true
-      }
-    }
-  }
+  const profile = profileRes.data
+  const bizData = ownedRes.data
+  const isOwner = bizData?.owner_id === user.id
+  const isStaffAdmin = bsRes.data?.role === 'admin'
+  const isGlobalAdmin = profile?.role === 'admin'
+  const isAdminUser = isGlobalAdmin || isOwner || isStaffAdmin
 
   if (!isAdminUser) {
     return { isAdmin: false, error: "Hanya Admin atau Pemilik Unit Bisnis yang memiliki akses ke fitur ini." }
@@ -46,10 +31,10 @@ async function checkAdminSession() {
 
   const adminProfile = {
     ...(profile || {}),
-    active_business_id: businessId || profile?.active_business_id
+    active_business_id: activeBid
   }
 
-  return { isAdmin: true, adminProfile, user, supabaseAdmin }
+  return { isAdmin: true, adminProfile, user, supabaseAdmin, ownerId: bizData?.owner_id }
 }
 
 export async function GET(req: Request) {
@@ -57,7 +42,7 @@ export async function GET(req: Request) {
   const email = searchParams.get('email')
 
   try {
-    const { isAdmin, adminProfile, supabaseAdmin, error: authError } = await checkAdminSession()
+    const { isAdmin, adminProfile, user, supabaseAdmin, ownerId, error: authError } = await checkAdminSession()
     if (!isAdmin || !adminProfile || !adminProfile.active_business_id) {
       return NextResponse.json({ error: authError || "Akses ditolak" }, { status: 403 })
     }
@@ -65,61 +50,34 @@ export async function GET(req: Request) {
     if (email) {
       const trimmedEmail = email.trim().toLowerCase()
       
-      // Check in auth.users first using listUsers
-      const { data: { users }, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
-      if (listError) throw listError
+      // Fast-path profile lookup by email
+      let { data: existingProfile, error: profileError } = await supabaseAdmin
+        .from('profiles')
+        .select('id, full_name, email, business_id')
+        .eq('email', trimmedEmail)
+        .maybeSingle()
 
-      const existingAuthUser = users?.find(u => u.email?.toLowerCase() === trimmedEmail)
-      let existingProfile = null
+      if (profileError) throw profileError
 
-      if (existingAuthUser) {
-        // Query profile by ID
-        const { data: profile, error: profileError } = await supabaseAdmin
-          .from('profiles')
-          .select('id, full_name, email, business_id')
-          .eq('id', existingAuthUser.id)
-          .maybeSingle()
+      // Fallback to auth admin listUsers if not in profiles table
+      if (!existingProfile) {
+        const { data: { users }, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+        if (listError) throw listError
 
-        if (profileError) throw profileError
-
-        if (profile) {
-          existingProfile = profile
-          // Sync email if mismatched
-          if (profile.email !== existingAuthUser.email) {
-            const { data: updatedProfile } = await supabaseAdmin
-              .from('profiles')
-              .update({ email: existingAuthUser.email })
-              .eq('id', profile.id)
-              .select('id, full_name, email, business_id')
-              .single()
-            if (updatedProfile) {
-              existingProfile = updatedProfile
-            }
-          }
-        } else {
-          // Create profile on the fly if missing
+        const existingAuthUser = users?.find(u => u.email?.toLowerCase() === trimmedEmail)
+        if (existingAuthUser) {
           const { data: newProfile } = await supabaseAdmin
             .from('profiles')
-            .insert({
+            .upsert({
               id: existingAuthUser.id,
               email: existingAuthUser.email,
               full_name: existingAuthUser.user_metadata?.full_name || email.split('@')[0],
               role: 'staff'
-            })
+            }, { onConflict: 'id' })
             .select('id, full_name, email, business_id')
             .single()
           existingProfile = newProfile
         }
-      } else {
-        // If not found in auth, check in profiles table as fallback
-        const { data: profile, error: profileError } = await supabaseAdmin
-          .from('profiles')
-          .select('id, full_name, email, business_id')
-          .eq('email', trimmedEmail)
-          .maybeSingle()
-
-        if (profileError) throw profileError
-        existingProfile = profile
       }
 
       if (!existingProfile) {
@@ -145,19 +103,47 @@ export async function GET(req: Request) {
       })
     }
 
-    // Ambil daftar staff dari business_staff join profiles menggunakan admin client
-    const { data: bsData, error: staffError } = await supabaseAdmin
+    const activeBid = adminProfile.active_business_id
+
+    // Fetch staff list directly
+    let { data: bsData, error: staffError } = await supabaseAdmin
       .from('business_staff')
       .select('role, permissions, profiles (*)')
-      .eq('business_id', adminProfile.active_business_id)
+      .eq('business_id', activeBid)
 
     if (staffError) throw staffError
 
+    // Conditional auto-heal ONLY if ownerId or user.id is missing from business_staff
+    const existingProfileIds = new Set(bsData?.map((item: any) => item.profiles?.id).filter(Boolean))
+    const missingIds: string[] = []
+    if (ownerId && !existingProfileIds.has(ownerId)) missingIds.push(ownerId)
+    if (user?.id && !existingProfileIds.has(user.id)) missingIds.push(user.id)
+
+    if (missingIds.length > 0) {
+      await Promise.allSettled(missingIds.map(profileId =>
+        supabaseAdmin
+          .from('business_staff')
+          .upsert({
+            business_id: activeBid,
+            profile_id: profileId,
+            role: 'admin',
+            permissions: ['full_access']
+          }, { onConflict: 'business_id,profile_id' })
+      ))
+
+      const { data: reFetched } = await supabaseAdmin
+        .from('business_staff')
+        .select('role, permissions, profiles (*)')
+        .eq('business_id', activeBid)
+      
+      if (reFetched) bsData = reFetched
+    }
+
     const staff = bsData?.map((item: any) => ({
       ...item.profiles,
-      role: item.role,
+      role: item.role || 'staff',
       permissions: item.permissions || []
-    })) || []
+    })).filter(s => Boolean(s.id)) || []
 
     return NextResponse.json({ staff })
 
@@ -177,63 +163,36 @@ export async function POST(req: Request) {
 
     const trimmedEmail = email.trim().toLowerCase()
 
-    // 1. Cek apakah user dengan email tersebut sudah terdaftar di auth atau profiles
-    const { data: { users }, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
-    if (listError) throw listError
+    // 1. Fast-path lookup by email in profiles table
+    let { data: existingProfile, error: fastProfileError } = await supabaseAdmin
+      .from('profiles')
+      .select('id, business_id, email, full_name')
+      .eq('email', trimmedEmail)
+      .maybeSingle()
 
-    const existingAuthUser = users?.find(u => u.email?.toLowerCase() === trimmedEmail)
-    let existingProfile = null
+    if (fastProfileError) throw fastProfileError
 
-    if (existingAuthUser) {
-      // Get profile by ID
-      const { data: profile, error: profileError } = await supabaseAdmin
-        .from('profiles')
-        .select('id, business_id, email, full_name')
-        .eq('id', existingAuthUser.id)
-        .maybeSingle()
+    if (!existingProfile) {
+      // Fallback search in auth users
+      const { data: { users }, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+      if (listError) throw listError
 
-      if (profileError) throw profileError
-
-      if (profile) {
-        existingProfile = profile
-        // Sync email if mismatched
-        if (profile.email !== existingAuthUser.email) {
-          const { data: updated } = await supabaseAdmin
-            .from('profiles')
-            .update({ email: existingAuthUser.email })
-            .eq('id', profile.id)
-            .select('id, business_id, email, full_name')
-            .single()
-          if (updated) {
-            existingProfile = updated
-          }
-        }
-      } else {
-        // Create profile on the fly if missing
+      const existingAuthUser = users?.find(u => u.email?.toLowerCase() === trimmedEmail)
+      if (existingAuthUser) {
         const { data: newProfile, error: insertProfileError } = await supabaseAdmin
           .from('profiles')
-          .insert({
+          .upsert({
             id: existingAuthUser.id,
             email: existingAuthUser.email,
             full_name: existingAuthUser.user_metadata?.full_name || email.split('@')[0],
             role: role || 'staff'
-          })
+          }, { onConflict: 'id' })
           .select('id, business_id, email, full_name')
           .single()
-        
+
         if (insertProfileError) throw insertProfileError
         existingProfile = newProfile
       }
-    } else {
-      // Fallback check by email in profiles
-      const { data: profile, error: profileError } = await supabaseAdmin
-        .from('profiles')
-        .select('id, business_id, email, full_name')
-        .eq('email', trimmedEmail)
-        .maybeSingle()
-
-      if (profileError) throw profileError
-      existingProfile = profile
     }
 
     if (existingProfile) {

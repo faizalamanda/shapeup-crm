@@ -45,6 +45,25 @@ const { data: profile } = await supabase.from('profiles').select('active_busines
 
 ---
 
+### 1b. `lib/userBusinessHelper.ts` — Unified User & Business Fetching
+
+Gunakan modul tunggal ini baik di *client-side* (`UserContext.tsx`, `settings/business/page.tsx`) maupun *server-side* ketika ingin mendapatkan profil user + daftar bisnis (assigned + owned) + unit bisnis aktif + role & permissions dalam 1 *call* paralel.
+
+```typescript
+import { fetchUserBusinessContext } from '@/lib/userBusinessHelper'
+
+const {
+  userProfile,
+  businesses,
+  activeBusiness,
+  activeBusinessId,
+  currentUserRole,
+  currentUserPermissions
+} = await fetchUserBusinessContext(userId, supabase)
+```
+
+---
+
 ### 2. `lib/guestCustomer.ts` — Guest Customer Resolution
 
 Gunakan saat perlu resolve "Customer Tamu" (walk-in) di POS.

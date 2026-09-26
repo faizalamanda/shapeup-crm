@@ -8,6 +8,7 @@ import Link from 'next/link'
 import SettingsLayout from '@/components/SettingsLayout'
 import { seedDefaultCOA } from '@/lib/coa'
 import { useUserContext } from '@/components/UserContext'
+import { fetchUserBusinessContext } from '@/lib/userBusinessHelper'
 
 const TIMEZONE_OPTIONS = [
   { value: 'Asia/Jakarta', label: 'Indonesia Barat (WIB)' },
@@ -168,50 +169,14 @@ function BusinessSettingsInner() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role, active_business_id')
-        .eq('id', user.id)
-        .single()
-      
-      setUserRole(profile?.role || 'staff')
-      let activeId = profile?.active_business_id || null
+      const contextData = await fetchUserBusinessContext(user.id, supabase)
 
-      // Fetch assigned businesses
-      const { data: bsData } = await supabase
-        .from('business_staff')
-        .select('role, businesses (*)')
-        .eq('profile_id', user.id)
-
-      // Fetch owned businesses
-      const { data: ownedBiz } = await supabase
-        .from('businesses')
-        .select('*')
-        .eq('owner_id', user.id)
-
-      const bizMap = new Map<string, any>()
-      bsData?.forEach((item: any) => {
-        if (item.businesses) {
-          bizMap.set(item.businesses.id, item.businesses)
-        }
-      })
-      ownedBiz?.forEach((biz: any) => {
-        bizMap.set(biz.id, biz)
-      })
-
-      const rawBizList = Array.from(bizMap.values())
-      const parsedBizList = rawBizList.map(parseBusinessProfile)
+      setUserRole(contextData.currentUserRole)
+      const parsedBizList = contextData.businesses.map(parseBusinessProfile)
       setBusinesses(parsedBizList)
 
+      let activeId = contextData.activeBusinessId
       let found = activeId ? (parsedBizList.find(b => b.id === activeId) || null) : null
-      if (!found && parsedBizList.length > 0) {
-        found = parsedBizList[0]
-        activeId = found.id
-        await supabase.from('profiles').upsert({ id: user.id, active_business_id: activeId }, { onConflict: 'id' })
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new Event('shapeup:business_updated'))
-        }
-      }
 
       setActiveBid(activeId)
       setActiveBusiness(found)

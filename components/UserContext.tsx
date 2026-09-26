@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { logoutAction } from '@/app/auth/actions'
+import { fetchUserBusinessContext } from '@/lib/userBusinessHelper'
 
 export interface UserContextType {
   userProfile: any | null
@@ -143,115 +144,46 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     const loadId = ++loadIdRef.current
 
     try {
-      const [profileResult, bsResult, ownedResult] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', userId).single(),
-        supabase.from('business_staff').select('role, permissions, businesses (*)').eq('profile_id', userId),
-        supabase.from('businesses').select('*').eq('owner_id', userId),
-      ])
+      const contextData = await fetchUserBusinessContext(userId, supabase)
 
       if (loadId !== loadIdRef.current) return
 
-      const profile = profileResult.data
-      if (profile) {
-        setUserProfile(profile)
+      if (contextData.userProfile) {
+        setUserProfile(contextData.userProfile)
         loadedUserIdRef.current = userId
       }
 
-      const bizMap = new Map<string, any>()
-      bsResult.data?.forEach((item: any) => {
-        if (item.businesses) bizMap.set(item.businesses.id, item.businesses)
-      })
-      ownedResult.data?.forEach((biz: any) => {
-        bizMap.set(biz.id, biz)
-      })
+      setBusinesses(contextData.businesses)
+      setActiveBusiness(contextData.activeBusiness)
+      setCurrentUserRole(contextData.currentUserRole)
+      setCurrentUserPermissions(contextData.currentUserPermissions)
 
-      const combined = Array.from(bizMap.values())
-      if (combined.length > 0) {
-        setBusinesses(combined)
-      }
+      const targetBizId = contextData.activeBusinessId
 
-      const activeBizId = profile?.active_business_id || combined[0]?.id
-      let selectedActiveBiz: any = null
-
-      if (activeBizId) {
-        const active = combined.find(b => b.id === activeBizId)
-        if (active) {
-          setActiveBusiness(active)
-          selectedActiveBiz = active
-        } else {
-          const { data: fallbackBiz } = await supabase.from('businesses').select('*').eq('id', activeBizId).single()
-          if (loadId === loadIdRef.current && fallbackBiz) {
-            setActiveBusiness(fallbackBiz)
-            selectedActiveBiz = fallbackBiz
-            if (!combined.some(b => b.id === fallbackBiz.id)) {
-              combined.push(fallbackBiz)
-              setBusinesses(combined)
-            }
-          } else if (combined.length > 0) {
-            setActiveBusiness(combined[0])
-            selectedActiveBiz = combined[0]
-          }
-        }
-      } else if (combined.length > 0) {
-        setActiveBusiness(combined[0])
-        selectedActiveBiz = combined[0]
-      }
-
-      // Auto-heal missing active_business_id in profiles table
-      if (!profile?.active_business_id && selectedActiveBiz?.id) {
-        supabase
-          .from('profiles')
-          .upsert({ id: userId, active_business_id: selectedActiveBiz.id }, { onConflict: 'id' })
-          .then(({ error }) => {
-            if (error) console.error('[UserContext] Auto-heal active_business_id error:', error)
-          })
-      }
-
-      const targetBizId = activeBizId || selectedActiveBiz?.id
+      // Async non-blocking WABA integration check
       if (targetBizId) {
-        const { data: wabaInt } = await supabase
+        supabase
           .from('integrations')
           .select('is_active, api_credentials')
           .eq('platform_name', 'waba_official')
           .filter('api_credentials->>business_id', 'eq', targetBizId)
           .maybeSingle()
-
-        setIsWabaActive(Boolean(wabaInt && wabaInt.is_active === true))
+          .then(({ data: wabaInt }) => {
+            if (loadId === loadIdRef.current) {
+              setIsWabaActive(Boolean(wabaInt && wabaInt.is_active === true))
+            }
+          })
       } else {
         setIsWabaActive(false)
       }
 
-      // Resolve role and permissions (Business Owners & Admins always get full_access)
-      const activeBs = bsResult.data?.find((item: any) => item.businesses?.id === targetBizId)
-      const isUserOwner = Boolean(ownedResult.data && ownedResult.data.some((b: any) => b.id === targetBizId))
-      const isGlobalAdmin = profile?.role === 'admin'
-      const isBsAdmin = activeBs?.role === 'admin'
-      const isUserAdmin = isGlobalAdmin || isBsAdmin || isUserOwner
-
-      let resolvedRole = 'staff'
-      let resolvedPerms: string[] = []
-
-      if (isUserAdmin) {
-        resolvedRole = 'admin'
-        resolvedPerms = ['full_access']
-      } else if (activeBs) {
-        resolvedRole = activeBs.role || 'staff'
-        resolvedPerms = Array.isArray(activeBs.permissions) ? activeBs.permissions : []
-      } else if (ownedResult.data && ownedResult.data.length > 0) {
-        resolvedRole = 'admin'
-        resolvedPerms = ['full_access']
-      }
-
-      setCurrentUserRole(resolvedRole)
-      setCurrentUserPermissions(resolvedPerms)
-
       try {
         if (typeof window !== 'undefined' && window.localStorage) {
-          if (profile) localStorage.setItem('su_cached_user_profile', JSON.stringify(profile))
-          if (combined && combined.length > 0) localStorage.setItem('su_cached_businesses', JSON.stringify(combined))
-          if (selectedActiveBiz) localStorage.setItem('su_cached_active_biz', JSON.stringify(selectedActiveBiz))
-          localStorage.setItem('su_cached_role', resolvedRole)
-          localStorage.setItem('su_cached_perms', JSON.stringify(resolvedPerms))
+          if (contextData.userProfile) localStorage.setItem('su_cached_user_profile', JSON.stringify(contextData.userProfile))
+          if (contextData.businesses.length > 0) localStorage.setItem('su_cached_businesses', JSON.stringify(contextData.businesses))
+          if (contextData.activeBusiness) localStorage.setItem('su_cached_active_biz', JSON.stringify(contextData.activeBusiness))
+          localStorage.setItem('su_cached_role', contextData.currentUserRole)
+          localStorage.setItem('su_cached_perms', JSON.stringify(contextData.currentUserPermissions))
         }
       } catch (e) {
         console.error('[UserContext] Error setting cache:', e)
@@ -318,6 +250,13 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
   }, [clearCachedUserData])
 
   useEffect(() => {
+    // Eager instant session fetch on mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user?.id && !loadedUserIdRef.current) {
+        loadProfileAndBusinesses(session.user.id, false)
+      }
+    })
+
     // Safety timeout (3.5 seconds): Release loading state gracefully without kicking user out
     const safetyTimeoutId = setTimeout(async () => {
       if (loadedUserIdRef.current) return
