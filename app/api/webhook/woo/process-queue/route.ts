@@ -57,15 +57,19 @@ export async function POST(req: Request) {
   try {
     // 2. Recover stuck items (>15 mins processing)
     const fifteenMinsAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString()
-    await supabaseAdmin
+    const { error: recoveryErr } = await supabaseAdmin
       .from('webhook_ingest_queue')
-      .update({ status: 'pending' })
+      .update({ status: 'pending', processing_at: null })
       .eq('status', 'processing')
-      .lt('processed_at', fifteenMinsAgo)
+      .lt('processing_at', fifteenMinsAgo)
 
-    // 3. Fetch pending batch using RPC
+    if (recoveryErr) {
+      console.warn('[process-queue] Stuck recovery warning:', recoveryErr.message)
+    }
+
+    // 3. Fetch pending batch using RPC (batch size 5 to stay under Vercel 10s execution limit)
     const { data: batch, error: fetchErr } = await supabaseAdmin.rpc('fetch_webhook_queue_batch', {
-      batch_size: 20
+      batch_size: 5
     })
 
     if (fetchErr) {
@@ -240,8 +244,8 @@ async function markDone(supabase: any, id: string) {
     .from('webhook_ingest_queue')
     .update({
       status: 'done',
-      processed_at: new Date().toISOString(),
-      error_message: null
+      done_at: new Date().toISOString(),
+      error_log: null
     })
     .eq('id', id)
 }
@@ -252,9 +256,9 @@ async function markRetryOrDead(supabase: any, item: any, errMsg: string) {
     await supabase
       .from('webhook_ingest_queue')
       .update({
-        status: 'failed',
+        status: 'dead',
         retry_count: newRetryCount,
-        error_message: `DEAD LETTER: ${errMsg}`
+        error_log: `DEAD LETTER: ${errMsg}`
       })
       .eq('id', item.id)
   } else {
@@ -266,8 +270,9 @@ async function markRetryOrDead(supabase: any, item: any, errMsg: string) {
       .update({
         status: 'pending',
         retry_count: newRetryCount,
-        processed_at: nextRetry,
-        error_message: `Retry #${newRetryCount}: ${errMsg}`
+        scheduled_at: nextRetry,
+        processing_at: null,
+        error_log: `Retry #${newRetryCount}: ${errMsg}`
       })
       .eq('id', item.id)
   }
