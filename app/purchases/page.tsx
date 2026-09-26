@@ -181,34 +181,39 @@ export default function PurchasesPage() {
     }
   }, [])
 
-  // Fetch Suppliers, Products, and Accounts once
+  // Fetch Suppliers, Products, and Accounts once in parallel
   const fetchLookups = useCallback(async (businessId: string) => {
     try {
-      const supRes = await fetch('/api/suppliers')
+      const [supRes, prodRes, accRes] = await Promise.all([
+        fetch('/api/suppliers'),
+        supabase
+          .from('products')
+          .select('id, name, sku, price, cost_price, type')
+          .eq('business_id', businessId)
+          .order('name', { ascending: true }),
+        supabase
+          .from('accounts')
+          .select('id, code, name, type')
+          .eq('business_id', businessId)
+          .order('code', { ascending: true })
+      ])
+
       if (supRes.ok) {
         const supData = await supRes.json()
         setSuppliers(supData)
       }
-
-      const { data: prodData } = await supabase
-        .from('products')
-        .select('id, name, sku, price, cost_price, type')
-        .eq('business_id', businessId)
-        .order('name', { ascending: true })
-      setProducts(prodData || [])
-
-      const { data: accData } = await supabase
-        .from('accounts')
-        .select('id, code, name, type')
-        .eq('business_id', businessId)
-        .order('code', { ascending: true })
-      setAccounts(accData || [])
+      if (prodRes.data) {
+        setProducts(prodRes.data)
+      }
+      if (accRes.data) {
+        setAccounts(accRes.data)
+      }
     } catch (err) {
       console.error('Error fetching lookups:', err)
     }
   }, [supabase])
 
-  // Load Active Business Profile
+  // Load Active Business Profile and Lookups in background
   useEffect(() => {
     async function loadProfile() {
       try {
@@ -228,27 +233,22 @@ export default function PurchasesPage() {
           setActiveBizId(businessId)
           const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
           setActiveBizName(biz?.name || 'Bisnis Saya')
-          await fetchLookups(businessId)
+          fetchLookups(businessId)
         }
       } catch (err) {
         console.error('Error loading profile:', err)
-        setLoading(false)
       }
     }
     loadProfile()
   }, [supabase, fetchLookups])
 
-  // Fetch purchases when page, pageSize, or debouncedSearch changes
+  // Fetch purchases immediately on mount and when pagination/search changes
   useEffect(() => {
-    if (activeBizId) {
-      fetchPurchases(currentPage, pageSize, debouncedSearch)
-    }
-  }, [activeBizId, currentPage, pageSize, debouncedSearch, fetchPurchases])
+    fetchPurchases(currentPage, pageSize, debouncedSearch)
+  }, [currentPage, pageSize, debouncedSearch, fetchPurchases])
 
   const refreshData = () => {
-    if (activeBizId) {
-      fetchPurchases(currentPage, pageSize, debouncedSearch)
-    }
+    fetchPurchases(currentPage, pageSize, debouncedSearch)
   }
 
   // Payment Source Accounts (101xxx assets)

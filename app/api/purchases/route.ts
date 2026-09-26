@@ -1,28 +1,14 @@
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
+import { getApiContext } from '@/lib/apiContext'
 import { NextResponse } from 'next/server'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
-import { syncPurchaseStatus } from '@/lib/expenseSync'
+import { postJournalTransaction } from '@/lib/journalHelper'
 
 export async function GET(req: Request) {
-  const supabase = await createClient()
+  const ctx = await getApiContext()
+  if (ctx.error) return ctx.error
+  const { businessId, supabase } = ctx
 
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
     const url = new URL(req.url)
     const id = url.searchParams.get('id')
     const all = url.searchParams.get('all') === 'true'
@@ -121,25 +107,11 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const supabase = await createClient()
+  const ctx = await getApiContext()
+  if (ctx.error) return ctx.error
+  const { businessId, supabase } = ctx
 
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
     const body = await req.json()
     const {
       supplier_id,
@@ -158,7 +130,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
-    // Resolve Account Mapping
+    // Resolve Account Mapping (cached)
     const accountMap = await ensureExpenseAccounts(businessId, supabase)
     const accHutang = accountMap['201000'] // Hutang Usaha
     const accPersediaan = accountMap['102000'] // Persediaan Barang
@@ -198,96 +170,84 @@ export async function POST(req: Request) {
     const netPhysicalDebit = physicalSubtotal * ratio
     const netServiceDebit = serviceSubtotal * ratio
 
-    // 1. Create Purchase Transaction (inventory receipt & accounts payable entry)
-    const { data: purchaseTx, error: txErr } = await supabase
-      .from('transactions')
-      .insert({
-        business_id: businessId,
-        date: date,
-        description: `Pembelian: ${purchase_number}`
-      })
-      .select('*')
-      .single()
+    // 1. Create Purchase Journal Transaction via postJournalTransaction helper
+    const journalLines: any[] = []
+    if (netPhysicalDebit > 0) {
+      journalLines.push({ account_id: accPersediaan, debit: netPhysicalDebit, credit: 0 })
+    }
+    if (netServiceDebit > 0) {
+      journalLines.push({ account_id: accBeban, debit: netServiceDebit, credit: 0 })
+    }
+    journalLines.push({ account_id: accHutang, debit: 0, credit: grandTotal })
 
-    if (txErr || !purchaseTx) {
+    let purchaseTxId: string
+    try {
+      const postRes = await postJournalTransaction(
+        businessId,
+        null,
+        date,
+        `Pembelian: ${purchase_number}`,
+        journalLines,
+        supabase,
+        true
+      )
+      purchaseTxId = postRes.transactionId
+    } catch (txErr: any) {
       return NextResponse.json({ error: `Failed to create ledger transaction: ${txErr?.message}` }, { status: 500 })
     }
 
-    // Create journal lines for this transaction
-    const journalLines = []
+    // 2. Batch update stock & WAC cost price for physical products (Aggregated & Optimized Parallel Execution)
+    const physicalItems = items.filter((item: any) => item.is_physical && item.product_id)
+    if (physicalItems.length > 0) {
+      const aggregatedPhysical = new Map<string, { totalQty: number; totalNetCost: number }>()
+      for (const item of physicalItems) {
+        const pId = item.product_id
+        const qty = parseFloat(item.quantity) || 0
+        const netPrice = (parseFloat(item.price) || 0) * ratio
+        const existing = aggregatedPhysical.get(pId) || { totalQty: 0, totalNetCost: 0 }
+        aggregatedPhysical.set(pId, {
+          totalQty: existing.totalQty + qty,
+          totalNetCost: existing.totalNetCost + (qty * netPrice)
+        })
+      }
 
-    // Debit Physical Inventory
-    if (netPhysicalDebit > 0) {
-      journalLines.push({
-        transaction_id: purchaseTx.id,
-        account_id: accPersediaan,
-        debit: netPhysicalDebit,
-        credit: 0
-      })
-    }
+      const productIds = Array.from(aggregatedPhysical.keys())
+      const { data: products, error: prodErr } = await supabase
+        .from('products')
+        .select('id, cost_price, stock_quantity')
+        .in('id', productIds)
 
-    // Debit Service/Operational Expense
-    if (netServiceDebit > 0) {
-      journalLines.push({
-        transaction_id: purchaseTx.id,
-        account_id: accBeban,
-        debit: netServiceDebit,
-        credit: 0
-      })
-    }
+      if (prodErr) {
+        console.error(`Failed to batch fetch products for stock update: ${prodErr.message}`)
+      } else if (products) {
+        const productMap = new Map<string, { id: string; cost_price: number; stock_quantity: number }>(
+          products.map(p => [p.id, p])
+        )
 
-    // Credit Accounts Payable (Hutang Usaha)
-    journalLines.push({
-      transaction_id: purchaseTx.id,
-      account_id: accHutang,
-      debit: 0,
-      credit: grandTotal
-    })
+        const updatePromises = Array.from(aggregatedPhysical.entries()).map(([productId, agg]) => {
+          const product = productMap.get(productId)
+          if (!product) return Promise.resolve()
 
-    const { error: jlErr } = await supabase.from('journal_lines').insert(journalLines)
-    if (jlErr) {
-      await supabase.from('transactions').delete().eq('id', purchaseTx.id)
-      return NextResponse.json({ error: `Failed to create journal lines: ${jlErr.message}` }, { status: 500 })
-    }
+          const currentQty = Number(product.stock_quantity) || 0
+          const currentCost = Number(product.cost_price) || 0
+          const purchaseQty = agg.totalQty
+          const newQty = currentQty + purchaseQty
+          let newCost = agg.totalQty > 0 ? (agg.totalNetCost / agg.totalQty) : currentCost
 
-    // 2. Update stock & WAC cost for physical products
-    for (const item of items) {
-      if (item.is_physical && item.product_id) {
-        // Fetch current product details
-        const { data: product, error: prodErr } = await supabase
-          .from('products')
-          .select('id, cost_price, stock_quantity')
-          .eq('id', item.product_id)
-          .single()
+          if (newQty > 0 && currentQty > 0) {
+            newCost = ((currentQty * currentCost) + agg.totalNetCost) / newQty
+          }
 
-        if (prodErr || !product) {
-          console.error(`Failed to fetch product for stock update: ${item.product_id}`)
-          continue
-        }
+          return supabase
+            .from('products')
+            .update({
+              stock_quantity: newQty,
+              cost_price: newCost
+            })
+            .eq('id', productId)
+        })
 
-        const currentQty = Number(product.stock_quantity) || 0
-        const currentCost = Number(product.cost_price) || 0
-        const purchaseQty = parseFloat(item.quantity) || 0
-        const netPurchasePrice = (parseFloat(item.price) || 0) * ratio // Net cost net of discount/fees allocation
-
-        const newQty = currentQty + purchaseQty
-        let newCost = netPurchasePrice
-
-        if (newQty > 0 && currentQty > 0) {
-          newCost = ((currentQty * currentCost) + (purchaseQty * netPurchasePrice)) / newQty
-        }
-
-        const { error: updErr } = await supabase
-          .from('products')
-          .update({
-            stock_quantity: newQty,
-            cost_price: newCost
-          })
-          .eq('id', item.product_id)
-
-        if (updErr) {
-          console.error(`Failed to update product stock: ${updErr.message}`)
-        }
+        await Promise.all(updatePromises)
       }
     }
 
@@ -296,7 +256,7 @@ export async function POST(req: Request) {
       .from('purchases')
       .insert({
         business_id: businessId,
-        transaction_id: purchaseTx.id,
+        transaction_id: purchaseTxId,
         supplier_id: supplier_id || null,
         purchase_number,
         date,
@@ -314,64 +274,45 @@ export async function POST(req: Request) {
       .single()
 
     if (purErr) {
-      // Clean up transaction
-      await supabase.from('transactions').delete().eq('id', purchaseTx.id)
+      await supabase.from('transactions').delete().eq('id', purchaseTxId)
       return NextResponse.json({ error: `Failed to create purchase entry: ${purErr.message}` }, { status: 500 })
     }
 
     // 4. Handle initial/DP payment if paidAmt > 0
     if (paidAmt > 0) {
-      const { data: payTx, error: payTxErr } = await supabase
-        .from('transactions')
-        .insert({
-          business_id: businessId,
-          date: date,
-          description: `Pembayaran Awal Pembelian: ${purchase_number}`
-        })
-        .select('*')
-        .single()
-
-      if (payTxErr || !payTx) {
-        console.error(`Failed to create payment transaction: ${payTxErr?.message}`)
-      } else {
+      try {
         const payJournalLines = [
-          {
-            transaction_id: payTx.id,
-            account_id: accHutang, // Debit Hutang Usaha to decrease liability
-            debit: paidAmt,
-            credit: 0
-          },
-          {
-            transaction_id: payTx.id,
-            account_id: payment_method_account_id, // Credit Cash/Bank
-            debit: 0,
-            credit: paidAmt
-          }
+          { account_id: accHutang, debit: paidAmt, credit: 0 },
+          { account_id: payment_method_account_id, debit: 0, credit: paidAmt }
         ]
+        const payPostRes = await postJournalTransaction(
+          businessId,
+          null,
+          date,
+          `Pembayaran Awal Pembelian: ${purchase_number}`,
+          payJournalLines,
+          supabase,
+          true
+        )
 
-        const { error: pjlErr } = await supabase.from('journal_lines').insert(payJournalLines)
-        if (pjlErr) {
-          console.error(`Failed to create payment journal lines: ${pjlErr.message}`)
-          await supabase.from('transactions').delete().eq('id', payTx.id)
-        } else {
-          // Record payment details
-          const { error: insPayErr } = await supabase
-            .from('purchase_payments')
-            .insert({
-              business_id: businessId,
-              purchase_id: purchase.id,
-              transaction_id: payTx.id,
-              date: date,
-              amount: paidAmt,
-              payment_method_account_id,
-              notes: 'Uang Muka / Pembayaran Awal',
-              attachment_url
-            })
+        const { error: insPayErr } = await supabase
+          .from('purchase_payments')
+          .insert({
+            business_id: businessId,
+            purchase_id: purchase.id,
+            transaction_id: payPostRes.transactionId,
+            date: date,
+            amount: paidAmt,
+            payment_method_account_id,
+            notes: 'Uang Muka / Pembayaran Awal',
+            attachment_url
+          })
 
-          if (insPayErr) {
-            console.error(`Failed to record purchase payment log: ${insPayErr.message}`)
-          }
+        if (insPayErr) {
+          console.error(`Failed to record purchase payment log: ${insPayErr.message}`)
         }
+      } catch (payTxErr: any) {
+        console.error(`Failed to create payment transaction: ${payTxErr?.message}`)
       }
     }
 
@@ -382,25 +323,11 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
-  const supabase = await createClient()
+  const ctx = await getApiContext()
+  if (ctx.error) return ctx.error
+  const { businessId, supabase } = ctx
 
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
     const url = new URL(req.url)
     const body = await req.json()
     const id = url.searchParams.get('id') || body.id
@@ -452,7 +379,7 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
-    // Resolve Account Mapping
+    // Resolve Account Mapping (cached)
     const accountMap = await ensureExpenseAccounts(businessId, supabase)
     const accHutang = accountMap['201000']
     const accPersediaan = accountMap['102000']
@@ -462,23 +389,35 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: 'Required accounting accounts could not be resolved' }, { status: 500 })
     }
 
-    // 2. Revert old physical items stock
+    // 2. Revert old physical items stock (Aggregated, Batch & Parallel)
     const oldItems = Array.isArray(oldPurchase.items_json) ? oldPurchase.items_json : []
-    for (const item of oldItems) {
-      if (item.is_physical && item.product_id) {
-        const { data: product } = await supabase
-          .from('products')
-          .select('stock_quantity')
-          .eq('id', item.product_id)
-          .single()
+    const oldPhysicalItems = oldItems.filter((i: any) => i.is_physical && i.product_id)
+    if (oldPhysicalItems.length > 0) {
+      const aggregatedOldPhysical = new Map<string, number>()
+      for (const item of oldPhysicalItems) {
+        const pId = item.product_id
+        const qty = parseFloat(item.quantity) || 0
+        aggregatedOldPhysical.set(pId, (aggregatedOldPhysical.get(pId) || 0) + qty)
+      }
 
-        if (product) {
-          const revertedQty = (Number(product.stock_quantity) || 0) - (parseFloat(item.quantity) || 0)
-          await supabase
+      const oldProdIds = Array.from(aggregatedOldPhysical.keys())
+      const { data: oldProducts } = await supabase
+        .from('products')
+        .select('id, stock_quantity')
+        .in('id', oldProdIds)
+
+      if (oldProducts) {
+        const oldProdMap = new Map(oldProducts.map(p => [p.id, p]))
+        const revertPromises = Array.from(aggregatedOldPhysical.entries()).map(([productId, qty]) => {
+          const product = oldProdMap.get(productId)
+          if (!product) return Promise.resolve()
+          const revertedQty = (Number(product.stock_quantity) || 0) - qty
+          return supabase
             .from('products')
             .update({ stock_quantity: revertedQty })
-            .eq('id', item.product_id)
-        }
+            .eq('id', productId)
+        })
+        await Promise.all(revertPromises)
       }
     }
 
@@ -506,45 +445,56 @@ export async function PUT(req: Request) {
     }
 
     const paymentStatus = paidAmt === 0 ? 'unpaid' : (paidAmt >= grandTotal ? 'paid' : 'partial')
-
-    // Allocation ratio to distribute discounts and fees proportionally
     const ratio = subtotal > 0 ? (grandTotal / subtotal) : 1
     const netPhysicalDebit = physicalSubtotal * ratio
     const netServiceDebit = serviceSubtotal * ratio
 
-    // 4. Update stock & WAC cost for new physical products
-    for (const item of items) {
-      if (item.is_physical && item.product_id) {
-        const { data: product, error: prodErr } = await supabase
-          .from('products')
-          .select('id, cost_price, stock_quantity')
-          .eq('id', item.product_id)
-          .single()
+    // 4. Update stock & WAC cost for new physical products (Aggregated, Batch & Parallel)
+    const newPhysicalItems = items.filter((i: any) => i.is_physical && i.product_id)
+    if (newPhysicalItems.length > 0) {
+      const aggregatedNewPhysical = new Map<string, { totalQty: number; totalNetCost: number }>()
+      for (const item of newPhysicalItems) {
+        const pId = item.product_id
+        const qty = parseFloat(item.quantity) || 0
+        const netPrice = (parseFloat(item.price) || 0) * ratio
+        const existing = aggregatedNewPhysical.get(pId) || { totalQty: 0, totalNetCost: 0 }
+        aggregatedNewPhysical.set(pId, {
+          totalQty: existing.totalQty + qty,
+          totalNetCost: existing.totalNetCost + (qty * netPrice)
+        })
+      }
 
-        if (prodErr || !product) {
-          console.error(`Failed to fetch product for stock update: ${item.product_id}`)
-          continue
-        }
+      const newProdIds = Array.from(aggregatedNewPhysical.keys())
+      const { data: newProducts, error: prodErr } = await supabase
+        .from('products')
+        .select('id, cost_price, stock_quantity')
+        .in('id', newProdIds)
 
-        const currentQty = Number(product.stock_quantity) || 0
-        const currentCost = Number(product.cost_price) || 0
-        const purchaseQty = parseFloat(item.quantity) || 0
-        const netPurchasePrice = (parseFloat(item.price) || 0) * ratio
+      if (!prodErr && newProducts) {
+        const newProdMap = new Map(newProducts.map(p => [p.id, p]))
+        const updatePromises = Array.from(aggregatedNewPhysical.entries()).map(([productId, agg]) => {
+          const product = newProdMap.get(productId)
+          if (!product) return Promise.resolve()
 
-        const newQty = currentQty + purchaseQty
-        let newCost = netPurchasePrice
+          const currentQty = Number(product.stock_quantity) || 0
+          const currentCost = Number(product.cost_price) || 0
+          const purchaseQty = agg.totalQty
+          const newQty = currentQty + purchaseQty
+          let newCost = agg.totalQty > 0 ? (agg.totalNetCost / agg.totalQty) : currentCost
 
-        if (newQty > 0 && currentQty > 0) {
-          newCost = ((currentQty * currentCost) + (purchaseQty * netPurchasePrice)) / newQty
-        }
+          if (newQty > 0 && currentQty > 0) {
+            newCost = ((currentQty * currentCost) + agg.totalNetCost) / newQty
+          }
 
-        await supabase
-          .from('products')
-          .update({
-            stock_quantity: newQty,
-            cost_price: newCost
-          })
-          .eq('id', item.product_id)
+          return supabase
+            .from('products')
+            .update({
+              stock_quantity: newQty,
+              cost_price: newCost
+            })
+            .eq('id', productId)
+        })
+        await Promise.all(updatePromises)
       }
     }
 
@@ -581,7 +531,7 @@ export async function PUT(req: Request) {
     }
 
     // Re-insert journal lines
-    const journalLines = []
+    const journalLines: any[] = []
     if (netPhysicalDebit > 0) {
       journalLines.push({
         transaction_id: mainTxId,
@@ -638,47 +588,35 @@ export async function PUT(req: Request) {
 
     // 7. Handle initial/DP payment if entered during edit (paidAmt > 0)
     if (paidAmt > 0) {
-      const { data: payTx, error: payTxErr } = await supabase
-        .from('transactions')
-        .insert({
-          business_id: businessId,
-          date: date,
-          description: `Pembayaran Awal Pembelian: ${purchase_number}`
-        })
-        .select('*')
-        .single()
-
-      if (!payTxErr && payTx) {
+      try {
         const payJournalLines = [
-          {
-            transaction_id: payTx.id,
-            account_id: accHutang,
-            debit: paidAmt,
-            credit: 0
-          },
-          {
-            transaction_id: payTx.id,
-            account_id: payment_method_account_id,
-            debit: 0,
-            credit: paidAmt
-          }
+          { account_id: accHutang, debit: paidAmt, credit: 0 },
+          { account_id: payment_method_account_id, debit: 0, credit: paidAmt }
         ]
+        const payPostRes = await postJournalTransaction(
+          businessId,
+          null,
+          date,
+          `Pembayaran Awal Pembelian: ${purchase_number}`,
+          payJournalLines,
+          supabase,
+          true
+        )
 
-        const { error: pjlErr } = await supabase.from('journal_lines').insert(payJournalLines)
-        if (!pjlErr) {
-          await supabase
-            .from('purchase_payments')
-            .insert({
-              business_id: businessId,
-              purchase_id: id,
-              transaction_id: payTx.id,
-              date: date,
-              amount: paidAmt,
-              payment_method_account_id,
-              notes: 'Uang Muka / Pembayaran Awal',
-              attachment_url
-            })
-        }
+        await supabase
+          .from('purchase_payments')
+          .insert({
+            business_id: businessId,
+            purchase_id: id,
+            transaction_id: payPostRes.transactionId,
+            date: date,
+            amount: paidAmt,
+            payment_method_account_id,
+            notes: 'Uang Muka / Pembayaran Awal',
+            attachment_url
+          })
+      } catch (payTxErr: any) {
+        console.error(`Failed to record payment in edit: ${payTxErr?.message}`)
       }
     }
 
@@ -689,14 +627,11 @@ export async function PUT(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const supabase = await createClient()
+  const ctx = await getApiContext()
+  if (ctx.error) return ctx.error
+  const { businessId, supabase } = ctx
 
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     const url = new URL(req.url)
     const id = url.searchParams.get('id')
 
@@ -709,41 +644,55 @@ export async function DELETE(req: Request) {
       .from('purchases')
       .select('*')
       .eq('id', id)
+      .eq('business_id', businessId)
       .single()
 
     if (getErr || !purchase) {
       return NextResponse.json({ error: 'Purchase not found' }, { status: 404 })
     }
 
-    // Revert inventory quantities (WAC is not fully reverted historically, but we reduce stock_quantity!)
+    // Revert inventory quantities in batch & parallel (Aggregated)
     const items = Array.isArray(purchase.items_json) ? purchase.items_json : []
-    for (const item of items) {
-      if (item.is_physical && item.product_id) {
-        const { data: product } = await supabase
-          .from('products')
-          .select('stock_quantity')
-          .eq('id', item.product_id)
-          .single()
+    const physicalItems = items.filter((i: any) => i.is_physical && i.product_id)
+    if (physicalItems.length > 0) {
+      const aggregatedPhysical = new Map<string, number>()
+      for (const item of physicalItems) {
+        const pId = item.product_id
+        const qty = parseFloat(item.quantity) || 0
+        aggregatedPhysical.set(pId, (aggregatedPhysical.get(pId) || 0) + qty)
+      }
 
-        if (product) {
-          const newQty = (product.stock_quantity || 0) - (parseInt(item.quantity) || 0)
-          await supabase
+      const prodIds = Array.from(aggregatedPhysical.keys())
+      const { data: products } = await supabase
+        .from('products')
+        .select('id, stock_quantity')
+        .in('id', prodIds)
+
+      if (products) {
+        const prodMap = new Map(products.map(p => [p.id, p]))
+        const revertPromises = Array.from(aggregatedPhysical.entries()).map(([productId, qty]) => {
+          const product = prodMap.get(productId)
+          if (!product) return Promise.resolve()
+          const newQty = (Number(product.stock_quantity) || 0) - qty
+          return supabase
             .from('products')
             .update({ stock_quantity: newQty })
-            .eq('id', item.product_id)
-        }
+            .eq('id', productId)
+        })
+        await Promise.all(revertPromises)
       }
     }
 
-    // Delete purchase payments first (cascades transaction deletions)
+    // Delete purchase payments first
     const { data: payments } = await supabase
       .from('purchase_payments')
       .select('transaction_id')
       .eq('purchase_id', id)
 
-    if (payments) {
-      for (const p of payments) {
-        await supabase.from('transactions').delete().eq('id', p.transaction_id)
+    if (payments && payments.length > 0) {
+      const txIds = payments.map(p => p.transaction_id).filter(Boolean)
+      if (txIds.length > 0) {
+        await supabase.from('transactions').delete().in('id', txIds)
       }
     }
 

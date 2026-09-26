@@ -175,6 +175,8 @@ await earnPointsForOrder(supabase, { businessId, customerId, orderId, orderAmoun
 6. **Accounts (COA):** Cached selamanya per process → setelah call pertama, 0ms
 7. **Parallelisasi:** Di `orderLedger.ts`, accounts + integration config di-fetch via `Promise.all`
 8. **HPP sharing:** `calculateProductsHppBatch` dipanggil 1x di `syncOrderToLedger`, hasilnya di-share ke `applyStockMovement` dan `generateItemizedHppJournalLines`
+9. **Batch Stock & Cost Updates:** Di `purchases/route.ts` dan `expenses/route.ts`, pembaruan stok & WAC HPP dilakukan secara agregat (batch `.in('id', productIds)`) dan dieksekusi secara paralel (`Promise.all`) untuk menghindari *N+1 query bottleneck*.
+10. **Immediate Frontend Fetching:** Pemuatan data utama halaman (seperti `fetchPurchases`) dilakukan seketika di *mount* tanpa menunggu resolution profile *client-side*, karena API route sudah menangani otentikasi via cookie `getApiContext()`.
 
 ## 🔗 Dependency Graph
 

@@ -1,27 +1,12 @@
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
+import { getApiContext } from '@/lib/apiContext'
 import { NextResponse } from 'next/server'
 
 export async function GET(req: Request) {
-  const supabase = await createClient()
+  const ctx = await getApiContext()
+  if (ctx.error) return ctx.error
+  const { businessId, supabase } = ctx
 
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
-
     const { data: suppliers, error: fetchErr } = await supabase
       .from('suppliers')
       .select(`
@@ -42,25 +27,11 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const supabase = await createClient()
+  const ctx = await getApiContext()
+  if (ctx.error) return ctx.error
+  const { businessId, supabase } = ctx
 
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
     const body = await req.json()
     const {
       id,
@@ -120,25 +91,11 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const supabase = await createClient()
+  const ctx = await getApiContext()
+  if (ctx.error) return ctx.error
+  const { businessId, supabase } = ctx
 
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
     const url = new URL(req.url)
     const id = url.searchParams.get('id')
 

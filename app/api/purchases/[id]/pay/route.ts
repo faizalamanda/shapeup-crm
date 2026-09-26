@@ -1,31 +1,18 @@
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
+import { getApiContext } from '@/lib/apiContext'
 import { NextResponse } from 'next/server'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
+import { postJournalTransaction } from '@/lib/journalHelper'
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const supabase = await createClient()
+  const ctx = await getApiContext()
+  if (ctx.error) return ctx.error
+  const { businessId, supabase } = ctx
 
   try {
     const { id } = await params
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
     const body = await req.json()
     const {
       amount,
@@ -52,7 +39,7 @@ export async function POST(
       return NextResponse.json({ error: 'Write-off account is required when write-off amount is non-zero' }, { status: 400 })
     }
 
-    // Resolve Account Mapping
+    // Resolve Account Mapping (cached)
     const accountMap = await ensureExpenseAccounts(businessId, supabase)
     const accHutang = accountMap['201000'] // Hutang Usaha
 
@@ -84,31 +71,14 @@ export async function POST(
 
     const newPaymentStatus = newAmountPaid >= grandTotal - 0.01 ? 'paid' : 'partial'
 
-    // 1. Create Payment Transaction
-    const { data: payTx, error: txErr } = await supabase
-      .from('transactions')
-      .insert({
-        business_id: businessId,
-        date: date,
-        description: `Pembayaran Pembelian: ${purchase.purchase_number}`
-      })
-      .select('*')
-      .single()
-
-    if (txErr || !payTx) {
-      return NextResponse.json({ error: `Failed to create payment transaction: ${txErr?.message}` }, { status: 500 })
-    }
-
-    // 2. Post Journal Lines
-    const journalLines = [
+    // 1. Post Payment Journal Transaction via postJournalTransaction helper
+    const journalLines: any[] = [
       {
-        transaction_id: payTx.id,
         account_id: accHutang, // Debit Hutang Usaha to decrease liability
         debit: totalDebtCleared,
         credit: 0
       },
       {
-        transaction_id: payTx.id,
         account_id: payment_method_account_id, // Credit Cash/Bank
         debit: 0,
         credit: numAmount
@@ -120,7 +90,6 @@ export async function POST(
       if (numWriteOff > 0) {
         // Cash paid is less than debt cleared. Credit write-off account (Gain/Discount)
         journalLines.push({
-          transaction_id: payTx.id,
           account_id: write_off_account_id,
           debit: 0,
           credit: numWriteOff
@@ -128,7 +97,6 @@ export async function POST(
       } else {
         // Cash paid is more than debt cleared. Debit write-off account (Fee/Expense)
         journalLines.push({
-          transaction_id: payTx.id,
           account_id: write_off_account_id,
           debit: Math.abs(numWriteOff),
           credit: 0
@@ -136,19 +104,29 @@ export async function POST(
       }
     }
 
-    const { error: jlErr } = await supabase.from('journal_lines').insert(journalLines)
-    if (jlErr) {
-      await supabase.from('transactions').delete().eq('id', payTx.id)
-      return NextResponse.json({ error: `Failed to create journal lines: ${jlErr.message}` }, { status: 500 })
+    let payTxId: string
+    try {
+      const postRes = await postJournalTransaction(
+        businessId,
+        null,
+        date,
+        `Pembayaran Pembelian: ${purchase.purchase_number}`,
+        journalLines,
+        supabase,
+        true
+      )
+      payTxId = postRes.transactionId
+    } catch (txErr: any) {
+      return NextResponse.json({ error: `Failed to create payment transaction: ${txErr?.message}` }, { status: 500 })
     }
 
-    // 3. Create Payment Log Record
+    // 2. Create Payment Log Record
     const { data: paymentLog, error: payLogErr } = await supabase
       .from('purchase_payments')
       .insert({
         business_id: businessId,
         purchase_id: id,
-        transaction_id: payTx.id,
+        transaction_id: payTxId,
         date,
         amount: numAmount,
         payment_method_account_id,
@@ -161,11 +139,11 @@ export async function POST(
       .single()
 
     if (payLogErr) {
-      await supabase.from('transactions').delete().eq('id', payTx.id)
+      await supabase.from('transactions').delete().eq('id', payTxId)
       return NextResponse.json({ error: `Failed to record payment log: ${payLogErr.message}` }, { status: 500 })
     }
 
-    // 4. Update Purchase
+    // 3. Update Purchase
     const { error: updErr } = await supabase
       .from('purchases')
       .update({
@@ -175,8 +153,7 @@ export async function POST(
       .eq('id', id)
 
     if (updErr) {
-      // Clean up cascades
-      await supabase.from('transactions').delete().eq('id', payTx.id)
+      await supabase.from('transactions').delete().eq('id', payTxId)
       return NextResponse.json({ error: `Failed to update purchase details: ${updErr.message}` }, { status: 500 })
     }
 
