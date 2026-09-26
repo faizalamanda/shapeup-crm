@@ -17,19 +17,53 @@ import {
 // SETTINGS
 // ─────────────────────────────────────────────────────────────
 
+// ─── Loyalty Settings Cache (60s TTL) ─────────────────────────────────────
+// Digunakan agar earnPointsForOrder bisa langsung skip jika loyalty tidak aktif
+// tanpa perlu query DB setiap transaksi.
+
+interface LoyaltySettingsCacheEntry {
+  settings: LoyaltySettings | null
+  expiresAt: number
+}
+
+const loyaltySettingsCache = new Map<string, LoyaltySettingsCacheEntry>()
+const LOYALTY_CACHE_TTL = 60_000 // 60 seconds
+
+/**
+ * Invalidate loyalty settings cache for a business.
+ * Call this when settings are updated via upsertLoyaltySettings.
+ */
+export function invalidateLoyaltySettingsCache(businessId: string) {
+  loyaltySettingsCache.delete(businessId)
+}
+
 export async function fetchLoyaltySettings(
   supabase: SupabaseClient,
   businessId: string
 ): Promise<LoyaltySettings | null> {
+  // Check cache first
+  const now = Date.now()
+  const cached = loyaltySettingsCache.get(businessId)
+  if (cached && cached.expiresAt > now) {
+    return cached.settings
+  }
+
   const { data, error } = await supabase
     .from('loyalty_settings')
     .select('*')
     .eq('business_id', businessId)
     .single()
 
-  if (error && error.code === 'PGRST116') return null // No row found
+  if (error && error.code === 'PGRST116') {
+    // Cache the "not found" result too — so we don't keep querying
+    loyaltySettingsCache.set(businessId, { settings: null, expiresAt: now + LOYALTY_CACHE_TTL })
+    return null
+  }
   if (error) throw error
-  return data as LoyaltySettings
+
+  const settings = data as LoyaltySettings
+  loyaltySettingsCache.set(businessId, { settings, expiresAt: now + LOYALTY_CACHE_TTL })
+  return settings
 }
 
 export async function upsertLoyaltySettings(
@@ -44,6 +78,10 @@ export async function upsertLoyaltySettings(
     .single()
 
   if (error) throw error
+
+  // Invalidate cache so next transaction picks up the new settings
+  invalidateLoyaltySettingsCache(businessId)
+
   return data as LoyaltySettings
 }
 

@@ -24,8 +24,32 @@ export type ProductHppResult = {
   ingredients: RecipeIngredient[]
 }
 
+// ─── HPP Batch Cache (TTL 60 seconds) ─────────────────────────────────────
+// Recipe data rarely changes (biasanya 1x/hari), aman di-cache untuk
+// menghilangkan query ke product_recipes pada transaksi POS berturut-turut.
+
+interface HppBatchCacheEntry {
+  map: Map<string, ProductHppResult>
+  expiresAt: number
+}
+
+const hppBatchCache = new Map<string, HppBatchCacheEntry>()
+const HPP_CACHE_TTL = 60_000 // 60 seconds
+
+function makeHppCacheKey(ids: string[]): string {
+  return ids.slice().sort().join(',')
+}
+
+/**
+ * Invalidate HPP cache. Call this when recipes or ingredient cost_price change.
+ */
+export function invalidateHppCache() {
+  hppBatchCache.clear()
+}
+
 /**
  * Calculates dynamic HPP for multiple products in a SINGLE batch query.
+ * Results are cached in-memory (60s TTL) keyed by sorted product IDs.
  * Returns Map<productId, ProductHppResult>
  */
 export async function calculateProductsHppBatch(
@@ -35,6 +59,21 @@ export async function calculateProductsHppBatch(
   const result = new Map<string, ProductHppResult>()
   const validIds = Array.from(new Set(productIds.filter(Boolean)))
   if (validIds.length === 0) return result
+
+  // Check cache
+  const cacheKey = makeHppCacheKey(validIds)
+  const now = Date.now()
+  const cached = hppBatchCache.get(cacheKey)
+  if (cached && cached.expiresAt > now) {
+    return cached.map
+  }
+
+  // Periodic cache cleanup
+  if (hppBatchCache.size > 50) {
+    for (const [k, v] of hppBatchCache.entries()) {
+      if (v.expiresAt <= now) hppBatchCache.delete(k)
+    }
+  }
 
   try {
     const { data: recipes, error } = await supabase
@@ -91,6 +130,9 @@ export async function calculateProductsHppBatch(
 
       result.set(pId, { isVariable: true, unitHpp, ingredients: formattedRecipes })
     }
+
+    // Store in cache
+    hppBatchCache.set(cacheKey, { map: result, expiresAt: Date.now() + HPP_CACHE_TTL })
 
     return result
   } catch (err) {

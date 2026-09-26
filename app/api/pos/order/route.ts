@@ -1,29 +1,15 @@
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { NextResponse } from 'next/server'
+import { getApiContext } from '@/lib/apiContext'
+import { resolveGuestCustomerId } from '@/lib/guestCustomer'
 import { syncOrderToLedger } from '@/lib/orderLedger'
+import { NextResponse } from 'next/server'
 
 export async function POST(req: Request) {
-  const supabase = await createClient()
-
   try {
-    // 1. Get logged-in user and active business ID
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    // 1. Auth + Business ID — uses JWT fast-path + cached profile
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId, supabase } = ctx
 
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found for user profile' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
     const body = await req.json()
     const { customer_id, items, payment_method, discount_amount = 0, grand_total, subtotal } = body
 
@@ -33,17 +19,20 @@ export async function POST(req: Request) {
 
     // 2. Validate products & check stock
     const productIds = items.filter((i: any) => !String(i.id).startsWith('custom-')).map((i: any) => i.id)
-    const { data: dbProducts, error: prodErr } = await supabase
-      .from('products')
-      .select('id, name, type, price, cost_price, stock_type, stock_quantity')
-      .in('id', productIds)
-
-    if (prodErr || !dbProducts) {
-      return NextResponse.json({ error: 'Gagal mengambil data produk' }, { status: 500 })
-    }
 
     const productMap = new Map<string, any>()
-    dbProducts.forEach(p => productMap.set(p.id, p))
+    if (productIds.length > 0) {
+      const { data: dbProducts, error: prodErr } = await supabase
+        .from('products')
+        .select('id, name, type, price, cost_price, stock_type, stock_quantity')
+        .in('id', productIds)
+
+      if (prodErr || !dbProducts) {
+        return NextResponse.json({ error: 'Gagal mengambil data produk' }, { status: 500 })
+      }
+      dbProducts.forEach(p => productMap.set(p.id, p))
+    }
+
 
     let totalCogs = 0
 
@@ -74,50 +63,13 @@ export async function POST(req: Request) {
       }
     }
 
-    // 4. Resolve Guest Customer if needed
+    // 3. Resolve Guest Customer — uses cached guest ID per business
     let resolvedCustomerId = customer_id
     if (!resolvedCustomerId || resolvedCustomerId === 'guest' || resolvedCustomerId === '0') {
-      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-      if (!serviceRoleKey) {
-        return NextResponse.json({ 
-          error: 'Kunci admin (SUPABASE_SERVICE_ROLE_KEY) tidak ditemukan di file .env.local Anda. Silakan tambahkan kunci tersebut dari dashboard Supabase -> Settings -> API -> service_role.' 
-        }, { status: 500 })
-      }
-
-      const supabaseAdmin = createAdminClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        serviceRoleKey
-      )
-
-      const { data: guestCust } = await supabaseAdmin
-          .from('customers')
-          .select('id')
-          .eq('business_id', businessId)
-          .eq('phone', '0')
-          .maybeSingle()
-
-      if (guestCust) {
-        resolvedCustomerId = guestCust.id
-      } else {
-        const { data: newGuest, error: guestErr } = await supabaseAdmin
-          .from('customers')
-          .insert({
-            business_id: businessId,
-            phone: '0',
-            name: 'Customer Tamu',
-            email: 'guest@business.com'
-          })
-          .select('id')
-          .single()
-
-        if (guestErr) {
-          return NextResponse.json({ error: 'Gagal membuat akun Customer Tamu: ' + guestErr.message }, { status: 500 })
-        }
-        resolvedCustomerId = newGuest.id
-      }
+      resolvedCustomerId = await resolveGuestCustomerId(businessId, ctx.supabaseAdmin)
     }
 
-    // 5. Format to WooCommerce compatibility
+    // 4. Format to WooCommerce compatibility
     const orderNumber = 'POS-' + Date.now().toString().slice(-8)
     
     const lineItems = items.map((item: any, idx: number) => {
@@ -212,7 +164,7 @@ export async function POST(req: Request) {
 
     const fullOrder = { id: order.id, ...orderPayload }
 
-    // 7. Record Ledger transaction, stock reduction & journal lines using unified service
+    // 5. Record Ledger transaction, stock reduction & journal lines using unified service
     const syncRes = await syncOrderToLedger(order.id, supabase, fullOrder)
     if (!syncRes.success) {
       return NextResponse.json({ error: 'Gagal mencatat transaksi akuntansi: ' + syncRes.message }, { status: 500 })
