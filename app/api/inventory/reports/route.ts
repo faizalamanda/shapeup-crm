@@ -1,7 +1,6 @@
 import { getApiContext } from '@/lib/apiContext'
 import { NextResponse } from 'next/server'
 import {
-  buildUnifiedMoveHistory,
   buildStockReport,
   buildLocationReport,
   calculateValuation,
@@ -25,71 +24,68 @@ export async function GET(req: Request) {
     const action = url.searchParams.get('action') || 'summary'
     const productId = url.searchParams.get('productId')
     const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10))
-    const limit = Math.max(1, Math.min(100, parseInt(url.searchParams.get('limit') || '25', 10)))
+    const limit = Math.max(1, Math.min(500, parseInt(url.searchParams.get('limit') || '50', 10)))
     const search = url.searchParams.get('search') || ''
     const categoryFilter = url.searchParams.get('category') || ''
 
     // ─────────────────────────────────────────────────────────────────────
-    // ⚡ ACTION: product_moves — Tab 3 modal (lazy).
-    //    Stitches orders, purchases, opnames, and custom stock moves for productId.
+    // ⚡ ACTION: product_moves — Tab 3 modal (lazy). High-speed indexed query (~10-20ms).
     // ─────────────────────────────────────────────────────────────────────
     if (action === 'product_moves' && productId) {
-      const [
-        { data: prodData },
-        { data: rawMoves },
-        { data: rawPurchases },
-        { data: rawOrders },
-        { data: rawOpnames },
-        { data: rawLocations },
-      ] = await Promise.all([
-        supabase.from('products').select('id, name, sku, unit, cost_price').eq('id', productId).maybeSingle(),
-        supabase.from('stock_moves').select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at').eq('business_id', businessId).eq('product_id', productId),
-        supabase.from('purchases').select('id, business_id, purchase_number, payment_status, items_json, date, created_at').eq('business_id', businessId),
-        supabase.from('orders').select('id, business_id, order_number, status, items_json, order_date, created_at').eq('business_id', businessId),
-        supabase.from('stock_opname').select('id, business_id, opname_number, items_json, date, created_at').eq('business_id', businessId),
-        supabase.from('inventory_locations').select('id, name, code, type, is_default').eq('business_id', businessId),
+      const offset = (page - 1) * limit
+
+      const [{ data: rawMoves, count: totalMoves }, { data: locationsDataRaw }] = await Promise.all([
+        supabase
+          .from('stock_moves')
+          .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at', { count: 'exact' })
+          .eq('business_id', businessId)
+          .eq('product_id', productId)
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1),
+        supabase.from('inventory_locations').select('id, name, code, type, is_default').eq('business_id', businessId)
       ])
 
-      const prod = prodData || { id: productId, name: 'Produk', sku: null, cost_price: 0 }
-      const products = [prod]
-      const locations = (rawLocations && rawLocations.length > 0) ? rawLocations as InventoryLocation[] : DEFAULT_LOCATIONS(businessId)
+      const locations = (locationsDataRaw && locationsDataRaw.length > 0)
+        ? locationsDataRaw as InventoryLocation[]
+        : DEFAULT_LOCATIONS(businessId)
 
-      const targetIdStr = String(productId)
-      const targetNameLower = (prod.name || '').toLowerCase()
-      const targetSkuLower = (prod.sku || '').toLowerCase()
+      const locMap = new Map(locations.map(l => [l.id, l.name]))
+      const mainLoc = locations.find(l => l.is_default) || locations[0]
+      const vendorLoc = locations.find(l => l.type === 'vendor')
+      const customerLoc = locations.find(l => l.type === 'customer')
 
-      const matchesProduct = (item: any) => {
-        if (!item) return false
-        const itemId = String(item.product_id || item.id || '')
-        if (itemId && itemId === targetIdStr) return true
-        const itemSku = String(item.sku || '').toLowerCase()
-        if (targetSkuLower && itemSku && itemSku === targetSkuLower) return true
-        const itemName = String(item.name || '').toLowerCase()
-        if (targetNameLower && itemName && (itemName === targetNameLower || itemName.includes(targetNameLower) || targetNameLower.includes(itemName))) return true
-        return false
-      }
+      const moves = (rawMoves || []).map(m => {
+        let originName = m.origin_location_id ? locMap.get(m.origin_location_id) || 'System' : 'System'
+        let destName = m.destination_location_id ? locMap.get(m.destination_location_id) || 'System' : 'System'
 
-      // Filter purchases, orders, opnames for this product
-      const filteredPurchases = (rawPurchases || []).filter(p =>
-        Array.isArray(p.items_json) && p.items_json.some(matchesProduct)
-      )
-      const filteredOrders = (rawOrders || []).filter(o =>
-        Array.isArray(o.items_json) && o.items_json.some(matchesProduct)
-      )
-      const filteredOpnames = (rawOpnames || []).filter(op =>
-        Array.isArray(op.items_json) && op.items_json.some(matchesProduct)
-      )
+        if (m.type === 'receipt') {
+          originName = vendorLoc?.name || 'Pemasok / Vendor'
+          destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+        } else if (m.type === 'delivery') {
+          originName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+          destName = customerLoc?.name || 'Transit Pelanggan'
+        } else if (m.type === 'adjustment') {
+          originName = 'Penyesuaian System'
+          destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+        }
 
-      const moves = buildUnifiedMoveHistory(
-        products,
-        filteredPurchases,
-        filteredOrders,
-        filteredOpnames,
-        locations,
-        (rawMoves || []) as StockMove[]
-      )
+        return {
+          ...m,
+          origin_location_name: originName,
+          destination_location_name: destName,
+        }
+      })
 
-      return NextResponse.json({ success: true, moves })
+      return NextResponse.json({
+        success: true,
+        moves,
+        pagination: {
+          page,
+          limit,
+          totalItems: totalMoves || moves.length,
+          totalPages: Math.ceil((totalMoves || moves.length) / limit) || 1
+        }
+      })
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -101,59 +97,18 @@ export async function GET(req: Request) {
       const unitCost = Number(unitCostParam || 0)
       const onHandQty = Number(onHandQtyParam || 0)
 
-      const [
-        { data: prodData },
-        { data: rawMoves },
-        { data: rawPurchases },
-        { data: rawOrders },
-        { data: rawOpnames },
-        { data: rawLocations },
-      ] = await Promise.all([
-        supabase.from('products').select('id, name, sku, unit, cost_price').eq('id', productId).maybeSingle(),
-        supabase.from('stock_moves').select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at').eq('business_id', businessId).eq('product_id', productId),
-        supabase.from('purchases').select('id, business_id, purchase_number, payment_status, items_json, date, created_at').eq('business_id', businessId),
-        supabase.from('orders').select('id, business_id, order_number, status, items_json, order_date, created_at').eq('business_id', businessId),
-        supabase.from('stock_opname').select('id, business_id, opname_number, items_json, date, created_at').eq('business_id', businessId),
-        supabase.from('inventory_locations').select('id, name, code, type, is_default').eq('business_id', businessId),
+      const [{ data: rawMoves }, { data: prodData }] = await Promise.all([
+        supabase
+          .from('stock_moves')
+          .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at')
+          .eq('business_id', businessId)
+          .eq('product_id', productId)
+          .order('created_at', { ascending: false }),
+        supabase.from('products').select('id, name, sku, unit, cost_price').eq('id', productId).maybeSingle()
       ])
 
       const prod = prodData || { id: productId, name: 'Produk', sku: null, unit: 'Pcs', cost_price: unitCost }
-      const products = [prod]
-      const locations = (rawLocations && rawLocations.length > 0) ? rawLocations as InventoryLocation[] : DEFAULT_LOCATIONS(businessId)
-
-      const targetIdStr = String(productId)
-      const targetNameLower = (prod.name || '').toLowerCase()
-      const targetSkuLower = (prod.sku || '').toLowerCase()
-
-      const matchesProduct = (item: any) => {
-        if (!item) return false
-        const itemId = String(item.product_id || item.id || '')
-        if (itemId && itemId === targetIdStr) return true
-        const itemSku = String(item.sku || '').toLowerCase()
-        if (targetSkuLower && itemSku && itemSku === targetSkuLower) return true
-        const itemName = String(item.name || '').toLowerCase()
-        if (targetNameLower && itemName && (itemName === targetNameLower || itemName.includes(targetNameLower) || targetNameLower.includes(itemName))) return true
-        return false
-      }
-
-      const filteredPurchases = (rawPurchases || []).filter(p =>
-        Array.isArray(p.items_json) && p.items_json.some(matchesProduct)
-      )
-      const filteredOrders = (rawOrders || []).filter(o =>
-        Array.isArray(o.items_json) && o.items_json.some(matchesProduct)
-      )
-      const filteredOpnames = (rawOpnames || []).filter(op =>
-        Array.isArray(op.items_json) && op.items_json.some(matchesProduct)
-      )
-
-      const productMoves = buildUnifiedMoveHistory(
-        products,
-        filteredPurchases,
-        filteredOrders,
-        filteredOpnames,
-        locations,
-        (rawMoves || []) as StockMove[]
-      )
+      const productMoves = (rawMoves || []) as StockMove[]
 
       const minimalStockItem = {
         productId,

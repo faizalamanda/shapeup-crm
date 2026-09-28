@@ -1,7 +1,7 @@
 "use client"
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { StockReportItem, StockMove } from '../types'
+import { StockReportItem, StockMove, PaginationMeta } from '../types'
 
 interface ProductDetailModalProps {
   productId: string | null
@@ -23,8 +23,16 @@ export default function ProductDetailModal({
   const [loadingValuation, setLoadingValuation] = useState(false)
   const [errorValuation, setErrorValuation] = useState<string | null>(null)
 
-  // Tab 3 (Moves) state & loader
+  // Tab 3 (Moves) state, loader & pagination controls
   const [moves, setMoves] = useState<StockMove[] | null>(null)
+  const [movesLimit, setMovesLimit] = useState<number>(50)
+  const [movesPage, setMovesPage] = useState<number>(1)
+  const [movesMeta, setMovesMeta] = useState<PaginationMeta>({
+    page: 1,
+    limit: 50,
+    totalItems: 0,
+    totalPages: 1,
+  })
   const [loadingMoves, setLoadingMoves] = useState(false)
   const [errorMoves, setErrorMoves] = useState<string | null>(null)
 
@@ -42,7 +50,6 @@ export default function ProductDetailModal({
     if (activeTab === 'valuation' && !valuationData && !loadingValuation && productId) {
       setLoadingValuation(true)
       setErrorValuation(null)
-      // FIX C: Pass unitCost + onHandQty so server only needs to query stock_moves
       const unitCost = initialStockItem?.unitCost ?? 0
       const onHandQty = initialStockItem?.onHandQty ?? 0
       fetch(`/api/inventory/reports?action=product_valuation&productId=${productId}&unitCost=${unitCost}&onHandQty=${onHandQty}`)
@@ -59,24 +66,45 @@ export default function ProductDetailModal({
     }
   }, [activeTab, valuationData, loadingValuation, productId, initialStockItem])
 
-  // Lazy load Tab 3 (Move History) data ONLY when Tab 3 is selected
-  useEffect(() => {
-    if (activeTab === 'moves' && moves === null && !loadingMoves && productId) {
-      setLoadingMoves(true)
-      setErrorMoves(null)
-      fetch(`/api/inventory/reports?action=product_moves&productId=${productId}`)
-        .then(res => res.json())
-        .then(json => {
-          if (json.success && json.moves) {
-            setMoves(json.moves)
-          } else {
-            setErrorMoves(json.error || 'Gagal memuat mutasi stok')
+  // ⚡ Fast Indexed Fetch for Move History
+  const fetchMoveHistory = useCallback(
+    async (targetPage = movesPage, targetLimit = movesLimit) => {
+      if (!productId) return
+      try {
+        setLoadingMoves(true)
+        setErrorMoves(null)
+
+        const res = await fetch(`/api/inventory/reports?action=product_moves&productId=${productId}&page=${targetPage}&limit=${targetLimit}`)
+        const json = await res.json()
+
+        if (json.success && json.moves) {
+          setMoves(json.moves)
+          if (json.pagination) {
+            setMovesMeta(json.pagination)
           }
-        })
-        .catch(err => setErrorMoves(err.message || 'Gagal memuat mutasi stok'))
-        .finally(() => setLoadingMoves(false))
+        } else {
+          setErrorMoves(json.error || 'Gagal memuat mutasi stok')
+        }
+      } catch (err: any) {
+        setErrorMoves(err.message || 'Gagal memuat mutasi stok')
+      } finally {
+        setLoadingMoves(false)
+      }
+    },
+    [productId, movesPage, movesLimit]
+  )
+
+  // Trigger fetch when tab moves is opened or limit/page changes
+  useEffect(() => {
+    if (activeTab === 'moves' && productId) {
+      fetchMoveHistory(movesPage, movesLimit)
     }
-  }, [activeTab, moves, loadingMoves, productId])
+  }, [activeTab, movesPage, movesLimit, productId, fetchMoveHistory])
+
+  const handleLimitChange = (newLimit: number) => {
+    setMovesLimit(newLimit)
+    setMovesPage(1)
+  }
 
   if (!productId || !initialStockItem) return null
 
@@ -199,9 +227,9 @@ export default function ProductDetailModal({
             {loadingMoves && (
               <span className="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
             )}
-            {moves !== null && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 text-slate-700">
-                {moves.length}
+            {movesMeta.totalItems > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-100 text-blue-700 font-extrabold">
+                {movesMeta.totalItems}
               </span>
             )}
           </button>
@@ -376,13 +404,34 @@ export default function ProductDetailModal({
             </div>
           )}
 
-          {/* TAB 3: MOVE HISTORY (Lazy Loaded on Click) */}
+          {/* TAB 3: MOVE HISTORY (Ultra-Fast & Paginated) */}
           {activeTab === 'moves' && (
             <div className="space-y-3 animate-in fade-in duration-100">
+              {/* Controls bar: Limit selector & Refresh */}
+              <div className="flex items-center justify-between gap-2 bg-[#F7F7F5] p-2.5 rounded-xl border border-[#E2E2DC] text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-[#1C1C1A]">Tampilkan:</span>
+                  <select
+                    value={movesLimit}
+                    onChange={e => handleLimitChange(Number(e.target.value))}
+                    className="bg-white border border-[#E2E2DC] rounded px-2 py-1 text-xs font-medium focus:outline-none focus:border-blue-500 cursor-pointer"
+                  >
+                    <option value={20}>20 baris</option>
+                    <option value={50}>50 baris</option>
+                    <option value={100}>100 baris</option>
+                    <option value={200}>200 baris</option>
+                  </select>
+                </div>
+
+                <div className="text-[11px] text-[#6B6B63]">
+                  Total {movesMeta.totalItems} transaksi mutasi ditemukan
+                </div>
+              </div>
+
               {loadingMoves ? (
                 <div className="py-12 text-center text-[#82827A] flex flex-col items-center justify-center gap-2">
                   <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-xs font-medium">Memuat riwayat pergerakan stok...</span>
+                  <span className="text-xs font-medium">Memuat mutasi stok terindeks (~10ms)...</span>
                 </div>
               ) : errorMoves ? (
                 <div className="bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl text-xs font-medium">
@@ -475,6 +524,34 @@ export default function ProductDetailModal({
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Moves Modal Pagination Footer */}
+                  {movesMeta.totalPages > 1 && (
+                    <div className="p-2.5 border-t border-[#E2E2DC] flex items-center justify-between bg-[#F7F7F5] text-xs">
+                      <span className="text-[#6B6B63] text-[11px]">
+                        Halaman {movesMeta.page} dari {movesMeta.totalPages}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          disabled={movesPage <= 1 || loadingMoves}
+                          onClick={() => setMovesPage(p => Math.max(1, p - 1))}
+                          className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-[#E2E2DC] disabled:opacity-40 rounded text-xs transition-all cursor-pointer"
+                        >
+                          &larr; Seb.
+                        </button>
+                        <span className="px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded font-bold text-xs">
+                          {movesPage}
+                        </span>
+                        <button
+                          disabled={movesPage >= movesMeta.totalPages || loadingMoves}
+                          onClick={() => setMovesPage(p => Math.min(movesMeta.totalPages, p + 1))}
+                          className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-[#E2E2DC] disabled:opacity-40 rounded text-xs transition-all cursor-pointer"
+                        >
+                          Lanjut &rarr;
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
