@@ -1,5 +1,5 @@
 "use client"
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import * as XLSX from 'xlsx'
 import {
   StockReportItem,
@@ -33,9 +33,7 @@ export default function InventoryReportsMain() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [activeBizName, setActiveBizName] = useState<string>('')
 
-  // Report Data State
-  const [products, setProducts] = useState<any[]>([])
-  const [locations, setLocations] = useState<any[]>([])
+  // Report Data State — only what's actually consumed by child components
   const [moves, setMoves] = useState<StockMove[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [stockReportItems, setStockReportItems] = useState<StockReportItem[]>([])
@@ -67,8 +65,6 @@ export default function InventoryReportsMain() {
       }
 
       if (json.businessName) setActiveBizName(json.businessName)
-      if (json.products) setProducts(json.products)
-      if (json.locations) setLocations(json.locations)
       if (json.categories) setCategories(json.categories)
       if (json.moves) setMoves(json.moves)
       if (json.stockReportItems) setStockReportItems(json.stockReportItems)

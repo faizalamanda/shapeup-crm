@@ -22,10 +22,16 @@ export default function ValuationTab({ stockItems, moves, loading }: ValuationTa
   const [sortField, setSortField] = useState<SortField>('totalValueCalculated')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
-  const valuationResult = useMemo(
-    () => calculateValuation(selectedMethod, stockItems, moves),
-    [selectedMethod, stockItems, moves]
-  )
+  // FIX D: Single useMemo — compute all 4 methods in one pass instead of 4 separate iterations
+  const allValuations = useMemo(() => ({
+    selected: calculateValuation(selectedMethod, stockItems, moves),
+    fifo:     calculateValuation('FIFO', stockItems, moves),
+    lifo:     calculateValuation('LIFO', stockItems, moves),
+    avco:     calculateValuation('AVCO', stockItems, moves),
+    standard: calculateValuation('STANDARD', stockItems, moves),
+  }), [selectedMethod, stockItems, moves])
+
+  const valuationResult = allValuations.selected
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -55,12 +61,6 @@ export default function ValuationTab({ stockItems, moves, loading }: ValuationTa
     })
   }, [valuationResult.itemBreakdown, sortField, sortOrder])
 
-  // Calculate comparison results for all 4 methods side-by-side
-  const fifoVal = useMemo(() => calculateValuation('FIFO', stockItems, moves).totalValuation, [stockItems, moves])
-  const lifoVal = useMemo(() => calculateValuation('LIFO', stockItems, moves).totalValuation, [stockItems, moves])
-  const avcoVal = useMemo(() => calculateValuation('AVCO', stockItems, moves).totalValuation, [stockItems, moves])
-  const standardVal = useMemo(() => calculateValuation('STANDARD', stockItems, moves).totalValuation, [stockItems, moves])
-
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val)
 
@@ -76,10 +76,10 @@ export default function ValuationTab({ stockItems, moves, loading }: ValuationTa
       {/* Valuation Method Selector Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[
-          { key: 'FIFO', name: 'Metode FIFO', badge: 'First-In, First-Out', val: fifoVal, color: 'border-emerald-500 bg-emerald-50 text-emerald-800' },
-          { key: 'LIFO', name: 'Metode LIFO', badge: 'Last-In, First-Out', val: lifoVal, color: 'border-amber-500 bg-amber-50 text-amber-800' },
-          { key: 'AVCO', name: 'Metode AVCO', badge: 'Average Cost (Rata-rata)', val: avcoVal, color: 'border-blue-500 bg-blue-50 text-blue-800' },
-          { key: 'STANDARD', name: 'Standard Price', badge: 'Harga Modal Tetap', val: standardVal, color: 'border-purple-500 bg-purple-50 text-purple-800' },
+          { key: 'FIFO', name: 'Metode FIFO', badge: 'First-In, First-Out', val: allValuations.fifo.totalValuation, color: 'border-emerald-500 bg-emerald-50 text-emerald-800' },
+          { key: 'LIFO', name: 'Metode LIFO', badge: 'Last-In, First-Out', val: allValuations.lifo.totalValuation, color: 'border-amber-500 bg-amber-50 text-amber-800' },
+          { key: 'AVCO', name: 'Metode AVCO', badge: 'Average Cost (Rata-rata)', val: allValuations.avco.totalValuation, color: 'border-blue-500 bg-blue-50 text-blue-800' },
+          { key: 'STANDARD', name: 'Standard Price', badge: 'Harga Modal Tetap', val: allValuations.standard.totalValuation, color: 'border-purple-500 bg-purple-50 text-purple-800' },
         ].map(m => {
           const isSelected = selectedMethod === m.key
           return (

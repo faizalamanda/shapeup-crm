@@ -42,6 +42,9 @@ export interface StockReportItem {
   availableQty: number
   reservedQty: number
   unitCost: number
+  price?: number
+  description?: string | null
+  hppType?: string | null
   totalValue: number
   incomingShipments: number
   outgoingItems: number
