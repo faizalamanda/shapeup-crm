@@ -1,6 +1,7 @@
 import { getApiContext } from '@/lib/apiContext'
 import { NextResponse } from 'next/server'
 import {
+  buildUnifiedMoveHistory,
   buildStockReport,
   buildLocationReport,
   calculateValuation,
@@ -29,16 +30,16 @@ export async function GET(req: Request) {
     const categoryFilter = url.searchParams.get('category') || ''
 
     // ─────────────────────────────────────────────────────────────────────
-    // ⚡ ACTION: product_moves — Tab 3 modal (lazy). High-speed indexed query (~10-20ms).
+    // ⚡ ACTION: product_moves — Tab 3 modal (lazy). Ultra-fast & Fail-safe.
     // ─────────────────────────────────────────────────────────────────────
     if (action === 'product_moves' && productId) {
       const offset = (page - 1) * limit
 
+      // 1. High-speed primary query on stock_moves by product_id (~10ms)
       const [{ data: rawMoves, count: totalMoves }, { data: locationsDataRaw }] = await Promise.all([
         supabase
           .from('stock_moves')
           .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at', { count: 'exact' })
-          .eq('business_id', businessId)
           .eq('product_id', productId)
           .order('created_at', { ascending: false })
           .range(offset, offset + limit - 1),
@@ -49,14 +50,56 @@ export async function GET(req: Request) {
         ? locationsDataRaw as InventoryLocation[]
         : DEFAULT_LOCATIONS(businessId)
 
+      let finalMoves: any[] = rawMoves || []
+      let finalTotalCount = totalMoves || finalMoves.length
+
+      // 2. Safety Fallback: If stock_moves is empty for this product, stitch dynamically from orders/purchases/opnames
+      if (finalMoves.length === 0) {
+        const [
+          { data: prodData },
+          { data: rawPurchases },
+          { data: rawOrders },
+          { data: rawOpnames },
+        ] = await Promise.all([
+          supabase.from('products').select('id, name, sku, unit, cost_price').eq('id', productId).maybeSingle(),
+          supabase.from('purchases').select('id, business_id, purchase_number, payment_status, items_json, date, created_at').eq('business_id', businessId),
+          supabase.from('orders').select('id, business_id, order_number, status, items_json, order_date, created_at').eq('business_id', businessId),
+          supabase.from('stock_opname').select('id, business_id, opname_number, items_json, date, created_at').eq('business_id', businessId),
+        ])
+
+        const prod = prodData || { id: productId, name: 'Produk', sku: null, cost_price: 0 }
+        const targetIdStr = String(productId)
+        const targetNameLower = (prod.name || '').toLowerCase()
+        const targetSkuLower = (prod.sku || '').toLowerCase()
+
+        const matchesProduct = (item: any) => {
+          if (!item) return false
+          const itemId = String(item.product_id || item.id || '')
+          if (itemId && itemId === targetIdStr) return true
+          const itemSku = String(item.sku || '').toLowerCase()
+          if (targetSkuLower && itemSku && itemSku === targetSkuLower) return true
+          const itemName = String(item.name || '').toLowerCase()
+          if (targetNameLower && itemName && (itemName === targetNameLower || itemName.includes(targetNameLower) || targetNameLower.includes(itemName))) return true
+          return false
+        }
+
+        const filteredPurchases = (rawPurchases || []).filter(p => Array.isArray(p.items_json) && p.items_json.some(matchesProduct))
+        const filteredOrders = (rawOrders || []).filter(o => Array.isArray(o.items_json) && o.items_json.some(matchesProduct))
+        const filteredOpnames = (rawOpnames || []).filter(op => Array.isArray(op.items_json) && op.items_json.some(matchesProduct))
+
+        const stitched = buildUnifiedMoveHistory([prod], filteredPurchases, filteredOrders, filteredOpnames, locations, [])
+        finalTotalCount = stitched.length
+        finalMoves = stitched.slice(offset, offset + limit)
+      }
+
       const locMap = new Map(locations.map(l => [l.id, l.name]))
       const mainLoc = locations.find(l => l.is_default) || locations[0]
       const vendorLoc = locations.find(l => l.type === 'vendor')
       const customerLoc = locations.find(l => l.type === 'customer')
 
-      const moves = (rawMoves || []).map(m => {
-        let originName = m.origin_location_id ? locMap.get(m.origin_location_id) || 'System' : 'System'
-        let destName = m.destination_location_id ? locMap.get(m.destination_location_id) || 'System' : 'System'
+      const moves = finalMoves.map(m => {
+        let originName = m.origin_location_name || (m.origin_location_id ? locMap.get(m.origin_location_id) || 'System' : 'System')
+        let destName = m.destination_location_name || (m.destination_location_id ? locMap.get(m.destination_location_id) || 'System' : 'System')
 
         if (m.type === 'receipt') {
           originName = vendorLoc?.name || 'Pemasok / Vendor'
@@ -82,8 +125,8 @@ export async function GET(req: Request) {
         pagination: {
           page,
           limit,
-          totalItems: totalMoves || moves.length,
-          totalPages: Math.ceil((totalMoves || moves.length) / limit) || 1
+          totalItems: finalTotalCount,
+          totalPages: Math.ceil(finalTotalCount / limit) || 1
         }
       })
     }
@@ -101,7 +144,6 @@ export async function GET(req: Request) {
         supabase
           .from('stock_moves')
           .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at')
-          .eq('business_id', businessId)
           .eq('product_id', productId)
           .order('created_at', { ascending: false }),
         supabase.from('products').select('id, name, sku, unit, cost_price').eq('id', productId).maybeSingle()
