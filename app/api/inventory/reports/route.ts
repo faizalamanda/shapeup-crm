@@ -1,7 +1,6 @@
 import { getApiContext } from '@/lib/apiContext'
 import { NextResponse } from 'next/server'
 import {
-  buildUnifiedMoveHistory,
   buildStockReport,
   buildLocationReport,
   calculateValuation,
@@ -24,6 +23,10 @@ export async function GET(req: Request) {
     const url = new URL(req.url)
     const action = url.searchParams.get('action') || 'summary'
     const productId = url.searchParams.get('productId')
+    const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10))
+    const limit = Math.max(1, Math.min(100, parseInt(url.searchParams.get('limit') || '25', 10)))
+    const search = url.searchParams.get('search') || ''
+    const categoryFilter = url.searchParams.get('category') || ''
 
     // ─────────────────────────────────────────────────────────────────────
     // ⚡ ACTION: product_moves — Tab 3 modal (lazy). 1 query only.
@@ -41,7 +44,6 @@ export async function GET(req: Request) {
 
     // ─────────────────────────────────────────────────────────────────────
     // ⚡ ACTION: product_valuation — Tab 2 modal (lazy).
-    //    FIX C: Only fetch stock_moves — product data comes from client (unitCost param).
     // ─────────────────────────────────────────────────────────────────────
     if (action === 'product_valuation' && productId) {
       const unitCostParam = url.searchParams.get('unitCost')
@@ -58,7 +60,6 @@ export async function GET(req: Request) {
 
       const productMoves = (rawMoves || []) as StockMove[]
 
-      // Minimal stockItem for valuation calculation — built from client-provided params
       const minimalStockItem = {
         productId,
         productName: '',
@@ -89,82 +90,156 @@ export async function GET(req: Request) {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // ⚡ ACTION: summary — Full inventory report.
-    //    FIX A: businesses.name is now INSIDE Promise.all (parallel, not sequential).
+    // ⚡ ACTION: location_report — Lazy load for Location tab
     // ─────────────────────────────────────────────────────────────────────
-    const [
-      { data: biz },
-      { data: productsData },
-      { data: purchasesData },
-      { data: ordersData },
-      { data: opnamesData },
-      { data: locationsDataRaw },
-      { data: movesDataRaw },
-    ] = await Promise.all([
-      supabase.from('businesses').select('name').eq('id', businessId).single(),
-      supabase
+    if (action === 'location_report') {
+      const [{ data: locationsDataRaw }, { data: productsData }] = await Promise.all([
+        supabase.from('inventory_locations').select('id, name, code, type, is_default').eq('business_id', businessId),
+        supabase.from('products').select('id, name, sku, unit, stock_quantity, cost_price').eq('business_id', businessId)
+      ])
+
+      const locations = (locationsDataRaw && locationsDataRaw.length > 0)
+        ? locationsDataRaw as InventoryLocation[]
+        : DEFAULT_LOCATIONS(businessId)
+
+      const stockReportItems = buildStockReport(productsData || [], [], locations)
+      const locationReportSummaries = buildLocationReport(locations, stockReportItems, [])
+
+      return NextResponse.json({ success: true, locationReportSummaries })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // ⚡ ACTION: summary (Fast Paginated Stock Report & Filtered Summary Metrics)
+    // ─────────────────────────────────────────────────────────────────────
+    const offset = (page - 1) * limit
+
+    // Parallel fetch: Filtered RPC metrics (or fast fallback), categories, paginated products, locations
+    const metricsPromise = (async () => {
+      // 1. Try RPC function if available (with search & category parameters)
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('get_inventory_summary_metrics', {
+          p_business_id: businessId,
+          p_search: search || null,
+          p_category_name: categoryFilter || null
+        })
+        if (!rpcErr && rpcRes) {
+          return {
+            totalProducts: Number(rpcRes.total_products || 0),
+            totalStockQty: Number(rpcRes.total_stock_qty || 0),
+            totalValuation: Number(rpcRes.total_valuation || 0),
+            outOfStockCount: Number(rpcRes.out_of_stock_count || 0),
+            lowStockCount: Number(rpcRes.low_stock_count || 0),
+            totalOnHand: Number(rpcRes.total_stock_qty || 0),
+            totalAvailable: Number(rpcRes.total_stock_qty || 0),
+            totalReserved: 0,
+            totalIncoming: 0,
+            totalOutgoing: 0
+          }
+        }
+      } catch (e) {}
+
+      // 2. Fast Fallback Query: calculate filtered metrics directly from products table
+      let statsQuery = supabase
         .from('products')
-        .select('id, name, sku, unit, cost_price, price, description, hpp_type, stock_quantity, category_id, categories(id, name)')
-        .eq('business_id', businessId),
-      supabase
-        .from('purchases')
-        .select('id, business_id, purchase_number, payment_status, items_json, date, created_at')
-        .eq('business_id', businessId),
-      supabase
-        .from('orders')
-        .select('id, business_id, order_number, status, items_json, order_date, created_at')
-        .eq('business_id', businessId),
-      supabase
-        .from('stock_opname')
-        .select('id, business_id, opname_number, items_json, date, created_at')
-        .eq('business_id', businessId),
-      supabase
-        .from('inventory_locations')
-        .select('id, name, code, type, is_default')
-        .eq('business_id', businessId),
-      supabase
-        .from('stock_moves')
-        .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at')
+        .select('stock_quantity, cost_price, category_id, categories(name)')
         .eq('business_id', businessId)
-        .order('created_at', { ascending: false }),
+
+      if (search) {
+        statsQuery = statsQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%`)
+      }
+
+      if (categoryFilter) {
+        statsQuery = statsQuery.eq('categories.name', categoryFilter)
+      }
+
+      const { data: prodStats } = await statsQuery
+
+      let totalStockQty = 0
+      let totalValuation = 0
+      let outOfStockCount = 0
+      let lowStockCount = 0
+
+      if (prodStats) {
+        prodStats.forEach(p => {
+          const q = Number(p.stock_quantity || 0)
+          const c = Number(p.cost_price || 0)
+          totalStockQty += q
+          totalValuation += (q * c)
+          if (q <= 0) outOfStockCount++
+          else if (q <= 5) lowStockCount++
+        })
+      }
+
+      return {
+        totalProducts: prodStats?.length || 0,
+        totalStockQty,
+        totalValuation,
+        outOfStockCount,
+        lowStockCount,
+        totalOnHand: totalStockQty,
+        totalAvailable: totalStockQty,
+        totalReserved: 0,
+        totalIncoming: 0,
+        totalOutgoing: 0
+      }
+    })()
+
+    // Categories query for filter dropdown
+    const categoriesPromise = supabase
+      .from('categories')
+      .select('name')
+      .eq('business_id', businessId)
+      .order('name', { ascending: true })
+
+    // Paginated products query
+    let prodsQuery = supabase
+      .from('products')
+      .select('id, name, sku, unit, cost_price, price, description, hpp_type, stock_quantity, category_id, categories(id, name)', { count: 'exact' })
+      .eq('business_id', businessId)
+
+    if (search) {
+      prodsQuery = prodsQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%`)
+    }
+
+    if (categoryFilter) {
+      prodsQuery = prodsQuery.eq('categories.name', categoryFilter)
+    }
+
+    prodsQuery = prodsQuery
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1)
+
+    // Execute parallel tasks
+    const [metrics, categoriesRes, prodsRes, locationsRes] = await Promise.all([
+      metricsPromise,
+      categoriesPromise,
+      prodsQuery,
+      supabase.from('inventory_locations').select('id, name, code, type, is_default').eq('business_id', businessId)
     ])
 
-    const businessName = biz?.name || ''
-    const prods = productsData || []
-    const locations = (locationsDataRaw && locationsDataRaw.length > 0)
-      ? locationsDataRaw as InventoryLocation[]
+    const totalItems = prodsRes.count || 0
+    const totalPages = Math.ceil(totalItems / limit) || 1
+    const paginatedProducts = prodsRes.data || []
+
+    const categories = (categoriesRes.data || []).map(c => c.name).filter(Boolean)
+    const locations = (locationsRes.data && locationsRes.data.length > 0)
+      ? locationsRes.data as InventoryLocation[]
       : DEFAULT_LOCATIONS(businessId)
 
-    // Extract unique category names from products
-    const catSet = new Set<string>()
-    prods.forEach((p: any) => {
-      const catName = Array.isArray(p.categories) ? p.categories[0]?.name : p.categories?.name
-      if (catName) catSet.add(catName)
-    })
-    const categories = Array.from(catSet)
+    // Build stock report items ONLY for the active page products
+    const stockReportItems = buildStockReport(paginatedProducts, [], locations)
 
-    const customMoves = (movesDataRaw || []) as StockMove[]
-    const moves = buildUnifiedMoveHistory(
-      prods,
-      purchasesData || [],
-      ordersData || [],
-      opnamesData || [],
-      locations,
-      customMoves
-    )
-
-    const stockReportItems = buildStockReport(prods, moves, locations)
-    const locationReportSummaries = buildLocationReport(locations, stockReportItems, moves)
-
-    // FIX B: Only send what the client actually uses.
-    // Removed: products (raw), locations (raw) — not consumed by any component.
     return NextResponse.json({
       success: true,
-      businessName,
+      metrics,
+      pagination: {
+        page,
+        limit,
+        totalItems,
+        totalPages
+      },
       categories,
       stockReportItems,
-      locationReportSummaries,
-      moves,
     })
   } catch (err: any) {
     console.error('[GET /api/inventory/reports] Error:', err)

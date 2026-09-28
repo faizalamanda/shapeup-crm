@@ -1,13 +1,17 @@
 "use client"
-import React, { useState, useEffect, useMemo } from 'react'
-import { StockReportItem } from '../types'
+import React, { useState } from 'react'
+import { StockReportItem, InventoryReportMetrics, PaginationMeta } from '../types'
 import ProductDetailModal from './ProductDetailModal'
 
 interface StockReportTabProps {
   items: StockReportItem[]
+  metrics: InventoryReportMetrics | null
+  pagination: PaginationMeta
   loading: boolean
   searchQuery: string
   selectedCategory: string
+  onPageChange: (page: number) => void
+  onPageSizeChange: (limit: number) => void
 }
 
 type SortField =
@@ -22,35 +26,21 @@ type SortField =
 
 export default function StockReportTab({
   items,
+  metrics,
+  pagination,
   loading,
   searchQuery,
   selectedCategory,
+  onPageChange,
+  onPageSizeChange,
 }: StockReportTabProps) {
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState<number>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('shapeup_inventory_page_size')
-      if (saved) return Number(saved)
-    }
-    return 25
-  })
-
   // Selected Product for Detail Modal
   const [selectedProduct, setSelectedProduct] = useState<StockReportItem | null>(null)
 
-  // Table Sorting state
+  // Client-side sorting on active page
   const [sortField, setSortField] = useState<SortField>('productName')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
-  const handlePageSizeChange = (size: number) => {
-    setPageSize(size)
-    setCurrentPage(1)
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('shapeup_inventory_page_size', String(size))
-    }
-  }
-
-  // Handle Sort Toggle
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))
@@ -60,89 +50,35 @@ export default function StockReportTab({
     }
   }
 
-  // Reset to page 1 on search or category filter change
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [searchQuery, selectedCategory])
+  // Sorted items for current active page
+  const sortedItems = [...items].sort((a, b) => {
+    let valA: any = a[sortField]
+    let valB: any = b[sortField]
 
-  // Filtered Items (strict match based on searchQuery & selectedCategory)
-  const filteredItems = useMemo(() => {
-    return items.filter(item => {
-      const matchesSearch =
-        !searchQuery ||
-        item.productName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (item.sku && item.sku.toLowerCase().includes(searchQuery.toLowerCase()))
+    if (typeof valA === 'string') {
+      valA = valA.toLowerCase()
+      valB = (valB || '').toString().toLowerCase()
+      return sortOrder === 'asc'
+        ? valA.localeCompare(valB)
+        : valB.localeCompare(valA)
+    }
 
-      const matchesCategory =
-        !selectedCategory || item.categoryName === selectedCategory
-
-      return matchesSearch && matchesCategory
-    })
-  }, [items, searchQuery, selectedCategory])
-
-  // Sorted Items
-  const sortedItems = useMemo(() => {
-    return [...filteredItems].sort((a, b) => {
-      let valA: any = a[sortField]
-      let valB: any = b[sortField]
-
-      if (typeof valA === 'string') {
-        valA = valA.toLowerCase()
-        valB = (valB || '').toString().toLowerCase()
-        return sortOrder === 'asc'
-          ? valA.localeCompare(valB)
-          : valB.localeCompare(valA)
-      }
-
-      valA = Number(valA || 0)
-      valB = Number(valB || 0)
-      return sortOrder === 'asc' ? valA - valB : valB - valA
-    })
-  }, [filteredItems, sortField, sortOrder])
-
-  // Robust summary metrics calculated strictly from filteredItems
-  const totalOnHand = useMemo(
-    () => filteredItems.reduce((sum, i) => sum + (i.onHandQty || 0), 0),
-    [filteredItems]
-  )
-  const totalAvailable = useMemo(
-    () => filteredItems.reduce((sum, i) => sum + (i.availableQty || 0), 0),
-    [filteredItems]
-  )
-  const totalReserved = useMemo(
-    () => filteredItems.reduce((sum, i) => sum + (i.reservedQty || 0), 0),
-    [filteredItems]
-  )
-  const totalValue = useMemo(
-    () => filteredItems.reduce((sum, i) => sum + (i.totalValue || 0), 0),
-    [filteredItems]
-  )
-  const totalIncoming = useMemo(
-    () => filteredItems.reduce((sum, i) => sum + (i.incomingShipments || 0), 0),
-    [filteredItems]
-  )
-  const totalOutgoing = useMemo(
-    () => filteredItems.reduce((sum, i) => sum + (i.outgoingItems || 0), 0),
-    [filteredItems]
-  )
-
-  // Pagination
-  const totalPages = Math.ceil(sortedItems.length / pageSize) || 1
-  const paginatedItems = useMemo(
-    () => sortedItems.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-    [sortedItems, currentPage, pageSize]
-  )
+    valA = Number(valA || 0)
+    valB = Number(valB || 0)
+    return sortOrder === 'asc' ? valA - valB : valB - valA
+  })
 
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val)
 
-  // Render Sort Arrow Helper
   const renderSortArrow = (field: SortField) => {
     if (sortField !== field) {
       return <span className="ml-1 text-slate-300 opacity-60">↕</span>
     }
     return <span className="ml-1 text-blue-600 font-bold">{sortOrder === 'asc' ? '↑' : '↓'}</span>
   }
+
+  const { page, limit, totalItems, totalPages } = pagination
 
   return (
     <div className="space-y-6">
@@ -155,42 +91,46 @@ export default function StockReportTab({
         />
       )}
 
-      {/* Metrics Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+      {/* Metrics Summary Cards (From Fast Server Summary) */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+        <div className="bg-white border border-[#E2E2DC] rounded-xl p-3.5 sm:p-4 shadow-xs transition-all hover:border-[#D6D6CE]">
+          <div className="text-[11px] sm:text-xs font-semibold text-[#6B6B63]">Total Jenis Produk</div>
+          <div className="text-lg sm:text-xl font-bold text-[#1C1C1A] mt-1">
+            {metrics ? metrics.totalProducts.toLocaleString('id-ID') : '...'}
+          </div>
+          <div className="text-[10px] text-[#82827A] mt-0.5">Master Data Catalog</div>
+        </div>
+
         <div className="bg-white border border-[#E2E2DC] rounded-xl p-3.5 sm:p-4 shadow-xs transition-all hover:border-[#D6D6CE]">
           <div className="text-[11px] sm:text-xs font-semibold text-[#6B6B63]">Total Stok Fisik</div>
-          <div className="text-lg sm:text-xl font-bold text-[#1C1C1A] mt-1">{totalOnHand.toLocaleString('id-ID')}</div>
-          <div className="text-[10px] text-[#82827A] mt-0.5">On Hand Quantity</div>
-        </div>
-
-        <div className="bg-emerald-50/50 border border-emerald-200 rounded-xl p-3.5 sm:p-4 shadow-xs transition-all hover:border-emerald-300">
-          <div className="text-[11px] sm:text-xs font-semibold text-emerald-800">Stok Tersedia</div>
-          <div className="text-lg sm:text-xl font-bold text-emerald-700 mt-1">{totalAvailable.toLocaleString('id-ID')}</div>
-          <div className="text-[10px] text-emerald-600 mt-0.5">Free for Sale</div>
-        </div>
-
-        <div className="bg-amber-50/50 border border-amber-200 rounded-xl p-3.5 sm:p-4 shadow-xs transition-all hover:border-amber-300">
-          <div className="text-[11px] sm:text-xs font-semibold text-amber-800">Stok Terpesan</div>
-          <div className="text-lg sm:text-xl font-bold text-amber-700 mt-1">{totalReserved.toLocaleString('id-ID')}</div>
-          <div className="text-[10px] text-amber-600 mt-0.5">Reserved Orders</div>
+          <div className="text-lg sm:text-xl font-bold text-[#1C1C1A] mt-1">
+            {metrics ? metrics.totalStockQty.toLocaleString('id-ID') : '...'}
+          </div>
+          <div className="text-[10px] text-[#82827A] mt-0.5">Total Units On Hand</div>
         </div>
 
         <div className="bg-blue-50/50 border border-blue-200 rounded-xl p-3.5 sm:p-4 shadow-xs transition-all hover:border-blue-300">
-          <div className="text-[11px] sm:text-xs font-semibold text-blue-800">Total Nilai Stok</div>
-          <div className="text-lg sm:text-xl font-bold text-blue-700 mt-1">{formatCurrency(totalValue)}</div>
+          <div className="text-[11px] sm:text-xs font-semibold text-blue-800">Total Nilai Persediaan</div>
+          <div className="text-lg sm:text-xl font-bold text-blue-700 mt-1">
+            {metrics ? formatCurrency(metrics.totalValuation) : '...'}
+          </div>
           <div className="text-[10px] text-blue-600 mt-0.5">Inventory Valuation</div>
         </div>
 
-        <div className="bg-teal-50/50 border border-teal-200 rounded-xl p-3.5 sm:p-4 shadow-xs transition-all hover:border-teal-300">
-          <div className="text-[11px] sm:text-xs font-semibold text-teal-800">Penerimaan Barusan</div>
-          <div className="text-lg sm:text-xl font-bold text-teal-700 mt-1">{totalIncoming.toLocaleString('id-ID')}</div>
-          <div className="text-[10px] text-teal-600 mt-0.5">Incoming Shipments</div>
+        <div className="bg-amber-50/50 border border-amber-200 rounded-xl p-3.5 sm:p-4 shadow-xs transition-all hover:border-amber-300">
+          <div className="text-[11px] sm:text-xs font-semibold text-amber-800">Stok Sedikit (≤ 5)</div>
+          <div className="text-lg sm:text-xl font-bold text-amber-700 mt-1">
+            {metrics ? metrics.lowStockCount.toLocaleString('id-ID') : '...'}
+          </div>
+          <div className="text-[10px] text-amber-600 mt-0.5">Perlu Reorder</div>
         </div>
 
         <div className="bg-rose-50/50 border border-rose-200 rounded-xl p-3.5 sm:p-4 shadow-xs transition-all hover:border-rose-300">
-          <div className="text-[11px] sm:text-xs font-semibold text-rose-800">Pengiriman Keluar</div>
-          <div className="text-lg sm:text-xl font-bold text-rose-700 mt-1">{totalOutgoing.toLocaleString('id-ID')}</div>
-          <div className="text-[10px] text-rose-600 mt-0.5">Outgoing Items</div>
+          <div className="text-[11px] sm:text-xs font-semibold text-rose-800">Stok Habis / Minus</div>
+          <div className="text-lg sm:text-xl font-bold text-rose-700 mt-1">
+            {metrics ? metrics.outOfStockCount.toLocaleString('id-ID') : '...'}
+          </div>
+          <div className="text-[10px] text-rose-600 mt-0.5">Stok Kosong</div>
         </div>
       </div>
 
@@ -199,20 +139,25 @@ export default function StockReportTab({
         <div className="p-3.5 sm:p-4 border-b border-[#E2E2DC] flex flex-wrap justify-between items-center gap-2 bg-white">
           <div className="flex items-center gap-2">
             <h3 className="text-xs sm:text-sm font-bold text-[#1C1C1A]">
-              Daftar Stok Produk ({filteredItems.length} Produk)
+              Daftar Stok Produk ({totalItems} Produk)
             </h3>
             {searchQuery && (
               <span className="px-2 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-700 rounded-full">
-                Filter: &quot;{searchQuery}&quot;
+                Search: &quot;{searchQuery}&quot;
+              </span>
+            )}
+            {selectedCategory && (
+              <span className="px-2 py-0.5 text-[10px] font-medium bg-indigo-100 text-indigo-700 rounded-full">
+                Kategori: &quot;{selectedCategory}&quot;
               </span>
             )}
           </div>
 
           <div className="flex items-center gap-2 text-xs">
-            <span className="text-[#6B6B63] text-[11px]">Tampilkan:</span>
+            <span className="text-[#6B6B63] text-[11px]">Tampilkan per halaman:</span>
             <select
-              value={pageSize}
-              onChange={e => handlePageSizeChange(Number(e.target.value))}
+              value={limit}
+              onChange={e => onPageSizeChange(Number(e.target.value))}
               className="bg-[#F7F7F5] text-[#1C1C1A] text-xs border border-[#E2E2DC] rounded px-2 py-1 focus:outline-none focus:border-blue-500 cursor-pointer"
             >
               <option value={15}>15 baris</option>
@@ -252,22 +197,6 @@ export default function StockReportTab({
                   </div>
                 </th>
                 <th
-                  onClick={() => handleSort('availableQty')}
-                  className="py-2.5 px-3 sm:px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
-                >
-                  <div className="flex items-center justify-end">
-                    Stok Tersedia {renderSortArrow('availableQty')}
-                  </div>
-                </th>
-                <th
-                  onClick={() => handleSort('reservedQty')}
-                  className="py-2.5 px-3 sm:px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
-                >
-                  <div className="flex items-center justify-end">
-                    Stok Terpesan {renderSortArrow('reservedQty')}
-                  </div>
-                </th>
-                <th
                   onClick={() => handleSort('unitCost')}
                   className="py-2.5 px-3 sm:px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
                 >
@@ -283,34 +212,26 @@ export default function StockReportTab({
                     Total Nilai {renderSortArrow('totalValue')}
                   </div>
                 </th>
-                <th
-                  onClick={() => handleSort('incomingShipments')}
-                  className="py-2.5 px-3 sm:px-4 text-center cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
-                >
-                  <div className="flex items-center justify-center">
-                    Masuk / Keluar {renderSortArrow('incomingShipments')}
-                  </div>
-                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E2E2DC]">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-[#82827A]">
+                  <td colSpan={5} className="py-8 text-center text-[#82827A]">
                     <div className="flex items-center justify-center gap-2">
                       <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                      <span>Memuat data laporan stok...</span>
+                      <span>Memuat data halaman {page}...</span>
                     </div>
                   </td>
                 </tr>
-              ) : paginatedItems.length === 0 ? (
+              ) : sortedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-[#82827A]">
+                  <td colSpan={5} className="py-8 text-center text-[#82827A]">
                     Tidak ada data produk yang sesuai dengan filter pencarian.
                   </td>
                 </tr>
               ) : (
-                paginatedItems.map(item => (
+                sortedItems.map(item => (
                   <tr key={item.productId} className="hover:bg-[#F9F9F8] transition-colors">
                     <td className="py-2.5 px-3 sm:px-4">
                       <button
@@ -332,26 +253,16 @@ export default function StockReportTab({
                     </td>
                     <td className="py-2.5 px-3 sm:px-4 text-[#6B6B63] text-[11px]">{item.categoryName}</td>
                     <td className="py-2.5 px-3 sm:px-4 text-right font-bold text-[#1C1C1A]">
-                      {item.onHandQty} <span className="text-[10px] text-[#82827A] font-normal">{item.unit}</span>
-                    </td>
-                    <td className="py-2.5 px-3 sm:px-4 text-right text-emerald-700 font-bold">
-                      {item.availableQty}
-                    </td>
-                    <td className="py-2.5 px-3 sm:px-4 text-right text-amber-700 font-semibold">
-                      {item.reservedQty > 0 ? `${item.reservedQty}` : '-'}
+                      <span className={item.onHandQty <= 0 ? 'text-rose-600 font-extrabold' : item.onHandQty <= 5 ? 'text-amber-600 font-extrabold' : ''}>
+                        {item.onHandQty}
+                      </span>{' '}
+                      <span className="text-[10px] text-[#82827A] font-normal">{item.unit}</span>
                     </td>
                     <td className="py-2.5 px-3 sm:px-4 text-right text-[#2D2D2A] font-mono text-[11px]">
                       {formatCurrency(item.unitCost)}
                     </td>
                     <td className="py-2.5 px-3 sm:px-4 text-right text-blue-700 font-extrabold font-mono text-[11px]">
                       {formatCurrency(item.totalValue)}
-                    </td>
-                    <td className="py-2.5 px-3 sm:px-4 text-center">
-                      <div className="inline-flex items-center gap-1.5 text-[11px]">
-                        <span className="text-emerald-700 font-bold">+{item.incomingShipments}</span>
-                        <span className="text-[#A8A89E]">/</span>
-                        <span className="text-rose-700 font-bold">-{item.outgoingItems}</span>
-                      </div>
                     </td>
                   </tr>
                 ))
@@ -360,29 +271,50 @@ export default function StockReportTab({
           </table>
         </div>
 
-        {/* Pagination Navigation Footer */}
+        {/* Server Pagination Controls */}
         {totalPages > 1 && (
-          <div className="p-3 border-t border-[#E2E2DC] flex items-center justify-between bg-[#F7F7F5] text-xs">
+          <div className="p-3 border-t border-[#E2E2DC] flex flex-col sm:flex-row items-center justify-between gap-3 bg-[#F7F7F5] text-xs">
             <span className="text-[#6B6B63] text-[11px]">
-              Menampilkan {((currentPage - 1) * pageSize) + 1} - {Math.min(currentPage * pageSize, sortedItems.length)} dari {sortedItems.length} barang (Halaman {currentPage} dari {totalPages})
+              Menampilkan {((page - 1) * limit) + 1} - {Math.min(page * limit, totalItems)} dari {totalItems} barang (Halaman {page} dari {totalPages})
             </span>
-            <div className="flex items-center gap-2">
+
+            <div className="flex items-center gap-1.5">
               <button
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                className="px-3 py-1 bg-white hover:bg-slate-100 border border-[#E2E2DC] disabled:opacity-40 text-[#1C1C1A] rounded text-xs transition-all cursor-pointer font-medium"
+                disabled={page <= 1 || loading}
+                onClick={() => onPageChange(1)}
+                className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-[#E2E2DC] disabled:opacity-40 text-[#1C1C1A] rounded text-[11px] font-medium transition-all cursor-pointer"
+                title="Halaman Pertama"
+              >
+                &laquo;
+              </button>
+
+              <button
+                disabled={page <= 1 || loading}
+                onClick={() => onPageChange(page - 1)}
+                className="px-3 py-1 bg-white hover:bg-slate-100 border border-[#E2E2DC] disabled:opacity-40 text-[#1C1C1A] rounded text-xs font-medium transition-all cursor-pointer"
               >
                 &larr; Seb.
               </button>
-              <span className="px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded font-bold text-xs">
-                {currentPage}
+
+              <span className="px-3 py-1 bg-blue-600 text-white font-bold text-xs rounded shadow-xs">
+                {page} / {totalPages}
               </span>
+
               <button
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                className="px-3 py-1 bg-white hover:bg-slate-100 border border-[#E2E2DC] disabled:opacity-40 text-[#1C1C1A] rounded text-xs transition-all cursor-pointer font-medium"
+                disabled={page >= totalPages || loading}
+                onClick={() => onPageChange(page + 1)}
+                className="px-3 py-1 bg-white hover:bg-slate-100 border border-[#E2E2DC] disabled:opacity-40 text-[#1C1C1A] rounded text-xs font-medium transition-all cursor-pointer"
               >
                 Lanjut &rarr;
+              </button>
+
+              <button
+                disabled={page >= totalPages || loading}
+                onClick={() => onPageChange(totalPages)}
+                className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-[#E2E2DC] disabled:opacity-40 text-[#1C1C1A] rounded text-[11px] font-medium transition-all cursor-pointer"
+                title="Halaman Terakhir"
+              >
+                &raquo;
               </button>
             </div>
           </div>

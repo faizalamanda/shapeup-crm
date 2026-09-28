@@ -104,3 +104,24 @@ export interface InventoryReportsFilter {
   dateTo: string
   valuationMethod: 'FIFO' | 'LIFO' | 'AVCO' | 'STANDARD'
 }
+
+export interface InventoryReportMetrics {
+  totalProducts: number
+  totalStockQty: number
+  totalValuation: number
+  outOfStockCount: number
+  lowStockCount: number
+  totalOnHand: number
+  totalAvailable: number
+  totalReserved: number
+  totalIncoming: number
+  totalOutgoing: number
+}
+
+export interface PaginationMeta {
+  page: number
+  limit: number
+  totalItems: number
+  totalPages: number
+}
+
