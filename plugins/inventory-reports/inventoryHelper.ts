@@ -365,16 +365,29 @@ export function calculateValuation(
   stockItems: StockReportItem[],
   moves: StockMove[]
 ): ValuationMethodResult {
+  // Pre-group receipt moves by product_id once (O(M) time) for O(1) item lookups
+  const receiptMap = new Map<string, StockMove[]>()
+  moves.forEach(m => {
+    if (m.type === 'receipt' && m.status === 'done' && m.unit_cost > 0) {
+      if (!receiptMap.has(m.product_id)) {
+        receiptMap.set(m.product_id, [])
+      }
+      receiptMap.get(m.product_id)!.push(m)
+    }
+  })
+
+  // Pre-sort each product's receipt list by date ascending
+  receiptMap.forEach(list => {
+    list.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+  })
+
   const itemBreakdown = stockItems.map(item => {
     const qtyOnHand = item.onHandQty
     const standardCost = item.unitCost
     let unitCostCalculated = standardCost
     let totalValueCalculated = qtyOnHand * standardCost
 
-    // Fetch incoming purchase receipts for this product sorted by date
-    const receiptMoves = moves
-      .filter(m => m.product_id === item.productId && m.type === 'receipt' && m.status === 'done' && m.unit_cost > 0)
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    const receiptMoves = receiptMap.get(item.productId) || []
 
     if (qtyOnHand > 0 && receiptMoves.length > 0) {
       if (method === 'FIFO') {

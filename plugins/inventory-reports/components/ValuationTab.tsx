@@ -22,16 +22,15 @@ export default function ValuationTab({ stockItems, moves, loading }: ValuationTa
   const [sortField, setSortField] = useState<SortField>('totalValueCalculated')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
-  // FIX D: Single useMemo — compute all 4 methods in one pass instead of 4 separate iterations
+  // Calculate 4 valuation methods once per data payload. Method switching is instant 0ms!
   const allValuations = useMemo(() => ({
-    selected: calculateValuation(selectedMethod, stockItems, moves),
-    fifo:     calculateValuation('FIFO', stockItems, moves),
-    lifo:     calculateValuation('LIFO', stockItems, moves),
-    avco:     calculateValuation('AVCO', stockItems, moves),
+    fifo: calculateValuation('FIFO', stockItems, moves),
+    lifo: calculateValuation('LIFO', stockItems, moves),
+    avco: calculateValuation('AVCO', stockItems, moves),
     standard: calculateValuation('STANDARD', stockItems, moves),
-  }), [selectedMethod, stockItems, moves])
+  }), [stockItems, moves])
 
-  const valuationResult = allValuations.selected
+  const valuationResult = allValuations[selectedMethod.toLowerCase() as 'fifo' | 'lifo' | 'avco' | 'standard']
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
