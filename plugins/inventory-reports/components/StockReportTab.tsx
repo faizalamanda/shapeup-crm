@@ -1,6 +1,7 @@
 "use client"
 import React, { useState, useEffect, useMemo } from 'react'
 import { StockReportItem } from '../types'
+import ProductDetailModal from './ProductDetailModal'
 
 interface StockReportTabProps {
   items: StockReportItem[]
@@ -33,6 +34,9 @@ export default function StockReportTab({
     }
     return 25
   })
+
+  // Selected Product for Detail Modal
+  const [selectedProduct, setSelectedProduct] = useState<StockReportItem | null>(null)
 
   // Table Sorting state
   const [sortField, setSortField] = useState<SortField>('productName')
@@ -142,7 +146,16 @@ export default function StockReportTab({
 
   return (
     <div className="space-y-6">
-      {/* Metrics Summary Cards - Dynamically updated for search query */}
+      {/* Product Detail Modal */}
+      {selectedProduct && (
+        <ProductDetailModal
+          productId={selectedProduct.productId}
+          initialStockItem={selectedProduct}
+          onClose={() => setSelectedProduct(null)}
+        />
+      )}
+
+      {/* Metrics Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
         <div className="bg-white border border-[#E2E2DC] rounded-xl p-3.5 sm:p-4 shadow-xs transition-all hover:border-[#D6D6CE]">
           <div className="text-[11px] sm:text-xs font-semibold text-[#6B6B63]">Total Stok Fisik</div>
@@ -195,7 +208,6 @@ export default function StockReportTab({
             )}
           </div>
 
-          {/* Page size selector */}
           <div className="flex items-center gap-2 text-xs">
             <span className="text-[#6B6B63] text-[11px]">Tampilkan:</span>
             <select
@@ -301,8 +313,22 @@ export default function StockReportTab({
                 paginatedItems.map(item => (
                   <tr key={item.productId} className="hover:bg-[#F9F9F8] transition-colors">
                     <td className="py-2.5 px-3 sm:px-4">
-                      <div className="font-bold text-[#1C1C1A] text-xs sm:text-sm">{item.productName}</div>
-                      {item.sku && <div className="text-[10px] text-[#6B6B63] font-mono">SKU: {item.sku}</div>}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedProduct(item)}
+                        className="text-left group cursor-pointer focus:outline-none"
+                        title="Klik untuk melihat detail, valuation & move history produk ini"
+                      >
+                        <div className="font-bold text-blue-600 group-hover:text-blue-800 group-hover:underline text-xs sm:text-sm transition-colors flex items-center gap-1.5">
+                          <span>{item.productName}</span>
+                          <span className="opacity-0 group-hover:opacity-100 text-[10px] text-blue-500 transition-opacity">
+                            🔍
+                          </span>
+                        </div>
+                        {item.sku && (
+                          <div className="text-[10px] text-[#6B6B63] font-mono">SKU: {item.sku}</div>
+                        )}
+                      </button>
                     </td>
                     <td className="py-2.5 px-3 sm:px-4 text-[#6B6B63] text-[11px]">{item.categoryName}</td>
                     <td className="py-2.5 px-3 sm:px-4 text-right font-bold text-[#1C1C1A]">

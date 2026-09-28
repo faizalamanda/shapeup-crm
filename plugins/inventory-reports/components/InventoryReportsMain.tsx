@@ -1,37 +1,28 @@
 "use client"
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
-import { supabase } from '@/lib/supabase'
 import * as XLSX from 'xlsx'
 import {
   StockReportItem,
   LocationReportSummary,
   StockMove,
-  MoveStatus,
 } from '../types'
 import {
-  fetchFullInventoryData,
-  buildUnifiedMoveHistory,
-  buildStockReport,
-  buildLocationReport,
   calculateValuation,
 } from '../inventoryHelper'
 
 import StockReportTab from './StockReportTab'
 import LocationReportTab from './LocationReportTab'
-import MoveHistoryTab from './MoveHistoryTab'
 import MoveAnalysisTab from './MoveAnalysisTab'
 import ValuationTab from './ValuationTab'
 
-type ActiveTab = 'stock' | 'location' | 'moves' | 'analysis' | 'valuation'
+type ActiveTab = 'stock' | 'location' | 'analysis' | 'valuation'
 
 export default function InventoryReportsMain() {
-  // Using singleton supabase client from @/lib/supabase
-
-  // Active tab state initialized with localStorage persistence
+  // Active tab state initialized with localStorage persistence (default to 'stock')
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('shapeup_inventory_active_tab') as ActiveTab
-      if (['stock', 'location', 'moves', 'analysis', 'valuation'].includes(saved)) {
+      if (['stock', 'location', 'analysis', 'valuation'].includes(saved)) {
         return saved
       }
     }
@@ -40,23 +31,19 @@ export default function InventoryReportsMain() {
 
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [activeBizId, setActiveBizId] = useState<string | null>(null)
   const [activeBizName, setActiveBizName] = useState<string>('')
 
-  // Raw Data State
+  // Report Data State
   const [products, setProducts] = useState<any[]>([])
   const [locations, setLocations] = useState<any[]>([])
   const [moves, setMoves] = useState<StockMove[]>([])
   const [categories, setCategories] = useState<string[]>([])
-
-  // Track loaded tabs to enable Lazy Loading
-  const [loadedTabs, setLoadedTabs] = useState<Record<string, boolean>>({})
+  const [stockReportItems, setStockReportItems] = useState<StockReportItem[]>([])
+  const [locationReportSummaries, setLocationReportSummaries] = useState<LocationReportSummary[]>([])
 
   // Filters State
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('')
-  const [statusFilter, setStatusFilter] = useState<MoveStatus | 'all'>('all')
-  const [lotFilter, setLotFilter] = useState('')
 
   // Handler for tab switching with localStorage persistence
   const handleTabChange = (tab: ActiveTab) => {
@@ -66,93 +53,38 @@ export default function InventoryReportsMain() {
     }
   }
 
-  // Primary Lazy Data Fetcher
-  const loadInventoryData = useCallback(async (forceRefresh = false) => {
+  // ⚡ Fast Data Fetcher using /api/inventory/reports (Auth verified via API cookie)
+  const loadInventoryData = useCallback(async () => {
     try {
       setLoading(true)
       setErrorMsg(null)
 
-      const {
-        data: { user },
-        error: userErr,
-      } = await supabase.auth.getUser()
+      const res = await fetch('/api/inventory/reports?action=summary')
+      const json = await res.json()
 
-      if (userErr) throw userErr
-      if (!user) {
-        setErrorMsg('Sesi pengguna telah berakhir. Silakan login kembali.')
-        setLoading(false)
-        return
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Gagal memuat data persediaan stok')
       }
 
-      const { data: profile, error: profErr } = await supabase
-        .from('profiles')
-        .select('active_business_id')
-        .eq('id', user.id)
-        .single()
-
-      if (profErr) throw profErr
-      if (!profile?.active_business_id) {
-        setErrorMsg('Bisnis aktif tidak ditemukan pada profil Anda.')
-        setLoading(false)
-        return
-      }
-
-      const bizId = profile.active_business_id
-      setActiveBizId(bizId)
-
-      const { data: biz } = await supabase
-        .from('businesses')
-        .select('name')
-        .eq('id', bizId)
-        .single()
-
-      if (biz) setActiveBizName(biz.name)
-
-      // Lazy Data Fetching: Fetch full stitched data for current active tab context
-      const { products: prods, purchases, orders, opnames, locations: locs, customMoves } =
-        await fetchFullInventoryData(supabase, bizId)
-
-      setProducts(prods)
-      setLocations(locs)
-
-      // Extract category names
-      const catSet = new Set<string>()
-      prods.forEach(p => {
-        const catName = Array.isArray(p.categories) ? p.categories[0]?.name : p.categories?.name
-        if (catName) catSet.add(catName)
-      })
-      setCategories(Array.from(catSet))
-
-      // Build unified move history
-      const unifiedMoves = buildUnifiedMoveHistory(prods, purchases, orders, opnames, locs, customMoves)
-      setMoves(unifiedMoves)
-
-      setLoadedTabs(prev => ({ ...prev, [activeTab]: true }))
+      if (json.businessName) setActiveBizName(json.businessName)
+      if (json.products) setProducts(json.products)
+      if (json.locations) setLocations(json.locations)
+      if (json.categories) setCategories(json.categories)
+      if (json.moves) setMoves(json.moves)
+      if (json.stockReportItems) setStockReportItems(json.stockReportItems)
+      if (json.locationReportSummaries) setLocationReportSummaries(json.locationReportSummaries)
     } catch (err: any) {
       console.error('[InventoryReportsMain] Error loading inventory data:', err)
       setErrorMsg(err.message || 'Gagal memuat data persediaan stok. Periksa koneksi internet Anda.')
     } finally {
       setLoading(false)
     }
-  }, [supabase, activeTab])
+  }, [])
 
-  // Fetch data on initial mount or when switching to an un-loaded tab
+  // Immediate fetch on initial mount
   useEffect(() => {
-    if (!loadedTabs[activeTab]) {
-      loadInventoryData()
-    }
-  }, [activeTab, loadedTabs, loadInventoryData])
-
-  // Computed Derived Reports (useMemo for maximum speed)
-  const stockReportItems: StockReportItem[] = useMemo(
-    () => buildStockReport(products, moves, locations),
-    [products, moves, locations]
-  )
-
-  const locationReportSummaries: LocationReportSummary[] = useMemo(
-    () => buildLocationReport(locations, stockReportItems, moves),
-    [locations, stockReportItems, moves]
-  )
+    loadInventoryData()
+  }, [loadInventoryData])
 
   // Export to Excel / CSV Handler
   const handleExportExcel = () => {
@@ -183,20 +115,6 @@ export default function InventoryReportsMain() {
         'Stok Terpesan': loc.reservedQty,
         'Total Nilai Persediaan': loc.totalValue,
       }))
-    } else if (activeTab === 'moves') {
-      exportData = moves.map(m => ({
-        'Waktu': m.created_at,
-        'No. Referensi': m.reference,
-        'Nama Produk': m.product_name,
-        'SKU': m.product_sku || '-',
-        'Tipe Mutasi': m.type,
-        'Asal': m.origin_location_name || '-',
-        'Tujuan': m.destination_location_name || '-',
-        'No. Lot / Batch': m.lot_number || '-',
-        'Jumlah (Qty)': m.qty,
-        'Harga Unit': m.unit_cost,
-        'Status': m.status,
-      }))
     } else if (activeTab === 'valuation') {
       const fifoRes = calculateValuation('FIFO', stockReportItems, moves)
       exportData = fifoRes.itemBreakdown.map(i => ({
@@ -218,7 +136,7 @@ export default function InventoryReportsMain() {
 
   return (
     <div className="space-y-6">
-      {/* Top Animated Loading Bar (Google Calendar Style) */}
+      {/* Top Animated Loading Bar */}
       {loading && (
         <div className="fixed top-0 left-0 right-0 z-50 h-1.5 bg-blue-100 overflow-hidden">
           <div className="h-full bg-gradient-to-r from-blue-500 via-indigo-600 to-blue-500 animate-pulse transition-all duration-300 w-full" />
@@ -236,7 +154,7 @@ export default function InventoryReportsMain() {
             </div>
           </div>
           <button
-            onClick={() => loadInventoryData(true)}
+            onClick={() => loadInventoryData()}
             className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer whitespace-nowrap"
           >
             🔄 Coba Lagi
@@ -253,17 +171,17 @@ export default function InventoryReportsMain() {
               Laporan Inventory & Stok
             </h1>
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-              Full Hybrid Architecture v1.0
+              Fast Engine v2.0
             </span>
           </div>
           <p className="text-xs text-[#6B6B63] mt-1">
-            {activeBizName ? `Bisnis: ${activeBizName}` : 'Memuat data bisnis...'} — Pantau stok, lokasi gudang, mutasi, analisis tren, dan penilaian persediaan (FIFO/LIFO/AVCO).
+            {activeBizName ? `Bisnis: ${activeBizName}` : 'Memuat data bisnis...'} — Pantau stok, lokasi gudang, analisis mutasi, dan penilaian persediaan (FIFO/LIFO/AVCO).
           </p>
         </div>
 
         <div className="flex items-center gap-3">
           <button
-            onClick={() => loadInventoryData(true)}
+            onClick={() => loadInventoryData()}
             title="Segarkan Data dari Database"
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#F7F7F5] hover:bg-[#EAEAEA] text-[#1C1C1A] border border-[#E2E2DC] text-xs font-bold transition-all cursor-pointer"
           >
@@ -293,12 +211,11 @@ export default function InventoryReportsMain() {
         </div>
       </div>
 
-      {/* Navigation Tabs (with localStorage Persistence) */}
+      {/* Navigation Tabs (Move History Tab Removed per specification) */}
       <div className="flex border-b border-[#E2E2DC] space-x-1 overflow-x-auto bg-white p-1 rounded-t-xl">
         {[
           { key: 'stock', label: '📦 Stock Report', desc: 'Stok saat ini, available, reserved, cost' },
           { key: 'location', label: '📍 Location Report', desc: 'Distribusi per gudang & outlet' },
-          { key: 'moves', label: '📜 Move History', desc: 'Log mutasi, transfer & lot' },
           { key: 'analysis', label: '📊 Move Analysis', desc: 'Pivot table & visual charts' },
           { key: 'valuation', label: '💰 Valuation', desc: 'Penilaian FIFO, LIFO, AVCO' },
         ].map(t => {
@@ -319,8 +236,8 @@ export default function InventoryReportsMain() {
         })}
       </div>
 
-      {/* Global Filter Bar (Search & Category) */}
-      {(activeTab === 'stock' || activeTab === 'moves') && (
+      {/* Global Filter Bar (Search & Category for Stock Report) */}
+      {activeTab === 'stock' && (
         <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-[#E2E2DC] shadow-xs">
           <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
             <div className="relative w-full sm:w-64">
@@ -345,7 +262,7 @@ export default function InventoryReportsMain() {
               </svg>
             </div>
 
-            {categories.length > 0 && activeTab === 'stock' && (
+            {categories.length > 0 && (
               <select
                 value={selectedCategory}
                 onChange={e => setSelectedCategory(e.target.value)}
@@ -376,18 +293,6 @@ export default function InventoryReportsMain() {
 
         {activeTab === 'location' && (
           <LocationReportTab locations={locationReportSummaries} loading={loading} />
-        )}
-
-        {activeTab === 'moves' && (
-          <MoveHistoryTab
-            moves={moves}
-            loading={loading}
-            searchQuery={searchQuery}
-            statusFilter={statusFilter}
-            lotFilter={lotFilter}
-            setStatusFilter={setStatusFilter}
-            setLotFilter={setLotFilter}
-          />
         )}
 
         {activeTab === 'analysis' && <MoveAnalysisTab moves={moves} loading={loading} />}
