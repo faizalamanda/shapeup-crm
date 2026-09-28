@@ -1,4 +1,5 @@
 import { getApiContext } from '@/lib/apiContext'
+import { recordStockMovements, StockMoveInput } from '@/lib/stockLedger'
 import { NextResponse } from 'next/server'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
 import { postJournalTransaction } from '@/lib/journalHelper'
@@ -248,6 +249,19 @@ export async function POST(req: Request) {
         })
 
         await Promise.all(updatePromises)
+
+        // Record SaaS Stock Movement Ledger (Receipt from Supplier)
+        const stockMoveInputs: StockMoveInput[] = Array.from(aggregatedPhysical.entries()).map(([productId, agg]) => ({
+          businessId,
+          productId,
+          reference: purchase_number || `PO-${purchaseTxId.slice(0, 6)}`,
+          qty: agg.totalQty,
+          unitCost: agg.totalQty > 0 ? (agg.totalNetCost / agg.totalQty) : 0,
+          type: 'receipt',
+          status: paymentStatus === 'paid' ? 'done' : 'pending',
+          createdAt: date || new Date().toISOString()
+        }))
+        await recordStockMovements(stockMoveInputs, supabase)
       }
     }
 

@@ -1,6 +1,7 @@
 import { getApiContext } from '@/lib/apiContext'
 import { NextResponse } from 'next/server'
 import {
+  buildUnifiedMoveHistory,
   buildStockReport,
   buildLocationReport,
   calculateValuation,
@@ -29,17 +30,66 @@ export async function GET(req: Request) {
     const categoryFilter = url.searchParams.get('category') || ''
 
     // ─────────────────────────────────────────────────────────────────────
-    // ⚡ ACTION: product_moves — Tab 3 modal (lazy). 1 query only.
+    // ⚡ ACTION: product_moves — Tab 3 modal (lazy).
+    //    Stitches orders, purchases, opnames, and custom stock moves for productId.
     // ─────────────────────────────────────────────────────────────────────
     if (action === 'product_moves' && productId) {
-      const { data: rawMoves } = await supabase
-        .from('stock_moves')
-        .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at')
-        .eq('business_id', businessId)
-        .eq('product_id', productId)
-        .order('created_at', { ascending: false })
+      const [
+        { data: prodData },
+        { data: rawMoves },
+        { data: rawPurchases },
+        { data: rawOrders },
+        { data: rawOpnames },
+        { data: rawLocations },
+      ] = await Promise.all([
+        supabase.from('products').select('id, name, sku, unit, cost_price').eq('id', productId).maybeSingle(),
+        supabase.from('stock_moves').select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at').eq('business_id', businessId).eq('product_id', productId),
+        supabase.from('purchases').select('id, business_id, purchase_number, payment_status, items_json, date, created_at').eq('business_id', businessId),
+        supabase.from('orders').select('id, business_id, order_number, status, items_json, order_date, created_at').eq('business_id', businessId),
+        supabase.from('stock_opname').select('id, business_id, opname_number, items_json, date, created_at').eq('business_id', businessId),
+        supabase.from('inventory_locations').select('id, name, code, type, is_default').eq('business_id', businessId),
+      ])
 
-      return NextResponse.json({ success: true, moves: rawMoves || [] })
+      const prod = prodData || { id: productId, name: 'Produk', sku: null, cost_price: 0 }
+      const products = [prod]
+      const locations = (rawLocations && rawLocations.length > 0) ? rawLocations as InventoryLocation[] : DEFAULT_LOCATIONS(businessId)
+
+      const targetIdStr = String(productId)
+      const targetNameLower = (prod.name || '').toLowerCase()
+      const targetSkuLower = (prod.sku || '').toLowerCase()
+
+      const matchesProduct = (item: any) => {
+        if (!item) return false
+        const itemId = String(item.product_id || item.id || '')
+        if (itemId && itemId === targetIdStr) return true
+        const itemSku = String(item.sku || '').toLowerCase()
+        if (targetSkuLower && itemSku && itemSku === targetSkuLower) return true
+        const itemName = String(item.name || '').toLowerCase()
+        if (targetNameLower && itemName && (itemName === targetNameLower || itemName.includes(targetNameLower) || targetNameLower.includes(itemName))) return true
+        return false
+      }
+
+      // Filter purchases, orders, opnames for this product
+      const filteredPurchases = (rawPurchases || []).filter(p =>
+        Array.isArray(p.items_json) && p.items_json.some(matchesProduct)
+      )
+      const filteredOrders = (rawOrders || []).filter(o =>
+        Array.isArray(o.items_json) && o.items_json.some(matchesProduct)
+      )
+      const filteredOpnames = (rawOpnames || []).filter(op =>
+        Array.isArray(op.items_json) && op.items_json.some(matchesProduct)
+      )
+
+      const moves = buildUnifiedMoveHistory(
+        products,
+        filteredPurchases,
+        filteredOrders,
+        filteredOpnames,
+        locations,
+        (rawMoves || []) as StockMove[]
+      )
+
+      return NextResponse.json({ success: true, moves })
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -51,21 +101,66 @@ export async function GET(req: Request) {
       const unitCost = Number(unitCostParam || 0)
       const onHandQty = Number(onHandQtyParam || 0)
 
-      const { data: rawMoves } = await supabase
-        .from('stock_moves')
-        .select('id, product_id, reference, qty, unit_cost, status, type, created_at')
-        .eq('business_id', businessId)
-        .eq('product_id', productId)
-        .order('created_at', { ascending: false })
+      const [
+        { data: prodData },
+        { data: rawMoves },
+        { data: rawPurchases },
+        { data: rawOrders },
+        { data: rawOpnames },
+        { data: rawLocations },
+      ] = await Promise.all([
+        supabase.from('products').select('id, name, sku, unit, cost_price').eq('id', productId).maybeSingle(),
+        supabase.from('stock_moves').select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at').eq('business_id', businessId).eq('product_id', productId),
+        supabase.from('purchases').select('id, business_id, purchase_number, payment_status, items_json, date, created_at').eq('business_id', businessId),
+        supabase.from('orders').select('id, business_id, order_number, status, items_json, order_date, created_at').eq('business_id', businessId),
+        supabase.from('stock_opname').select('id, business_id, opname_number, items_json, date, created_at').eq('business_id', businessId),
+        supabase.from('inventory_locations').select('id, name, code, type, is_default').eq('business_id', businessId),
+      ])
 
-      const productMoves = (rawMoves || []) as StockMove[]
+      const prod = prodData || { id: productId, name: 'Produk', sku: null, unit: 'Pcs', cost_price: unitCost }
+      const products = [prod]
+      const locations = (rawLocations && rawLocations.length > 0) ? rawLocations as InventoryLocation[] : DEFAULT_LOCATIONS(businessId)
+
+      const targetIdStr = String(productId)
+      const targetNameLower = (prod.name || '').toLowerCase()
+      const targetSkuLower = (prod.sku || '').toLowerCase()
+
+      const matchesProduct = (item: any) => {
+        if (!item) return false
+        const itemId = String(item.product_id || item.id || '')
+        if (itemId && itemId === targetIdStr) return true
+        const itemSku = String(item.sku || '').toLowerCase()
+        if (targetSkuLower && itemSku && itemSku === targetSkuLower) return true
+        const itemName = String(item.name || '').toLowerCase()
+        if (targetNameLower && itemName && (itemName === targetNameLower || itemName.includes(targetNameLower) || targetNameLower.includes(itemName))) return true
+        return false
+      }
+
+      const filteredPurchases = (rawPurchases || []).filter(p =>
+        Array.isArray(p.items_json) && p.items_json.some(matchesProduct)
+      )
+      const filteredOrders = (rawOrders || []).filter(o =>
+        Array.isArray(o.items_json) && o.items_json.some(matchesProduct)
+      )
+      const filteredOpnames = (rawOpnames || []).filter(op =>
+        Array.isArray(op.items_json) && op.items_json.some(matchesProduct)
+      )
+
+      const productMoves = buildUnifiedMoveHistory(
+        products,
+        filteredPurchases,
+        filteredOrders,
+        filteredOpnames,
+        locations,
+        (rawMoves || []) as StockMove[]
+      )
 
       const minimalStockItem = {
         productId,
-        productName: '',
-        sku: null,
+        productName: prod.name || '',
+        sku: prod.sku || null,
         categoryName: '',
-        unit: '',
+        unit: prod.unit || 'Pcs',
         onHandQty,
         availableQty: onHandQty,
         reservedQty: 0,
@@ -113,9 +208,7 @@ export async function GET(req: Request) {
     // ─────────────────────────────────────────────────────────────────────
     const offset = (page - 1) * limit
 
-    // Parallel fetch: Filtered RPC metrics (or fast fallback), categories, paginated products, locations
     const metricsPromise = (async () => {
-      // 1. Try RPC function if available (with search & category parameters)
       try {
         const { data: rpcRes, error: rpcErr } = await supabase.rpc('get_inventory_summary_metrics', {
           p_business_id: businessId,
@@ -138,7 +231,6 @@ export async function GET(req: Request) {
         }
       } catch (e) {}
 
-      // 2. Fast Fallback Query: calculate filtered metrics directly from products table
       let statsQuery = supabase
         .from('products')
         .select('stock_quantity, cost_price, category_id, categories(name)')
@@ -184,14 +276,12 @@ export async function GET(req: Request) {
       }
     })()
 
-    // Categories query for filter dropdown
     const categoriesPromise = supabase
       .from('categories')
       .select('name')
       .eq('business_id', businessId)
       .order('name', { ascending: true })
 
-    // Paginated products query
     let prodsQuery = supabase
       .from('products')
       .select('id, name, sku, unit, cost_price, price, description, hpp_type, stock_quantity, category_id, categories(id, name)', { count: 'exact' })
@@ -209,7 +299,6 @@ export async function GET(req: Request) {
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
-    // Execute parallel tasks
     const [metrics, categoriesRes, prodsRes, locationsRes] = await Promise.all([
       metricsPromise,
       categoriesPromise,
@@ -226,7 +315,6 @@ export async function GET(req: Request) {
       ? locationsRes.data as InventoryLocation[]
       : DEFAULT_LOCATIONS(businessId)
 
-    // Build stock report items ONLY for the active page products
     const stockReportItems = buildStockReport(paginatedProducts, [], locations)
 
     return NextResponse.json({

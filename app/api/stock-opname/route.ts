@@ -1,4 +1,5 @@
 import { createClient, getAuthUser } from '@/lib/supabaseServer'
+import { recordStockMovements, StockMoveInput } from '@/lib/stockLedger'
 import { NextResponse } from 'next/server'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
 
@@ -188,6 +189,27 @@ export async function POST(req: Request) {
       if (updErr) {
         console.error(`Failed to update product stock: ${updErr.message}`)
       }
+    }
+
+    // Record SaaS Stock Movement Ledger for Opname Adjustments
+    const stockMoveInputs: StockMoveInput[] = items
+      .map((item: any) => {
+        const diff = (parseFloat(item.actual_quantity) || 0) - (parseFloat(item.recorded_quantity) || 0)
+        return {
+          businessId,
+          productId: item.product_id,
+          reference: opname_number || `OPN-${tx.id.slice(0, 6)}`,
+          qty: Math.abs(diff),
+          unitCost: 0,
+          type: 'adjustment' as const,
+          status: 'done' as const,
+          createdAt: date || new Date().toISOString()
+        }
+      })
+      .filter((m: any) => m.qty > 0)
+
+    if (stockMoveInputs.length > 0) {
+      await recordStockMovements(stockMoveInputs, supabase)
     }
 
     // If journalLines is empty (no stock was changed), we create a dummy balancing entry or delete the transaction.

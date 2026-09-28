@@ -184,6 +184,32 @@ await earnPointsForOrder(supabase, { businessId, customerId, orderId, orderAmoun
 
 ---
 
+### 9. `lib/stockLedger.ts` — SaaS Stock Movement Ledger
+
+Modul terpusat untuk mencatat mutasi stok fisik secara **SaaS-grade/immutable** ke tabel `public.stock_moves`.
+
+```typescript
+import { recordStockMovements } from '@/lib/stockLedger'
+
+await recordStockMovements([
+  {
+    businessId,
+    productId,
+    reference: 'PO-001',
+    qty: 10,
+    unitCost: 50000,
+    type: 'receipt', // 'receipt' | 'delivery' | 'transfer' | 'adjustment' | 'refund'
+    status: 'done'
+  }
+], supabase)
+```
+
+**Fitur:**
+- **Idempotensi Otomatis:** Menghindari duplikasi mutasi untuk referensi + produk + tipe yang sama.
+- **Dipakai di:** `purchases/route.ts`, `stock-opname/route.ts`, `pos/refund/route.ts`, `lib/inventoryHelper.ts` (POS Orders & Invoices).
+
+---
+
 ## ⚡ Performance Rules
 
 1. **Auth:** `getApiContext()` uses JWT fast-path → ~0-5ms (no network call to Supabase Auth)
