@@ -125,32 +125,67 @@ export function buildUnifiedMoveHistory(
   customMoves: StockMove[]
 ): StockMove[] {
   const moves: StockMove[] = []
+  const seenKeySet = new Set<string>()
+
   const prodMap = new Map<string, any>()
-  products.forEach(p => prodMap.set(p.id, p))
+  const exactNameMap = new Map<string, any>()
+  const skuMap = new Map<string, any>()
+
+  products.forEach(p => {
+    if (p.id) prodMap.set(p.id, p)
+    if (p.sku) skuMap.set(String(p.sku).trim().toLowerCase(), p)
+    if (p.name) exactNameMap.set(String(p.name).trim().toLowerCase(), p)
+  })
 
   const mainLocation = locations.find(l => l.is_default) || locations[0] || { id: 'wh-main', name: 'Gudang Utama' }
   const vendorLocation = locations.find(l => l.type === 'vendor') || { id: 'wh-vendor', name: 'Vendor' }
   const customerLocation = locations.find(l => l.type === 'customer') || { id: 'wh-customer', name: 'Customer' }
 
-  // 1. Process Purchases (Receipts from Supplier)
+  // 1. Custom moves from table (Primary real DB records)
+  customMoves.forEach(m => {
+    const key = `${m.reference}_${m.product_id}_${m.type}`
+    if (!seenKeySet.has(key)) {
+      seenKeySet.add(key)
+      moves.push(m)
+    }
+  })
+
+  const resolveProd = (item: any) => {
+    const rawId = String(item.product_id || item.id || '')
+    if (prodMap.has(rawId)) return prodMap.get(rawId)
+    const itemSku = String(item.sku || '').trim().toLowerCase()
+    if (itemSku && skuMap.has(itemSku)) return skuMap.get(itemSku)
+    const itemName = String(item.name || '').trim().toLowerCase()
+    if (itemName && exactNameMap.has(itemName)) return exactNameMap.get(itemName)
+    return null
+  }
+
+  // 2. Process Purchases (Receipts from Supplier) fallback
   purchases.forEach(p => {
     const items = Array.isArray(p.items_json) ? p.items_json : []
     const moveStatus = p.payment_status === 'paid' ? 'done' : p.payment_status === 'partial' ? 'pending' : 'done'
+    const ref = p.purchase_number || `PO-${p.id.slice(0, 6)}`
 
     items.forEach((item: any) => {
-      const prodId = item.product_id || item.id
-      const prod = prodMap.get(prodId)
+      const prod = resolveProd(item)
+      const prodId = prod?.id || item.product_id || item.id
+      if (!prodId) return
+
+      const key = `${ref}_${prodId}_receipt`
+      if (seenKeySet.has(key)) return
+      seenKeySet.add(key)
+
       const qty = parseFloat(String(item.quantity || item.qty || 1)) || 1
       const unitCost = parseFloat(String(item.unit_price || item.price || item.cost_price || (prod?.cost_price || 0))) || 0
       const lot = item.lot_number || item.batch_no || item.lot || null
 
       moves.push({
-        id: `purchase-${p.id}-${prodId || Math.random()}`,
+        id: `purchase-${p.id}-${prodId}`,
         business_id: p.business_id,
-        product_id: prodId || 'unknown',
+        product_id: prodId,
         product_name: prod?.name || item.name || 'Produk Pembelian',
         product_sku: prod?.sku || item.sku || null,
-        reference: p.purchase_number || `PO-${p.id.slice(0, 6)}`,
+        reference: ref,
         origin_location_id: vendorLocation.id,
         origin_location_name: vendorLocation.name,
         destination_location_id: mainLocation.id,
@@ -165,25 +200,32 @@ export function buildUnifiedMoveHistory(
     })
   })
 
-  // 2. Process Orders (Deliveries to Customer & Reserved Items)
+  // 3. Process Orders (Deliveries to Customer & Reserved Items) fallback
   orders.forEach(o => {
     const items = Array.isArray(o.items_json) ? o.items_json : []
     const isCompleted = ['completed', 'shipped', 'delivered', 'done'].includes((o.status || '').toLowerCase())
     const moveStatus: StockMove['status'] = isCompleted ? 'done' : ['cancelled', 'refunded'].includes((o.status || '').toLowerCase()) ? 'cancelled' : 'pending'
+    const ref = o.order_number || `ORD-${o.id.slice(0, 6)}`
 
     items.forEach((item: any) => {
-      const prodId = item.product_id || item.id
-      const prod = prodMap.get(prodId)
+      const prod = resolveProd(item)
+      const prodId = prod?.id || item.product_id || item.id
+      if (!prodId) return
+
+      const key = `${ref}_${prodId}_delivery`
+      if (seenKeySet.has(key)) return
+      seenKeySet.add(key)
+
       const qty = parseFloat(String(item.quantity || item.qty || 1)) || 1
       const unitCost = prod?.cost_price || 0
 
       moves.push({
-        id: `order-${o.id}-${prodId || Math.random()}`,
+        id: `order-${o.id}-${prodId}`,
         business_id: o.business_id,
-        product_id: prodId || 'unknown',
+        product_id: prodId,
         product_name: prod?.name || item.name || 'Produk Pesanan',
         product_sku: prod?.sku || item.sku || null,
-        reference: o.order_number || `ORD-${o.id.slice(0, 6)}`,
+        reference: ref,
         origin_location_id: mainLocation.id,
         origin_location_name: mainLocation.name,
         destination_location_id: customerLocation.id,
@@ -198,20 +240,29 @@ export function buildUnifiedMoveHistory(
     })
   })
 
-  // 3. Process Stock Opnames (Adjustments)
+  // 4. Process Stock Opnames (Adjustments) fallback
   opnames.forEach(op => {
     const items = Array.isArray(op.items_json) ? op.items_json : []
+    const ref = op.opname_number || `OPN-${op.id.slice(0, 6)}`
+
     items.forEach((item: any) => {
-      const prod = prodMap.get(item.product_id)
+      const prod = resolveProd(item)
+      const prodId = prod?.id || item.product_id
+      if (!prodId) return
+
+      const key = `${ref}_${prodId}_adjustment`
+      if (seenKeySet.has(key)) return
+      seenKeySet.add(key)
+
       const diff = (item.actual_quantity || 0) - (item.recorded_quantity || 0)
 
       moves.push({
-        id: `opname-${op.id}-${item.product_id}`,
+        id: `opname-${op.id}-${prodId}`,
         business_id: op.business_id,
-        product_id: item.product_id,
+        product_id: prodId,
         product_name: prod?.name || item.name || 'Produk Opname',
         product_sku: prod?.sku || null,
-        reference: op.opname_number || `OPN-${op.id.slice(0, 6)}`,
+        reference: ref,
         origin_location_id: diff < 0 ? mainLocation.id : null,
         origin_location_name: diff < 0 ? mainLocation.name : 'Penyesuaian System',
         destination_location_id: diff >= 0 ? mainLocation.id : null,
@@ -225,9 +276,6 @@ export function buildUnifiedMoveHistory(
       })
     })
   })
-
-  // 4. Custom moves from table
-  customMoves.forEach(m => moves.push(m))
 
   // Sort by date descending
   return moves.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())

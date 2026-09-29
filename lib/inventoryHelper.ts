@@ -124,25 +124,37 @@ export async function resolveOrderProducts(
     }
 
     if (!dbProd && name) {
-      const { data: newProd, error: newProdErr } = await supabase
+      // Prevent duplicate product rows: Check existing product by exact/case-insensitive name before insert
+      const { data: existingByName } = await supabase
         .from('products')
-        .insert({
-          business_id: businessId,
-          name: name,
-          sku: sku || null,
-          price: itemPrice,
-          cost_price: extractedCostPrice,
-          type: 'physical',
-          stock_type: 'tracked',
-          stock_quantity: 0
-        })
         .select('*')
-        .single()
+        .eq('business_id', businessId)
+        .ilike('name', name)
+        .maybeSingle()
 
-      if (newProdErr) {
-        console.error(`Failed to auto-create product: ${newProdErr.message}`)
+      if (existingByName) {
+        dbProd = existingByName
       } else {
-        dbProd = newProd
+        const { data: newProd, error: newProdErr } = await supabase
+          .from('products')
+          .insert({
+            business_id: businessId,
+            name: name,
+            sku: sku || null,
+            price: itemPrice,
+            cost_price: extractedCostPrice,
+            type: 'physical',
+            stock_type: 'tracked',
+            stock_quantity: 0
+          })
+          .select('*')
+          .single()
+
+        if (newProdErr) {
+          console.error(`Failed to auto-create product: ${newProdErr.message}`)
+        } else {
+          dbProd = newProd
+        }
       }
     }
 

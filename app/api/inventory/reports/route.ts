@@ -76,10 +76,10 @@ export async function GET(req: Request) {
           if (!item) return false
           const itemId = String(item.product_id || item.id || '')
           if (itemId && itemId === targetIdStr) return true
-          const itemSku = String(item.sku || '').toLowerCase()
+          const itemSku = String(item.sku || '').trim().toLowerCase()
           if (targetSkuLower && itemSku && itemSku === targetSkuLower) return true
-          const itemName = String(item.name || '').toLowerCase()
-          if (targetNameLower && itemName && (itemName === targetNameLower || itemName.includes(targetNameLower) || targetNameLower.includes(itemName))) return true
+          const itemName = String(item.name || '').trim().toLowerCase()
+          if (targetNameLower && itemName && itemName === targetNameLower) return true
           return false
         }
 
