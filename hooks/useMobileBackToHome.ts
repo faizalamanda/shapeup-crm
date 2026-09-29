@@ -2,6 +2,8 @@
 
 import { useEffect, useRef } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import { isModalBackHandlingActive } from '@/hooks/useModalBackHandler'
+import { isMobileOrStandaloneApp } from '@/hooks/usePageBackNavigation'
 
 /**
  * List of action/ID segment patterns that indicate a sub-page / form route
@@ -61,8 +63,9 @@ export function getParentPath(pathname: string): string | null {
 
 /**
  * Hook to handle mobile / browser Back button like a native app on Mobile screens (< 768px or PWA).
- * On Mobile: Pressing Back on sub-pages returns to parent menu, menu pages return to /onboarding.
- * On Desktop (>= 768px): Preserves standard linear browser back history.
+ * On mobile/PWA, Back exits the current workspace to onboarding. Modal history
+ * always has priority and is handled by its own LIFO modal registry.
+ * Desktop preserves normal browser history.
  */
 export function useMobileBackToHome() {
   const pathname = usePathname()
@@ -75,26 +78,17 @@ export function useMobileBackToHome() {
 
   useEffect(() => {
     const handlePopState = (event: PopStateEvent) => {
-      // 1. Check if on Desktop screen (width >= 768px). On desktop, allow normal browser back navigation.
-      if (typeof window !== 'undefined' && window.innerWidth >= 768) {
+      if (!isMobileOrStandaloneApp()) {
         return
       }
 
-      // 2. If a modal is open (modalStateKey present), do not redirect.
-      if (event.state?.modalStateKey || window.history.state?.modalStateKey) {
+      // `popstate` reaches this root listener before the modal listener. Yield
+      // while a modal owns the current transition, including X/submit cleanup.
+      if (isModalBackHandlingActive()) {
         return
       }
 
-      const activePath = currentPathRef.current
-      const targetParent = getParentPath(activePath)
-
-      if (targetParent) {
-        setTimeout(() => {
-          if (window.location.pathname !== targetParent) {
-            router.replace(targetParent)
-          }
-        }, 0)
-      }
+      if (currentPathRef.current !== '/onboarding') router.replace('/onboarding')
     }
 
     window.addEventListener('popstate', handlePopState)

@@ -12,6 +12,14 @@ let modalStack: ModalStackItem[] = []
 let isProgrammaticBack = false
 let isListenersAttached = false
 
+/**
+ * Lets page-level Back handlers yield to the modal stack. This also remains true
+ * while a programmatic `history.back()` removes a modal history entry.
+ */
+export function isModalBackHandlingActive() {
+  return modalStack.length > 0 || isProgrammaticBack
+}
+
 function handleGlobalPopState() {
   if (isProgrammaticBack) {
     isProgrammaticBack = false
@@ -83,4 +91,3 @@ export function useModalBackHandler(isOpen: boolean, onClose: () => void) {
     }
   }, [isOpen])
 }
-
