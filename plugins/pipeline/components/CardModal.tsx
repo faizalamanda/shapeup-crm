@@ -143,17 +143,17 @@ export default function CardModal({
           <div className="lg:col-span-2 space-y-6">
             
             {/* Top Action Bar (Mobile & Desktop) */}
-            <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-gray-50/80 dark:bg-gray-900/50 rounded-2xl border border-gray-200/60 dark:border-gray-800">
-              <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-2 bg-gray-50/80 dark:bg-gray-900/50 rounded-xl border border-gray-200/60 dark:border-gray-800">
+              <div className="flex flex-wrap items-center gap-2">
                 {/* Status toggle pill */}
-                <div className="flex items-center bg-gray-200/80 dark:bg-gray-800 p-1 rounded-xl text-xs font-semibold shadow-inner">
+                <div className="flex items-center bg-gray-200/80 dark:bg-gray-800 p-0.5 rounded-lg text-xs font-semibold shadow-inner">
                   <button
                     type="button"
                     onClick={() => {
                       setStatus('active');
                       handleSaveField({ status: 'active' });
                     }}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${
+                    className={`px-2.5 py-1 rounded-md transition-all ${
                       status === 'active' ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 shadow-xs' : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                     }`}
                   >
@@ -165,7 +165,7 @@ export default function CardModal({
                       setStatus('won');
                       handleSaveField({ status: 'won' });
                     }}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${
+                    className={`px-2.5 py-1 rounded-md transition-all ${
                       status === 'won' ? 'bg-emerald-600 text-white shadow-xs' : 'text-gray-600 dark:text-gray-400 hover:text-emerald-600'
                     }`}
                   >
@@ -177,7 +177,7 @@ export default function CardModal({
                       setStatus('lost');
                       handleSaveField({ status: 'lost' });
                     }}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${
+                    className={`px-2.5 py-1 rounded-md transition-all ${
                       status === 'lost' ? 'bg-red-600 text-white shadow-xs' : 'text-gray-600 dark:text-gray-400 hover:text-red-600'
                     }`}
                   >
@@ -186,7 +186,7 @@ export default function CardModal({
                 </div>
 
                 {isSaving && (
-                  <span className="text-xs text-blue-600 dark:text-blue-400 animate-pulse font-medium bg-blue-50 dark:bg-blue-900/30 px-2 py-1 rounded-md">
+                  <span className="text-[11px] text-blue-600 dark:text-blue-400 animate-pulse font-medium bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-md">
                     Menyimpan...
                   </span>
                 )}
@@ -200,10 +200,10 @@ export default function CardModal({
                     onClose();
                   }
                 }}
-                className="p-2 text-red-600 hover:bg-red-600 hover:text-white dark:hover:bg-red-600 dark:hover:text-white rounded-xl transition-colors text-xs font-semibold flex items-center gap-1.5 border border-red-200 dark:border-red-900/50"
+                className="p-1.5 text-red-600 hover:bg-red-600 hover:text-white dark:hover:bg-red-600 dark:hover:text-white rounded-lg transition-colors text-xs font-semibold flex items-center gap-1 border border-red-200 dark:border-red-900/50"
                 title="Hapus Kartu"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                 </svg>
                 <span>Hapus</span>
