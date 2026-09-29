@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { PipelineCard, PipelineStage, PipelineActivity, CardLabel, CardPriority, CardStatus } from '../types';
 import { formatCurrency } from '../helpers/kanbanUtils';
+import { FullScreenModal } from '@/components/ui/FullScreenModal';
 
 interface CardModalProps {
   card: PipelineCard | null;
@@ -129,11 +130,13 @@ export default function CardModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-150">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-        
-        {/* Header bar */}
-        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-4 bg-gray-50/50 dark:bg-gray-900/40">
+    <FullScreenModal
+      isOpen={true}
+      onClose={onClose}
+      title="Detail Kartu Pipeline"
+      desktopSize="lg"
+      footer={
+        <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             {/* Status toggle pill */}
             <div className="flex items-center bg-gray-200 dark:bg-gray-700 p-0.5 rounded-lg text-xs font-semibold">
@@ -182,38 +185,27 @@ export default function CardModal({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                if (confirm('Hapus kartu ini secara permanen?')) {
-                  onDeleteCard(card.id);
-                  onClose();
-                }
-              }}
-              className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-xl transition-colors text-xs font-semibold flex items-center gap-1"
-              title="Hapus Kartu"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-              Hapus
-            </button>
-
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm('Hapus kartu ini secara permanen?')) {
+                onDeleteCard(card.id);
+                onClose();
+              }
+            }}
+            className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-xl transition-colors text-xs font-semibold flex items-center gap-1"
+            title="Hapus Kartu"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            <span className="hidden sm:inline">Hapus</span>
+          </button>
         </div>
-
+      }
+    >
         {/* Modal Main Content (2-Column Grid on desktop) */}
-        <div className="flex-1 overflow-y-auto p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 custom-scrollbar">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
           {/* Left Column: Details & Editing (2 cols) */}
           <div className="lg:col-span-2 space-y-6">
@@ -223,8 +215,7 @@ export default function CardModal({
               <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">
                 Judul Kartu
               </label>
-              <input
-                type="text"
+              <textarea
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 onBlur={() => {
@@ -232,7 +223,8 @@ export default function CardModal({
                     handleSaveField({ title: title.trim() });
                   }
                 }}
-                className="w-full text-xl font-bold px-3 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:border-blue-500 focus:outline-hidden text-gray-900 dark:text-gray-100"
+                rows={2}
+                className="w-full text-xl font-bold px-3 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:border-blue-500 focus:outline-hidden text-gray-900 dark:text-gray-100 resize-none min-h-[3.5rem]"
               />
             </div>
 
@@ -526,8 +518,6 @@ export default function CardModal({
           </div>
 
         </div>
-
-      </div>
-    </div>
+    </FullScreenModal>
   );
 }
