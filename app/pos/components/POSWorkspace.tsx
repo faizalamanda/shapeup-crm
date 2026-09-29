@@ -64,9 +64,16 @@ export default function POSWorkspace() {
   // Cart & Customer State
   const [cart, setCart] = useState<any[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null)
-  const [cartDiscountPercent, setCartDiscountPercent] = useState<number>(0)
+  
+  // Discount states
+  const [globalDiscountType, setGlobalDiscountType] = useState<'nominal' | 'percent'>('nominal')
+  const [globalDiscountInput, setGlobalDiscountInput] = useState<string>('')
+  
   const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false)
   const [customerSearch, setCustomerSearch] = useState('')
+
+  // Item edit state
+  const [editingItemIndex, setEditingItemIndex] = useState<number | null>(null)
 
   // Mobile Bottom Sheet State
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
@@ -173,11 +180,18 @@ export default function POSWorkspace() {
   }, [cart])
 
   const discountAmount = useMemo(() => {
-    if (cartDiscountPercent > 0) {
-      return Math.round((subtotal * cartDiscountPercent) / 100)
+    let itemDiscount = cart.reduce((acc, item) => acc + (item.discount || 0) * item.quantity, 0)
+    let globalDiscount = 0
+    const globalInputNumber = Number(globalDiscountInput) || 0
+    if (globalInputNumber > 0) {
+      if (globalDiscountType === 'percent') {
+        globalDiscount = Math.round((subtotal * globalInputNumber) / 100)
+      } else {
+        globalDiscount = globalInputNumber
+      }
     }
-    return cart.reduce((acc, item) => acc + (item.discount || 0) * item.quantity, 0)
-  }, [subtotal, cartDiscountPercent, cart])
+    return itemDiscount + globalDiscount
+  }, [subtotal, globalDiscountType, globalDiscountInput, cart])
 
   const grandTotal = useMemo(() => {
     return Math.max(0, subtotal - discountAmount)
@@ -237,6 +251,19 @@ export default function POSWorkspace() {
 
   const handleRemoveItem = (index: number) => {
     setCart((prev) => prev.filter((_, i) => i !== index))
+    if (editingItemIndex === index) setEditingItemIndex(null)
+  }
+
+  const handleUpdateItemPriceDiscount = (index: number, newPrice: number, newDiscount: number) => {
+    setCart((prev) => {
+      const copy = [...prev]
+      copy[index] = {
+        ...copy[index],
+        finalPrice: newPrice,
+        discount: newDiscount
+      }
+      return copy
+    })
   }
 
   // Keypad Handlers
@@ -400,7 +427,7 @@ export default function POSWorkspace() {
       
       setCart([])
       setSelectedCustomer(null)
-      setCartDiscountPercent(0)
+      setGlobalDiscountInput('')
       setCheckingOut(false)
 
       // 3. Background Sync (Fire and Forget)
@@ -544,18 +571,60 @@ export default function POSWorkspace() {
                     <div className="text-[10px] text-slate-500 italic">• "{item.note}"</div>
                   )}
                 </div>
-                <button
-                  onClick={() => handleRemoveItem(idx)}
-                  className="text-slate-400 hover:text-rose-600 p-1 text-sm transition"
-                >
-                  ✕
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setEditingItemIndex(editingItemIndex === idx ? null : idx)}
+                    className={`p-1.5 rounded-lg transition ${editingItemIndex === idx ? 'bg-indigo-100 text-indigo-700' : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
+                    title="Ubah Harga / Diskon"
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    onClick={() => handleRemoveItem(idx)}
+                    className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
 
+              {editingItemIndex === idx && (
+                <div className="p-2.5 bg-white border border-indigo-100 rounded-xl space-y-2 shadow-sm my-2">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Harga Satuan (Rp)</label>
+                    <input 
+                      type="number" 
+                      value={item.finalPrice || ''} 
+                      onChange={(e) => handleUpdateItemPriceDiscount(idx, Number(e.target.value), item.discount)}
+                      onWheel={(e) => e.currentTarget.blur()}
+                      className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Diskon per Item (Rp)</label>
+                    <input 
+                      type="number" 
+                      value={item.discount || ''} 
+                      onChange={(e) => handleUpdateItemPriceDiscount(idx, item.finalPrice, Number(e.target.value))}
+                      onWheel={(e) => e.currentTarget.blur()}
+                      className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
-                <span className="font-extrabold text-indigo-950 text-sm">
-                  Rp {(item.finalPrice * item.quantity).toLocaleString('id-ID')}
-                </span>
+                <div className="flex flex-col">
+                  {item.discount > 0 && (
+                    <span className="text-[10px] text-slate-400 line-through">
+                      Rp {(item.finalPrice * item.quantity).toLocaleString('id-ID')}
+                    </span>
+                  )}
+                  <span className={`font-extrabold text-sm ${item.discount > 0 ? 'text-rose-600' : 'text-indigo-950'}`}>
+                    Rp {((item.finalPrice - (item.discount || 0)) * item.quantity).toLocaleString('id-ID')}
+                  </span>
+                </div>
 
                 <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
                   <button
@@ -587,10 +656,45 @@ export default function POSWorkspace() {
           </div>
           {discountAmount > 0 && (
             <div className="flex justify-between text-rose-600 font-medium">
-              <span>Diskon</span>
+              <span>Total Diskon</span>
               <span>-Rp {discountAmount.toLocaleString('id-ID')}</span>
             </div>
           )}
+
+          {/* Global Discount */}
+          <div className="pt-2 border-t border-slate-100 flex flex-col gap-1.5">
+            <div className="flex justify-between items-center">
+              <span className="text-slate-600 font-semibold">Diskon Global</span>
+              <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                <button
+                  onClick={() => setGlobalDiscountType('nominal')}
+                  className={`px-2 py-1 text-[10px] font-bold rounded-md transition ${globalDiscountType === 'nominal' ? 'bg-white shadow-xs text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  Rp
+                </button>
+                <button
+                  onClick={() => setGlobalDiscountType('percent')}
+                  className={`px-2 py-1 text-[10px] font-bold rounded-md transition ${globalDiscountType === 'percent' ? 'bg-white shadow-xs text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  %
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                placeholder="0"
+                value={globalDiscountInput}
+                onChange={(e) => setGlobalDiscountInput(e.target.value)}
+                onWheel={(e) => e.currentTarget.blur()}
+                className="w-full p-2 text-xs text-right rounded-xl border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-slate-50"
+              />
+              {globalDiscountInput && (
+                 <button onClick={() => setGlobalDiscountInput('')} className="text-slate-400 hover:text-rose-500 p-1 font-bold text-sm">✕</button>
+              )}
+            </div>
+          </div>
+
           <div className="flex justify-between items-center pt-2 border-t border-slate-200 text-sm font-black text-slate-900">
             <span>GRAND TOTAL</span>
             <span className="text-xl font-black text-indigo-600">
