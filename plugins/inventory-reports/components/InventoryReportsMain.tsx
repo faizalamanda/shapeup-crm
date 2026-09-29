@@ -12,11 +12,10 @@ import { useUserContext } from '@/components/UserContext'
 
 import StockReportTab from './StockReportTab'
 import LocationReportTab from './LocationReportTab'
-import MoveHistoryTab from './MoveHistoryTab'
 import MoveAnalysisTab from './MoveAnalysisTab'
 import ValuationTab from './ValuationTab'
 
-type ActiveTab = 'stock' | 'location' | 'history' | 'analysis' | 'valuation'
+type ActiveTab = 'stock' | 'location' | 'analysis' | 'valuation'
 
 const globalMovesCache = new Map<string, { moves: StockMove[]; timestamp: number }>()
 
@@ -49,7 +48,7 @@ export default function InventoryReportsMain() {
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('shapeup_inventory_active_tab') as ActiveTab
-      if (['stock', 'location', 'history', 'analysis', 'valuation'].includes(saved)) {
+      if (['stock', 'location', 'analysis', 'valuation'].includes(saved)) {
         return saved
       }
     }
@@ -204,9 +203,9 @@ export default function InventoryReportsMain() {
     }
   }, [activeBusiness?.id])
 
-  // Lazy load moves when history or analysis tab is active
+  // Lazy load moves when analysis tab is active
   useEffect(() => {
-    if ((activeTab === 'history' || activeTab === 'analysis') && moves.length === 0) {
+    if (activeTab === 'analysis' && moves.length === 0) {
       loadGlobalMoves()
     }
   }, [activeTab, moves.length, loadGlobalMoves])
@@ -324,7 +323,6 @@ export default function InventoryReportsMain() {
         {[
           { key: 'stock', label: '📦 Stock Report', desc: 'Stok saat ini per halaman' },
           { key: 'location', label: '📍 Location Report', desc: 'Distribusi per gudang & outlet' },
-          { key: 'history', label: '📜 Move History', desc: 'Riwayat mutasi terpaginasi' },
           { key: 'analysis', label: '📊 Move Analysis', desc: 'Pivot table & visual charts' },
           { key: 'valuation', label: '💰 Valuation', desc: 'Penilaian FIFO, LIFO, AVCO' },
         ].map(t => {
@@ -406,20 +404,6 @@ export default function InventoryReportsMain() {
 
         {activeTab === 'location' && (
           <LocationReportTab locations={locationReportSummaries} loading={loading} />
-        )}
-
-        {activeTab === 'history' && (
-          <MoveHistoryTab
-            moves={moves}
-            loading={loadingMoves}
-            searchQuery={searchQuery}
-            statusFilter={moveStatusFilter}
-            lotFilter={moveLotFilter}
-            setStatusFilter={setMoveStatusFilter}
-            setLotFilter={setMoveLotFilter}
-            isFromCache={isMovesFromCache}
-            isRevalidating={isMovesRevalidating}
-          />
         )}
 
         {activeTab === 'analysis' && <MoveAnalysisTab moves={moves} loading={loadingMoves} />}
