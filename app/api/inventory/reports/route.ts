@@ -45,6 +45,10 @@ export async function GET(req: Request) {
     const limit = Math.max(1, Math.min(500, parseInt(url.searchParams.get('limit') || '50', 10)))
     const search = url.searchParams.get('search') || ''
     const categoryFilter = url.searchParams.get('category') || ''
+    
+    const sortField = url.searchParams.get('sortField') || 'productName'
+    const sortOrder = url.searchParams.get('sortOrder') || 'asc'
+    const isAsc = sortOrder === 'asc'
 
     // ─────────────────────────────────────────────────────────────────────
     // ⚡ ACTION: global_moves — Global Paginated Move History across business
@@ -423,9 +427,21 @@ export async function GET(req: Request) {
       prodsQuery = prodsQuery.eq('categories.name', categoryFilter)
     }
 
-    prodsQuery = prodsQuery
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1)
+    // Try DB native sort first for simpler fields
+    if (sortField === 'productName') {
+      prodsQuery = prodsQuery.order('name', { ascending: isAsc })
+    } else if (sortField === 'onHandQty') {
+      prodsQuery = prodsQuery.order('stock_quantity', { ascending: isAsc })
+    } else if (sortField === 'unitCost') {
+      prodsQuery = prodsQuery.order('cost_price', { ascending: isAsc })
+    } else {
+      prodsQuery = prodsQuery.order('created_at', { ascending: false })
+    }
+
+    const requiresJsSort = sortField === 'totalValue' || sortField === 'categoryName'
+    if (!requiresJsSort) {
+      prodsQuery = prodsQuery.range(offset, offset + limit - 1)
+    }
 
     const [metrics, categoriesRes, prodsRes, locationsRes] = await Promise.all([
       metricsPromise,
@@ -436,7 +452,23 @@ export async function GET(req: Request) {
 
     const totalItems = prodsRes.count || 0
     const totalPages = Math.ceil(totalItems / limit) || 1
-    const paginatedProducts = prodsRes.data || []
+    let paginatedProducts = prodsRes.data || []
+
+    if (requiresJsSort) {
+      paginatedProducts.sort((a: any, b: any) => {
+        if (sortField === 'totalValue') {
+          const valA = (Number(a.stock_quantity || 0) * Number(a.cost_price || 0))
+          const valB = (Number(b.stock_quantity || 0) * Number(b.cost_price || 0))
+          return isAsc ? valA - valB : valB - valA
+        } else if (sortField === 'categoryName') {
+          const catA = (a.categories?.name || '').toLowerCase()
+          const catB = (b.categories?.name || '').toLowerCase()
+          return isAsc ? catA.localeCompare(catB) : catB.localeCompare(catA)
+        }
+        return 0
+      })
+      paginatedProducts = paginatedProducts.slice(offset, offset + limit)
+    }
 
     const categories = (categoriesRes.data || []).map(c => c.name).filter(Boolean)
     const locations = (locationsRes.data && locationsRes.data.length > 0)

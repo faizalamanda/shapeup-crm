@@ -35,3 +35,13 @@
 - Bahasa UI/error messages: **Indonesia**
 - Bahasa kode/variabel/comments: **English**  
 - Semua monetary values: **IDR (no decimal)**
+
+## Pagination & Table Data Standards
+
+1. **Server-Side Sorting for Paginated Data:** Ketika mengimplementasikan fitur sorting pada semua tabel yang datanya dimuat secara bertahap (*paginated* dari server), pastikan sorting diaplikasikan di API / server (menggunakan `sortField` & `sortOrder`), bukan mengurutkan array pada komponen *client*. 
+   - Gunakan `.order()` Supabase untuk kolom dasar (seperti *name*, *price*, *stock*).
+   - Jika harus mengurutkan berdasarkan field kalkulasi (*computed fields*, contoh: Total Nilai) atau *foreign table* yang rumit, dan dataset per-bisnis diasumsikan wajar (beberapa ribu baris), *bypass* `.range()` di Supabase, tarik semua row hasil filter, lakukan *sorting array* di Node.js/Edge, lalu gunakan `.slice()` sebelum *return* response.
+
+## Inventory & Reporting Standards
+
+1. **Running Stock Balance (Stok Sistem):** Saat menampilkan riwayat mutasi (*move history*), selalu kalkulasikan *system stock* secara mundur (*backward*) dari stok fisik terakhir (`current_stock_quantity`). Jangan menghitung *forward* dari transaksi tertua karena berpotensi tidak sinkron dengan stok on hand saat ini. Selalu lampirkan `system_stock?: number` ke *interface* `StockMove` untuk menampilkannya di UI dengan *type safety* penuh.

@@ -12,9 +12,12 @@ interface StockReportTabProps {
   selectedCategory: string
   onPageChange: (page: number) => void
   onPageSizeChange: (limit: number) => void
+  sortField: SortField
+  sortOrder: 'asc' | 'desc'
+  onSortChange: (field: SortField) => void
 }
 
-type SortField =
+export type SortField =
   | 'productName'
   | 'categoryName'
   | 'onHandQty'
@@ -33,40 +36,15 @@ export default function StockReportTab({
   selectedCategory,
   onPageChange,
   onPageSizeChange,
+  sortField,
+  sortOrder,
+  onSortChange,
 }: StockReportTabProps) {
   // Selected Product for Detail Modal
   const [selectedProduct, setSelectedProduct] = useState<StockReportItem | null>(null)
 
-  // Client-side sorting on active page
-  const [sortField, setSortField] = useState<SortField>('productName')
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
-
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))
-    } else {
-      setSortField(field)
-      setSortOrder('asc')
-    }
-  }
-
-  // Sorted items for current active page
-  const sortedItems = [...items].sort((a, b) => {
-    let valA: any = a[sortField]
-    let valB: any = b[sortField]
-
-    if (typeof valA === 'string') {
-      valA = valA.toLowerCase()
-      valB = (valB || '').toString().toLowerCase()
-      return sortOrder === 'asc'
-        ? valA.localeCompare(valB)
-        : valB.localeCompare(valA)
-    }
-
-    valA = Number(valA || 0)
-    valB = Number(valB || 0)
-    return sortOrder === 'asc' ? valA - valB : valB - valA
-  })
+  // Items are already sorted from server
+  const sortedItems = items
 
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val)
@@ -173,7 +151,7 @@ export default function StockReportTab({
             <thead className="bg-[#F7F7F5] text-[#6B6B63] uppercase tracking-wider font-bold border-b border-[#E2E2DC]">
               <tr>
                 <th
-                  onClick={() => handleSort('productName')}
+                  onClick={() => onSortChange('productName')}
                   className="py-2.5 px-3 sm:px-4 cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
                 >
                   <div className="flex items-center">
@@ -181,7 +159,7 @@ export default function StockReportTab({
                   </div>
                 </th>
                 <th
-                  onClick={() => handleSort('categoryName')}
+                  onClick={() => onSortChange('categoryName')}
                   className="py-2.5 px-3 sm:px-4 cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
                 >
                   <div className="flex items-center">
@@ -189,7 +167,7 @@ export default function StockReportTab({
                   </div>
                 </th>
                 <th
-                  onClick={() => handleSort('onHandQty')}
+                  onClick={() => onSortChange('onHandQty')}
                   className="py-2.5 px-3 sm:px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
                 >
                   <div className="flex items-center justify-end">
@@ -197,7 +175,7 @@ export default function StockReportTab({
                   </div>
                 </th>
                 <th
-                  onClick={() => handleSort('unitCost')}
+                  onClick={() => onSortChange('unitCost')}
                   className="py-2.5 px-3 sm:px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
                 >
                   <div className="flex items-center justify-end">
@@ -205,7 +183,7 @@ export default function StockReportTab({
                   </div>
                 </th>
                 <th
-                  onClick={() => handleSort('totalValue')}
+                  onClick={() => onSortChange('totalValue')}
                   className="py-2.5 px-3 sm:px-4 text-right cursor-pointer hover:bg-[#ECECE8] transition-colors select-none"
                 >
                   <div className="flex items-center justify-end">

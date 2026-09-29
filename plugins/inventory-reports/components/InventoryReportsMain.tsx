@@ -10,7 +10,7 @@ import {
 } from '../types'
 import { useUserContext } from '@/components/UserContext'
 
-import StockReportTab from './StockReportTab'
+import StockReportTab, { SortField } from './StockReportTab'
 import LocationReportTab from './LocationReportTab'
 import MoveAnalysisTab from './MoveAnalysisTab'
 import ValuationTab from './ValuationTab'
@@ -76,6 +76,9 @@ export default function InventoryReportsMain() {
   })
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('')
+  
+  const [sortField, setSortField] = useState<SortField>('productName')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
   // Report Data State
   const [metrics, setMetrics] = useState<InventoryReportMetrics | null>(null)
@@ -108,7 +111,7 @@ export default function InventoryReportsMain() {
 
   // ⚡ Fast Paginated Data Fetcher
   const loadInventoryData = useCallback(
-    async (targetPage = page, targetLimit = limit, targetSearch = searchQuery, targetCat = selectedCategory) => {
+    async (targetPage = page, targetLimit = limit, targetSearch = searchQuery, targetCat = selectedCategory, targetSortField = sortField, targetSortOrder = sortOrder) => {
       try {
         setLoading(true)
         setErrorMsg(null)
@@ -119,6 +122,8 @@ export default function InventoryReportsMain() {
           limit: String(targetLimit),
           search: targetSearch,
           category: targetCat,
+          sortField: targetSortField,
+          sortOrder: targetSortOrder
         })
 
         const res = await fetch(`/api/inventory/reports?${params.toString()}`)
@@ -139,7 +144,7 @@ export default function InventoryReportsMain() {
         setLoading(false)
       }
     },
-    [page, limit, searchQuery, selectedCategory]
+    [page, limit, searchQuery, selectedCategory, sortField, sortOrder]
   )
 
   // Search debounce ref
@@ -150,20 +155,33 @@ export default function InventoryReportsMain() {
     setPage(1)
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
     searchTimeoutRef.current = setTimeout(() => {
-      loadInventoryData(1, limit, val, selectedCategory)
+      loadInventoryData(1, limit, val, selectedCategory, sortField, sortOrder)
     }, 350)
   }
 
   const handleCategoryChange = (val: string) => {
     setSelectedCategory(val)
     setPage(1)
-    loadInventoryData(1, limit, searchQuery, val)
+    loadInventoryData(1, limit, searchQuery, val, sortField, sortOrder)
   }
 
   // Fetch when page or limit changes directly
   const handlePageChange = (newPage: number) => {
     setPage(newPage)
-    loadInventoryData(newPage, limit, searchQuery, selectedCategory)
+    loadInventoryData(newPage, limit, searchQuery, selectedCategory, sortField, sortOrder)
+  }
+  
+  const handleSortChange = (field: SortField) => {
+    let newOrder: 'asc' | 'desc' = 'asc'
+    if (sortField === field) {
+      newOrder = sortOrder === 'asc' ? 'desc' : 'asc'
+      setSortOrder(newOrder)
+    } else {
+      setSortField(field)
+      setSortOrder('asc')
+    }
+    setPage(1)
+    loadInventoryData(1, limit, searchQuery, selectedCategory, field, newOrder)
   }
 
   // Initial fetch on mount
@@ -261,7 +279,7 @@ export default function InventoryReportsMain() {
             </div>
           </div>
           <button
-            onClick={() => loadInventoryData(page, limit, searchQuery, selectedCategory)}
+            onClick={() => loadInventoryData(page, limit, searchQuery, selectedCategory, sortField, sortOrder)}
             className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer whitespace-nowrap"
           >
             🔄 Coba Lagi
@@ -288,7 +306,7 @@ export default function InventoryReportsMain() {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={() => loadInventoryData(page, limit, searchQuery, selectedCategory)}
+            onClick={() => loadInventoryData(page, limit, searchQuery, selectedCategory, sortField, sortOrder)}
             title="Segarkan Data dari Database"
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#F7F7F5] hover:bg-[#EAEAEA] text-[#1C1C1A] border border-[#E2E2DC] text-xs font-bold transition-all cursor-pointer"
           >
@@ -399,6 +417,9 @@ export default function InventoryReportsMain() {
             selectedCategory={selectedCategory}
             onPageChange={handlePageChange}
             onPageSizeChange={handlePageSizeChange}
+            sortField={sortField}
+            sortOrder={sortOrder}
+            onSortChange={handleSortChange}
           />
         )}
 
