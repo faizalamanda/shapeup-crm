@@ -228,6 +228,8 @@ Untuk aturan fallback riwayat, backfill, dan perbaikan data legacy, baca [knowle
 8. **HPP sharing:** `calculateProductsHppBatch` dipanggil 1x di `syncOrderToLedger`, hasilnya di-share ke `applyStockMovement` dan `generateItemizedHppJournalLines`
 9. **Batch Stock & Cost Updates:** Di `purchases/route.ts` dan `expenses/route.ts`, pembaruan stok & WAC HPP dilakukan secara agregat (batch `.in('id', productIds)`) dan dieksekusi secara paralel (`Promise.all`) untuk menghindari *N+1 query bottleneck*.
 10. **Immediate Frontend Fetching:** Pemuatan data utama halaman (seperti `fetchPurchases`) dilakukan seketika di *mount* tanpa menunggu resolution profile *client-side*, karena API route sudah menangani otentikasi via cookie `getApiContext()`.
+11. **Location Caching:** Di API route laporan inventory (`inventory/reports/route.ts`), kueri `inventory_locations` di-cache 5 menit di memori server untuk mempercepat kueri mutasi terindeks (~3ms).
+12. **Client SWR & Cache Sync Status:** Komponen UI yang menampilkan Move History (modal / tab) wajib menggunakan client-side SWR cache (`0ms` instant load). Jika data bersumber dari cache, UI wajib menampilkan badge status `⚡ Sync: Data Tampil dari Cache (0ms)`.
 
 ## 🔗 Dependency Graph
 
@@ -251,6 +253,8 @@ API Route (POS/Invoice/Webhook/etc.)
 |-------|-----|-----------------|
 | Profile (apiContext) | 30s | `invalidateProfileCache(userId)` — saat switch business |
 | Guest Customer | 5min | `invalidateGuestCache(businessId)` — jarang perlu |
+| Inventory Locations | 5min | Auto-expire (5 menit) |
+| Move History (Client SWR) | Memory | Stale-While-Revalidate di background |
 | Accounts (COA) | Forever | Restart server — jarang berubah |
 | Integration Config | 60s | Auto-expire |
 | HPP/Recipe Batch | 60s | `invalidateHppCache()` — saat recipe diubah |

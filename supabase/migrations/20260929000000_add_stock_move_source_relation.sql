@@ -17,3 +17,10 @@ CREATE INDEX IF NOT EXISTS idx_stock_moves_source
 CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_moves_document_product_type
   ON public.stock_moves (business_id, source_type, source_id, product_id, type)
   WHERE source_id IS NOT NULL;
+
+-- High performance composite indexes for fast Move History queries (~1ms)
+CREATE INDEX IF NOT EXISTS idx_stock_moves_biz_prod_created
+  ON public.stock_moves (business_id, product_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_stock_moves_biz_created
+  ON public.stock_moves (business_id, created_at DESC);

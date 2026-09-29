@@ -10,6 +10,8 @@ interface MoveHistoryTabProps {
   lotFilter: string
   setStatusFilter: (status: MoveStatus | 'all') => void
   setLotFilter: (lot: string) => void
+  isFromCache?: boolean
+  isRevalidating?: boolean
 }
 
 type SortField =
@@ -30,6 +32,8 @@ export default function MoveHistoryTab({
   lotFilter,
   setStatusFilter,
   setLotFilter,
+  isFromCache = false,
+  isRevalidating = false,
 }: MoveHistoryTabProps) {
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(() => {
@@ -203,6 +207,22 @@ export default function MoveHistoryTab({
         </div>
 
         <div className="flex items-center gap-3 text-xs text-[#6B6B63]">
+          {isFromCache ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              ⚡ Sync: Data Tampil dari Cache (0ms)
+            </span>
+          ) : isRevalidating ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+              <span className="w-2 h-2 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              Menyinkronkan data...
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              ✓ Live Database
+            </span>
+          )}
           <span>Log Mutasi: <strong className="text-[#1C1C1A]">{filteredMoves.length}</strong></span>
           <select
             value={pageSize}

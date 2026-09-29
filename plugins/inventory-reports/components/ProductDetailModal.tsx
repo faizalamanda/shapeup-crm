@@ -11,6 +11,9 @@ interface ProductDetailModalProps {
 
 type ModalTab = 'details' | 'valuation' | 'moves'
 
+// Client-side SWR Cache for Product Move History (0ms instant load)
+const moveHistoryCache = new Map<string, { moves: StockMove[]; meta: PaginationMeta; timestamp: number }>()
+
 export default function ProductDetailModal({
   productId,
   initialStockItem,
@@ -34,6 +37,8 @@ export default function ProductDetailModal({
     totalPages: 1,
   })
   const [loadingMoves, setLoadingMoves] = useState(false)
+  const [isFromCache, setIsFromCache] = useState(false)
+  const [isRevalidating, setIsRevalidating] = useState(false)
   const [errorMoves, setErrorMoves] = useState<string | null>(null)
 
   // Prevent background scrolling while modal is open
@@ -66,29 +71,52 @@ export default function ProductDetailModal({
     }
   }, [activeTab, valuationData, loadingValuation, productId, initialStockItem])
 
-  // ⚡ Fast Indexed Fetch for Move History
+  // ⚡ SWR Fast Cache Fetcher for Move History
   const fetchMoveHistory = useCallback(
     async (targetPage = movesPage, targetLimit = movesLimit) => {
       if (!productId) return
-      try {
-        setLoadingMoves(true)
-        setErrorMoves(null)
+      const cacheKey = `${productId}_${targetPage}_${targetLimit}`
+      const cached = moveHistoryCache.get(cacheKey)
 
+      if (cached) {
+        setMoves(cached.moves)
+        setMovesMeta(cached.meta)
+        setIsFromCache(true)
+        setLoadingMoves(false)
+        setIsRevalidating(true)
+      } else {
+        setLoadingMoves(true)
+        setIsFromCache(false)
+        setIsRevalidating(false)
+      }
+
+      setErrorMoves(null)
+
+      try {
         const res = await fetch(`/api/inventory/reports?action=product_moves&productId=${productId}&page=${targetPage}&limit=${targetLimit}`)
         const json = await res.json()
 
         if (json.success && json.moves) {
           setMoves(json.moves)
-          if (json.pagination) {
-            setMovesMeta(json.pagination)
-          }
-        } else {
+          const meta = json.pagination || { page: targetPage, limit: targetLimit, totalItems: json.moves.length, totalPages: 1 }
+          setMovesMeta(meta)
+
+          moveHistoryCache.set(cacheKey, {
+            moves: json.moves,
+            meta,
+            timestamp: Date.now()
+          })
+          setIsFromCache(false)
+        } else if (!cached) {
           setErrorMoves(json.error || 'Gagal memuat mutasi stok')
         }
       } catch (err: any) {
-        setErrorMoves(err.message || 'Gagal memuat mutasi stok')
+        if (!cached) {
+          setErrorMoves(err.message || 'Gagal memuat mutasi stok')
+        }
       } finally {
         setLoadingMoves(false)
+        setIsRevalidating(false)
       }
     },
     [productId, movesPage, movesLimit]
@@ -407,8 +435,8 @@ export default function ProductDetailModal({
           {/* TAB 3: MOVE HISTORY (Ultra-Fast & Paginated) */}
           {activeTab === 'moves' && (
             <div className="space-y-3 animate-in fade-in duration-100">
-              {/* Controls bar: Limit selector & Refresh */}
-              <div className="flex items-center justify-between gap-2 bg-[#F7F7F5] p-2.5 rounded-xl border border-[#E2E2DC] text-xs">
+              {/* Controls bar: Limit selector & Refresh & Cache Sync Status */}
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-[#F7F7F5] p-2.5 rounded-xl border border-[#E2E2DC] text-xs">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-[#1C1C1A]">Tampilkan:</span>
                   <select
@@ -423,8 +451,27 @@ export default function ProductDetailModal({
                   </select>
                 </div>
 
-                <div className="text-[11px] text-[#6B6B63]">
-                  Total {movesMeta.totalItems} transaksi mutasi ditemukan
+                <div className="flex items-center gap-3">
+                  {isFromCache ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                      ⚡ Sync: Data Tampil dari Cache (0ms)
+                    </span>
+                  ) : isRevalidating ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                      <span className="w-2 h-2 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                      Menyinkronkan data...
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      ✓ Live Database
+                    </span>
+                  )}
+
+                  <div className="text-[11px] text-[#6B6B63]">
+                    Total {movesMeta.totalItems} transaksi mutasi ditemukan
+                  </div>
                 </div>
               </div>
 

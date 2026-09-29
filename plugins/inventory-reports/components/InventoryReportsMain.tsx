@@ -12,10 +12,13 @@ import { useUserContext } from '@/components/UserContext'
 
 import StockReportTab from './StockReportTab'
 import LocationReportTab from './LocationReportTab'
+import MoveHistoryTab from './MoveHistoryTab'
 import MoveAnalysisTab from './MoveAnalysisTab'
 import ValuationTab from './ValuationTab'
 
-type ActiveTab = 'stock' | 'location' | 'analysis' | 'valuation'
+type ActiveTab = 'stock' | 'location' | 'history' | 'analysis' | 'valuation'
+
+const globalMovesCache = new Map<string, { moves: StockMove[]; timestamp: number }>()
 
 export default function InventoryReportsMain() {
   const { activeBusiness } = useUserContext()
@@ -46,7 +49,7 @@ export default function InventoryReportsMain() {
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('shapeup_inventory_active_tab') as ActiveTab
-      if (['stock', 'location', 'analysis', 'valuation'].includes(saved)) {
+      if (['stock', 'location', 'history', 'analysis', 'valuation'].includes(saved)) {
         return saved
       }
     }
@@ -55,6 +58,13 @@ export default function InventoryReportsMain() {
 
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  // Move History Filters
+  const [moveStatusFilter, setMoveStatusFilter] = useState<any>('all')
+  const [moveLotFilter, setMoveLotFilter] = useState<string>('')
+  const [loadingMoves, setLoadingMoves] = useState(false)
+  const [isMovesFromCache, setIsMovesFromCache] = useState(false)
+  const [isMovesRevalidating, setIsMovesRevalidating] = useState(false)
 
   // Server Pagination State
   const [page, setPage] = useState(1)
@@ -161,6 +171,45 @@ export default function InventoryReportsMain() {
   useEffect(() => {
     loadInventoryData(1, limit, '', '')
   }, [])
+
+  // ⚡ SWR Fast Global Moves Loader (0ms instant cache load)
+  const loadGlobalMoves = useCallback(async () => {
+    const cacheKey = `global_moves_${activeBusiness?.id || 'default'}`
+    const cached = globalMovesCache.get(cacheKey)
+
+    if (cached) {
+      setMoves(cached.moves)
+      setIsMovesFromCache(true)
+      setLoadingMoves(false)
+      setIsMovesRevalidating(true)
+    } else {
+      setLoadingMoves(true)
+      setIsMovesFromCache(false)
+      setIsMovesRevalidating(false)
+    }
+
+    try {
+      const res = await fetch('/api/inventory/reports?action=global_moves&limit=200')
+      const json = await res.json()
+      if (json.success && json.moves) {
+        setMoves(json.moves)
+        globalMovesCache.set(cacheKey, { moves: json.moves, timestamp: Date.now() })
+        setIsMovesFromCache(false)
+      }
+    } catch (e) {
+      console.error('Failed fetching global moves:', e)
+    } finally {
+      setLoadingMoves(false)
+      setIsMovesRevalidating(false)
+    }
+  }, [activeBusiness?.id])
+
+  // Lazy load moves when history or analysis tab is active
+  useEffect(() => {
+    if ((activeTab === 'history' || activeTab === 'analysis') && moves.length === 0) {
+      loadGlobalMoves()
+    }
+  }, [activeTab, moves.length, loadGlobalMoves])
 
   // Lazy fetch location report data when location tab is selected
   useEffect(() => {
@@ -275,6 +324,7 @@ export default function InventoryReportsMain() {
         {[
           { key: 'stock', label: '📦 Stock Report', desc: 'Stok saat ini per halaman' },
           { key: 'location', label: '📍 Location Report', desc: 'Distribusi per gudang & outlet' },
+          { key: 'history', label: '📜 Move History', desc: 'Riwayat mutasi terpaginasi' },
           { key: 'analysis', label: '📊 Move Analysis', desc: 'Pivot table & visual charts' },
           { key: 'valuation', label: '💰 Valuation', desc: 'Penilaian FIFO, LIFO, AVCO' },
         ].map(t => {
@@ -358,7 +408,21 @@ export default function InventoryReportsMain() {
           <LocationReportTab locations={locationReportSummaries} loading={loading} />
         )}
 
-        {activeTab === 'analysis' && <MoveAnalysisTab moves={moves} loading={loading} />}
+        {activeTab === 'history' && (
+          <MoveHistoryTab
+            moves={moves}
+            loading={loadingMoves}
+            searchQuery={searchQuery}
+            statusFilter={moveStatusFilter}
+            lotFilter={moveLotFilter}
+            setStatusFilter={setMoveStatusFilter}
+            setLotFilter={setMoveLotFilter}
+            isFromCache={isMovesFromCache}
+            isRevalidating={isMovesRevalidating}
+          />
+        )}
+
+        {activeTab === 'analysis' && <MoveAnalysisTab moves={moves} loading={loadingMoves} />}
 
         {activeTab === 'valuation' && (
           <ValuationTab stockItems={stockReportItems} moves={moves} loading={loading} />

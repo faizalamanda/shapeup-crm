@@ -15,6 +15,23 @@ const DEFAULT_LOCATIONS = (businessId: string): InventoryLocation[] => [
   { id: 'wh-customer', business_id: businessId, name: 'Transit Pelanggan', type: 'customer', code: 'CUSTOMER', is_default: false, created_at: new Date().toISOString() },
 ]
 
+const locationCache: Record<string, { locations: InventoryLocation[]; timestamp: number }> = {}
+
+async function getCachedLocations(businessId: string, supabase: any): Promise<InventoryLocation[]> {
+  const now = Date.now()
+  const cached = locationCache[businessId]
+  if (cached && (now - cached.timestamp < 300000)) {
+    return cached.locations
+  }
+  const { data: raw } = await supabase
+    .from('inventory_locations')
+    .select('id, name, code, type, is_default')
+    .eq('business_id', businessId)
+  const locations = (raw && raw.length > 0) ? (raw as InventoryLocation[]) : DEFAULT_LOCATIONS(businessId)
+  locationCache[businessId] = { locations, timestamp: now }
+  return locations
+}
+
 export async function GET(req: Request) {
   const ctx = await getApiContext()
   if (ctx.error) return ctx.error
@@ -30,31 +47,121 @@ export async function GET(req: Request) {
     const categoryFilter = url.searchParams.get('category') || ''
 
     // ─────────────────────────────────────────────────────────────────────
+    // ⚡ ACTION: global_moves — Global Paginated Move History across business
+    // ─────────────────────────────────────────────────────────────────────
+    if (action === 'global_moves') {
+      const offset = (page - 1) * limit
+      const statusFilter = url.searchParams.get('status') || 'all'
+      const typeFilter = url.searchParams.get('type') || 'all'
+
+      const locations = await getCachedLocations(businessId, supabase)
+      const locMap = new Map(locations.map(l => [l.id, l.name]))
+      const mainLoc = locations.find(l => l.is_default) || locations[0]
+      const vendorLoc = locations.find(l => l.type === 'vendor')
+      const customerLoc = locations.find(l => l.type === 'customer')
+
+      let movesQuery = supabase
+        .from('stock_moves')
+        .select(`
+          id, business_id, product_id, reference, origin_location_id, destination_location_id,
+          qty, unit_cost, lot_number, status, type, created_at,
+          products (id, name, sku, unit)
+        `, { count: 'exact' })
+        .eq('business_id', businessId)
+
+      if (statusFilter !== 'all') {
+        movesQuery = movesQuery.eq('status', statusFilter)
+      }
+
+      if (typeFilter !== 'all') {
+        movesQuery = movesQuery.eq('type', typeFilter)
+      }
+
+      if (search) {
+        movesQuery = movesQuery.or(`reference.ilike.%${search}%,lot_number.ilike.%${search}%`)
+      }
+
+      const { data: rawMoves, count: totalMoves, error: movesErr } = await movesQuery
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1)
+
+      if (movesErr) {
+        return NextResponse.json({ error: movesErr.message }, { status: 500 })
+      }
+
+      const finalTotalCount = totalMoves || 0
+      const moves = (rawMoves || []).map((m: any) => {
+        let originName = m.origin_location_name || (m.origin_location_id ? locMap.get(m.origin_location_id) || 'System' : 'System')
+        let destName = m.destination_location_name || (m.destination_location_id ? locMap.get(m.destination_location_id) || 'System' : 'System')
+
+        if (m.type === 'receipt') {
+          originName = vendorLoc?.name || 'Pemasok / Vendor'
+          destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+        } else if (m.type === 'delivery') {
+          originName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+          destName = customerLoc?.name || 'Transit Pelanggan'
+        } else if (m.type === 'adjustment') {
+          originName = 'Penyesuaian System'
+          destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+        }
+
+        const prod = m.products || {}
+
+        return {
+          id: m.id,
+          business_id: m.business_id,
+          product_id: m.product_id,
+          product_name: prod.name || 'Produk',
+          product_sku: prod.sku || null,
+          unit: prod.unit || 'Pcs',
+          reference: m.reference,
+          origin_location_id: m.origin_location_id,
+          origin_location_name: originName,
+          destination_location_id: m.destination_location_id,
+          destination_location_name: destName,
+          qty: Number(m.qty || 0),
+          unit_cost: Number(m.unit_cost || 0),
+          lot_number: m.lot_number || null,
+          status: m.status,
+          type: m.type,
+          created_at: m.created_at
+        }
+      })
+
+      return NextResponse.json({
+        success: true,
+        moves,
+        pagination: {
+          page,
+          limit,
+          totalItems: finalTotalCount,
+          totalPages: Math.ceil(finalTotalCount / limit) || 1
+        }
+      })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
     // ⚡ ACTION: product_moves — Tab 3 modal (lazy). Ultra-fast & Fail-safe.
     // ─────────────────────────────────────────────────────────────────────
     if (action === 'product_moves' && productId) {
       const offset = (page - 1) * limit
 
-      // 1. High-speed primary query on stock_moves by product_id (~10ms)
-      const [{ data: rawMoves, count: totalMoves }, { data: locationsDataRaw }] = await Promise.all([
+      // High-speed cached locations + indexed stock_moves query (~3ms)
+      const [locations, { data: rawMoves, count: totalMoves }] = await Promise.all([
+        getCachedLocations(businessId, supabase),
         supabase
           .from('stock_moves')
           .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at', { count: 'exact' })
           .eq('business_id', businessId)
           .eq('product_id', productId)
           .order('created_at', { ascending: false })
-          .range(offset, offset + limit - 1),
-        supabase.from('inventory_locations').select('id, name, code, type, is_default').eq('business_id', businessId)
+          .range(offset, offset + limit - 1)
       ])
-
-      const locations = (locationsDataRaw && locationsDataRaw.length > 0)
-        ? locationsDataRaw as InventoryLocation[]
-        : DEFAULT_LOCATIONS(businessId)
 
       let finalMoves: any[] = rawMoves || []
       let finalTotalCount = totalMoves || finalMoves.length
 
-      // 2. Safety Fallback: If stock_moves is empty for this product, stitch dynamically from orders/purchases/opnames
+      // Safety Fallback: If stock_moves is empty for this product, stitch dynamically from orders/purchases/opnames
       if (finalMoves.length === 0) {
         const [
           { data: prodData },
@@ -89,8 +196,6 @@ export async function GET(req: Request) {
         const filteredOpnames = (rawOpnames || []).filter(op => Array.isArray(op.items_json) && op.items_json.some(matchesProduct))
 
         const stitched = buildUnifiedMoveHistory([prod], filteredPurchases, filteredOrders, filteredOpnames, locations, [])
-        // The fallback receives a whole purchase/order document. Keep only moves
-        // whose immutable product UUID is the product currently opened in modal.
         const productMoves = stitched.filter(move => String(move.product_id) === targetIdStr)
         finalTotalCount = productMoves.length
         finalMoves = productMoves.slice(offset, offset + limit)
