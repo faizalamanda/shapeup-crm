@@ -25,6 +25,7 @@ export interface StockMove {
   destination_location_id: string | null
   destination_location_name?: string
   qty: number
+  system_stock?: number
   unit_cost: number
   lot_number?: string | null
   status: MoveStatus

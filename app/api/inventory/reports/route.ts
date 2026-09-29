@@ -146,8 +146,8 @@ export async function GET(req: Request) {
     if (action === 'product_moves' && productId) {
       const offset = (page - 1) * limit
 
-      // High-speed cached locations + indexed stock_moves query (~3ms)
-      const [locations, { data: rawMoves, count: totalMoves }] = await Promise.all([
+      // High-speed cached locations + indexed stock_moves query + product stock (~3ms)
+      const [locations, { data: rawMoves, count: totalMoves }, { data: prodInfo }] = await Promise.all([
         getCachedLocations(businessId, supabase),
         supabase
           .from('stock_moves')
@@ -155,11 +155,13 @@ export async function GET(req: Request) {
           .eq('business_id', businessId)
           .eq('product_id', productId)
           .order('created_at', { ascending: false })
-          .range(offset, offset + limit - 1)
+          .range(offset, offset + limit - 1),
+        supabase.from('products').select('stock_quantity').eq('id', productId).maybeSingle()
       ])
 
       let finalMoves: any[] = rawMoves || []
       let finalTotalCount = totalMoves || finalMoves.length
+      const currentStockQty = Number(prodInfo?.stock_quantity || 0)
 
       // Safety Fallback: If stock_moves is empty for this product, stitch dynamically from orders/purchases/opnames
       if (finalMoves.length === 0) {
@@ -206,7 +208,25 @@ export async function GET(req: Request) {
       const vendorLoc = locations.find(l => l.type === 'vendor')
       const customerLoc = locations.find(l => l.type === 'customer')
 
+      let runningStock = currentStockQty
       const moves = finalMoves.map(m => {
+        const moveSystemStock = runningStock
+        let delta = Number(m.qty || 0)
+        if (m.type === 'receipt' || m.type === 'refund') {
+          delta = Number(m.qty || 0)
+        } else if (m.type === 'delivery') {
+          delta = -Number(m.qty || 0)
+        } else if (m.type === 'adjustment') {
+          const originName = String(m.origin_location_name || '')
+          const destName = String(m.destination_location_name || '')
+          if (originName.includes('System') || destName.includes('Utama') || m.destination_location_id) {
+            delta = Number(m.qty || 0)
+          } else {
+            delta = -Number(m.qty || 0)
+          }
+        }
+        runningStock -= delta
+
         let originName = m.origin_location_name || (m.origin_location_id ? locMap.get(m.origin_location_id) || 'System' : 'System')
         let destName = m.destination_location_name || (m.destination_location_id ? locMap.get(m.destination_location_id) || 'System' : 'System')
 
@@ -223,6 +243,7 @@ export async function GET(req: Request) {
 
         return {
           ...m,
+          system_stock: moveSystemStock,
           origin_location_name: originName,
           destination_location_name: destName,
         }

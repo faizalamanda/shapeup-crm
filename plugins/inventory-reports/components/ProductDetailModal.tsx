@@ -499,6 +499,7 @@ export default function ProductDetailModal({
                           <th className="py-2.5 px-3">Tipe Mutasi</th>
                           <th className="py-2.5 px-3">Asal / Tujuan</th>
                           <th className="py-2.5 px-3 text-right">Qty</th>
+                          <th className="py-2.5 px-3 text-right">Stok Sistem</th>
                           <th className="py-2.5 px-3 text-right">Harga Unit</th>
                           <th className="py-2.5 px-3 text-center">Status</th>
                         </tr>
@@ -548,6 +549,10 @@ export default function ProductDetailModal({
                               <td className="py-2 px-3 text-right font-bold text-[#1C1C1A]">
                                 {m.type === 'receipt' ? `+${m.qty}` : m.type === 'delivery' ? `-${m.qty}` : m.qty}{' '}
                                 <span className="text-[10px] text-[#82827A] font-normal">{unit}</span>
+                              </td>
+                              <td className="py-2 px-3 text-right font-extrabold text-blue-700 font-mono">
+                                {formatNumber(m.system_stock ?? 0)}{' '}
+                                <span className="text-[10px] text-blue-600/80 font-normal">{unit}</span>
                               </td>
                               <td className="py-2 px-3 text-right font-mono text-[11px] text-[#2D2D2A]">
                                 {formatCurrency(m.unit_cost)}
