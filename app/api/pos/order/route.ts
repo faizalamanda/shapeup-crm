@@ -2,6 +2,7 @@ import { getApiContext } from '@/lib/apiContext'
 import { resolveGuestCustomerId } from '@/lib/guestCustomer'
 import { syncOrderToLedger } from '@/lib/orderLedger'
 import { NextResponse } from 'next/server'
+import { after } from 'next/server'
 
 export async function POST(req: Request) {
   try {
@@ -11,7 +12,7 @@ export async function POST(req: Request) {
     const { user, businessId, supabase } = ctx
 
     const body = await req.json()
-    const { customer_id, items, payment_method, discount_amount = 0, grand_total, subtotal } = body
+    const { customer_id, items, payment_method, discount_amount = 0, grand_total, subtotal, order_number: clientOrderNumber } = body
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'Keranjang belanja tidak boleh kosong' }, { status: 400 })
@@ -70,7 +71,7 @@ export async function POST(req: Request) {
     }
 
     // 4. Format to WooCommerce compatibility
-    const orderNumber = 'POS-' + Date.now().toString().slice(-8)
+    const orderNumber = clientOrderNumber || ('POS-' + Date.now().toString().slice(-8))
     
     const lineItems = items.map((item: any, idx: number) => {
       const isCustom = String(item.id).startsWith('custom-')
@@ -164,11 +165,19 @@ export async function POST(req: Request) {
 
     const fullOrder = { id: order.id, ...orderPayload }
 
-    // 5. Record Ledger transaction, stock reduction & journal lines using unified service
-    const syncRes = await syncOrderToLedger(order.id, supabase, fullOrder)
-    if (!syncRes.success) {
-      return NextResponse.json({ error: 'Gagal mencatat transaksi akuntansi: ' + syncRes.message }, { status: 500 })
-    }
+    // 5. Record Ledger transaction, stock reduction & journal lines in the background
+    // We use Next.js after() so it doesn't block the client response
+    after(async () => {
+      try {
+        const syncRes = await syncOrderToLedger(order.id, supabase, fullOrder)
+        if (!syncRes.success) {
+          console.error(`[Background Sync] Failed to sync order ${order.id} to ledger:`, syncRes.message)
+          // Todo: Retry logic or update sync_status='failed' once DB column is added
+        }
+      } catch (syncErr) {
+        console.error(`[Background Sync] Exception syncing order ${order.id}:`, syncErr)
+      }
+    })
 
     return NextResponse.json({
       success: true,

@@ -364,25 +364,13 @@ export default function POSWorkspace() {
         note: item.note
       }))
 
-      const res = await fetch('/api/pos/order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customer_id: selectedCustomer?.id || 'guest',
-          items: itemsPayload,
-          payment_method: paymentInfo.method,
-          subtotal: subtotal,
-          discount_amount: discountAmount,
-          grand_total: grandTotal
-        })
-      })
+      // Optimistic UI: Generate Order Number locally
+      const orderNumber = 'POS-' + Date.now().toString().slice(-8)
 
-      const result = await res.json()
-      if (!res.ok) throw new Error(result.error || 'Gagal memproses pesanan POS')
-
+      // 1. Build Receipt immediately
       const receipt: ReceiptData = {
         businessName: userProfile?.full_name ? `${userProfile.full_name}'s Store` : 'ShapeUp POS',
-        orderNumber: result.order_number || ('POS-' + Date.now().toString().slice(-6)),
+        orderNumber: orderNumber,
         date: new Date().toLocaleString('id-ID'),
         cashierName: userProfile?.full_name || 'Kasir',
         customerName: selectedCustomer?.name || 'Walk-in Customer',
@@ -404,17 +392,43 @@ export default function POSWorkspace() {
         changeAmount: paymentInfo.changeAmount
       }
 
+      // 2. Show receipt & clear cart BEFORE waiting for server
       setReceiptData(receipt)
       setIsPaymentModalOpen(false)
       setIsMobileCartOpen(false)
       setIsReceiptModalOpen(true)
-
+      
       setCart([])
       setSelectedCustomer(null)
       setCartDiscountPercent(0)
+      setCheckingOut(false)
+
+      // 3. Background Sync (Fire and Forget)
+      fetch('/api/pos/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_id: selectedCustomer?.id || 'guest',
+          items: itemsPayload,
+          payment_method: paymentInfo.method,
+          subtotal: subtotal,
+          discount_amount: discountAmount,
+          grand_total: grandTotal,
+          order_number: orderNumber
+        })
+      })
+      .then(async (res) => {
+        if (!res.ok) {
+          const result = await res.json()
+          alert(`⚠️ Peringatan: Pesanan #${orderNumber} gagal disimpan ke server.\nPesan: ${result.error || 'Server error'}`)
+        }
+      })
+      .catch(err => {
+         alert(`⚠️ Peringatan: Koneksi terputus. Pesanan #${orderNumber} gagal dikirim ke server.`)
+      })
+      
     } catch (err: any) {
-      throw err
-    } finally {
+      alert(err.message || 'Terjadi kesalahan pada aplikasi kasir.')
       setCheckingOut(false)
     }
   }
