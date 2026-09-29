@@ -29,24 +29,47 @@ async function backfillStockMoves() {
   console.log('🚀 Memulai Backfill Data Histori ke Tabel stock_moves...\n')
 
   const [resProds, resPurchases, resOrders, resOpnames] = await Promise.all([
-    fetch(env.NEXT_PUBLIC_SUPABASE_URL + '/rest/v1/products?select=id,name,sku,cost_price', { headers }).then(r => r.json()),
+    fetch(env.NEXT_PUBLIC_SUPABASE_URL + '/rest/v1/products?select=id,business_id,name,sku,cost_price', { headers }).then(r => r.json()),
     fetch(env.NEXT_PUBLIC_SUPABASE_URL + '/rest/v1/purchases?select=id,business_id,purchase_number,payment_status,items_json,date,created_at', { headers }).then(r => r.json()),
     fetch(env.NEXT_PUBLIC_SUPABASE_URL + '/rest/v1/orders?select=id,business_id,order_number,status,items_json,order_date,created_at', { headers }).then(r => r.json()),
     fetch(env.NEXT_PUBLIC_SUPABASE_URL + '/rest/v1/stock_opname?select=id,business_id,opname_number,items_json,date,created_at', { headers }).then(r => r.json()),
   ])
 
+  // Product aliases must be scoped to the owning business. Product UUID is
+  // preferred; SKU/name are legacy fallbacks only and cannot cross tenants.
   const prodMap = new Map()
   ;(resProds || []).forEach(p => {
-    prodMap.set(String(p.id), p)
-    if (p.sku) prodMap.set(String(p.sku).toLowerCase(), p)
-    if (p.name) prodMap.set(String(p.name).toLowerCase(), p)
+    const prefix = String(p.business_id) + ':'
+    prodMap.set(prefix + String(p.id), p)
+    if (p.sku) prodMap.set(prefix + String(p.sku).toLowerCase(), p)
+    if (p.name) prodMap.set(prefix + String(p.name).toLowerCase(), p)
   })
 
-  // Fetch existing stock_moves to avoid duplicates
-  const resExisting = await fetch(env.NEXT_PUBLIC_SUPABASE_URL + '/rest/v1/stock_moves?select=reference,product_id,type', { headers })
-  const existingMoves = await resExisting.json()
-  const existingKeySet = new Set((existingMoves || []).map(e => `${e.reference}_${e.product_id}_${e.type}`))
+  const resolveProduct = (businessId, item) => {
+    const prefix = String(businessId) + ':'
+    const rawId = String(item.product_id || item.id || '')
+    return prodMap.get(prefix + rawId) ||
+      prodMap.get(prefix + String(item.sku || '').toLowerCase()) ||
+      prodMap.get(prefix + String(item.name || '').toLowerCase()) || null
+  }
 
+  // Fetch existing stock_moves with pagination to bypass PostgREST 1000 limit
+  let existingMoves = []
+  let page = 0
+  const pageSize = 1000
+  while (true) {
+    const resExisting = await fetch(
+      `${env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/stock_moves?select=reference,product_id,type&limit=${pageSize}&offset=${page * pageSize}`,
+      { headers }
+    )
+    const batch = await resExisting.json()
+    if (!Array.isArray(batch) || batch.length === 0) break
+    existingMoves.push(...batch)
+    if (batch.length < pageSize) break
+    page++
+  }
+
+  const existingKeySet = new Set((existingMoves || []).map(e => `${e.reference}_${e.product_id}_${e.type}`))
   const newMoveRows = []
 
   // 1. Process Purchases
@@ -57,7 +80,7 @@ async function backfillStockMoves() {
 
     items.forEach(item => {
       const pIdRaw = String(item.product_id || item.id || '')
-      const prod = prodMap.get(pIdRaw) || prodMap.get(String(item.sku || '').toLowerCase()) || prodMap.get(String(item.name || '').toLowerCase())
+      const prod = resolveProduct(p.business_id, item)
       const pId = prod ? prod.id : (isUuid(pIdRaw) ? pIdRaw : null)
 
       if (!pId || !isUuid(pId)) return
@@ -88,7 +111,7 @@ async function backfillStockMoves() {
 
     items.forEach(item => {
       const pIdRaw = String(item.product_id || item.id || '')
-      const prod = prodMap.get(pIdRaw) || prodMap.get(String(item.sku || '').toLowerCase()) || prodMap.get(String(item.name || '').toLowerCase())
+      const prod = resolveProduct(o.business_id, item)
       const pId = prod ? prod.id : (isUuid(pIdRaw) ? pIdRaw : null)
 
       if (!pId || !isUuid(pId)) return
@@ -118,7 +141,7 @@ async function backfillStockMoves() {
 
     items.forEach(item => {
       const pIdRaw = String(item.product_id || item.id || '')
-      const prod = prodMap.get(pIdRaw) || prodMap.get(String(item.name || '').toLowerCase())
+      const prod = resolveProduct(op.business_id, item)
       const pId = prod ? prod.id : (isUuid(pIdRaw) ? pIdRaw : null)
 
       if (!pId || !isUuid(pId)) return

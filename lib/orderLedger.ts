@@ -204,7 +204,7 @@ export async function syncOrderToLedger(
 
       // Stock Deduction
       if (stockReductionStatuses.includes(status) || status === 'completed') {
-        await applyStockMovement(businessId, matchedProducts, 'deduct', orderRef, supabase, sharedHppMap)
+        await applyStockMovement(businessId, matchedProducts, 'deduct', orderRef, supabase, sharedHppMap, orderId, 'order')
       }
 
       // Check if it's a partial commit (tx exists but has 0 lines)
@@ -332,7 +332,7 @@ export async function syncOrderToLedger(
 
     else if (status === 'cancelled' || status === 'failed') {
       if (salesTx && !reversalSalesTx) {
-        await applyStockMovement(businessId, matchedProducts, 'restore', orderRef, supabase)
+        await applyStockMovement(businessId, matchedProducts, 'restore', orderRef, supabase, undefined, orderId, 'order')
         const reversalLines = salesTx.journal_lines.map((line: any) => ({
           account_id: line.account_id,
           debit: line.credit,
@@ -382,7 +382,7 @@ export async function syncOrderToLedger(
 
     else if (status === 'returned') {
       if (salesTx && !reversalSalesTx) {
-        await applyStockMovement(businessId, matchedProducts, 'restore', orderRef, supabase)
+        await applyStockMovement(businessId, matchedProducts, 'restore', orderRef, supabase, undefined, orderId, 'order')
         const reversalLines = salesTx.journal_lines.map((line: any) => ({
           account_id: line.account_id,
           debit: line.credit,

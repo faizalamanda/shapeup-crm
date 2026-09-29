@@ -1,5 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { calculateProductHpp, calculateProductsHppBatch } from './recipeHelper'
+import { recordStockMovements, MoveSourceType } from './stockLedger'
 
 const productCacheBySku: Record<string, Record<string, any>> = {}
 const productCacheByName: Record<string, Record<string, any>> = {}
@@ -176,7 +177,9 @@ export async function applyStockMovement(
   direction: 'deduct' | 'restore',
   reference: string,
   supabase: SupabaseClient,
-  precomputedHppMap?: Map<string, any>  // FIX: terima shared hppMap dari orderLedger, hindari double query
+  precomputedHppMap?: Map<string, any>,
+  sourceId?: string,
+  sourceType: MoveSourceType = 'order'
 ) {
   if (!matchedProducts || matchedProducts.length === 0) return
 
@@ -220,25 +223,11 @@ export async function applyStockMovement(
 
   const targetProductIds = Array.from(targetMoves.keys())
 
-  // 3. Batch Idempotency Check
-  const { data: existingMoves } = await supabase
-    .from('stock_moves')
-    .select('product_id')
-    .eq('business_id', businessId)
-    .eq('reference', reference)
-    .eq('type', moveType)
-    .in('product_id', targetProductIds)
-
-  const existingSet = new Set((existingMoves || []).map(m => m.product_id))
-  const remainingTargetIds = targetProductIds.filter(id => !existingSet.has(id))
-
-  if (remainingTargetIds.length === 0) return
-
-  // 4. Batch fetch current stock_quantity for remaining products
+  // 3. Batch fetch current stock_quantity for target products
   const { data: currentProds } = await supabase
     .from('products')
     .select('id, stock_quantity, cost_price')
-    .in('id', remainingTargetIds)
+    .in('id', targetProductIds)
 
   const stockMap = new Map<string, { stock_quantity: number; cost_price: number }>()
   if (currentProds) {
@@ -250,11 +239,11 @@ export async function applyStockMovement(
     })
   }
 
-  // 5. Build parallel updates and batch insert records
+  // 4. Build parallel stock quantity updates
   const updatePromises: Promise<any>[] = []
-  const stockMoveInserts: any[] = []
+  const stockMoveInputs: any[] = []
 
-  for (const pId of remainingTargetIds) {
+  for (const pId of targetProductIds) {
     const moveInfo = targetMoves.get(pId)
     if (!moveInfo || moveInfo.qty <= 0) continue
 
@@ -271,14 +260,16 @@ export async function applyStockMovement(
       )
     )
 
-    stockMoveInserts.push({
-      business_id: businessId,
-      product_id: pId,
-      reference: reference,
+    stockMoveInputs.push({
+      businessId,
+      productId: pId,
+      reference,
       qty: moveInfo.qty,
-      unit_cost: currentData.cost_price,
-      status: 'done',
-      type: moveType
+      unitCost: currentData.cost_price,
+      type: moveType,
+      sourceType,
+      sourceId,
+      status: 'done' as const
     })
   }
 
@@ -286,13 +277,7 @@ export async function applyStockMovement(
     await Promise.all(updatePromises)
   }
 
-  if (stockMoveInserts.length > 0) {
-    const { error: batchMoveErr } = await supabase
-      .from('stock_moves')
-      .insert(stockMoveInserts)
-
-    if (batchMoveErr) {
-      console.error('Failed batch inserting stock moves:', batchMoveErr.message)
-    }
+  if (stockMoveInputs.length > 0) {
+    await recordStockMovements(stockMoveInputs, supabase)
   }
 }

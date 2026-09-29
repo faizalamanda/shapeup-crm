@@ -2,6 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 
 export type MoveType = 'receipt' | 'delivery' | 'transfer' | 'adjustment' | 'refund'
 export type MoveStatus = 'done' | 'pending' | 'cancelled'
+export type MoveSourceType = 'purchase' | 'order' | 'stock_opname' | 'refund' | 'manual'
 
 export interface StockMoveInput {
   businessId: string
@@ -10,6 +11,9 @@ export interface StockMoveInput {
   qty: number
   unitCost: number
   type: MoveType
+  /** Stable ID of the business document that produced this movement. */
+  sourceType?: MoveSourceType
+  sourceId?: string
   status?: MoveStatus
   originLocationId?: string | null
   destinationLocationId?: string | null
@@ -37,37 +41,90 @@ export async function recordStockMovements(
   const reference = moves[0].reference
   const productIds = moves.map(m => m.productId)
 
-  // Batch Idempotency Check: avoid duplicate movement rows for same reference + product + type
-  const { data: existing } = await supabase
-    .from('stock_moves')
-    .select('product_id, type')
-    .eq('business_id', businessId)
-    .eq('reference', reference)
-    .in('product_id', productIds)
+  if (moves.some(m => m.businessId !== businessId)) {
+    throw new Error('All stock movements in a batch must belong to one business')
+  }
 
-  const existingKeySet = new Set((existing || []).map(e => `${e.product_id}_${e.type}`))
+  const sourceType = moves[0].sourceType
+  const sourceId = moves[0].sourceId
+  if (moves.some(m => m.sourceType !== sourceType || m.sourceId !== sourceId)) {
+    throw new Error('All stock movements in a batch must share one source')
+  }
 
-  const newMoveRows = moves
-    .filter(m => !existingKeySet.has(`${m.productId}_${m.type}`))
-    .map(m => ({
-      business_id: m.businessId,
-      product_id: m.productId,
-      reference: m.reference,
-      qty: Math.abs(m.qty),
-      unit_cost: m.unitCost || 0,
-      status: m.status || 'done',
-      type: m.type,
-      origin_location_id: m.originLocationId || null,
-      destination_location_id: m.destinationLocationId || null,
-      lot_number: m.lotNumber || null,
-      created_at: m.createdAt || new Date().toISOString()
-    }))
+  // A document UUID is the primary idempotency key. Reference is retained only
+  // for display and for older callers that do not yet have a source document.
+  let existingMovesData: any[] = []
+  if (sourceType && sourceId) {
+    const { data: existing, error } = await supabase
+      .from('stock_moves')
+      .select('product_id, type')
+      .eq('business_id', businessId)
+      .in('product_id', productIds)
+      .eq('source_type', sourceType)
+      .eq('source_id', sourceId)
 
+    if (!error && existing) {
+      existingMovesData = existing
+    } else {
+      const { data: fallbackExisting } = await supabase
+        .from('stock_moves')
+        .select('product_id, type')
+        .eq('business_id', businessId)
+        .in('product_id', productIds)
+        .eq('reference', reference)
+      existingMovesData = fallbackExisting || []
+    }
+  } else {
+    const { data: existing } = await supabase
+      .from('stock_moves')
+      .select('product_id, type')
+      .eq('business_id', businessId)
+      .in('product_id', productIds)
+      .eq('reference', reference)
+    existingMovesData = existing || []
+  }
+
+  const existingKeySet = new Set(existingMovesData.map(e => `${e.product_id}_${e.type}`))
+
+  const buildRows = (includeSource: boolean) => {
+    return moves
+      .filter(m => !existingKeySet.has(`${m.productId}_${m.type}`))
+      .map(m => {
+        const row: Record<string, any> = {
+          business_id: m.businessId,
+          product_id: m.productId,
+          reference: m.reference,
+          qty: Math.abs(m.qty),
+          unit_cost: m.unitCost || 0,
+          status: m.status || 'done',
+          type: m.type,
+          origin_location_id: m.originLocationId || null,
+          destination_location_id: m.destinationLocationId || null,
+          lot_number: m.lotNumber || null,
+          created_at: m.createdAt || new Date().toISOString()
+        }
+        if (includeSource && m.sourceType) row.source_type = m.sourceType
+        if (includeSource && m.sourceId) row.source_id = m.sourceId
+        return row
+      })
+  }
+
+  let newMoveRows = buildRows(true)
   if (newMoveRows.length === 0) return { inserted: 0 }
 
-  const { error } = await supabase
+  let { error } = await supabase
     .from('stock_moves')
     .insert(newMoveRows)
+
+  // If DB does not have source_type / source_id columns yet, fallback to inserting without them
+  if (error && error.code === 'PGRST204') {
+    newMoveRows = buildRows(false)
+    if (newMoveRows.length === 0) return { inserted: 0 }
+    const fallbackRes = await supabase
+      .from('stock_moves')
+      .insert(newMoveRows)
+    error = fallbackRes.error
+  }
 
   if (error) {
     console.error('[StockLedger] Failed to record stock movements:', error.message)

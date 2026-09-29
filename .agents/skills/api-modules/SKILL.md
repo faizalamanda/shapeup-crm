@@ -199,14 +199,20 @@ await recordStockMovements([
     qty: 10,
     unitCost: 50000,
     type: 'receipt', // 'receipt' | 'delivery' | 'transfer' | 'adjustment' | 'refund'
+    sourceType: 'purchase',
+    sourceId: purchase.id, // UUID dokumen sumber, bukan nomor invoice
     status: 'done'
   }
 ], supabase)
 ```
 
 **Fitur:**
-- **Idempotensi Otomatis:** Menghindari duplikasi mutasi untuk referensi + produk + tipe yang sama.
+- **Relasi utama:** `product_id` adalah UUID produk; `reference` hanya untuk tampilan/pencarian dokumen.
+- **Idempotensi Otomatis:** Untuk dokumen baru gunakan `source_type + source_id + product_id + type`; jangan jadikan nomor invoice sebagai kunci relasi.
+- **Isolasi tenant:** Setiap query `stock_moves` wajib memfilter `business_id` dan `product_id`.
 - **Dipakai di:** `purchases/route.ts`, `stock-opname/route.ts`, `pos/refund/route.ts`, `lib/inventoryHelper.ts` (POS Orders & Invoices).
+
+Untuk aturan fallback riwayat, backfill, dan perbaikan data legacy, baca [knowledge inventory ledger](../../knowledge/inventory-ledger.md).
 
 ---
 

@@ -40,6 +40,7 @@ export async function GET(req: Request) {
         supabase
           .from('stock_moves')
           .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at', { count: 'exact' })
+          .eq('business_id', businessId)
           .eq('product_id', productId)
           .order('created_at', { ascending: false })
           .range(offset, offset + limit - 1),
@@ -88,8 +89,11 @@ export async function GET(req: Request) {
         const filteredOpnames = (rawOpnames || []).filter(op => Array.isArray(op.items_json) && op.items_json.some(matchesProduct))
 
         const stitched = buildUnifiedMoveHistory([prod], filteredPurchases, filteredOrders, filteredOpnames, locations, [])
-        finalTotalCount = stitched.length
-        finalMoves = stitched.slice(offset, offset + limit)
+        // The fallback receives a whole purchase/order document. Keep only moves
+        // whose immutable product UUID is the product currently opened in modal.
+        const productMoves = stitched.filter(move => String(move.product_id) === targetIdStr)
+        finalTotalCount = productMoves.length
+        finalMoves = productMoves.slice(offset, offset + limit)
       }
 
       const locMap = new Map(locations.map(l => [l.id, l.name]))
@@ -144,6 +148,7 @@ export async function GET(req: Request) {
         supabase
           .from('stock_moves')
           .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at')
+          .eq('business_id', businessId)
           .eq('product_id', productId)
           .order('created_at', { ascending: false }),
         supabase.from('products').select('id, name, sku, unit, cost_price').eq('id', productId).maybeSingle()

@@ -197,6 +197,34 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Failed to create ledger transaction: ${txErr?.message}` }, { status: 500 })
     }
 
+    // Create the source document before its inventory ledger rows. `purchase.id`
+    // is the immutable relation; `purchase_number` is only a human reference.
+    const { data: purchase, error: purErr } = await supabase
+      .from('purchases')
+      .insert({
+        business_id: businessId,
+        transaction_id: purchaseTxId,
+        supplier_id: supplier_id || null,
+        purchase_number,
+        date,
+        due_date: due_date || null,
+        subtotal,
+        discount_amount: discount,
+        other_fees: fees,
+        grand_total: grandTotal,
+        amount_paid: paidAmt,
+        payment_status: paymentStatus,
+        items_json: items,
+        attachment_url
+      })
+      .select('*')
+      .single()
+
+    if (purErr) {
+      await supabase.from('transactions').delete().eq('id', purchaseTxId)
+      return NextResponse.json({ error: `Failed to create purchase entry: ${purErr.message}` }, { status: 500 })
+    }
+
     // 2. Batch update stock & WAC cost price for physical products (Aggregated & Optimized Parallel Execution)
     const physicalItems = items.filter((item: any) => item.is_physical && item.product_id)
     if (physicalItems.length > 0) {
@@ -258,6 +286,8 @@ export async function POST(req: Request) {
           qty: agg.totalQty,
           unitCost: agg.totalQty > 0 ? (agg.totalNetCost / agg.totalQty) : 0,
           type: 'receipt',
+          sourceType: 'purchase',
+          sourceId: purchase.id,
           status: paymentStatus === 'paid' ? 'done' : 'pending',
           createdAt: date || new Date().toISOString()
         }))
@@ -265,34 +295,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // 3. Create the purchase record
-    const { data: purchase, error: purErr } = await supabase
-      .from('purchases')
-      .insert({
-        business_id: businessId,
-        transaction_id: purchaseTxId,
-        supplier_id: supplier_id || null,
-        purchase_number,
-        date,
-        due_date: due_date || null,
-        subtotal,
-        discount_amount: discount,
-        other_fees: fees,
-        grand_total: grandTotal,
-        amount_paid: paidAmt,
-        payment_status: paymentStatus,
-        items_json: items,
-        attachment_url
-      })
-      .select('*')
-      .single()
-
-    if (purErr) {
-      await supabase.from('transactions').delete().eq('id', purchaseTxId)
-      return NextResponse.json({ error: `Failed to create purchase entry: ${purErr.message}` }, { status: 500 })
-    }
-
-    // 4. Handle initial/DP payment if paidAmt > 0
+    // 3. Handle initial/DP payment if paidAmt > 0
     if (paidAmt > 0) {
       try {
         const payJournalLines = [
