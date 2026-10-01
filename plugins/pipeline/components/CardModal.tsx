@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { PipelineCard, PipelineStage, PipelineActivity, CardLabel, CardPriority, CardStatus } from '../types';
 import { formatCurrency } from '../helpers/kanbanUtils';
 import { FullScreenModal } from '@/components/ui/FullScreenModal';
@@ -59,6 +59,37 @@ export default function CardModal({
   const [commentText, setCommentText] = useState('');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  const titleTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const adjustTitleHeight = () => {
+    if (titleTextareaRef.current) {
+      titleTextareaRef.current.style.height = 'auto';
+      titleTextareaRef.current.style.height = `${titleTextareaRef.current.scrollHeight}px`;
+    }
+  };
+
+  useEffect(() => {
+    setTitle(card.title);
+    setDescription(card.description || '');
+    setStageId(card.stage_id);
+    setValue(String(card.value || 0));
+    setPriority(card.priority || 'medium');
+    setStatus(card.status || 'active');
+    setAssigneeId(card.assignee_id || '');
+    setDueDate(card.due_date ? card.due_date.substring(0, 10) : '');
+    setLabels(card.labels || []);
+  }, [card]);
+
+  useEffect(() => {
+    adjustTitleHeight();
+    const timer = setTimeout(adjustTitleHeight, 50);
+    window.addEventListener('resize', adjustTitleHeight);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', adjustTitleHeight);
+    };
+  }, [title]);
 
   useEffect(() => {
     let isMounted = true;
@@ -216,6 +247,7 @@ export default function CardModal({
                 Judul Kartu
               </label>
               <textarea
+                ref={titleTextareaRef}
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 onBlur={() => {
@@ -223,8 +255,8 @@ export default function CardModal({
                     handleSaveField({ title: title.trim() });
                   }
                 }}
-                rows={2}
-                className="w-full text-xl font-bold px-3 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:border-blue-500 focus:outline-hidden text-gray-900 dark:text-gray-100 resize-none min-h-[3.5rem]"
+                rows={1}
+                className="w-full text-xl font-bold px-3 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:border-blue-500 focus:outline-hidden text-gray-900 dark:text-gray-100 resize-none overflow-hidden min-h-[3.25rem] leading-snug"
               />
             </div>
 
