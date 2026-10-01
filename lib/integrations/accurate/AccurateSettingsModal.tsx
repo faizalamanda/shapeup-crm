@@ -17,6 +17,7 @@ export default function AccurateSettingsModal({
   const [accurateDbId, setAccurateDbId] = useState('')
   const [isTestingConnection, setIsTestingConnection] = useState(false)
   const [isSyncingAccurate, setIsSyncingAccurate] = useState(false)
+  const [syncMode, setSyncMode] = useState<'standard' | 'all'>('standard')
   const [saving, setSaving] = useState(false)
   const [accurateSaved, setAccurateSaved] = useState<any>(null)
 
@@ -129,7 +130,7 @@ export default function AccurateSettingsModal({
         const res = await fetch('/api/integrations/accurate/sync-orders', { 
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ page: currentPage })
+          body: JSON.stringify({ page: currentPage, forceAll: syncMode === 'all' })
         })
         const json = await res.json()
         
@@ -233,14 +234,26 @@ export default function AccurateSettingsModal({
                   </p>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={handleSyncAccurate}
-                disabled={isSyncingAccurate}
-                className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
-              >
-                {isSyncingAccurate ? 'Menarik Data...' : '🔄 Sinkronisasi Data Order & HPP Sekarang'}
-              </button>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <select 
+                    value={syncMode}
+                    onChange={(e) => setSyncMode(e.target.value as 'standard'|'all')}
+                    className="flex-1 px-3 py-2.5 border border-slate-200 rounded-xl text-sm bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-100"
+                  >
+                    <option value="standard">Sync Berkala (Update 14 Hari)</option>
+                    <option value="all">Tarik Semua Data (Dari Awal)</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleSyncAccurate}
+                    disabled={isSyncingAccurate}
+                    className="flex-[1.5] py-2.5 px-4 bg-slate-900 hover:bg-black text-white font-semibold rounded-xl text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {isSyncingAccurate ? 'Menarik Data...' : '🔄 Mulai Sinkronisasi'}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 

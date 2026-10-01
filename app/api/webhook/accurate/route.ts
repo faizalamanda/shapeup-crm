@@ -24,7 +24,8 @@ export async function POST(req: NextRequest) {
     const relevantEvents = payload.filter((e: any) => 
       e.type === 'SALES_INVOICE' || e.type === 'SALES_RECEIPT' || 
       e.type === 'SALESINVOICE' || e.type === 'SALESRECEIPT' ||
-      e.module === 'SALES_INVOICE' || e.module === 'salesInvoice'
+      e.module === 'SALES_INVOICE' || e.module === 'salesInvoice' ||
+      e.module === 'SALES_RECEIPT' || e.module === 'salesReceipt'
     )
     
     console.log('[Accurate Webhook] Relevant events:', relevantEvents)
@@ -67,6 +68,16 @@ export async function POST(req: NextRequest) {
             event.data.forEach((item: any) => {
               if (item.salesInvoiceId) specificInvoiceIds.push(item.salesInvoiceId)
               if (item.salesReceiptId) specificReceiptIds.push(item.salesReceiptId)
+
+              const typeStr = String(event.type || '').toUpperCase()
+              const moduleStr = String(event.module || '').toUpperCase()
+              
+              if ((typeStr.includes('INVOICE') || moduleStr.includes('INVOICE')) && item.id) {
+                specificInvoiceIds.push(item.id)
+              }
+              if ((typeStr.includes('RECEIPT') || moduleStr.includes('RECEIPT')) && item.id) {
+                specificReceiptIds.push(item.id)
+              }
             })
           }
         })

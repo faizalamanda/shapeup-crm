@@ -11,7 +11,7 @@ const toNum = (val: any) => {
 
 const pad = (n: number) => n.toString().padStart(2, '0')
 
-export async function executeAccurateSync(businessId: string, page = 1, specificIds?: { invoiceIds: number[], receiptIds: number[] }): Promise<{ success: boolean; hasNextPage?: boolean; error?: string; processedOrders?: number; newProducts?: number; message?: string }> {
+export async function executeAccurateSync(businessId: string, page = 1, specificIds?: { invoiceIds: number[], receiptIds: number[] }, forceAll: boolean = false): Promise<{ success: boolean; hasNextPage?: boolean; error?: string; processedOrders?: number; newProducts?: number; message?: string }> {
   try {
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!serviceRoleKey) {
@@ -128,10 +128,10 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
       orders = Array.from(finalInvoiceIds).map(id => ({ id }))
       hasNextPage = false
     } else {
-      let listUrl = `${accurateHost}/accurate/api/sales-invoice/list.do?sp.page=${page}&sp.pageSize=100`
+      let listUrl = `${accurateHost}/accurate/api/sales-invoice/list.do?sp.page=${page}&sp.pageSize=25`
       
-      // Add date filter if it's the second sync onwards
-      if (config.last_sync_date) {
+      // Add date filter if it's the second sync onwards, and not forcing full sync
+      if (config.last_sync_date && !forceAll) {
         // To catch late updates (e.g. an order from 5 days ago just paid today),
         // we don't just query from last_sync_date. We query from 14 days BEFORE last_sync_date.
         const parts = String(config.last_sync_date).split('/')
@@ -381,9 +381,9 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
         // else fallback to new Date() if valid.
         const parts = String(o.transDate).split('/')
         if (parts.length === 3) {
-          // Accurate returns date only. We assume midnight in Jakarta time (+07:00) 
-          // to ensure it stores correctly in UTC without bleeding into the next/previous day.
-          orderDateUtc = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00+07:00`).toISOString()
+          const invTime = o.invoiceTime || '00:00:00'
+          // Compile Local Time (WIB) into an accurate UTC Date
+          orderDateUtc = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T${invTime}+07:00`).toISOString()
         } else {
           // Attempt standard parse
           const d = new Date(o.transDate)
@@ -402,7 +402,7 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
         status: normalizeAccurateStatus(o),
         total_qty: o.totalQty,
         subtotal: o.calculatedSubtotal,
-        discount_amount: toNum(o.itemDiscountAmount || 0) + toNum(o.discountAmount || 0),
+        discount_amount: toNum(o.itemDiscountAmount || 0) + toNum(o.discountAmount || 0) + toNum(o.cashDiscount || 0),
         shipping_cost: toNum(o.freight || 0),
         other_fees: 0,
         grand_total: toNum(o.totalAmount || o.calculatedSubtotal),

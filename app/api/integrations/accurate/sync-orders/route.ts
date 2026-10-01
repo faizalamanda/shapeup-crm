@@ -23,14 +23,16 @@ export async function POST(req: NextRequest) {
     }
 
     let page = 1
+    let forceAll = false
     try {
       const body = await req.json()
       if (body.page) page = parseInt(body.page, 10)
+      if (body.forceAll === true) forceAll = true
     } catch (e) {
       // ignore
     }
 
-    const result = await executeAccurateSync(businessId, page)
+    const result = await executeAccurateSync(businessId, page, undefined, forceAll)
 
     if (!result.success) {
       return NextResponse.json({ error: result.error || 'Failed to sync' }, { status: 400 })
