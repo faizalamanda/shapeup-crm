@@ -11,7 +11,7 @@ const toNum = (val: any) => {
 
 const pad = (n: number) => n.toString().padStart(2, '0')
 
-export async function executeAccurateSync(businessId: string, page = 1, specificIds?: { invoiceIds: number[], receiptIds: number[] }, forceAll: boolean = false): Promise<{ success: boolean; hasNextPage?: boolean; error?: string; processedOrders?: number; newProducts?: number; message?: string }> {
+export async function executeAccurateSync(businessId: string, page = 1, specificIds?: { invoiceIds: number[], receiptIds: number[] }, forceAll: boolean = false): Promise<{ success: boolean; hasNextPage?: boolean; error?: string; processedOrders?: number; newProducts?: number; message?: string; totalPages?: number }> {
   try {
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!serviceRoleKey) {
@@ -103,6 +103,7 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
 
     let orders = []
     let hasNextPage = false
+    let totalPages = 1
 
     if (specificIds && (specificIds.invoiceIds.length > 0 || specificIds.receiptIds.length > 0)) {
       const finalInvoiceIds = new Set<number>(specificIds.invoiceIds)
@@ -159,6 +160,7 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
       orders = listData.d || []
       const sp = listData.sp || {}
       hasNextPage = sp.pageCount > page
+      totalPages = sp.pageCount || 1
     }
 
     let processedOrders = 0
@@ -459,6 +461,7 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
       processedOrders,
       newProducts,
       hasNextPage,
+      totalPages,
       message: `Batch ${page} selesai. ${processedOrders} pesanan diproses.` 
     }
 

@@ -17,6 +17,8 @@ export default function AccurateSettingsModal({
   const [accurateDbId, setAccurateDbId] = useState('')
   const [isTestingConnection, setIsTestingConnection] = useState(false)
   const [isSyncingAccurate, setIsSyncingAccurate] = useState(false)
+  const [syncProgress, setSyncProgress] = useState(0)
+  const [syncStatusText, setSyncStatusText] = useState('')
   const [syncMode, setSyncMode] = useState<'standard' | 'all'>('standard')
   const [saving, setSaving] = useState(false)
   const [accurateSaved, setAccurateSaved] = useState<any>(null)
@@ -120,6 +122,8 @@ export default function AccurateSettingsModal({
 
   const handleSyncAccurate = async () => {
     setIsSyncingAccurate(true)
+    setSyncProgress(0)
+    setSyncStatusText('Menghubungkan ke server Accurate...')
     try {
       let currentPage = 1
       let hasNextPage = true
@@ -139,15 +143,23 @@ export default function AccurateSettingsModal({
         totalProcessed += (json.processedOrders || 0)
         totalNew += (json.newProducts || 0)
         
+        const totalPages = json.totalPages || 1
+        setSyncProgress(Math.min(100, Math.round((currentPage / totalPages) * 100)))
+        setSyncStatusText(`Memproses batch ${currentPage} dari ${totalPages}... (${totalProcessed} pesanan ditarik)`)
+        
         hasNextPage = json.hasNextPage
         if (hasNextPage) {
           currentPage++
         }
       }
-      alert(`Sinkronisasi selesai! ${totalProcessed} pesanan ditarik, ${totalNew} produk ditambahkan.`)
+      setSyncProgress(100)
+      setSyncStatusText('Sinkronisasi Selesai!')
+      setTimeout(() => {
+        alert(`Sinkronisasi selesai! ${totalProcessed} pesanan ditarik, ${totalNew} produk ditambahkan.`)
+        setIsSyncingAccurate(false)
+      }, 500)
     } catch (err: any) {
       alert('Error: ' + (err.message || 'Gagal sinkronisasi.'))
-    } finally {
       setIsSyncingAccurate(false)
     }
   }
@@ -253,6 +265,21 @@ export default function AccurateSettingsModal({
                     {isSyncingAccurate ? 'Menarik Data...' : '🔄 Mulai Sinkronisasi'}
                   </button>
                 </div>
+                
+                {isSyncingAccurate && (
+                  <div className="mt-3 bg-slate-50 border border-slate-100 p-3 rounded-xl">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-xs font-semibold text-slate-700">{syncStatusText}</span>
+                      <span className="text-xs font-bold text-blue-600">{syncProgress}%</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out" 
+                        style={{ width: `${syncProgress}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
