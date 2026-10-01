@@ -260,3 +260,39 @@ export async function processWooOrder(
 
   console.log(`[Processor] ✅ Order #${woo.number} (ID: ${orderData.id}) processed successfully for business ${businessId}`)
 }
+
+export async function processAccurateEvent(
+  supabase: SupabaseClient,
+  businessId: string,
+  payload: any
+): Promise<void> {
+  const appUrl = Deno.env.get("NEXT_PUBLIC_APP_URL") || Deno.env.get("APP_URL")
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+
+  if (!appUrl) {
+    throw new Error(
+      `[Processor] APP_URL not configured in Edge Function secrets. ` +
+      `Set NEXT_PUBLIC_APP_URL or APP_URL in Supabase Dashboard → Edge Functions → Secrets. ` +
+      `Accurate webhook cannot be processed without this.`
+    )
+  }
+
+  const res = await fetch(`${appUrl}/api/webhook/accurate/process-queue`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-service-key": serviceKey ?? "",
+    },
+    body: JSON.stringify({
+      businessId,
+      payload,
+    }),
+  })
+
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`Accurate queue process HTTP ${res.status}: ${body}`)
+  }
+
+  console.log(`[Processor] ✅ Accurate events processed successfully for business ${businessId}`)
+}

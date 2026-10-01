@@ -27,7 +27,7 @@ import {
   recoverStuckWebhookQueue,
   isRetryableError,
 } from "./queue-manager.ts"
-import { processWooOrder } from "./processor.ts"
+import { processWooOrder, processAccurateEvent } from "./processor.ts"
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -74,12 +74,18 @@ Deno.serve(async () => {
 })
 
 async function processItem(item: any) {
-  const { id, business_id, payload, retry_count } = item
+  const { id, business_id, payload, retry_count, source } = item
 
   try {
-    console.log(`[process-webhook-queue] Processing item ${id} (order #${payload?.number || payload?.id})`)
+    console.log(`[process-webhook-queue] Processing item ${id} (source: ${source})`)
 
-    await processWooOrder(supabase, business_id, payload)
+    if (source === 'woocommerce') {
+      await processWooOrder(supabase, business_id, payload)
+    } else if (source === 'accurate') {
+      await processAccurateEvent(supabase, business_id, payload)
+    } else {
+      console.warn(`[process-webhook-queue] Unknown source: ${source}`)
+    }
 
     await markAsDone(supabase, id)
     console.log(`[process-webhook-queue] Done: item ${id}`)

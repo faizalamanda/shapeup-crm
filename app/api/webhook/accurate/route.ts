@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, message: 'No active integrations' })
     }
 
-    // Process each database ID sequentially
+    // Process each database ID sequentially to ingest into Queue
     for (const dbId of dbIds) {
       const integration = integrations.find(int => {
         const conf = int.config as any
@@ -59,43 +59,28 @@ export async function POST(req: NextRequest) {
       })
 
       if (integration) {
-        // Find all invoice IDs for this DB
-        const specificInvoiceIds: number[] = []
-        const specificReceiptIds: number[] = []
+        const eventsForDb = relevantEvents.filter((e: any) => e.databaseId == dbId)
         
-        relevantEvents.filter((e: any) => e.databaseId == dbId).forEach((event: any) => {
-          if (event.data && Array.isArray(event.data)) {
-            event.data.forEach((item: any) => {
-              if (item.salesInvoiceId) specificInvoiceIds.push(item.salesInvoiceId)
-              if (item.salesReceiptId) specificReceiptIds.push(item.salesReceiptId)
-
-              const typeStr = String(event.type || '').toUpperCase()
-              const moduleStr = String(event.module || '').toUpperCase()
-              
-              if ((typeStr.includes('INVOICE') || moduleStr.includes('INVOICE')) && item.id) {
-                specificInvoiceIds.push(item.id)
-              }
-              if ((typeStr.includes('RECEIPT') || moduleStr.includes('RECEIPT')) && item.id) {
-                specificReceiptIds.push(item.id)
-              }
-            })
-          }
+        // Enqueue to webhook_ingest_queue for asynchronous Edge Function processing
+        const { error: insertErr } = await supabaseAdmin.from('webhook_ingest_queue').insert({
+          business_id: integration.business_id,
+          source: 'accurate',
+          payload: eventsForDb,
+          status: 'pending',
+          scheduled_at: new Date().toISOString()
         })
 
-        if (specificInvoiceIds.length > 0 || specificReceiptIds.length > 0) {
-          console.log(`[Accurate Webhook] Triggering sync for Business ${integration.business_id} (DB: ${dbId}) with Invoices:`, specificInvoiceIds, 'Receipts:', specificReceiptIds)
-          await executeAccurateSync(integration.business_id, 1, { invoiceIds: specificInvoiceIds, receiptIds: specificReceiptIds })
+        if (insertErr) {
+          console.error(`[Accurate Webhook] Failed to enqueue payload for DB ${dbId}:`, insertErr.message)
         } else {
-          // Fallback to normal sync if no specific IDs found
-          console.log(`[Accurate Webhook] Triggering sync for Business ${integration.business_id} (DB: ${dbId}) without specific IDs`)
-          await executeAccurateSync(integration.business_id, 1)
+          console.log(`[Accurate Webhook] Queued ${eventsForDb.length} events for Business ${integration.business_id}`)
         }
       } else {
         console.log(`[Accurate Webhook] Unknown DB ID: ${dbId}`)
       }
     }
 
-    return NextResponse.json({ success: true, message: 'Webhook processed' })
+    return NextResponse.json({ success: true, message: 'Webhook received and queued for processing.' })
   } catch (error: any) {
     console.error('[Accurate Webhook] Error:', error)
     // Always return 200 OK so Accurate doesn't disable the webhook
