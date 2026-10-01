@@ -254,13 +254,26 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
         const custId = order.customer?.id || order.customerNo || orderSummary.id
         const custName = order.customer?.name || order.customerName || `Accurate Customer ${custId}`
         const dummyPhone = `000${String(custId).replace(/\D/g, '')}`
+        
+        const rawPhone = order.customer?.contactInfo?.mobilePhone || order.customer?.contactInfo?.workPhone || order.customer?.contactInfo?.homePhone
+        let cleanPhone = dummyPhone
+        if (rawPhone) {
+          let cPhone = rawPhone.replace(/\D/g, "")
+          if (cPhone.startsWith("0")) {
+            cPhone = "62" + cPhone.substring(1)
+          } else if (cPhone.startsWith("8")) {
+            cPhone = "62" + cPhone
+          }
+          if (cPhone.length >= 5) cleanPhone = cPhone
+        }
 
-        uniqueCustomersMap.set(dummyPhone, {
+        uniqueCustomersMap.set(cleanPhone, {
           business_id: businessId,
-          phone: dummyPhone,
+          phone: cleanPhone,
           name: custName,
-          email: '',
-          address_data: {}
+          email: order.customer?.contactInfo?.email || '',
+          address_data: {},
+          _dummyPhone: dummyPhone
         })
 
         // Items Processing
@@ -290,7 +303,7 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
 
         allOrdersToProcess.push({
           ...order,
-          extractedCustomerPhone: dummyPhone,
+          extractedCustomerPhone: cleanPhone,
           totalQty,
           calculatedSubtotal,
           itemsJson
@@ -308,9 +321,28 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
     let customerIdMap = new Map<string, string>() // phone -> id
     const customersArray = Array.from(uniqueCustomersMap.values())
     if (customersArray.length > 0) {
+      
+      // MIGRATION: Rename dummy phones to real phones if real phone doesn't exist
+      for (const c of customersArray) {
+        if (c.phone !== c._dummyPhone) {
+          const { data: exist } = await supabaseAdmin.from('customers').select('id').eq('business_id', businessId).eq('phone', c.phone).maybeSingle()
+          if (!exist) {
+            await supabaseAdmin.from('customers').update({ phone: c.phone }).eq('business_id', businessId).eq('phone', c._dummyPhone)
+          } else {
+            // Delete redundant dummy customer to avoid orphaned records
+            await supabaseAdmin.from('customers').delete().eq('business_id', businessId).eq('phone', c._dummyPhone)
+          }
+        }
+      }
+
+      const upsertPayload = customersArray.map(c => {
+        const { _dummyPhone, ...rest } = c
+        return rest
+      })
+
       const { data: upsertedCustomers, error: custErr } = await supabaseAdmin
         .from('customers')
-        .upsert(customersArray, { onConflict: 'business_id, phone' })
+        .upsert(upsertPayload, { onConflict: 'business_id, phone' })
         .select('id, phone')
         
       if (custErr) throw custErr
