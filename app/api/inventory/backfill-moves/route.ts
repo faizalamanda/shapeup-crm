@@ -63,6 +63,10 @@ export async function POST(req: Request) {
     const productMap = new Map<string, any>()
     allProducts.forEach(p => productMap.set(p.id, p))
 
+    // Fallback: lookup by name untuk order dari Accurate/external yang tidak punya product_id
+    const productNameMap = new Map<string, any>()
+    allProducts.forEach(p => productNameMap.set(p.name.trim().toLowerCase(), p))
+
     // Status order yang memotong stok (sesuai default business)
     const STOCK_REDUCTION_STATUSES = ['shipped', 'completed', 'delivered', 'done']
 
@@ -129,9 +133,16 @@ export async function POST(req: Request) {
 
       const aggByProduct = new Map<string, { qty: number; unitCost: number }>()
       for (const item of items) {
-        const productId = item.product_id || item.id
-        if (!productId || !productMap.has(productId)) continue
-        const prod = productMap.get(productId)
+        // Coba cari via product_id dulu, fallback ke name matching (Accurate/external)
+        let productId = item.product_id || item.id
+        let prod = productMap.get(productId)
+
+        if (!prod && item.name) {
+          prod = productNameMap.get(item.name.trim().toLowerCase())
+          if (prod) productId = prod.id
+        }
+
+        if (!prod || !productId) continue
         if (prod?.stock_type !== 'tracked') continue
 
         const qty = parseFloat(item.quantity || item.qty || 1) || 0

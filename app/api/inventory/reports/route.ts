@@ -145,12 +145,12 @@ export async function GET(req: Request) {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // ⚡ ACTION: product_moves — Tab 3 modal (lazy). Ultra-fast & Fail-safe.
+    // ⚡ ACTION: product_moves — Tab 3 modal (lazy). Forward calculation.
     // ─────────────────────────────────────────────────────────────────────
     if (action === 'product_moves' && productId) {
       const offset = (page - 1) * limit
 
-      // High-speed cached locations + indexed stock_moves query + product stock (~3ms)
+      // Query stock_moves urut ASC (terlama → terbaru) untuk forward calculation
       const [locations, { data: rawMoves, count: totalMoves }, { data: prodInfo }] = await Promise.all([
         getCachedLocations(businessId, supabase),
         supabase
@@ -158,14 +158,13 @@ export async function GET(req: Request) {
           .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at', { count: 'exact' })
           .eq('business_id', businessId)
           .eq('product_id', productId)
-          .order('created_at', { ascending: false })
+          .order('created_at', { ascending: true })   // ← FORWARD: terlama dulu
           .range(offset, offset + limit - 1),
         supabase.from('products').select('stock_quantity').eq('id', productId).maybeSingle()
       ])
 
       let finalMoves: any[] = rawMoves || []
       let finalTotalCount = totalMoves || finalMoves.length
-      const currentStockQty = Number(prodInfo?.stock_quantity || 0)
 
       // Safety Fallback: If stock_moves is empty for this product, stitch dynamically from orders/purchases/opnames
       if (finalMoves.length === 0) {
@@ -202,7 +201,10 @@ export async function GET(req: Request) {
         const filteredOpnames = (rawOpnames || []).filter(op => Array.isArray(op.items_json) && op.items_json.some(matchesProduct))
 
         const stitched = buildUnifiedMoveHistory([prod], filteredPurchases, filteredOrders, filteredOpnames, locations, [])
-        const productMoves = stitched.filter(move => String(move.product_id) === targetIdStr)
+        // Sort ASC untuk forward
+        const productMoves = stitched
+          .filter(move => String(move.product_id) === targetIdStr)
+          .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
         finalTotalCount = productMoves.length
         finalMoves = productMoves.slice(offset, offset + limit)
       }
@@ -212,37 +214,51 @@ export async function GET(req: Request) {
       const vendorLoc = locations.find(l => l.type === 'vendor')
       const customerLoc = locations.find(l => l.type === 'customer')
 
-      let runningStock = currentStockQty
+      // ── FORWARD CALCULATION ───────────────────────────────────────────
+      // Untuk page 1: mulai dari 0
+      // Untuk page N: hitung sum semua moves SEBELUM offset ini (ASC)
+      let runningStock = 0
 
-      // If page > 1 (offset > 0), fetch prior newer moves (0 to offset-1) to calculate starting running stock for this page
       if (offset > 0 && rawMoves && rawMoves.length > 0) {
+        // Ambil semua moves sebelum halaman ini (index 0 s/d offset-1), ASC
         const { data: priorMoves } = await supabase
           .from('stock_moves')
           .select('qty, type, status, origin_location_id, destination_location_id')
           .eq('business_id', businessId)
           .eq('product_id', productId)
-          .order('created_at', { ascending: false })
+          .order('created_at', { ascending: true })
           .range(0, offset - 1)
 
         if (priorMoves && priorMoves.length > 0) {
           for (const pm of priorMoves) {
             if (pm.status === 'cancelled') continue
-            let delta = 0
             if (pm.type === 'receipt' || pm.type === 'refund') {
-              delta = Number(pm.qty || 0)
+              runningStock += Number(pm.qty || 0)
             } else if (pm.type === 'delivery') {
-              delta = -Number(pm.qty || 0)
+              runningStock -= Number(pm.qty || 0)
             } else if (pm.type === 'adjustment') {
               const isIncrease = !pm.origin_location_id || (pm.destination_location_id && !pm.origin_location_id)
-              delta = isIncrease ? Number(pm.qty || 0) : -Number(pm.qty || 0)
+              runningStock += isIncrease ? Number(pm.qty || 0) : -Number(pm.qty || 0)
             }
-            runningStock -= delta
           }
         }
       }
 
       const moves = finalMoves.map(m => {
-        const moveSystemStock = runningStock
+        let delta = 0
+        if (m.status !== 'cancelled') {
+          if (m.type === 'receipt' || m.type === 'refund') {
+            delta = Number(m.qty || 0)
+          } else if (m.type === 'delivery') {
+            delta = -Number(m.qty || 0)
+          } else if (m.type === 'adjustment') {
+            const isIncrease = !m.origin_location_id || (m.destination_location_id && !m.origin_location_id)
+            delta = isIncrease ? Number(m.qty || 0) : -Number(m.qty || 0)
+          }
+        }
+
+        runningStock += delta  // maju ke masa depan
+        const moveSystemStock = runningStock  // tampilkan stok SETELAH transaksi ini
 
         let originName = m.origin_location_name || (m.origin_location_id ? locMap.get(m.origin_location_id) || 'System' : 'System')
         let destName = m.destination_location_name || (m.destination_location_id ? locMap.get(m.destination_location_id) || 'System' : 'System')
@@ -258,19 +274,6 @@ export async function GET(req: Request) {
           originName = isIncrease ? 'Penyesuaian System' : mainLoc?.name || 'Gudang Utama (WH-MAIN)'
           destName = isIncrease ? mainLoc?.name || 'Gudang Utama (WH-MAIN)' : 'Selisih Stok Opname'
         }
-
-        let delta = 0
-        if (m.status !== 'cancelled') {
-          if (m.type === 'receipt' || m.type === 'refund') {
-            delta = Number(m.qty || 0)
-          } else if (m.type === 'delivery') {
-            delta = -Number(m.qty || 0)
-          } else if (m.type === 'adjustment') {
-            const isIncrease = !m.origin_location_id || (m.destination_location_id && !m.origin_location_id)
-            delta = isIncrease ? Number(m.qty || 0) : -Number(m.qty || 0)
-          }
-        }
-        runningStock -= delta
 
         return {
           ...m,
@@ -291,6 +294,7 @@ export async function GET(req: Request) {
         }
       })
     }
+
 
     // ─────────────────────────────────────────────────────────────────────
     // ⚡ ACTION: product_valuation — Tab 2 modal (lazy).

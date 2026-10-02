@@ -499,7 +499,7 @@ export default function ProductDetailModal({
                           <th className="py-2.5 px-3">Tipe Mutasi</th>
                           <th className="py-2.5 px-3">Asal / Tujuan</th>
                           <th className="py-2.5 px-3 text-right">Qty</th>
-                          <th className="py-2.5 px-3 text-right">Stok Sistem</th>
+                          <th className="py-2.5 px-3 text-right">Saldo Stok</th>
                           <th className="py-2.5 px-3 text-right">Harga Unit</th>
                           <th className="py-2.5 px-3 text-center">Status</th>
                         </tr>
