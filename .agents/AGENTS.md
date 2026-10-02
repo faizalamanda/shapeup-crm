@@ -45,3 +45,11 @@
 ## Inventory & Reporting Standards
 
 1. **Running Stock Balance (Stok Sistem):** Saat menampilkan riwayat mutasi (*move history*), selalu kalkulasikan *system stock* secara mundur (*backward*) dari stok fisik terakhir (`current_stock_quantity`). Jangan menghitung *forward* dari transaksi tertua karena berpotensi tidak sinkron dengan stok on hand saat ini. Selalu lampirkan `system_stock?: number` ke *interface* `StockMove` untuk menampilkannya di UI dengan *type safety* penuh.
+
+2. **Default Business Inventory Settings:** Saat bisnis baru dibuat atau belum memiliki konfigurasi integrasi custom, default sistem adalah:
+   - **Trigger Pengurangan Stok Produk Physical**: `['shipped', 'completed']` (Dikirim & Selesai).
+   - **Trigger Pembaruan Jurnal Item (HPP & Persediaan)**: `['shipped', 'completed']` (Dikirim & Selesai).
+   - **Persentase Default HPP / HAP Produk Baru**: `0%`.
+
+3. **Strict Setting-Driven Triggers:** Pengurangan stok dan jurnal HPP **WAJIB HANYA** terpicu berdasarkan status yang terdaftar di `stockReductionStatuses` dan `journalHppStatuses` hasil konfigurasi bisnis dari database/settings. **Dilarang keras** menumpuk *hardcoded fallback* (seperti `status === 'completed'`) secara manual di kode logika.
+

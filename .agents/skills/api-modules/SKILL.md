@@ -108,6 +108,10 @@ const syncRes = await syncOrderToLedger(orderId, supabase, preloadedOrder)
 - `lib/journalHelper.ts` — Transaction + journal_lines posting
 - `plugins/loyalty/helpers/loyaltyApi.ts` — Loyalty points (cached settings)
 
+**Aturan Default Pengaturan Bisnis Baru & Trigger Stok:**
+- **Default Bisnis Baru:** `global_stock_reduction_status = ['shipped', 'completed']`, `global_journal_hpp_status = ['shipped', 'completed']`, `global_default_hpp_percentage = 0%`.
+- **Strict Setting-Driven:** Pengurangan stok (`applyStockMovement`) dan HPP Journal Lines **TIDAK BOLEH** di-override dengan hardcoded fallback seperti `status === 'completed'`. Selalu patuhi `stockReductionStatuses.includes(status)` dan `journalHppStatuses.includes(status)` dari setting database.
+
 ---
 
 ### 4. `lib/accountHelper.ts` — COA Account Resolution (Sales)
