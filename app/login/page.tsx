@@ -24,34 +24,19 @@ function LoginForm() {
     setErrorMsg('')
 
     try {
-      // 1. Direct Supabase client authentication (with retry for transient 500 server errors)
-      const sanitizedEmail = email.trim().toLowerCase()
-      let authErr: any = null
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        const res = await supabase.auth.signInWithPassword({
-          email: sanitizedEmail,
-          password,
-        })
-        authErr = res.error
+      const formData = new FormData()
+      formData.append('email', email)
+      formData.append('password', password)
 
-        // Stop retrying if login succeeded or if credentials are WRONG (400 Bad Request)
-        if (!authErr || authErr.status === 400 || authErr.message === 'Invalid login credentials') {
-          break
-        }
+      const res = await loginAction(formData)
 
-        if (attempt < 3) {
-          console.warn(`[Login] Supabase Auth returned error (attempt ${attempt}/3):`, authErr.message)
-          await new Promise(r => setTimeout(r, 300))
-        }
-      }
-
-      if (authErr) {
-        setErrorMsg(authErr.message === 'Invalid login credentials' ? 'Email atau password salah.' : authErr.message)
+      if (res?.error) {
+        setErrorMsg(res.error === 'Invalid login credentials' ? 'Email atau password salah.' : res.error)
         setLoading(false)
         return
       }
 
-      // 2. Clear old stale local caches
+      // Clear old stale local caches
       if (typeof window !== 'undefined') {
         sessionStorage.clear()
         if (window.localStorage) {
@@ -66,7 +51,7 @@ function LoginForm() {
         }
       }
 
-      // 3. Immediate redirect
+      // Immediate redirect
       const nextParam = searchParams.get('next')
       if (nextParam && nextParam.startsWith('/')) {
         window.location.href = nextParam

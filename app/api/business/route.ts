@@ -32,14 +32,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Gagal simpan bisnis: ${bizError.message}` }, { status: 400 })
     }
 
+    const userEmail = user.email || ''
+    const userFullName = user.user_metadata?.full_name || user.email?.split('@')[0] || 'User'
+
     const { error: profileError } = await supabaseAdmin
       .from('profiles')
-      .update({ 
+      .upsert({ 
+        id: user.id,
         business_id: biz.id,
         active_business_id: biz.id,
-        role: 'admin'
-      })
-      .eq('id', user.id)
+        role: 'admin',
+        email: userEmail,
+        full_name: userFullName
+      }, { onConflict: 'id' })
 
     if (profileError) {
       console.error("Profile Update Error:", profileError)
