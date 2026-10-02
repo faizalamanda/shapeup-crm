@@ -179,7 +179,8 @@ export async function applyStockMovement(
   supabase: SupabaseClient,
   precomputedHppMap?: Map<string, any>,
   sourceId?: string,
-  sourceType: MoveSourceType = 'order'
+  sourceType: MoveSourceType = 'order',
+  status: 'done' | 'pending' | 'cancelled' = 'done'
 ) {
   if (!matchedProducts || matchedProducts.length === 0) return
 
@@ -238,7 +239,7 @@ export async function applyStockMovement(
       type: moveType,
       sourceType,
       sourceId,
-      status: 'done' as const
+      status
     })
   }
 

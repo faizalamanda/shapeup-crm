@@ -329,7 +329,7 @@ export async function syncOrderToLedger(
 
     else if (status === 'cancelled' || status === 'failed') {
       if (salesTx && !reversalSalesTx) {
-        await applyStockMovement(businessId, matchedProducts, 'restore', orderRef, supabase, undefined, orderId, 'order')
+        await applyStockMovement(businessId, matchedProducts, 'restore', orderRef, supabase, undefined, orderId, 'order', 'pending')
         const reversalLines = salesTx.journal_lines.map((line: any) => ({
           account_id: line.account_id,
           debit: line.credit,
@@ -379,7 +379,7 @@ export async function syncOrderToLedger(
 
     else if (status === 'returned') {
       if (salesTx && !reversalSalesTx) {
-        await applyStockMovement(businessId, matchedProducts, 'restore', orderRef, supabase, undefined, orderId, 'order')
+        await applyStockMovement(businessId, matchedProducts, 'restore', orderRef, supabase, undefined, orderId, 'order', 'pending')
         const reversalLines = salesTx.journal_lines.map((line: any) => ({
           account_id: line.account_id,
           debit: line.credit,

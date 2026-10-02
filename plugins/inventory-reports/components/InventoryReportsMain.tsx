@@ -14,8 +14,9 @@ import StockReportTab, { SortField } from './StockReportTab'
 import LocationReportTab from './LocationReportTab'
 import MoveAnalysisTab from './MoveAnalysisTab'
 import ValuationTab from './ValuationTab'
+import PendingReturnsTab from './PendingReturnsTab'
 
-type ActiveTab = 'stock' | 'location' | 'analysis' | 'valuation'
+type ActiveTab = 'stock' | 'location' | 'analysis' | 'valuation' | 'returns'
 
 const globalMovesCache = new Map<string, { moves: StockMove[]; timestamp: number }>()
 const GLOBAL_MOVES_CACHE_TTL = 60_000 // 60 detik
@@ -418,6 +419,7 @@ export default function InventoryReportsMain() {
           { key: 'location', label: '📍 Location Report', desc: 'Distribusi per gudang & outlet' },
           { key: 'analysis', label: '📊 Move Analysis', desc: 'Pivot table & visual charts' },
           { key: 'valuation', label: '💰 Valuation', desc: 'Penilaian FIFO, LIFO, AVCO' },
+          { key: 'returns', label: '🔄 Karantina Retur', desc: 'Penerimaan barang retur/batal' },
         ].map(t => {
           const isActive = activeTab === t.key
           return (
@@ -507,6 +509,8 @@ export default function InventoryReportsMain() {
         {activeTab === 'valuation' && (
           <ValuationTab stockItems={stockReportItems} moves={moves} loading={loading} />
         )}
+
+        {activeTab === 'returns' && <PendingReturnsTab />}
       </div>
 
       {/* ─── Backfill Confirmation Modal ─────────────────────────────────────── */}
