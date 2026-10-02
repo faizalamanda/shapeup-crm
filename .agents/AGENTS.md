@@ -44,7 +44,7 @@
 
 ## Inventory & Reporting Standards
 
-1. **Running Stock Balance (Stok Sistem):** Saat menampilkan riwayat mutasi (*move history*), selalu kalkulasikan *system stock* secara mundur (*backward*) dari stok fisik terakhir (`current_stock_quantity`). Jangan menghitung *forward* dari transaksi tertua karena berpotensi tidak sinkron dengan stok on hand saat ini. Selalu lampirkan `system_stock?: number` ke *interface* `StockMove` untuk menampilkannya di UI dengan *type safety* penuh.
+1. **Running Stock Balance (Stok Sistem):** **JANGAN PERNAH** menghitung running balance (`system_stock`) secara manual (forward/backward) menggunakan iterasi array di JavaScript. Gunakan selalu PostgreSQL View `v_stock_moves_ledger` yang telah menggunakan *Window Functions* untuk menjamin akurasi 100% dan performa maksimal, bahkan jika ada transaksi *backdate*. (Lihat skill `inventory-ledger` untuk panduan lengkapnya).
 
 2. **Default Business Inventory Settings:** Saat bisnis baru dibuat atau belum memiliki konfigurasi integrasi custom, default sistem adalah:
    - **Trigger Pengurangan Stok Produk Physical**: `['shipped', 'completed']` (Dikirim & Selesai).
@@ -53,3 +53,7 @@
 
 3. **Strict Setting-Driven Triggers:** Pengurangan stok dan jurnal HPP **WAJIB HANYA** terpicu berdasarkan status yang terdaftar di `stockReductionStatuses` dan `journalHppStatuses` hasil konfigurasi bisnis dari database/settings. **Dilarang keras** menumpuk *hardcoded fallback* (seperti `status === 'completed'`) secara manual di kode logika.
 
+
+## Research & Planning
+
+1. **Academic & Journal Approach:** Before proposing or executing major architectural changes or complex logic, ALWAYS conduct research and write planning artifacts using a rigorous academic/journal approach (Database Theory, Software Engineering Principles, CQRS, Normalization, etc.). Base your reasoning on established computer science concepts rather than purely practical hacks.

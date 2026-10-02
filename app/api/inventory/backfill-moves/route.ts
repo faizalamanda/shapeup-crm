@@ -203,10 +203,10 @@ export async function POST(req: Request) {
           type: 'adjustment',
           source_type: 'stock_opname',
           source_id: opname.id,
-          // diff > 0 → tambah stok: origin null, dest = gudang
-          // diff < 0 → kurang stok: origin = gudang, dest null
-          origin_location_id: diff < 0 ? 'wh-main' : null,
-          destination_location_id: diff > 0 ? 'wh-main' : null,
+          // diff > 0 → tambah stok: origin null, dest null
+          // diff < 0 → kurang stok: origin null, dest null (dulu wh-main, tapi error UUID)
+          origin_location_id: null,
+          destination_location_id: null,
           lot_number: null,
           created_at: moveDate,
         })
@@ -215,13 +215,8 @@ export async function POST(req: Request) {
 
     // ─────────────────────────────────────────────────────────────────
     // 3. Hitung stok per produk dari moves yang baru dibuat
-    //    Untuk produk tanpa histori → pakai stock_quantity sekarang (STOK-AWAL)
     // ─────────────────────────────────────────────────────────────────
 
-    // Produk yang punya histori di moves
-    const productsWithHistory = new Set<string>(newMoveRows.map(r => r.product_id))
-
-    // Hitung stok hasil kalkulasi dari moves
     const calculatedStockMap = new Map<string, number>()
     for (const row of newMoveRows) {
       const current = calculatedStockMap.get(row.product_id) || 0
@@ -230,36 +225,52 @@ export async function POST(req: Request) {
       } else if (row.type === 'delivery') {
         calculatedStockMap.set(row.product_id, current - row.qty)
       } else if (row.type === 'adjustment') {
-        // diff > 0 (destination ada) → tambah; diff < 0 (origin ada) → kurang
         const isIncrease = !row.origin_location_id
         calculatedStockMap.set(row.product_id, isIncrease ? current + row.qty : current - row.qty)
       }
     }
 
-    // Produk TANPA histori → insert STOK-AWAL dari stock_quantity sekarang
+    // ─────────────────────────────────────────────────────────────────
+    // 4. Koreksi Saldo Awal (Discrepancy Check)
+    //    Memastikan forward calculation tidak pernah negatif di awal dan klop 100% dengan fisik.
+    // ─────────────────────────────────────────────────────────────────
+
     const openingStockRows: any[] = []
+    
     for (const prod of allProducts) {
       if (prod.stock_type !== 'tracked') continue
-      if (productsWithHistory.has(prod.id)) continue
 
       const currentStock = Number(prod.stock_quantity || 0)
-      if (currentStock <= 0) continue // tidak ada stok awal → skip
-
-      openingStockRows.push({
-        business_id: businessId,
-        product_id: prod.id,
-        reference: 'STOK-AWAL',
-        qty: currentStock,
-        unit_cost: Math.round(Number(prod.cost_price || 0)),
-        status: 'done',
-        type: 'adjustment',
-        source_type: 'manual',
-        source_id: null,
-        origin_location_id: null,
-        destination_location_id: 'wh-main',
-        lot_number: null,
-        created_at: prod.created_at,
-      })
+      const calculatedNet = calculatedStockMap.get(prod.id) || 0
+      const discrepancy = currentStock - calculatedNet
+      
+      if (discrepancy !== 0) {
+        // Suntik STOK-AWAL di waktu paling awal (1 menit sebelum produk dibuat) 
+        // supaya urutannya muncul paling atas/awal di riwayat (forward calculation)
+        const prodDate = new Date(prod.created_at || Date.now())
+        prodDate.setMinutes(prodDate.getMinutes() - 1)
+        
+        openingStockRows.push({
+          business_id: businessId,
+          product_id: prod.id,
+          reference: 'STOK-AWAL',
+          qty: Math.abs(discrepancy),
+          unit_cost: Math.round(Number(prod.cost_price || 0)),
+          status: 'done',
+          type: 'adjustment',
+          source_type: 'manual',
+          source_id: null,
+          // discrepancy > 0 -> origin null, dest null (artinya stok nambah)
+          // discrepancy < 0 -> origin = dummy UUID, dest null (artinya stok kurang)
+          origin_location_id: discrepancy < 0 ? '00000000-0000-0000-0000-000000000000' : null,
+          destination_location_id: null,
+          lot_number: null,
+          created_at: prodDate.toISOString(),
+        })
+        
+        // Update perhitungan net dengan koreksi ini
+        calculatedStockMap.set(prod.id, currentStock)
+      }
     }
 
     const allNewRows = [...newMoveRows, ...openingStockRows]

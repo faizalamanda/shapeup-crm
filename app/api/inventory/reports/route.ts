@@ -145,121 +145,31 @@ export async function GET(req: Request) {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // ⚡ ACTION: product_moves — Tab 3 modal (lazy). Forward calculation.
+    // ⚡ ACTION: product_moves — Tab 3 modal (lazy). Window Function Calculation.
     // ─────────────────────────────────────────────────────────────────────
     if (action === 'product_moves' && productId) {
       const offset = (page - 1) * limit
 
-      // Query stock_moves urut ASC (terlama → terbaru) untuk forward calculation
-      const [locations, { data: rawMoves, count: totalMoves }, { data: prodInfo }] = await Promise.all([
+      // Query v_stock_moves_ledger urut DESC (terbaru → terlama)
+      const [locations, { data: rawMoves, count: totalMoves }] = await Promise.all([
         getCachedLocations(businessId, supabase),
         supabase
-          .from('stock_moves')
-          .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at', { count: 'exact' })
+          .from('v_stock_moves_ledger')
+          .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at, system_stock', { count: 'exact' })
           .eq('business_id', businessId)
           .eq('product_id', productId)
-          .order('created_at', { ascending: true })   // ← FORWARD: terlama dulu
-          .range(offset, offset + limit - 1),
-        supabase.from('products').select('stock_quantity').eq('id', productId).maybeSingle()
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1)
       ])
 
       let finalMoves: any[] = rawMoves || []
       let finalTotalCount = totalMoves || finalMoves.length
-
-      // Safety Fallback: If stock_moves is empty for this product, stitch dynamically from orders/purchases/opnames
-      if (finalMoves.length === 0) {
-        const [
-          { data: prodData },
-          { data: rawPurchases },
-          { data: rawOrders },
-          { data: rawOpnames },
-        ] = await Promise.all([
-          supabase.from('products').select('id, name, sku, unit, cost_price').eq('id', productId).maybeSingle(),
-          supabase.from('purchases').select('id, business_id, purchase_number, payment_status, items_json, date, created_at').eq('business_id', businessId),
-          supabase.from('orders').select('id, business_id, order_number, status, items_json, order_date, created_at').eq('business_id', businessId),
-          supabase.from('stock_opname').select('id, business_id, opname_number, items_json, date, created_at').eq('business_id', businessId),
-        ])
-
-        const prod = prodData || { id: productId, name: 'Produk', sku: null, cost_price: 0 }
-        const targetIdStr = String(productId)
-        const targetNameLower = (prod.name || '').toLowerCase()
-        const targetSkuLower = (prod.sku || '').toLowerCase()
-
-        const matchesProduct = (item: any) => {
-          if (!item) return false
-          const itemId = String(item.product_id || item.id || '')
-          if (itemId && itemId === targetIdStr) return true
-          const itemSku = String(item.sku || '').trim().toLowerCase()
-          if (targetSkuLower && itemSku && itemSku === targetSkuLower) return true
-          const itemName = String(item.name || '').trim().toLowerCase()
-          if (targetNameLower && itemName && itemName === targetNameLower) return true
-          return false
-        }
-
-        const filteredPurchases = (rawPurchases || []).filter(p => Array.isArray(p.items_json) && p.items_json.some(matchesProduct))
-        const filteredOrders = (rawOrders || []).filter(o => Array.isArray(o.items_json) && o.items_json.some(matchesProduct))
-        const filteredOpnames = (rawOpnames || []).filter(op => Array.isArray(op.items_json) && op.items_json.some(matchesProduct))
-
-        const stitched = buildUnifiedMoveHistory([prod], filteredPurchases, filteredOrders, filteredOpnames, locations, [])
-        // Sort ASC untuk forward
-        const productMoves = stitched
-          .filter(move => String(move.product_id) === targetIdStr)
-          .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-        finalTotalCount = productMoves.length
-        finalMoves = productMoves.slice(offset, offset + limit)
-      }
-
       const locMap = new Map(locations.map(l => [l.id, l.name]))
       const mainLoc = locations.find(l => l.is_default) || locations[0]
       const vendorLoc = locations.find(l => l.type === 'vendor')
       const customerLoc = locations.find(l => l.type === 'customer')
 
-      // ── FORWARD CALCULATION ───────────────────────────────────────────
-      // Untuk page 1: mulai dari 0
-      // Untuk page N: hitung sum semua moves SEBELUM offset ini (ASC)
-      let runningStock = 0
-
-      if (offset > 0 && rawMoves && rawMoves.length > 0) {
-        // Ambil semua moves sebelum halaman ini (index 0 s/d offset-1), ASC
-        const { data: priorMoves } = await supabase
-          .from('stock_moves')
-          .select('qty, type, status, origin_location_id, destination_location_id')
-          .eq('business_id', businessId)
-          .eq('product_id', productId)
-          .order('created_at', { ascending: true })
-          .range(0, offset - 1)
-
-        if (priorMoves && priorMoves.length > 0) {
-          for (const pm of priorMoves) {
-            if (pm.status === 'cancelled') continue
-            if (pm.type === 'receipt' || pm.type === 'refund') {
-              runningStock += Number(pm.qty || 0)
-            } else if (pm.type === 'delivery') {
-              runningStock -= Number(pm.qty || 0)
-            } else if (pm.type === 'adjustment') {
-              const isIncrease = !pm.origin_location_id || (pm.destination_location_id && !pm.origin_location_id)
-              runningStock += isIncrease ? Number(pm.qty || 0) : -Number(pm.qty || 0)
-            }
-          }
-        }
-      }
-
       const moves = finalMoves.map(m => {
-        let delta = 0
-        if (m.status !== 'cancelled') {
-          if (m.type === 'receipt' || m.type === 'refund') {
-            delta = Number(m.qty || 0)
-          } else if (m.type === 'delivery') {
-            delta = -Number(m.qty || 0)
-          } else if (m.type === 'adjustment') {
-            const isIncrease = !m.origin_location_id || (m.destination_location_id && !m.origin_location_id)
-            delta = isIncrease ? Number(m.qty || 0) : -Number(m.qty || 0)
-          }
-        }
-
-        runningStock += delta  // maju ke masa depan
-        const moveSystemStock = runningStock  // tampilkan stok SETELAH transaksi ini
-
         let originName = m.origin_location_name || (m.origin_location_id ? locMap.get(m.origin_location_id) || 'System' : 'System')
         let destName = m.destination_location_name || (m.destination_location_id ? locMap.get(m.destination_location_id) || 'System' : 'System')
 
@@ -277,7 +187,6 @@ export async function GET(req: Request) {
 
         return {
           ...m,
-          system_stock: moveSystemStock,
           origin_location_name: originName,
           destination_location_name: destName,
         }

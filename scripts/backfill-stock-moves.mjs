@@ -171,14 +171,37 @@ async function runBackfill(businessId) {
     }
   }
 
-  // --- STOK-AWAL untuk produk tanpa histori ---
+  // --- STOK-AWAL untuk produk (Discrepancy Check) ---
   const openingStockRows = []
   for (const prod of allProducts) {
     if (prod.stock_type !== 'tracked') continue
-    if (productsWithHistory.has(prod.id)) continue
+
     const currentStock = Number(prod.stock_quantity || 0)
-    if (currentStock <= 0) continue
-    openingStockRows.push({ business_id: businessId, product_id: prod.id, reference: 'STOK-AWAL', qty: currentStock, unit_cost: Math.round(Number(prod.cost_price || 0)), status: 'done', type: 'adjustment', source_type: 'manual', source_id: null, origin_location_id: null, destination_location_id: null, lot_number: null, created_at: prod.created_at })
+    const calculatedNet = calculatedStockMap.get(prod.id) || 0
+    const discrepancy = currentStock - calculatedNet
+
+    if (discrepancy !== 0) {
+      const prodDate = new Date(prod.created_at || Date.now())
+      prodDate.setMinutes(prodDate.getMinutes() - 1)
+
+      openingStockRows.push({ 
+        business_id: businessId, 
+        product_id: prod.id, 
+        reference: 'STOK-AWAL', 
+        qty: Math.abs(discrepancy), 
+        unit_cost: Math.round(Number(prod.cost_price || 0)), 
+        status: 'done', 
+        type: 'adjustment', 
+        source_type: 'manual', 
+        source_id: null, 
+        origin_location_id: discrepancy < 0 ? '00000000-0000-0000-0000-000000000000' : null, 
+        destination_location_id: null, 
+        lot_number: null, 
+        created_at: prodDate.toISOString() 
+      })
+
+      calculatedStockMap.set(prod.id, currentStock)
+    }
   }
 
   const allNewRows = [...newMoveRows, ...openingStockRows]
