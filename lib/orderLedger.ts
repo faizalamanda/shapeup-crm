@@ -179,10 +179,8 @@ export async function syncOrderToLedger(
     }
 
     const isSalesTriggered = stockReductionStatuses.includes(status) || 
-                             journalHppStatuses.includes(status) || 
-                             status === 'completed' || 
-                             status === 'shipped' ||
-                             status === 'processing'
+                             journalHppStatuses.includes(status) ||
+                             status === 'completed'
 
     const orderRef = `Order #${orderNumber}`
 
@@ -192,8 +190,7 @@ export async function syncOrderToLedger(
       // FIX: Pre-compute hppBatch SATU KALI dan share ke applyStockMovement & generateItemizedHppJournalLines
       //      Sebelumnya: calculateProductsHppBatch dipanggil 2x untuk data yang sama (~150ms wasted)
       let sharedHppMap: Map<string, any> | undefined
-      const needsHpp = stockReductionStatuses.includes(status) || status === 'completed' ||
-                       journalHppStatuses.includes(status)
+      const needsHpp = stockReductionStatuses.includes(status) || journalHppStatuses.includes(status)
 
       if (needsHpp && matchedProducts.length > 0) {
         const productIds = matchedProducts.map((m: any) => m.dbProduct?.id).filter(Boolean)
@@ -202,8 +199,8 @@ export async function syncOrderToLedger(
         }
       }
 
-      // Stock Deduction
-      if (stockReductionStatuses.includes(status) || status === 'completed') {
+      // Stock Deduction — STRICTLY obey user settings (stockReductionStatuses)
+      if (stockReductionStatuses.includes(status)) {
         await applyStockMovement(businessId, matchedProducts, 'deduct', orderRef, supabase, sharedHppMap, orderId, 'order')
       }
 
@@ -238,7 +235,7 @@ export async function syncOrderToLedger(
         else if (fee < 0) journalLines.push({ account_id: accountMap['403000'], debit: Math.abs(fee), credit: 0 })
 
         // HPP Lines — reuse sharedHppMap (tidak query ulang)
-        if (journalHppStatuses.includes(status) || status === 'completed') {
+        if (journalHppStatuses.includes(status)) {
           const { journalLines: hppLines } = await generateItemizedHppJournalLines(
             matchedProducts,
             accountMap,
@@ -273,7 +270,7 @@ export async function syncOrderToLedger(
         const existingLines = salesTx.journal_lines || []
         const hasHppLine = existingLines.some((jl: any) => jl.account_id === accountMap['501000'])
         
-        if (!hasHppLine && (journalHppStatuses.includes(status) || status === 'completed')) {
+        if (!hasHppLine && journalHppStatuses.includes(status)) {
           const { journalLines: hppLines } = await generateItemizedHppJournalLines(
             matchedProducts,
             accountMap,
