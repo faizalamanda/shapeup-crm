@@ -215,21 +215,6 @@ export async function GET(req: Request) {
       let runningStock = currentStockQty
       const moves = finalMoves.map(m => {
         const moveSystemStock = runningStock
-        let delta = Number(m.qty || 0)
-        if (m.type === 'receipt' || m.type === 'refund') {
-          delta = Number(m.qty || 0)
-        } else if (m.type === 'delivery') {
-          delta = -Number(m.qty || 0)
-        } else if (m.type === 'adjustment') {
-          const originName = String(m.origin_location_name || '')
-          const destName = String(m.destination_location_name || '')
-          if (originName.includes('System') || destName.includes('Utama') || m.destination_location_id) {
-            delta = Number(m.qty || 0)
-          } else {
-            delta = -Number(m.qty || 0)
-          }
-        }
-        runningStock -= delta
 
         let originName = m.origin_location_name || (m.origin_location_id ? locMap.get(m.origin_location_id) || 'System' : 'System')
         let destName = m.destination_location_name || (m.destination_location_id ? locMap.get(m.destination_location_id) || 'System' : 'System')
@@ -241,9 +226,21 @@ export async function GET(req: Request) {
           originName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
           destName = customerLoc?.name || 'Transit Pelanggan'
         } else if (m.type === 'adjustment') {
-          originName = 'Penyesuaian System'
-          destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+          const isIncrease = !m.origin_location_id || (m.destination_location_id && !m.origin_location_id)
+          originName = isIncrease ? 'Penyesuaian System' : mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+          destName = isIncrease ? mainLoc?.name || 'Gudang Utama (WH-MAIN)' : 'Selisih Stok Opname'
         }
+
+        let delta = Number(m.qty || 0)
+        if (m.type === 'receipt' || m.type === 'refund') {
+          delta = Number(m.qty || 0)
+        } else if (m.type === 'delivery') {
+          delta = -Number(m.qty || 0)
+        } else if (m.type === 'adjustment') {
+          const isIncrease = !m.origin_location_id || (m.destination_location_id && !m.origin_location_id)
+          delta = isIncrease ? Number(m.qty || 0) : -Number(m.qty || 0)
+        }
+        runningStock -= delta
 
         return {
           ...m,

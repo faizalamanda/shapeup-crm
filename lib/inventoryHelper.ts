@@ -223,11 +223,42 @@ export async function applyStockMovement(
 
   const targetProductIds = Array.from(targetMoves.keys())
 
-  // 3. Batch fetch current stock_quantity for target products
+  // 3. Prepare stock move inputs
+  const stockMoveInputs: any[] = []
+  for (const pId of targetProductIds) {
+    const moveInfo = targetMoves.get(pId)
+    if (!moveInfo || moveInfo.qty <= 0) continue
+
+    stockMoveInputs.push({
+      businessId,
+      productId: pId,
+      reference,
+      qty: moveInfo.qty,
+      unitCost: Number(moveInfo.dbProduct.cost_price || 0),
+      type: moveType,
+      sourceType,
+      sourceId,
+      status: 'done' as const
+    })
+  }
+
+  if (stockMoveInputs.length === 0) return
+
+  // 4. Record stock movements FIRST (Idempotency Check)
+  // Only update physical stock in products table if movements were newly inserted!
+  const moveRes = await recordStockMovements(stockMoveInputs, supabase)
+  const newlyInsertedIds = moveRes.insertedProductIds || []
+
+  if (newlyInsertedIds.length === 0) {
+    // Movement was already recorded previously — skip physical stock deduction to prevent double deduction!
+    return
+  }
+
+  // 5. Batch fetch current stock_quantity for newly inserted target products ONLY
   const { data: currentProds } = await supabase
     .from('products')
     .select('id, stock_quantity, cost_price')
-    .in('id', targetProductIds)
+    .in('id', newlyInsertedIds)
 
   const stockMap = new Map<string, { stock_quantity: number; cost_price: number }>()
   if (currentProds) {
@@ -239,11 +270,9 @@ export async function applyStockMovement(
     })
   }
 
-  // 4. Build parallel stock quantity updates
+  // 6. Execute physical stock quantity updates for newly inserted movements
   const updatePromises: Promise<any>[] = []
-  const stockMoveInputs: any[] = []
-
-  for (const pId of targetProductIds) {
+  for (const pId of newlyInsertedIds) {
     const moveInfo = targetMoves.get(pId)
     if (!moveInfo || moveInfo.qty <= 0) continue
 
@@ -259,25 +288,9 @@ export async function applyStockMovement(
           .eq('id', pId)
       )
     )
-
-    stockMoveInputs.push({
-      businessId,
-      productId: pId,
-      reference,
-      qty: moveInfo.qty,
-      unitCost: currentData.cost_price,
-      type: moveType,
-      sourceType,
-      sourceId,
-      status: 'done' as const
-    })
   }
 
   if (updatePromises.length > 0) {
     await Promise.all(updatePromises)
-  }
-
-  if (stockMoveInputs.length > 0) {
-    await recordStockMovements(stockMoveInputs, supabase)
   }
 }

@@ -35,7 +35,7 @@ export async function recordStockMovements(
   moves: StockMoveInput[],
   supabase: SupabaseClient
 ) {
-  if (!moves || moves.length === 0) return { inserted: 0 }
+  if (!moves || moves.length === 0) return { inserted: 0, insertedProductIds: [] }
 
   const businessId = moves[0].businessId
   const reference = moves[0].reference
@@ -52,28 +52,26 @@ export async function recordStockMovements(
   }
 
   // A document UUID is the primary idempotency key. Reference is retained only
+  // A document UUID is the primary idempotency key. Reference is retained only
   // for display and for older callers that do not yet have a source document.
   let existingMovesData: any[] = []
   if (sourceType && sourceId) {
-    const { data: existing, error } = await supabase
-      .from('stock_moves')
-      .select('product_id, type')
-      .eq('business_id', businessId)
-      .in('product_id', productIds)
-      .eq('source_type', sourceType)
-      .eq('source_id', sourceId)
-
-    if (!error && existing) {
-      existingMovesData = existing
-    } else {
-      const { data: fallbackExisting } = await supabase
+    const [{ data: existingBySource }, { data: existingByRef }] = await Promise.all([
+      supabase
+        .from('stock_moves')
+        .select('product_id, type')
+        .eq('business_id', businessId)
+        .in('product_id', productIds)
+        .eq('source_type', sourceType)
+        .eq('source_id', sourceId),
+      supabase
         .from('stock_moves')
         .select('product_id, type')
         .eq('business_id', businessId)
         .in('product_id', productIds)
         .eq('reference', reference)
-      existingMovesData = fallbackExisting || []
-    }
+    ])
+    existingMovesData = [...(existingBySource || []), ...(existingByRef || [])]
   } else {
     const { data: existing } = await supabase
       .from('stock_moves')
@@ -110,7 +108,7 @@ export async function recordStockMovements(
   }
 
   let newMoveRows = buildRows(true)
-  if (newMoveRows.length === 0) return { inserted: 0 }
+  if (newMoveRows.length === 0) return { inserted: 0, insertedProductIds: [] }
 
   let { error } = await supabase
     .from('stock_moves')
@@ -119,7 +117,7 @@ export async function recordStockMovements(
   // If DB does not have source_type / source_id columns yet, fallback to inserting without them
   if (error && error.code === 'PGRST204') {
     newMoveRows = buildRows(false)
-    if (newMoveRows.length === 0) return { inserted: 0 }
+    if (newMoveRows.length === 0) return { inserted: 0, insertedProductIds: [] }
     const fallbackRes = await supabase
       .from('stock_moves')
       .insert(newMoveRows)
@@ -128,8 +126,9 @@ export async function recordStockMovements(
 
   if (error) {
     console.error('[StockLedger] Failed to record stock movements:', error.message)
-    return { inserted: 0, error: error.message }
+    return { inserted: 0, insertedProductIds: [], error: error.message }
   }
 
-  return { inserted: newMoveRows.length }
+  const insertedProductIds = Array.from(new Set(newMoveRows.map(r => r.product_id)))
+  return { inserted: newMoveRows.length, insertedProductIds }
 }
