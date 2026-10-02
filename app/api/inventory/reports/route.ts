@@ -213,6 +213,34 @@ export async function GET(req: Request) {
       const customerLoc = locations.find(l => l.type === 'customer')
 
       let runningStock = currentStockQty
+
+      // If page > 1 (offset > 0), fetch prior newer moves (0 to offset-1) to calculate starting running stock for this page
+      if (offset > 0 && rawMoves && rawMoves.length > 0) {
+        const { data: priorMoves } = await supabase
+          .from('stock_moves')
+          .select('qty, type, status, origin_location_id, destination_location_id')
+          .eq('business_id', businessId)
+          .eq('product_id', productId)
+          .order('created_at', { ascending: false })
+          .range(0, offset - 1)
+
+        if (priorMoves && priorMoves.length > 0) {
+          for (const pm of priorMoves) {
+            if (pm.status === 'cancelled') continue
+            let delta = 0
+            if (pm.type === 'receipt' || pm.type === 'refund') {
+              delta = Number(pm.qty || 0)
+            } else if (pm.type === 'delivery') {
+              delta = -Number(pm.qty || 0)
+            } else if (pm.type === 'adjustment') {
+              const isIncrease = !pm.origin_location_id || (pm.destination_location_id && !pm.origin_location_id)
+              delta = isIncrease ? Number(pm.qty || 0) : -Number(pm.qty || 0)
+            }
+            runningStock -= delta
+          }
+        }
+      }
+
       const moves = finalMoves.map(m => {
         const moveSystemStock = runningStock
 
@@ -231,14 +259,16 @@ export async function GET(req: Request) {
           destName = isIncrease ? mainLoc?.name || 'Gudang Utama (WH-MAIN)' : 'Selisih Stok Opname'
         }
 
-        let delta = Number(m.qty || 0)
-        if (m.type === 'receipt' || m.type === 'refund') {
-          delta = Number(m.qty || 0)
-        } else if (m.type === 'delivery') {
-          delta = -Number(m.qty || 0)
-        } else if (m.type === 'adjustment') {
-          const isIncrease = !m.origin_location_id || (m.destination_location_id && !m.origin_location_id)
-          delta = isIncrease ? Number(m.qty || 0) : -Number(m.qty || 0)
+        let delta = 0
+        if (m.status !== 'cancelled') {
+          if (m.type === 'receipt' || m.type === 'refund') {
+            delta = Number(m.qty || 0)
+          } else if (m.type === 'delivery') {
+            delta = -Number(m.qty || 0)
+          } else if (m.type === 'adjustment') {
+            const isIncrease = !m.origin_location_id || (m.destination_location_id && !m.origin_location_id)
+            delta = isIncrease ? Number(m.qty || 0) : -Number(m.qty || 0)
+          }
         }
         runningStock -= delta
 

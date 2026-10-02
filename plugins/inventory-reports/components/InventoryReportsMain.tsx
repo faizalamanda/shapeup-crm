@@ -18,6 +18,7 @@ import ValuationTab from './ValuationTab'
 type ActiveTab = 'stock' | 'location' | 'analysis' | 'valuation'
 
 const globalMovesCache = new Map<string, { moves: StockMove[]; timestamp: number }>()
+const GLOBAL_MOVES_CACHE_TTL = 60_000 // 60 detik
 
 export default function InventoryReportsMain() {
   const { activeBusiness } = useUserContext()
@@ -62,6 +63,13 @@ export default function InventoryReportsMain() {
   const [moveStatusFilter, setMoveStatusFilter] = useState<any>('all')
   const [moveLotFilter, setMoveLotFilter] = useState<string>('')
   const [loadingMoves, setLoadingMoves] = useState(false)
+
+  // Backfill state
+  const [showBackfillModal, setShowBackfillModal] = useState(false)
+  const [backfillLoading, setBackfillLoading] = useState(false)
+  const [backfillDryRun, setBackfillDryRun] = useState<any>(null)
+  const [backfillResult, setBackfillResult] = useState<any>(null)
+  const [backfillError, setBackfillError] = useState<string | null>(null)
   const [isMovesFromCache, setIsMovesFromCache] = useState(false)
   const [isMovesRevalidating, setIsMovesRevalidating] = useState(false)
 
@@ -189,12 +197,14 @@ export default function InventoryReportsMain() {
     loadInventoryData(1, limit, '', '')
   }, [])
 
-  // ⚡ SWR Fast Global Moves Loader (0ms instant cache load)
+  // ⚡ SWR Fast Global Moves Loader — fix: hanya load jika activeBusiness sudah ada, + TTL cache
   const loadGlobalMoves = useCallback(async () => {
-    const cacheKey = `global_moves_${activeBusiness?.id || 'default'}`
+    if (!activeBusiness?.id) return // Tunggu business context siap dulu
+    const cacheKey = `global_moves_${activeBusiness.id}`
     const cached = globalMovesCache.get(cacheKey)
+    const isCacheValid = cached && (Date.now() - cached.timestamp < GLOBAL_MOVES_CACHE_TTL)
 
-    if (cached) {
+    if (isCacheValid) {
       setMoves(cached.moves)
       setIsMovesFromCache(true)
       setLoadingMoves(false)
@@ -240,6 +250,58 @@ export default function InventoryReportsMain() {
         .finally(() => setLoading(false))
     }
   }, [activeTab, locationReportSummaries.length])
+
+  // ─── Backfill Handler ───────────────────────────────────────────────────────
+  const handleBackfillDryRun = async () => {
+    setBackfillLoading(true)
+    setBackfillError(null)
+    setBackfillDryRun(null)
+    try {
+      const res = await fetch('/api/inventory/backfill-moves', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: true })
+      })
+      const json = await res.json()
+      if (json.success) {
+        setBackfillDryRun(json.summary)
+      } else {
+        setBackfillError(json.error || 'Gagal menjalankan preview')
+      }
+    } catch (e: any) {
+      setBackfillError(e.message || 'Terjadi kesalahan')
+    } finally {
+      setBackfillLoading(false)
+    }
+  }
+
+  const handleBackfillExecute = async () => {
+    setBackfillLoading(true)
+    setBackfillError(null)
+    setBackfillResult(null)
+    try {
+      const res = await fetch('/api/inventory/backfill-moves', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: false })
+      })
+      const json = await res.json()
+      if (json.success) {
+        setBackfillResult(json)
+        // Clear moves cache agar fresh setelah rebuild
+        globalMovesCache.clear()
+        setMoves([])
+        // Refresh stock report juga
+        loadInventoryData(1, limit, '', '')
+      } else {
+        setBackfillError(json.error || 'Gagal menjalankan rebuild')
+      }
+    } catch (e: any) {
+      setBackfillError(e.message || 'Terjadi kesalahan')
+    } finally {
+      setBackfillLoading(false)
+    }
+  }
 
   // Export Excel Handler
   const handleExportExcel = () => {
@@ -304,7 +366,7 @@ export default function InventoryReportsMain() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <button
             onClick={() => loadInventoryData(page, limit, searchQuery, selectedCategory, sortField, sortOrder)}
             title="Segarkan Data dari Database"
@@ -320,6 +382,19 @@ export default function InventoryReportsMain() {
               <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
             </svg>
             Refresh
+          </button>
+
+          <button
+            onClick={() => {
+              setShowBackfillModal(true)
+              setBackfillDryRun(null)
+              setBackfillResult(null)
+              setBackfillError(null)
+            }}
+            title="Rebuild ulang semua log mutasi stok dari transaksi"
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs font-bold transition-all cursor-pointer"
+          >
+            🔧 Rebuild Stock Moves
           </button>
 
           <button
@@ -433,6 +508,133 @@ export default function InventoryReportsMain() {
           <ValuationTab stockItems={stockReportItems} moves={moves} loading={loading} />
         )}
       </div>
+
+      {/* ─── Backfill Confirmation Modal ─────────────────────────────────────── */}
+      {showBackfillModal && (
+        <div
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => !backfillLoading && setShowBackfillModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl border border-[#E2E2DC] shadow-2xl w-full max-w-lg p-6 space-y-5"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center text-xl shrink-0">🔧</div>
+              <div>
+                <h3 className="text-base font-extrabold text-[#1C1C1A]">Rebuild Stock Moves</h3>
+                <p className="text-xs text-[#6B6B63] mt-0.5">Regenerasi ulang semua log mutasi stok dari data transaksi</p>
+              </div>
+            </div>
+
+            {/* Info */}
+            {!backfillResult && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs space-y-2">
+                <div className="font-bold text-amber-800 flex items-center gap-1.5">⚠️ Yang akan terjadi:</div>
+                <ul className="text-amber-700 space-y-1 list-disc list-inside">
+                  <li>Semua data <code className="bg-amber-100 px-1 rounded">stock_moves</code> lama akan <strong>dihapus</strong></li>
+                  <li>Di-generate ulang dari: Pembelian, Penjualan, Stock Opname</li>
+                  <li>Produk tanpa histori → dibuat entry <strong>STOK-AWAL</strong> otomatis</li>
+                  <li>Stok fisik produk dihitung ulang dari log baru</li>
+                </ul>
+              </div>
+            )}
+
+            {/* Error */}
+            {backfillError && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-xl text-xs font-medium">
+                ⚠️ {backfillError}
+              </div>
+            )}
+
+            {/* Dry Run Preview */}
+            {backfillDryRun && !backfillResult && (
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs space-y-2">
+                <div className="font-bold text-blue-800 flex items-center gap-1.5">📋 Preview Hasil:</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    ['Total Log Baru', backfillDryRun.totalMoveRowsToInsert],
+                    ['Dari Pembelian', backfillDryRun.fromPurchases],
+                    ['Dari Penjualan', backfillDryRun.fromOrders],
+                    ['Dari Stock Opname', backfillDryRun.fromOpname],
+                    ['Entry Stok Awal', backfillDryRun.openingStockEntries],
+                    ['Produk di-update', backfillDryRun.productsToRecalculate],
+                  ].map(([label, val]) => (
+                    <div key={label as string} className="bg-white rounded-lg border border-blue-200 p-2">
+                      <div className="text-[10px] text-blue-600">{label}</div>
+                      <div className="font-extrabold text-blue-800 text-sm">{val}</div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-blue-700 mt-1">Klik <strong>Jalankan Sekarang</strong> untuk eksekusi.</p>
+              </div>
+            )}
+
+            {/* Success Result */}
+            {backfillResult && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-xs space-y-2">
+                <div className="font-bold text-emerald-800 flex items-center gap-1.5">✅ Rebuild Berhasil!</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    ['Total Log Baru', backfillResult.summary?.totalInserted],
+                    ['Dari Pembelian', backfillResult.summary?.fromPurchases],
+                    ['Dari Penjualan', backfillResult.summary?.fromOrders],
+                    ['Dari Stock Opname', backfillResult.summary?.fromOpname],
+                    ['Entry Stok Awal', backfillResult.summary?.openingStockEntries],
+                    ['Produk Di-update', backfillResult.summary?.productsRecalculated],
+                  ].map(([label, val]) => (
+                    <div key={label as string} className="bg-white rounded-lg border border-emerald-200 p-2">
+                      <div className="text-[10px] text-emerald-600">{label}</div>
+                      <div className="font-extrabold text-emerald-800 text-sm">{val ?? '-'}</div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-emerald-700 text-[11px] mt-1">{backfillResult.message}</p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex items-center gap-3 pt-1">
+              {!backfillResult ? (
+                <>
+                  {!backfillDryRun ? (
+                    <button
+                      disabled={backfillLoading}
+                      onClick={handleBackfillDryRun}
+                      className="flex-1 py-2.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {backfillLoading ? '⏳ Loading...' : '🔍 Preview Dulu'}
+                    </button>
+                  ) : (
+                    <button
+                      disabled={backfillLoading}
+                      onClick={handleBackfillExecute}
+                      className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {backfillLoading ? '⏳ Memproses...' : '🚀 Jalankan Sekarang'}
+                    </button>
+                  )}
+                  <button
+                    disabled={backfillLoading}
+                    onClick={() => setShowBackfillModal(false)}
+                    className="px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#1C1C1A] text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    Batal
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => setShowBackfillModal(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer"
+                >
+                  ✅ Tutup
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
