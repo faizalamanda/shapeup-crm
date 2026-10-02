@@ -98,7 +98,7 @@ export async function POST(request: Request) {
           businessId,
           move.source_id || move.id,
           new Date().toISOString(),
-          `Barang Hilang Ekspedisi: ${move.product?.name} (${move.reference})`,
+          `Barang Hilang Ekspedisi: ${move.product?.name || move.reference} (${move.reference})`,
           journalLines,
           supabase
         )
