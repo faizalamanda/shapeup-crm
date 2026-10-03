@@ -45,3 +45,20 @@ This architecture is heavily backed by Database Theory and Computer Science prin
 2. **Event Sourcing & CQRS**: `stock_moves` acts as the Append-Only Event Store (Write Model). The view `v_stock_moves_ledger` acts as the Read Model, projecting past events into a current state without physical mutation.
 3. **High Concurrency & Race Conditions**: In high-velocity environments (e.g. Flash Sales), storing running balances requires locking (Row Locks), severely limiting write throughput. This Append-Only approach guarantees maximum concurrency without deadlocks.
 4. **Bitemporal Modeling**: Transactions have a Transaction Time (insertion) and Valid Time (effective date). Using `ORDER BY created_at` in the Window Function seamlessly handles backdated entries without requiring cascading row updates.
+
+## Ledger Insertion Rules (Important)
+When writing stock moves to `public.stock_moves` (usually via `recordStockMovements` in `lib/stockLedger.ts`), you **MUST** follow these critical rules:
+
+1. **Adjustments (Shrinkage vs Excess)**:
+   - For a **Positive Adjustment** (adding stock, e.g., Excess/Lebih): Set `originLocationId` to `null` and `destinationLocationId` to `null`.
+   - For a **Negative Adjustment** (removing stock, e.g., Shrinkage/Susut): You **MUST** set `originLocationId` to a dummy UUID (e.g., `'00000000-0000-0000-0000-000000000000'`). Without this, the view will incorrectly calculate it as a positive addition!
+
+2. **Precise Timestamps (`created_at`)**:
+   - The view relies heavily on `created_at` for chronological sorting.
+   - If the user provides a `date` (e.g. `'2026-09-30'`), passing it directly will resolve to Midnight UTC (e.g., `07:00 WIB`), messing up the timeline.
+   - **Rule**: If the date is *today*, use the exact current time (`new Date().toISOString()`). If the date is *backdated* and lacks a time component, append the end-of-day time (e.g. `T16:59:59.000Z` for `23:59:59 WIB`) to ensure it encompasses all transactions of that day.
+
+3. **Batch Operations (Anti N+1)**:
+   - Always batch `recordStockMovements` in a single array. Never loop and insert sequentially.
+   - If physical `products.stock_quantity` needs updating alongside, use `Promise.all()` to run updates concurrently to avoid Vercel/Edge timeouts.
+

@@ -103,7 +103,7 @@ export async function POST(req: Request) {
     }
 
     const journalLines: any[] = []
-    const updatePromises: Promise<any>[] = []
+    const updatePromises: any[] = []
 
     // 2. Loop items to update quantities and construct journal lines
     for (const item of items) {
