@@ -1,28 +1,14 @@
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
+import { createClient } from '@/lib/supabaseServer'
 import { recordStockMovements, StockMoveInput } from '@/lib/stockLedger'
 import { NextResponse } from 'next/server'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
+import { getApiContext } from '@/lib/apiContext'
 
 export async function GET(req: Request) {
-  const supabase = await createClient()
-
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { businessId, supabase } = ctx
 
     const { data: opnames, error: fetchErr } = await supabase
       .from('stock_opname')
@@ -61,25 +47,11 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const supabase = await createClient()
-
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { businessId, supabase } = ctx
 
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
     const body = await req.json()
     const {
       opname_number,
@@ -101,6 +73,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Required accounting accounts could not be resolved' }, { status: 500 })
     }
 
+    // Fetch all products in batch for cost price
+    const productIds = items.map((i: any) => i.product_id)
+    const { data: products, error: prodErr } = await supabase
+      .from('products')
+      .select('id, cost_price')
+      .in('id', productIds)
+      .eq('business_id', businessId)
+
+    if (prodErr) {
+      return NextResponse.json({ error: `Failed to fetch products: ${prodErr.message}` }, { status: 500 })
+    }
+
+    const productMap = new Map(products?.map(p => [p.id, p.cost_price || 0]) || [])
+
     // 1. Create Stock Opname Transaction in Ledger
     const { data: tx, error: txErr } = await supabase
       .from('transactions')
@@ -109,7 +95,7 @@ export async function POST(req: Request) {
         date: date,
         description: `Stock Opname: ${opname_number}`
       })
-      .select('*')
+      .select('id')
       .single()
 
     if (txErr || !tx) {
@@ -117,8 +103,7 @@ export async function POST(req: Request) {
     }
 
     const journalLines: any[] = []
-    let totalDebit = 0
-    let totalCredit = 0
+    const updatePromises: Promise<any>[] = []
 
     // 2. Loop items to update quantities and construct journal lines
     for (const item of items) {
@@ -129,19 +114,7 @@ export async function POST(req: Request) {
 
       if (diff === 0) continue
 
-      // Fetch product to get its cost price
-      const { data: product, error: prodErr } = await supabase
-        .from('products')
-        .select('cost_price')
-        .eq('id', product_id)
-        .single()
-
-      if (prodErr || !product) {
-        console.error(`Failed to fetch product details for ${product_id}: ${prodErr?.message}`)
-        continue
-      }
-
-      const costPrice = product.cost_price || 0
+      const costPrice = productMap.get(product_id) || 0
       const adjValue = Math.abs(diff) * costPrice
 
       if (adjValue > 0) {
@@ -159,8 +132,6 @@ export async function POST(req: Request) {
             debit: 0,
             credit: adjValue
           })
-          totalDebit += adjValue
-          totalCredit += adjValue
         } else {
           // Excess/Lebih: Debit Persediaan (Asset), Credit Penyesuaian Persediaan (Expense/contra)
           journalLines.push({
@@ -175,75 +146,29 @@ export async function POST(req: Request) {
             debit: 0,
             credit: adjValue
           })
-          totalDebit += adjValue
-          totalCredit += adjValue
         }
       }
 
-      // Update physical quantity in DB
-      const { error: updErr } = await supabase
-        .from('products')
-        .update({ stock_quantity: actQty })
-        .eq('id', product_id)
-
-      if (updErr) {
-        console.error(`Failed to update product stock: ${updErr.message}`)
-      }
+      // Prepare physical quantity update in DB
+      updatePromises.push(
+        supabase.from('products').update({ stock_quantity: actQty }).eq('id', product_id)
+      )
     }
 
-    // If journalLines is empty (no stock was changed), we create a dummy balancing entry or delete the transaction.
-    if (journalLines.length === 0) {
-      await supabase.from('transactions').delete().eq('id', tx.id)
-      
-      // Still record the stock opname itself with null transaction_id since no ledger updates were needed
-      const { data: stockOpname, error: soErr } = await supabase
-        .from('stock_opname')
-        .insert({
-          business_id: businessId,
-          transaction_id: null,
-          opname_number,
-          date,
-          notes,
-          items_json: items
-        })
-        .select('*')
-        .single()
-
-      if (soErr) {
-        return NextResponse.json({ error: `Failed to record stock opname: ${soErr.message}` }, { status: 500 })
-      }
-
-      // Record SaaS Stock Movement Ledger for Opname Adjustments
-      const stockMoveInputs: StockMoveInput[] = items
-        .map((item: any) => {
-          const diff = (parseFloat(item.actual_quantity) || 0) - (parseFloat(item.recorded_quantity) || 0)
-          return {
-            businessId,
-            productId: item.product_id,
-            reference: opname_number || `OPN-${stockOpname.id.slice(0, 6)}`,
-            qty: Math.abs(diff),
-            unitCost: 0,
-            type: 'adjustment' as const,
-            sourceType: 'stock_opname' as const,
-            sourceId: stockOpname.id,
-            status: 'done' as const,
-            createdAt: date || new Date().toISOString()
-          }
-        })
-        .filter((m: any) => m.qty > 0)
-
-      if (stockMoveInputs.length > 0) {
-        await recordStockMovements(stockMoveInputs, supabase)
-      }
-
-      return NextResponse.json(stockOpname)
+    // Execute physical stock updates in parallel
+    if (updatePromises.length > 0) {
+      await Promise.all(updatePromises)
     }
 
-    // Insert journal lines
-    const { error: jlErr } = await supabase.from('journal_lines').insert(journalLines)
-    if (jlErr) {
+    // Insert journal lines IF ANY
+    if (journalLines.length > 0) {
+      const { error: jlErr } = await supabase.from('journal_lines').insert(journalLines)
+      if (jlErr) {
+        await supabase.from('transactions').delete().eq('id', tx.id)
+        return NextResponse.json({ error: `Failed to insert journal lines: ${jlErr.message}` }, { status: 500 })
+      }
+    } else {
       await supabase.from('transactions').delete().eq('id', tx.id)
-      return NextResponse.json({ error: `Failed to insert journal lines: ${jlErr.message}` }, { status: 500 })
     }
 
     // 3. Create stock opname entry
@@ -251,7 +176,7 @@ export async function POST(req: Request) {
       .from('stock_opname')
       .insert({
         business_id: businessId,
-        transaction_id: tx.id,
+        transaction_id: journalLines.length > 0 ? tx.id : null,
         opname_number,
         date,
         notes,
@@ -261,8 +186,9 @@ export async function POST(req: Request) {
       .single()
 
     if (soErr) {
-      // clean up cascades
-      await supabase.from('transactions').delete().eq('id', tx.id)
+      if (journalLines.length > 0) {
+        await supabase.from('transactions').delete().eq('id', tx.id)
+      }
       return NextResponse.json({ error: `Failed to record stock opname: ${soErr.message}` }, { status: 500 })
     }
 
@@ -275,12 +201,15 @@ export async function POST(req: Request) {
           productId: item.product_id,
           reference: opname_number || `OPN-${stockOpname.id.slice(0, 6)}`,
           qty: Math.abs(diff),
-          unitCost: 0,
+          unitCost: productMap.get(item.product_id) || 0,
           type: 'adjustment' as const,
           sourceType: 'stock_opname' as const,
           sourceId: stockOpname.id,
           status: 'done' as const,
-          createdAt: date || new Date().toISOString()
+          createdAt: date || new Date().toISOString(),
+          // diff < 0 means shrinkage (negative adjustment), so we use a dummy origin_location_id
+          originLocationId: diff < 0 ? '00000000-0000-0000-0000-000000000000' : null,
+          destinationLocationId: null
         }
       })
       .filter((m: any) => m.qty > 0)
