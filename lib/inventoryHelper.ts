@@ -180,7 +180,8 @@ export async function applyStockMovement(
   precomputedHppMap?: Map<string, any>,
   sourceId?: string,
   sourceType: MoveSourceType = 'order',
-  status: 'done' | 'pending' | 'cancelled' = 'done'
+  status: 'done' | 'pending' | 'cancelled' = 'done',
+  createdAt?: string
 ) {
   if (!matchedProducts || matchedProducts.length === 0) return
 
@@ -239,7 +240,8 @@ export async function applyStockMovement(
       type: moveType,
       sourceType,
       sourceId,
-      status
+      status,
+      createdAt
     })
   }
 

@@ -184,11 +184,21 @@ export async function syncOrderToLedger(
 
     const orderRef = `Order #${orderNumber}`
 
+    // Determine precise order / shipped move date
+    let orderMoveDate = new Date().toISOString()
+    const raw = order.raw_source_data || {}
+    if (raw.date_shipped_gmt) orderMoveDate = new Date(raw.date_shipped_gmt + 'Z').toISOString()
+    else if (raw.date_shipped) orderMoveDate = new Date(raw.date_shipped).toISOString()
+    else if (raw.date_paid_gmt) orderMoveDate = new Date(raw.date_paid_gmt + 'Z').toISOString()
+    else if (raw.date_paid) orderMoveDate = new Date(raw.date_paid).toISOString()
+    else if (raw.date_completed_gmt) orderMoveDate = new Date(raw.date_completed_gmt + 'Z').toISOString()
+    else if (raw.date_completed) orderMoveDate = new Date(raw.date_completed).toISOString()
+    else if (order.order_date_utc) orderMoveDate = new Date(order.order_date_utc).toISOString()
+    else if (order.order_date) orderMoveDate = new Date(order.order_date).toISOString()
+
     // 6. State Machine for Transitions
     if (isSalesTriggered) {
       // 6.1 SALES POSTING
-      // FIX: Pre-compute hppBatch SATU KALI dan share ke applyStockMovement & generateItemizedHppJournalLines
-      //      Sebelumnya: calculateProductsHppBatch dipanggil 2x untuk data yang sama (~150ms wasted)
       let sharedHppMap: Map<string, any> | undefined
       const needsHpp = stockReductionStatuses.includes(status) || journalHppStatuses.includes(status)
 
@@ -201,7 +211,7 @@ export async function syncOrderToLedger(
 
       // Stock Deduction — STRICTLY obey user settings (stockReductionStatuses)
       if (stockReductionStatuses.includes(status)) {
-        await applyStockMovement(businessId, matchedProducts, 'deduct', orderRef, supabase, sharedHppMap, orderId, 'order')
+        await applyStockMovement(businessId, matchedProducts, 'deduct', orderRef, supabase, sharedHppMap, orderId, 'order', 'done', orderMoveDate)
       }
 
       // Check if it's a partial commit (tx exists but has 0 lines)
