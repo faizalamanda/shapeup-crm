@@ -270,7 +270,6 @@ export async function POST(req: Request) {
           return supabase
             .from('products')
             .update({
-              stock_quantity: newQty,
               cost_price: newCost
             })
             .eq('id', productId)
@@ -279,6 +278,7 @@ export async function POST(req: Request) {
         await Promise.all(updatePromises)
 
         // Record SaaS Stock Movement Ledger (Receipt from Supplier)
+        // PostgreSQL trigger trg_sync_product_stock_from_moves will automatically update products.stock_quantity
         const stockMoveInputs: StockMoveInput[] = Array.from(aggregatedPhysical.entries()).map(([productId, agg]) => ({
           businessId,
           productId,
@@ -288,7 +288,7 @@ export async function POST(req: Request) {
           type: 'receipt',
           sourceType: 'purchase',
           sourceId: purchase.id,
-          status: paymentStatus === 'paid' ? 'done' : 'pending',
+          status: 'done',
           createdAt: date || new Date().toISOString()
         }))
         await recordStockMovements(stockMoveInputs, supabase)
@@ -506,7 +506,6 @@ export async function PUT(req: Request) {
           return supabase
             .from('products')
             .update({
-              stock_quantity: newQty,
               cost_price: newCost
             })
             .eq('id', productId)
@@ -668,37 +667,14 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: 'Purchase not found' }, { status: 404 })
     }
 
-    // Revert inventory quantities in batch & parallel (Aggregated)
-    const items = Array.isArray(purchase.items_json) ? purchase.items_json : []
-    const physicalItems = items.filter((i: any) => i.is_physical && i.product_id)
-    if (physicalItems.length > 0) {
-      const aggregatedPhysical = new Map<string, number>()
-      for (const item of physicalItems) {
-        const pId = item.product_id
-        const qty = parseFloat(item.quantity) || 0
-        aggregatedPhysical.set(pId, (aggregatedPhysical.get(pId) || 0) + qty)
-      }
-
-      const prodIds = Array.from(aggregatedPhysical.keys())
-      const { data: products } = await supabase
-        .from('products')
-        .select('id, stock_quantity')
-        .in('id', prodIds)
-
-      if (products) {
-        const prodMap = new Map(products.map(p => [p.id, p]))
-        const revertPromises = Array.from(aggregatedPhysical.entries()).map(([productId, qty]) => {
-          const product = prodMap.get(productId)
-          if (!product) return Promise.resolve()
-          const newQty = (Number(product.stock_quantity) || 0) - qty
-          return supabase
-            .from('products')
-            .update({ stock_quantity: newQty })
-            .eq('id', productId)
-        })
-        await Promise.all(revertPromises)
-      }
-    }
+    // Delete stock moves associated with purchase (PostgreSQL trigger trg_sync_product_stock_from_moves
+    // will automatically recalculate products.stock_quantity upon deletion).
+    await supabase
+      .from('stock_moves')
+      .delete()
+      .eq('business_id', businessId)
+      .eq('source_type', 'purchase')
+      .eq('source_id', id)
 
     // Delete purchase payments first
     const { data: payments } = await supabase
