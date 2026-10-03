@@ -279,6 +279,10 @@ export async function POST(req: Request) {
 
         // Record SaaS Stock Movement Ledger (Receipt from Supplier)
         // PostgreSQL trigger trg_sync_product_stock_from_moves will automatically update products.stock_quantity
+        const moveTimestamp = (date && date.length === 10 && date === new Date().toISOString().split('T')[0])
+          ? new Date().toISOString()
+          : (date && date.includes('T') ? date : (date ? `${date}T16:59:59.000Z` : new Date().toISOString()))
+
         const stockMoveInputs: StockMoveInput[] = Array.from(aggregatedPhysical.entries()).map(([productId, agg]) => ({
           businessId,
           productId,
@@ -289,7 +293,7 @@ export async function POST(req: Request) {
           sourceType: 'purchase',
           sourceId: purchase.id,
           status: 'done',
-          createdAt: date || new Date().toISOString()
+          createdAt: moveTimestamp
         }))
         await recordStockMovements(stockMoveInputs, supabase)
       }
