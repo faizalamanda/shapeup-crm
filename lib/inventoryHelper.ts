@@ -245,53 +245,8 @@ export async function applyStockMovement(
 
   if (stockMoveInputs.length === 0) return
 
-  // 4. Record stock movements FIRST (Idempotency Check)
-  // Only update physical stock in products table if movements were newly inserted!
-  const moveRes = await recordStockMovements(stockMoveInputs, supabase)
-  const newlyInsertedIds = moveRes.insertedProductIds || []
-
-  if (newlyInsertedIds.length === 0) {
-    // Movement was already recorded previously — skip physical stock deduction to prevent double deduction!
-    return
-  }
-
-  // 5. Batch fetch current stock_quantity for newly inserted target products ONLY
-  const { data: currentProds } = await supabase
-    .from('products')
-    .select('id, stock_quantity, cost_price')
-    .in('id', newlyInsertedIds)
-
-  const stockMap = new Map<string, { stock_quantity: number; cost_price: number }>()
-  if (currentProds) {
-    currentProds.forEach(p => {
-      stockMap.set(p.id, {
-        stock_quantity: Number(p.stock_quantity || 0),
-        cost_price: Number(p.cost_price || 0)
-      })
-    })
-  }
-
-  // 6. Execute physical stock quantity updates for newly inserted movements
-  const updatePromises: Promise<any>[] = []
-  for (const pId of newlyInsertedIds) {
-    const moveInfo = targetMoves.get(pId)
-    if (!moveInfo || moveInfo.qty <= 0) continue
-
-    const currentData = stockMap.get(pId) || { stock_quantity: 0, cost_price: Number(moveInfo.dbProduct.cost_price || 0) }
-    const delta = direction === 'deduct' ? -moveInfo.qty : moveInfo.qty
-    const newStock = Math.max(0, currentData.stock_quantity + delta)
-
-    updatePromises.push(
-      Promise.resolve(
-        supabase
-          .from('products')
-          .update({ stock_quantity: newStock })
-          .eq('id', pId)
-      )
-    )
-  }
-
-  if (updatePromises.length > 0) {
-    await Promise.all(updatePromises)
-  }
+  // 4. Record stock movements (PostgreSQL trigger trg_sync_product_stock_from_moves
+  // will automatically and atomically sync products.stock_quantity from stock_moves).
+  await recordStockMovements(stockMoveInputs, supabase)
 }
+
