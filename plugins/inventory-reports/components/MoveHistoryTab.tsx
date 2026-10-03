@@ -356,8 +356,10 @@ export default function MoveHistoryTab({
                         <span className="text-[#A8A89E]">-</span>
                       )}
                     </td>
-                    <td className="py-2.5 px-3 sm:px-4 text-right font-bold text-[#1C1C1A]">
-                      {m.qty}
+                    <td className="py-2.5 px-3 sm:px-4 text-right font-bold">
+                      <span className={m.type === 'receipt' || (m.type === 'adjustment' && !m.origin_location_id) ? 'text-emerald-600' : m.type === 'delivery' || (m.type === 'adjustment' && m.origin_location_id) ? 'text-rose-600' : 'text-[#1C1C1A]'}>
+                        {m.type === 'receipt' ? `+${m.qty}` : m.type === 'delivery' ? `-${m.qty}` : m.type === 'adjustment' ? (m.origin_location_id ? `-${m.qty}` : `+${m.qty}`) : m.qty}
+                      </span>
                     </td>
                     <td className="py-2.5 px-3 sm:px-4 text-right font-mono text-[#6B6B63] text-[11px]">
                       {formatCurrency(m.unit_cost)}

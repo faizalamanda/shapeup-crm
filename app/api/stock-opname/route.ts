@@ -105,10 +105,30 @@ export async function POST(req: Request) {
     const journalLines: any[] = []
     const updatePromises: any[] = []
 
+    // Fetch true system stock directly from ledger to prevent out-of-sync discrepancies
+    const { data: ledgerBalances } = await supabase
+      .from('v_stock_moves_ledger')
+      .select('product_id, system_stock')
+      .in('product_id', productIds)
+      .order('created_at', { ascending: false })
+
+    const balanceMap = new Map()
+    if (ledgerBalances) {
+      for (const row of ledgerBalances) {
+        if (!balanceMap.has(row.product_id)) {
+          balanceMap.set(row.product_id, row.system_stock)
+        }
+      }
+    }
+
     // 2. Loop items to update quantities and construct journal lines
     for (const item of items) {
-      const { product_id, recorded_quantity, actual_quantity } = item
-      const recQty = parseFloat(recorded_quantity) || 0
+      const { product_id, actual_quantity } = item
+      
+      // Override client's recorded_quantity with the Absolute Truth from Ledger
+      const recQty = balanceMap.get(product_id) || 0
+      item.recorded_quantity = recQty // Mutate item so it gets saved correctly in items_json
+      
       const actQty = parseFloat(actual_quantity) || 0
       const diff = actQty - recQty
 

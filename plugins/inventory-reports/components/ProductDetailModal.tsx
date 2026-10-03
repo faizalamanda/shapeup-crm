@@ -547,7 +547,9 @@ export default function ProductDetailModal({
                                 {m.destination_location_name || 'System'}
                               </td>
                               <td className="py-2 px-3 text-right font-bold text-[#1C1C1A]">
-                                {m.type === 'receipt' ? `+${m.qty}` : m.type === 'delivery' ? `-${m.qty}` : m.qty}{' '}
+                              <span className={m.type === 'receipt' || (m.type === 'adjustment' && !m.origin_location_id) ? 'text-emerald-600' : m.type === 'delivery' || (m.type === 'adjustment' && m.origin_location_id) ? 'text-rose-600' : 'text-[#1C1C1A]'}>
+                                {m.type === 'receipt' ? `+${m.qty}` : m.type === 'delivery' ? `-${m.qty}` : m.type === 'adjustment' ? (m.origin_location_id ? `-${m.qty}` : `+${m.qty}`) : m.qty}{' '}
+                              </span>
                                 <span className="text-[10px] text-[#82827A] font-normal">{unit}</span>
                               </td>
                               <td className="py-2 px-3 text-right font-extrabold text-blue-700 font-mono">

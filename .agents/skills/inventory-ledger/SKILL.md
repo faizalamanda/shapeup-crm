@@ -62,3 +62,18 @@ When writing stock moves to `public.stock_moves` (usually via `recordStockMoveme
    - Always batch `recordStockMovements` in a single array. Never loop and insert sequentially.
    - If physical `products.stock_quantity` needs updating alongside, use `Promise.all()` to run updates concurrently to avoid Vercel/Edge timeouts.
 
+## Ledger UI & Calculation Rules
+
+1. **Opname Diff Calculation (The "Absolute Truth")**:
+   - **DO NOT** calculate Opname selisih (`diff`) based on `recorded_quantity` sent from the frontend or from caching tables (like `products.stock_quantity`).
+   - **MUST**: Always fetch the latest `system_stock` from `v_stock_moves_ledger` at the time the API executes. Calculate `diff = actual_quantity - true_system_stock`. This guarantees the final balance lands perfectly on `actual_quantity`.
+
+2. **Move History UI Rendering**:
+   - The `qty` column in `stock_moves` is always stored as an absolute (positive) number.
+   - When rendering `Move History` in the UI, use this logic to prepend `+` or `-` and apply colors:
+     ```tsx
+     // Positive (Emerald): receipt OR (adjustment AND !origin_location_id)
+     // Negative (Rose): delivery OR (adjustment AND origin_location_id)
+     {m.type === 'receipt' ? `+${m.qty}` : m.type === 'delivery' ? `-${m.qty}` : m.type === 'adjustment' ? (m.origin_location_id ? `-${m.qty}` : `+${m.qty}`) : m.qty}
+     ```
+
