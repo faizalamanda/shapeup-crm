@@ -192,6 +192,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Failed to record stock opname: ${soErr.message}` }, { status: 500 })
     }
 
+    // Determine precise timestamp for stock_moves
+    let moveCreatedAt = new Date().toISOString()
+    if (date && !date.includes('T')) {
+      const todayStr = new Date().toISOString().split('T')[0]
+      if (date !== todayStr) {
+        // Backdated opname: Set to end of day (23:59:59 WIB = 16:59:59 UTC)
+        moveCreatedAt = `${date}T16:59:59.000Z`
+      }
+      // If date is today, moveCreatedAt remains the exact current time (new Date().toISOString())
+    } else if (date && date.includes('T')) {
+      moveCreatedAt = date
+    }
+
     // Record SaaS Stock Movement Ledger for Opname Adjustments
     const stockMoveInputs: StockMoveInput[] = items
       .map((item: any) => {
@@ -206,7 +219,7 @@ export async function POST(req: Request) {
           sourceType: 'stock_opname' as const,
           sourceId: stockOpname.id,
           status: 'done' as const,
-          createdAt: date || new Date().toISOString(),
+          createdAt: moveCreatedAt,
           // diff < 0 means shrinkage (negative adjustment), so we use a dummy origin_location_id
           originLocationId: diff < 0 ? '00000000-0000-0000-0000-000000000000' : null,
           destinationLocationId: null
