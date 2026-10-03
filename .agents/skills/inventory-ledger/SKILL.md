@@ -60,7 +60,16 @@ When writing stock moves to `public.stock_moves` (usually via `recordStockMoveme
 
 3. **Batch Operations (Anti N+1)**:
    - Always batch `recordStockMovements` in a single array. Never loop and insert sequentially.
-   - If physical `products.stock_quantity` needs updating alongside, use `Promise.all()` to run updates concurrently to avoid Vercel/Edge timeouts.
+
+4. **Single Source of Truth for Physical Stock (NO MANUAL UPDATES)**:
+   - **CRITICAL**: Do **NOT** manually update `products.stock_quantity` via `supabase.from('products').update(...)` in the API route before or after inserting into `stock_moves`.
+   - The PostgreSQL database is configured with an automated trigger (`trg_sync_product_stock_from_moves`) that fires `AFTER INSERT OR UPDATE OR DELETE ON public.stock_moves`.
+   - Updating it manually in JS will cause "Ghost Updates" where the physical stock changes, but if the `stock_moves` insert fails silently, the Move History ledger will remain empty while the physical stock is altered, destroying data integrity. Let the DB Engine handle the sync atomically.
+
+5. **Strict Error Handling (No Silent Failures)**:
+   - Never call `recordStockMovements()` without explicitly checking its return value (`{ error }`).
+   - If `error` is present, the API **MUST throw or return a 500 status** to halt the transaction and inform the client. Swallowing the error (e.g., just returning `200 OK`) causes phantom states where the client thinks the process succeeded but the ledger is missing data.
+   - Idempotency Gotcha: If an opname or document is "Updated" (resubmitted with the same `reference` / `opname_number`), `recordStockMovements` is designed to be idempotent and will return `inserted: 0`. This is expected behavior, but silent DB failure errors must still be caught.
 
 ## Ledger UI & Calculation Rules
 

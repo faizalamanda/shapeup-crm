@@ -103,7 +103,6 @@ export async function POST(req: Request) {
     }
 
     const journalLines: any[] = []
-    const updatePromises: any[] = []
 
     // Fetch true system stock directly from ledger to prevent out-of-sync discrepancies
     const { data: ledgerBalances } = await supabase
@@ -168,17 +167,8 @@ export async function POST(req: Request) {
           })
         }
       }
-
-      // Prepare physical quantity update in DB
-      updatePromises.push(
-        supabase.from('products').update({ stock_quantity: actQty }).eq('id', product_id)
-      )
     }
 
-    // Execute physical stock updates in parallel
-    if (updatePromises.length > 0) {
-      await Promise.all(updatePromises)
-    }
 
     // Insert journal lines IF ANY
     if (journalLines.length > 0) {
@@ -248,7 +238,10 @@ export async function POST(req: Request) {
       .filter((m: any) => m.qty > 0)
 
     if (stockMoveInputs.length > 0) {
-      await recordStockMovements(stockMoveInputs, supabase)
+      const moveRes = await recordStockMovements(stockMoveInputs, supabase)
+      if (moveRes.error) {
+        throw new Error(`Failed to record stock movements: ${moveRes.error}`)
+      }
     }
 
     return NextResponse.json(stockOpname)
