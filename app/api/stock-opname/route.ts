@@ -50,7 +50,7 @@ export async function POST(req: Request) {
   try {
     const ctx = await getApiContext()
     if (ctx.error) return ctx.error
-    const { businessId, supabase } = ctx
+    const { businessId, supabase, supabaseAdmin } = ctx
 
     const body = await req.json()
     const {
@@ -238,8 +238,13 @@ export async function POST(req: Request) {
       .filter((m: any) => m.qty > 0)
 
     if (stockMoveInputs.length > 0) {
-      const moveRes = await recordStockMovements(stockMoveInputs, supabase)
+      const moveRes = await recordStockMovements(stockMoveInputs, supabaseAdmin)
       if (moveRes.error) {
+        // Rollback stock_opname since it failed
+        await supabaseAdmin.from('stock_opname').delete().eq('id', stockOpname.id)
+        if (journalLines.length > 0) {
+          await supabaseAdmin.from('transactions').delete().eq('id', tx.id)
+        }
         throw new Error(`Failed to record stock movements: ${moveRes.error}`)
       }
     }
