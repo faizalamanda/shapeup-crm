@@ -65,10 +65,10 @@ export async function GET(req: Request) {
       const customerLoc = locations.find(l => l.type === 'customer')
 
       let movesQuery = supabase
-        .from('stock_moves')
+        .from('v_stock_moves_ledger')
         .select(`
           id, business_id, product_id, reference, origin_location_id, destination_location_id,
-          qty, unit_cost, lot_number, status, type, created_at,
+          qty, unit_cost, lot_number, status, type, created_at, system_stock,
           products (id, name, sku, unit)
         `, { count: 'exact' })
         .eq('business_id', businessId)
@@ -216,8 +216,8 @@ export async function GET(req: Request) {
 
       const [{ data: rawMoves }, { data: prodData }] = await Promise.all([
         supabase
-          .from('stock_moves')
-          .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at')
+          .from('v_stock_moves_ledger')
+          .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at, system_stock')
           .eq('business_id', businessId)
           .eq('product_id', productId)
           .order('created_at', { ascending: false }),

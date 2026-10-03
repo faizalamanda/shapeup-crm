@@ -42,7 +42,7 @@ export async function fetchFullInventoryData(supabase: SupabaseClient, businessI
     supabase.from('orders').select('*').eq('business_id', businessId),
     supabase.from('stock_opname').select('*').eq('business_id', businessId),
     supabase.from('inventory_locations').select('*').eq('business_id', businessId),
-    supabase.from('stock_moves').select('*').eq('business_id', businessId).order('created_at', { ascending: false }),
+    supabase.from('v_stock_moves_ledger').select('*').eq('business_id', businessId).order('created_at', { ascending: false }),
     supabase.from('inventory_stock_summary').select('*').eq('business_id', businessId),
   ])
 
