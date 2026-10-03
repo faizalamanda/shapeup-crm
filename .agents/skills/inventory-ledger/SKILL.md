@@ -86,3 +86,24 @@ When writing stock moves to `public.stock_moves` (usually via `recordStockMoveme
      {m.type === 'receipt' ? `+${m.qty}` : m.type === 'delivery' ? `-${m.qty}` : m.type === 'adjustment' ? (m.origin_location_id ? `-${m.qty}` : `+${m.qty}`) : m.qty}
      ```
 
+## Idempotency Key & Timestamp Rules for `lib/stockLedger.ts`
+
+### 1. Composite Idempotency Key
+- In `lib/stockLedger.ts`, `existingKeySet` MUST include both:
+  - `${product_id}_${source_type}_${source_id}_${type}`
+  - `${product_id}_${reference}_${type}`
+- **NEVER** key solely by `${product_id}_${type}`. Doing so will block all subsequent transactions of the same type for that product.
+
+### 2. Order & Shipping Timestamp Selection Hierarchy
+When generating stock movements for orders (e.g. `type: 'delivery'`), determine the exact movement timestamp (`created_at`) using the following order of precedence:
+1. `raw.date_shipped_gmt` / `raw.date_shipped` *(Shipping Date — Top Priority)*
+2. `raw.date_paid_gmt` / `raw.date_paid` *(Payment Date)*
+3. `raw.date_completed_gmt` / `raw.date_completed` *(Completion Date)*
+4. `order.order_date_utc` / `order.order_date` *(Order Date)*
+5. `new Date().toISOString()` *(Fallback)*
+
+### 3. Pagination & Limit Safety (1,000 Row Boundary)
+- Supabase queries default to a limit of 1,000 rows.
+- When performing bulk operations (such as rebuilding stock move ledgers or auditing transactions across all businesses), always paginate with `.range(from, to)` in chunks (e.g., 500 or 1,000 rows per loop) to ensure no products or orders are missed.
+
+

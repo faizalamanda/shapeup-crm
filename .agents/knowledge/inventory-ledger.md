@@ -21,6 +21,18 @@
 
 Buat dokumen `purchases` lebih dulu agar UUID sumber tersedia. Agregasikan item fisik per `product_id` untuk update stok/WAC dan untuk satu receipt move per produk. Gunakan `recordStockMovements()`; jangan insert `stock_moves` langsung dari route.
 
+## Idempotensi dan Presisi Timestamp Mutasi
+
+- **Composite Idempotency Key:** Pengecekan mutasi existing di `recordStockMovements()` menggunakan komposit `${product_id}_${source_type}_${source_id}_${type}` dan `${product_id}_${reference}_${type}`. Dilarang menggunakan hanya `${product_id}_${type}` karena akan memblokir transaksi selanjutnya.
+- **Hierarki Presisi Timestamp Mutasi Pesanan (`delivery`):**
+  1. `date_shipped_gmt` / `date_shipped` (Prioritas Utama: Waktu pengiriman fisik)
+  2. `date_paid_gmt` / `date_paid` (Fallback 1: Waktu pembayaran)
+  3. `date_completed_gmt` / `date_completed` (Fallback 2: Waktu pesanan selesai)
+  4. `order_date_utc` / `order_date` (Fallback 3: Waktu pesanan dibuat)
+- **Single Source of Truth Stok Fisik:**
+  - `products.stock_quantity` **WAJIB HANYA** diperbarui secara otomatis oleh PostgreSQL Trigger `trg_sync_product_stock_from_moves` (`AFTER INSERT/UPDATE/DELETE ON stock_moves`).
+  - Dilarang keras melakukan manual update `products.stock_quantity` via `supabase.from('products').update()` di JavaScript saat menulis `stock_moves`.
+
 ## Backfill dan data legacy
 
 Backfill hanya boleh memakai UUID produk bila tersedia. Jika perlu fallback SKU/nama, index alias harus dibatasi dengan `business_id`; nama atau SKU lintas business tidak boleh pernah dipakai untuk merelasi produk. Selalu gunakan paginasi saat fetching `stock_moves` di script backfill untuk melewati batas 1.000 baris PostgREST.
