@@ -59,14 +59,14 @@ export async function recordStockMovements(
     const [{ data: existingBySource }, { data: existingByRef }] = await Promise.all([
       supabase
         .from('stock_moves')
-        .select('product_id, type')
+        .select('product_id, type, source_type, source_id, reference')
         .eq('business_id', businessId)
         .in('product_id', productIds)
         .eq('source_type', sourceType)
         .eq('source_id', sourceId),
       supabase
         .from('stock_moves')
-        .select('product_id, type')
+        .select('product_id, type, source_type, source_id, reference')
         .eq('business_id', businessId)
         .in('product_id', productIds)
         .eq('reference', reference)
@@ -75,18 +75,29 @@ export async function recordStockMovements(
   } else {
     const { data: existing } = await supabase
       .from('stock_moves')
-      .select('product_id, type')
+      .select('product_id, type, source_type, source_id, reference')
       .eq('business_id', businessId)
       .in('product_id', productIds)
       .eq('reference', reference)
     existingMovesData = existing || []
   }
 
-  const existingKeySet = new Set(existingMovesData.map(e => `${e.product_id}_${e.type}`))
+  const existingKeySet = new Set(
+    existingMovesData.flatMap(e => [
+      e.source_type && e.source_id ? `${e.product_id}_${e.source_type}_${e.source_id}_${e.type}` : null,
+      e.reference ? `${e.product_id}_${e.reference}_${e.type}` : null
+    ]).filter(Boolean)
+  )
 
   const buildRows = (includeSource: boolean) => {
     return moves
-      .filter(m => !existingKeySet.has(`${m.productId}_${m.type}`))
+      .filter(m => {
+        const keyBySource = m.sourceType && m.sourceId ? `${m.productId}_${m.sourceType}_${m.sourceId}_${m.type}` : null
+        const keyByRef = m.reference ? `${m.productId}_${m.reference}_${m.type}` : null
+        if (keyBySource && existingKeySet.has(keyBySource)) return false
+        if (keyByRef && existingKeySet.has(keyByRef)) return false
+        return true
+      })
       .map(m => {
         const row: Record<string, any> = {
           business_id: m.businessId,

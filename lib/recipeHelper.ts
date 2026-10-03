@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js'
+import { recordStockMovements, StockMoveInput } from './stockLedger'
 
 export type RecipeIngredient = {
   id?: string
@@ -276,39 +277,60 @@ export async function processOrderInventoryDeduction(
 export async function processOrderInventoryRestock(
   productId: string,
   refundQuantity: number,
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  reference?: string,
+  orderId?: string
 ): Promise<void> {
   if (!productId || refundQuantity <= 0) return
 
   try {
     const { isVariable, ingredients } = await calculateProductHpp(productId, supabase)
 
+    const { data: mainProd } = await supabase
+      .from('products')
+      .select('id, business_id, cost_price, stock_type, stock_quantity')
+      .eq('id', productId)
+      .single()
+
+    if (!mainProd) return
+
+    const stockMoveInputs: StockMoveInput[] = []
+    const refStr = reference || `REFUND-${productId.slice(0, 6)}`
+
     if (isVariable && ingredients.length > 0) {
       for (const recipe of ingredients) {
         const ingProd = recipe.ingredient
         if (ingProd && ingProd.stock_type === 'tracked') {
           const addQty = Number(recipe.quantity) * Number(refundQuantity)
-          const newStock = Number(ingProd.stock_quantity || 0) + addQty
-          await supabase
-            .from('products')
-            .update({ stock_quantity: newStock })
-            .eq('id', ingProd.id)
+          stockMoveInputs.push({
+            businessId: mainProd.business_id,
+            productId: ingProd.id,
+            reference: refStr,
+            qty: addQty,
+            unitCost: Number(ingProd.cost_price || 0),
+            type: 'refund',
+            sourceType: 'refund',
+            sourceId: orderId,
+            status: 'done'
+          })
         }
       }
-    } else {
-      const { data: mainProd } = await supabase
-        .from('products')
-        .select('id, stock_type, stock_quantity')
-        .eq('id', productId)
-        .single()
+    } else if (mainProd.stock_type === 'tracked') {
+      stockMoveInputs.push({
+        businessId: mainProd.business_id,
+        productId: mainProd.id,
+        reference: refStr,
+        qty: Number(refundQuantity),
+        unitCost: Number(mainProd.cost_price || 0),
+        type: 'refund',
+        sourceType: 'refund',
+        sourceId: orderId,
+        status: 'done'
+      })
+    }
 
-      if (mainProd && mainProd.stock_type === 'tracked') {
-        const newStock = Number(mainProd.stock_quantity || 0) + Number(refundQuantity)
-        await supabase
-          .from('products')
-          .update({ stock_quantity: newStock })
-          .eq('id', mainProd.id)
-      }
+    if (stockMoveInputs.length > 0) {
+      await recordStockMovements(stockMoveInputs, supabase)
     }
   } catch (err) {
     console.error(`Error in processOrderInventoryRestock for product ${productId}:`, err)

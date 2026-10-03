@@ -75,8 +75,14 @@ export async function POST(req: Request) {
         for (const item of items) {
           const dbProd = productMap.get(item.product_id)
           if (dbProd) {
-            // Restore stock (Restocks ingredients if Variable HPP, or product stock if Fixed HPP)
-            await processOrderInventoryRestock(dbProd.id, Number(item.quantity), supabase)
+            // Restore stock via recordStockMovements (Restocks ingredients if Variable HPP, or product stock if Fixed HPP)
+            await processOrderInventoryRestock(
+              dbProd.id,
+              Number(item.quantity),
+              supabase,
+              order.order_number ? `REFUND-#${order.order_number}` : undefined,
+              order.id
+            )
 
             // Calculate COGS to reverse
             if (dbProd.type === 'physical' && dbProd.cost_price > 0) {
