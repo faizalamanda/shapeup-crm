@@ -13,7 +13,7 @@ import { NextResponse } from 'next/server'
 export async function POST(req: Request) {
   const ctx = await getApiContext()
   if (ctx.error) return ctx.error
-  const { businessId, supabase } = ctx
+  const { businessId, supabase, supabaseAdmin } = ctx
 
   try {
     const body = await req.json().catch(() => ({}))
@@ -307,7 +307,7 @@ export async function POST(req: Request) {
     // ─────────────────────────────────────────────────────────────────
 
     // 5a. Hapus semua stock_moves untuk bisnis ini
-    const { error: deleteErr } = await supabase
+    const { error: deleteErr } = await supabaseAdmin
       .from('stock_moves')
       .delete()
       .eq('business_id', businessId)
@@ -321,7 +321,7 @@ export async function POST(req: Request) {
     let totalInserted = 0
     for (let i = 0; i < allNewRows.length; i += BATCH_SIZE) {
       const batch = allNewRows.slice(i, i + BATCH_SIZE)
-      const { error: insErr } = await supabase.from('stock_moves').insert(batch)
+      const { error: insErr } = await supabaseAdmin.from('stock_moves').insert(batch)
       if (insErr) {
         console.error('[Backfill] Insert batch error:', insErr.message)
         return NextResponse.json({ error: `Gagal insert stock_moves: ${insErr.message}` }, { status: 500 })
@@ -330,15 +330,20 @@ export async function POST(req: Request) {
     }
 
     // 5c. Update stock_quantity untuk produk yang punya histori transaksi
+    // DILARANG KERAS menggunakan Promise.all() untuk update masif, kita proses sekuensial per batch.
     if (stockUpdates.length > 0) {
-      const updatePromises = stockUpdates.map(({ productId, newQty }) =>
-        supabase
-          .from('products')
-          .update({ stock_quantity: newQty })
-          .eq('id', productId)
-          .eq('business_id', businessId)
-      )
-      await Promise.all(updatePromises)
+      const PROD_BATCH_SIZE = 50
+      for (let i = 0; i < stockUpdates.length; i += PROD_BATCH_SIZE) {
+        const batch = stockUpdates.slice(i, i + PROD_BATCH_SIZE)
+        // Jalankan update secara berurutan dalam batch kecil untuk mencegah timeout / pool exhaustion
+        for (const { productId, newQty } of batch) {
+          await supabaseAdmin
+            .from('products')
+            .update({ stock_quantity: newQty })
+            .eq('id', productId)
+            .eq('business_id', businessId)
+        }
+      }
     }
 
     return NextResponse.json({
