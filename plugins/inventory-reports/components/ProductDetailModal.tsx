@@ -527,7 +527,7 @@ export default function ProductDetailModal({
                           return (
                             <tr key={m.id} className="hover:bg-[#F9F9F8]">
                               <td className="py-2 px-3 text-[11px] text-[#6B6B63] whitespace-nowrap">
-                                {new Date(m.created_at).toLocaleString('id-ID', {
+                                {new Date(m.created_at && !m.created_at.includes('Z') && !m.created_at.includes('+') ? m.created_at + 'Z' : m.created_at).toLocaleString('id-ID', {
                                   dateStyle: 'short',
                                   timeStyle: 'short',
                                 })}

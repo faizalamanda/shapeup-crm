@@ -185,16 +185,12 @@ export async function syncOrderToLedger(
     const orderRef = `Order #${orderNumber}`
 
     // Determine precise order / shipped move date
-    let orderMoveDate = new Date().toISOString()
+    let orderMoveDate = order.updated_at ? new Date(order.updated_at).toISOString() : new Date().toISOString()
     const raw = order.raw_source_data || {}
     if (raw.date_shipped_gmt) orderMoveDate = new Date(raw.date_shipped_gmt + 'Z').toISOString()
     else if (raw.date_shipped) orderMoveDate = new Date(raw.date_shipped).toISOString()
-    else if (raw.date_paid_gmt) orderMoveDate = new Date(raw.date_paid_gmt + 'Z').toISOString()
-    else if (raw.date_paid) orderMoveDate = new Date(raw.date_paid).toISOString()
     else if (raw.date_completed_gmt) orderMoveDate = new Date(raw.date_completed_gmt + 'Z').toISOString()
     else if (raw.date_completed) orderMoveDate = new Date(raw.date_completed).toISOString()
-    else if (order.order_date_utc) orderMoveDate = new Date(order.order_date_utc).toISOString()
-    else if (order.order_date) orderMoveDate = new Date(order.order_date).toISOString()
 
     // 6. State Machine for Transitions
     if (isSalesTriggered) {
