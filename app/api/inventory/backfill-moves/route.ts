@@ -19,45 +19,79 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}))
     const dryRun = body.dryRun === true // dryRun=true → hanya preview, tidak eksekusi
 
-    // ─────────────────────────────────────────────────────────────────
-    // 1. Fetch semua data sumber secara paralel
-    // ─────────────────────────────────────────────────────────────────
-    const [
-      { data: products, error: prodErr },
-      { data: purchases, error: purErr },
-      { data: orders, error: ordErr },
-      { data: opnames, error: opnErr },
-    ] = await Promise.all([
-      supabase
-        .from('products')
-        .select('id, name, sku, stock_quantity, cost_price, stock_type, created_at')
-        .eq('business_id', businessId),
-      supabase
-        .from('purchases')
-        .select('id, purchase_number, payment_status, items_json, date, created_at')
-        .eq('business_id', businessId)
-        .order('date', { ascending: true }),
-      supabase
-        .from('orders')
-        .select('id, order_number, status, items_json, order_date, created_at, source_platform')
-        .eq('business_id', businessId)
-        .order('order_date', { ascending: true }),
-      supabase
-        .from('stock_opname')
-        .select('id, opname_number, items_json, date, created_at')
-        .eq('business_id', businessId)
-        .order('date', { ascending: true }),
-    ])
+    // Helper function to fetch all records safely via pagination (bypassing 1000 max-rows limit)
+    async function fetchAll(table: string, select: string, orderField?: string) {
+      let allData: any[] = []
+      let from = 0
+      const limit = 1000
+      let hasMore = true
 
-    if (prodErr) return NextResponse.json({ error: `Gagal fetch produk: ${prodErr.message}` }, { status: 500 })
-    if (purErr) return NextResponse.json({ error: `Gagal fetch pembelian: ${purErr.message}` }, { status: 500 })
-    if (ordErr) return NextResponse.json({ error: `Gagal fetch orders: ${ordErr.message}` }, { status: 500 })
-    if (opnErr) return NextResponse.json({ error: `Gagal fetch opname: ${opnErr.message}` }, { status: 500 })
+      while (hasMore) {
+        let query = supabaseAdmin
+          .from(table)
+          .select(select)
+          .eq('business_id', businessId)
+        
+        if (orderField) query = query.order(orderField, { ascending: true })
+        
+        const { data, error } = await query.range(from, from + limit - 1)
+        
+        if (error) throw error
+        
+        if (data && data.length > 0) {
+          allData = allData.concat(data)
+          from += limit
+          if (data.length < limit) hasMore = false
+        } else {
+          hasMore = false
+        }
+      }
+      return allData
+    }
 
-    const allProducts = products || []
-    const allPurchases = purchases || []
-    const allOrders = orders || []
-    const allOpnames = opnames || []
+    // Helper untuk menjamin jam mutasi akurat
+    // Jika logicalDate (order_date/date) hanya YYYY-MM-DD atau T00:00:00, 
+    // kita ambil komponen waktunya dari created_at agar urutannya persis.
+    function getPreciseDate(logicalDate: string | null, createdAt: string | null): string {
+      if (!logicalDate) return createdAt || new Date().toISOString()
+      if (!createdAt) return logicalDate
+
+      // Jika logicalDate sudah punya waktu yang spesifik (bukan tengah malam)
+      if (logicalDate.includes('T') && !logicalDate.includes('T00:00:00.000Z') && !logicalDate.includes('T00:00:00+00:00')) {
+        return logicalDate
+      }
+
+      // Ekstrak YYYY-MM-DD
+      const dateMatch = logicalDate.match(/^\d{4}-\d{2}-\d{2}/)
+      // Ekstrak T...Z
+      const timeMatch = createdAt.match(/T.*$/)
+
+      if (dateMatch && timeMatch) {
+        return `${dateMatch[0]}${timeMatch[0]}`
+      }
+
+      return logicalDate
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 1. Fetch semua data sumber secara paralel (Bebas limit 1000 baris)
+    // ─────────────────────────────────────────────────────────────────
+    let allProducts: any[] = []
+    let allPurchases: any[] = []
+    let allOrders: any[] = []
+    let allOpnames: any[] = []
+
+    try {
+      [allProducts, allPurchases, allOrders, allOpnames] = await Promise.all([
+        fetchAll('products', 'id, name, sku, stock_quantity, cost_price, stock_type, created_at'),
+        fetchAll('purchases', 'id, purchase_number, payment_status, items_json, date, created_at', 'date'),
+        fetchAll('orders', 'id, order_number, status, items_json, order_date, created_at, source_platform', 'order_date'),
+        fetchAll('stock_opname', 'id, opname_number, items_json, date, created_at', 'date'),
+      ])
+    } catch (err: any) {
+      return NextResponse.json({ error: `Gagal fetch data sumber: ${err.message}` }, { status: 500 })
+    }
+
 
     // Build product lookup map by ID
     const productMap = new Map<string, any>()
@@ -79,7 +113,7 @@ export async function POST(req: Request) {
     for (const purchase of allPurchases) {
       const items = Array.isArray(purchase.items_json) ? purchase.items_json : []
       const ref = purchase.purchase_number || `PO-${purchase.id.slice(0, 6)}`
-      const moveDate = purchase.date || purchase.created_at
+      const moveDate = getPreciseDate(purchase.date, purchase.created_at)
 
       // Agregasi qty per product (jika ada duplikat produk dalam 1 PO)
       const aggByProduct = new Map<string, { qty: number; unitCost: number }>()
@@ -129,7 +163,7 @@ export async function POST(req: Request) {
 
       const items = Array.isArray(order.items_json) ? order.items_json : []
       const ref = order.order_number || `ORD-${order.id.slice(0, 6)}`
-      const moveDate = order.order_date || order.created_at
+      const moveDate = getPreciseDate(order.order_date, order.created_at)
 
       const aggByProduct = new Map<string, { qty: number; unitCost: number }>()
       for (const item of items) {
@@ -179,7 +213,7 @@ export async function POST(req: Request) {
     for (const opname of allOpnames) {
       const items = Array.isArray(opname.items_json) ? opname.items_json : []
       const ref = opname.opname_number || `OPN-${opname.id.slice(0, 6)}`
-      const moveDate = opname.date || opname.created_at
+      const moveDate = getPreciseDate(opname.date, opname.created_at)
 
       for (const item of items) {
         const productId = item.product_id
