@@ -107,17 +107,22 @@ When generating stock movements for orders (e.g. `type: 'delivery'`), determine 
 - When performing bulk operations (such as rebuilding stock move ledgers or auditing transactions across all businesses), always paginate with `.range(from, to)` in chunks (e.g., 500 or 1,000 rows per loop) to ensure no products or orders are missed.
 
 ## Transaction Document UI Standard (Ledger Tabs)
-When displaying the details of any transaction document that affects inventory (e.g., Stock Opname, Sales Orders, Purchase Orders) in the frontend, you **MUST** follow this Tabbed UI architectural pattern to provide a transparent audit trail:
+When displaying the details of any transaction document that affects inventory (e.g., Stock Opname, Sales Orders, Purchase Orders) in the frontend, you **MUST** follow this Tabbed UI architectural pattern to provide a transparent audit trail.
 
-1. **Tab 1: Physical / General Details**
-   - Displays the raw data of the transaction (e.g., recorded vs actual physical count for Opname, or line items purchased for PO).
+### 1. Mobile/PWA Native Modal
+- The detail view **MUST** be wrapped in `<FullScreenModal>` from `@/components/ui/FullScreenModal` with `desktopSize="xl"` or `lg`. This ensures full PWA compliance, Safe-Area handling, and native Back-button routing.
+- Do NOT use custom portals, `body.style.overflow` locks, or raw `div` overlays.
 
-2. **Tab 2: Jurnal Stok (Stock Moves / Kartu Stok)**
-   - **Data Source**: Always fetch dynamically from `v_stock_moves_ledger` using `source_type` and `source_id` matching the document.
-   - **Purpose**: Allows the user to verify exactly what stock adjustments were made by this specific document, proving the action was executed correctly on the ledger.
-   - **Display Columns**: Product Name, Action Type, Qty Mutasi (with + / - signs and colors), and Saldo Sistem (Running Balance).
-
-3. **Tab 3: Jurnal Keuangan (Financial Journal)**
-   - **Data Source**: The `journal_lines` associated with the document's transaction ID.
-   - **Purpose**: To verify the financial accounting impact (Debit/Credit to Inventory and Adjustment accounts).
+### 2. Tab Structure & Lazy Loading (Access Speed)
+To prevent network bottlenecks on initial modal open, the data for the ledgers **MUST** be fetched lazily ("On-Demand") only when the user clicks the respective tab.
+- **Tab 1: Physical / General Details**
+  - **Data Source**: Pre-loaded with the document or fetched immediately.
+  - **Purpose**: Displays the raw data of the transaction (e.g., recorded vs actual physical count for Opname, or line items purchased for PO).
+- **Tab 2: Jurnal Stok (Stock Moves / Kartu Stok)**
+  - **Data Source**: Lazy-loaded from `v_stock_moves_ledger` using `source_type` and `source_id`. Execute as a direct Supabase client query from the browser to bypass API cold-starts.
+  - **Purpose**: Allows the user to verify exactly what stock adjustments were made by this specific document.
+  - **UI**: Show Time, Product Name, Action Type, Qty Mutasi (with + / - signs and colors), and Saldo Sistem (Running Balance).
+- **Tab 3: Jurnal Keuangan (Financial Journal)**
+  - **Data Source**: Lazy-loaded from `transactions` and `journal_lines` based on the document's transaction ID.
+  - **Purpose**: To verify the financial accounting impact (Debit/Credit to Inventory and Expense accounts).
 
