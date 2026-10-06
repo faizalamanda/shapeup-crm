@@ -105,19 +105,24 @@ export async function POST(req: Request) {
     const journalLines: any[] = []
 
     // Fetch true system stock directly from ledger to prevent out-of-sync discrepancies
-    const { data: ledgerBalances } = await supabase
-      .from('v_stock_moves_ledger')
-      .select('product_id, system_stock')
-      .in('product_id', productIds)
-      .order('created_at', { ascending: false })
+    // Using Promise.all per product to bypass Supabase 1,000 row limit and ensure absolute latest row
+    const balancePromises = productIds.map(async (pid: string) => {
+      const { data } = await supabase
+        .from('v_stock_moves_ledger')
+        .select('product_id, system_stock')
+        .eq('product_id', pid)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      
+      return { product_id: pid, system_stock: data?.system_stock || 0 }
+    })
+
+    const resolvedBalances = await Promise.all(balancePromises)
 
     const balanceMap = new Map()
-    if (ledgerBalances) {
-      for (const row of ledgerBalances) {
-        if (!balanceMap.has(row.product_id)) {
-          balanceMap.set(row.product_id, row.system_stock)
-        }
-      }
+    for (const row of resolvedBalances) {
+      balanceMap.set(row.product_id, row.system_stock)
     }
 
     // 2. Loop items to update quantities and construct journal lines

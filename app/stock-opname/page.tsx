@@ -57,6 +57,7 @@ export default function StockOpnamePage() {
   const [activeBizId, setActiveBizId] = useState<string | null>(null)
   const [activeBizName, setActiveBizName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
 
   // Modals state
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -111,14 +112,13 @@ export default function StockOpnamePage() {
   const fetchData = useCallback(async (businessId: string) => {
     setLoading(true)
     try {
-      // 1. Fetch Opnames
-      const res = await fetch('/api/stock-opname')
-      if (!res.ok) throw new Error('Gagal memuat stock opname')
-      const data = await res.json()
-      setOpnames(data)
+      // Parallelize fetches
+      const p1 = fetch('/api/stock-opname').then(res => {
+        if (!res.ok) throw new Error('Gagal memuat stock opname')
+        return res.json()
+      })
 
-      // 2. Fetch Tracked Physical Products
-      const { data: prodData } = await supabase
+      const p2 = supabase
         .from('products')
         .select('id, name, sku, stock_quantity, cost_price')
         .eq('business_id', businessId)
@@ -126,7 +126,10 @@ export default function StockOpnamePage() {
         .eq('stock_type', 'tracked')
         .order('name', { ascending: true })
 
-      setProducts(prodData || [])
+      const [data, prodRes] = await Promise.all([p1, p2])
+      
+      setOpnames(data)
+      setProducts(prodRes.data || [])
     } catch (err) {
       console.error('Error fetching stock opname page data:', err)
     } finally {
@@ -283,6 +286,21 @@ export default function StockOpnamePage() {
     setIsDetailOpen(true)
   }
 
+  // Filter opnames
+  const filteredOpnames = useMemo(() => {
+    if (!searchQuery.trim()) return opnames
+    const q = searchQuery.toLowerCase().trim()
+    return opnames.filter(o => {
+      const matchOpname = o.opname_number?.toLowerCase().includes(q) || false
+      const matchNotes = o.notes?.toLowerCase().includes(q) || false
+      const matchProducts = Array.isArray(o.items_json) && o.items_json.some(item => 
+        item.name?.toLowerCase().includes(q)
+      )
+
+      return matchOpname || matchNotes || matchProducts
+    })
+  }, [opnames, searchQuery])
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       
@@ -324,8 +342,27 @@ export default function StockOpnamePage() {
           <p className="text-xs text-gray-400 mt-1">Lakukan stock opname pertama Anda untuk menyesuaikan kuantitas produk.</p>
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl shadow-xs overflow-hidden">
-          <table className="w-full text-left border-collapse">
+        <div className="space-y-4">
+          <div className="flex items-center bg-white border border-gray-200 rounded-xl shadow-xs px-4 py-2">
+            <span className="text-gray-400 mr-2">🔍</span>
+            <input
+              type="text"
+              placeholder="Cari berdasarkan No. Dokumen, Catatan, atau Nama Produk..."
+              className="flex-1 bg-transparent text-sm font-medium text-gray-800 outline-none placeholder:text-gray-400 py-1"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            {searchQuery && (
+              <button 
+                onClick={() => setSearchQuery('')}
+                className="text-gray-400 hover:text-gray-600 text-sm font-bold"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl shadow-xs overflow-hidden">
+            <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200 uppercase text-[10px] text-gray-400 font-bold tracking-widest">
                 <th className="p-4">No. Dokumen</th>
@@ -336,7 +373,13 @@ export default function StockOpnamePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-xs font-semibold text-gray-700">
-              {opnames.map(o => {
+              {filteredOpnames.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-gray-400 italic">
+                    Tidak ada hasil pencarian untuk "{searchQuery}"
+                  </td>
+                </tr>
+              ) : filteredOpnames.map(o => {
                 const itemsCount = Array.isArray(o.items_json) ? o.items_json.length : 0
                 return (
                   <tr key={o.id} className="hover:bg-gray-50/50 transition-colors">
@@ -357,6 +400,7 @@ export default function StockOpnamePage() {
               })}
             </tbody>
           </table>
+        </div>
         </div>
       )}
 
