@@ -64,6 +64,10 @@ export default function StockOpnamePage() {
   const [submitLoading, setSubmitLoading] = useState(false)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [selectedOpname, setSelectedOpname] = useState<StockOpname | null>(null)
+  
+  const [selectedOpnameMoves, setSelectedOpnameMoves] = useState<any[]>([])
+  const [movesLoading, setMovesLoading] = useState(false)
+  const [detailTab, setDetailTab] = useState<'fisik' | 'jurnal_stok' | 'jurnal_keuangan'>('fisik')
 
   // Form State
   const [formOpnameNumber, setFormOpnameNumber] = useState('')
@@ -281,9 +285,26 @@ export default function StockOpnamePage() {
   }
 
   // View Details modal
-  const openDetailModal = (opname: StockOpname) => {
+  const openDetailModal = async (opname: StockOpname) => {
     setSelectedOpname(opname)
+    setDetailTab('fisik')
     setIsDetailOpen(true)
+    setMovesLoading(true)
+    try {
+      const { data, error } = await supabase
+        .from('v_stock_moves_ledger')
+        .select('*')
+        .eq('source_type', 'stock_opname')
+        .eq('source_id', opname.id)
+        .order('created_at', { ascending: false })
+      
+      if (error) throw error
+      setSelectedOpnameMoves(data || [])
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setMovesLoading(false)
+    }
   }
 
   // Filter opnames
@@ -738,62 +759,131 @@ export default function StockOpnamePage() {
                 )}
               </div>
 
-              {/* 1. Fisik & Perhitungan */}
-              <div className="space-y-2">
-                <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400">
-                  📦 Selisih & Perhitungan Fisik
-                </h4>
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead className="bg-gray-50 border-b border-gray-200 text-[10px] text-gray-400 font-bold uppercase">
-                      <tr>
-                        <th className="p-2">Nama Barang</th>
-                        <th className="p-2 text-center">Sistem</th>
-                        <th className="p-2 text-center">Fisik</th>
-                        <th className="p-2 text-right">Selisih</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 font-semibold text-gray-700">
-                      {selectedOpname.items_json.map((item, idx) => {
-                        const diff = item.actual_quantity - item.recorded_quantity
-                        return (
-                          <tr key={idx} className="hover:bg-gray-50/50">
-                            <td className="p-2 font-bold text-gray-900">{item.name}</td>
-                            <td className="p-2 text-center text-gray-400">{item.recorded_quantity}</td>
-                            <td className="p-2 text-center text-gray-950">{item.actual_quantity}</td>
-                            <td className="p-2 text-right">
-                              {diff === 0 && <span className="text-gray-400">-</span>}
-                              {diff > 0 && <span className="text-emerald-600 font-bold">+{diff} (Lebih)</span>}
-                              {diff < 0 && <span className="text-red-500 font-bold">{diff} (Susut)</span>}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+              <div className="flex border-b border-gray-200 space-x-4 mt-5">
+                <button 
+                  onClick={() => setDetailTab('fisik')}
+                  className={`pb-2 text-xs font-bold uppercase tracking-wider transition-colors ${detailTab === 'fisik' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+                >
+                  📦 Fisik
+                </button>
+                <button 
+                  onClick={() => setDetailTab('jurnal_stok')}
+                  className={`pb-2 text-xs font-bold uppercase tracking-wider transition-colors ${detailTab === 'jurnal_stok' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+                >
+                  📊 Jurnal Stok
+                </button>
+                <button 
+                  onClick={() => setDetailTab('jurnal_keuangan')}
+                  className={`pb-2 text-xs font-bold uppercase tracking-wider transition-colors ${detailTab === 'jurnal_keuangan' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+                >
+                  📒 Jurnal Keuangan
+                </button>
               </div>
 
-              {/* 2. Journal Lines / Entri Jurnal Akuntansi */}
-              <div className="space-y-2 pt-2 border-t border-gray-100">
-                <div className="flex justify-between items-center">
-                  <h4 className="text-[10px] font-black uppercase tracking-widest text-gray-400">
-                    📒 Entri Jurnal Akuntansi
-                  </h4>
-                  {selectedOpname.transaction_id ? (
-                    <span className="text-[9px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full uppercase">
-                      ✓ Diposting Ke Jurnal
-                    </span>
-                  ) : (
-                    <span className="text-[9px] font-extrabold bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full uppercase">
-                      Tanpa Penyesuaian Jurnal (Stok Pas)
-                    </span>
-                  )}
-                </div>
-
-                {selectedOpname.transactions?.journal_lines && selectedOpname.transactions.journal_lines.length > 0 ? (
+              {detailTab === 'fisik' && (
+                <div className="space-y-2 mt-4 animate-in fade-in duration-200">
                   <div className="border border-gray-200 rounded-lg overflow-hidden">
                     <table className="w-full text-left text-xs border-collapse">
+                      <thead className="bg-gray-50 border-b border-gray-200 text-[10px] text-gray-400 font-bold uppercase">
+                        <tr>
+                          <th className="p-2">Nama Barang</th>
+                          <th className="p-2 text-center">Sistem</th>
+                          <th className="p-2 text-center">Fisik</th>
+                          <th className="p-2 text-right">Selisih</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 font-semibold text-gray-700">
+                        {selectedOpname.items_json.map((item, idx) => {
+                          const diff = item.actual_quantity - item.recorded_quantity
+                          return (
+                            <tr key={idx} className="hover:bg-gray-50/50">
+                              <td className="p-2 font-bold text-gray-900">{item.name}</td>
+                              <td className="p-2 text-center text-gray-400">{item.recorded_quantity}</td>
+                              <td className="p-2 text-center text-gray-950">{item.actual_quantity}</td>
+                              <td className="p-2 text-right">
+                                {diff === 0 && <span className="text-gray-400">-</span>}
+                                {diff > 0 && <span className="text-emerald-600 font-bold">+{diff} (Lebih)</span>}
+                                {diff < 0 && <span className="text-red-500 font-bold">{diff} (Susut)</span>}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {detailTab === 'jurnal_stok' && (
+                <div className="space-y-2 mt-4 animate-in fade-in duration-200">
+                  {movesLoading ? (
+                    <div className="text-center p-4 text-xs text-gray-500 font-medium">Memuat kartu stok...</div>
+                  ) : selectedOpnameMoves.length === 0 ? (
+                    <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-4 text-center text-xs text-slate-500 font-medium">
+                      Tidak ada mutasi stok yang dicatat (karena tidak ada selisih).
+                    </div>
+                  ) : (
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead className="bg-slate-50 border-b border-gray-200 text-[10px] text-gray-500 font-bold uppercase">
+                          <tr>
+                            <th className="p-2.5">Produk</th>
+                            <th className="p-2.5 text-center">Tipe Aksi</th>
+                            <th className="p-2.5 text-right">Mutasi</th>
+                            <th className="p-2.5 text-right">Saldo Sistem</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 font-medium text-gray-700">
+                          {selectedOpnameMoves.map(move => {
+                            const prodName = products.find(p => p.id === move.product_id)?.name || 'Produk Tidak Ditemukan'
+                            const isNegative = move.origin_location_id !== null
+                            const qtyDisplay = isNegative ? `-${move.qty}` : `+${move.qty}`
+                            const qtyColor = isNegative ? 'text-red-500' : 'text-emerald-600'
+                            
+                            return (
+                              <tr key={move.id} className="hover:bg-gray-50/50">
+                                <td className="p-2.5 font-bold text-gray-900">{prodName}</td>
+                                <td className="p-2.5 text-center">
+                                  <span className="text-[9px] font-extrabold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full uppercase">
+                                    {move.type}
+                                  </span>
+                                </td>
+                                <td className={`p-2.5 text-right font-mono font-bold ${qtyColor}`}>
+                                  {qtyDisplay}
+                                </td>
+                                <td className="p-2.5 text-right font-mono font-bold text-gray-900">
+                                  {move.system_stock}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {detailTab === 'jurnal_keuangan' && (
+                <div className="space-y-3 mt-4 animate-in fade-in duration-200">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
+                      Entri Jurnal Akuntansi
+                    </span>
+                    {selectedOpname.transaction_id ? (
+                      <span className="text-[9px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full uppercase">
+                        ✓ Diposting Ke Jurnal
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-extrabold bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full uppercase">
+                        Tanpa Penyesuaian (Stok Pas)
+                      </span>
+                    )}
+                  </div>
+
+                  {selectedOpname.transactions?.journal_lines && selectedOpname.transactions.journal_lines.length > 0 ? (
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <table className="w-full text-left text-xs border-collapse">
                       <thead className="bg-slate-50 border-b border-gray-200 text-[10px] text-gray-500 font-bold uppercase">
                         <tr>
                           <th className="p-2.5">Kode & Akun Akuntansi</th>
@@ -838,12 +928,13 @@ export default function StockOpnamePage() {
                       </tfoot>
                     </table>
                   </div>
-                ) : (
-                  <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-3 text-center text-xs text-slate-500 font-medium">
-                    Tidak ada entri jurnal keuangan yang dibuat untuk hasil opname ini (selisih stok = 0).
-                  </div>
-                )}
-              </div>
+                  ) : (
+                    <div className="bg-slate-50 border border-dashed border-slate-200 rounded-lg p-3 text-center text-xs text-slate-500 font-medium">
+                      Tidak ada entri jurnal keuangan yang dibuat untuk hasil opname ini (selisih stok = 0).
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="pt-4 border-t border-gray-100 flex justify-end">
                 <button
