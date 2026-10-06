@@ -78,13 +78,14 @@ export function PurchaseDetailModal({ purchase, accounts, onClose, onEdit }: Pur
 
   // Lazy Load: Payments (Details Tab)
   useEffect(() => {
-    if (purchase?.id && activeTab === 'details' && !hasFetchedPayments) {
+    const purchaseId = purchase?.id;
+    if (purchaseId && activeTab === 'details' && !hasFetchedPayments) {
       async function fetchPayments() {
         setPaymentsLoading(true)
         const { data, error } = await supabase
           .from('purchase_payments')
           .select('*')
-          .eq('purchase_id', purchase.id)
+          .eq('purchase_id', purchaseId)
           .order('date', { ascending: true })
         if (!error && data) {
           setPayments(data)
@@ -98,14 +99,15 @@ export function PurchaseDetailModal({ purchase, accounts, onClose, onEdit }: Pur
 
   // Lazy Load: Stock Moves (Jurnal Stok Tab)
   useEffect(() => {
-    if (purchase?.id && activeTab === 'stock' && !hasFetchedStock) {
+    const purchaseId = purchase?.id;
+    if (purchaseId && activeTab === 'stock' && !hasFetchedStock) {
       async function fetchStock() {
         setStockLoading(true)
         const { data, error } = await supabase
           .from('v_stock_moves_ledger')
           .select('id, created_at, reference, type, qty, origin_location_id, system_stock, products ( name )')
           .eq('source_type', 'purchase')
-          .eq('source_id', purchase.id)
+          .eq('source_id', purchaseId)
           .order('created_at', { ascending: false })
         if (!error && data) {
           setStockMoves(data)
@@ -119,13 +121,16 @@ export function PurchaseDetailModal({ purchase, accounts, onClose, onEdit }: Pur
 
   // Lazy Load: Journal Lines (Jurnal Keuangan Tab)
   useEffect(() => {
-    if (purchase?.id && activeTab === 'journal' && !hasFetchedJournal) {
+    const purchaseId = purchase?.id;
+    const txId = purchase?.transaction_id;
+    
+    if (purchaseId && activeTab === 'journal' && !hasFetchedJournal) {
       async function fetchJournal() {
         setJournalLoading(true)
         setJournalError(null)
         try {
-          const { data: payData } = await supabase.from('purchase_payments').select('transaction_id').eq('purchase_id', purchase.id)
-          const txIds = [purchase.transaction_id].filter(Boolean) as string[]
+          const { data: payData } = await supabase.from('purchase_payments').select('transaction_id').eq('purchase_id', purchaseId)
+          const txIds = [txId].filter(Boolean) as string[]
           if (payData) {
             payData.forEach(p => { if (p.transaction_id) txIds.push(p.transaction_id) })
           }
@@ -169,7 +174,7 @@ export function PurchaseDetailModal({ purchase, accounts, onClose, onEdit }: Pur
       }
       fetchJournal()
     }
-  }, [purchase?.id, activeTab, hasFetchedJournal])
+  }, [purchase?.id, purchase?.transaction_id, activeTab, hasFetchedJournal])
 
   const formatIDR = (val: any) => new Intl.NumberFormat('id-ID', { 
     style: 'currency', currency: 'IDR', maximumFractionDigits: 0 
