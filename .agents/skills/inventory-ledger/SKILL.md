@@ -106,4 +106,18 @@ When generating stock movements for orders (e.g. `type: 'delivery'`), determine 
 - Supabase queries default to a limit of 1,000 rows.
 - When performing bulk operations (such as rebuilding stock move ledgers or auditing transactions across all businesses), always paginate with `.range(from, to)` in chunks (e.g., 500 or 1,000 rows per loop) to ensure no products or orders are missed.
 
+## Transaction Document UI Standard (Ledger Tabs)
+When displaying the details of any transaction document that affects inventory (e.g., Stock Opname, Sales Orders, Purchase Orders) in the frontend, you **MUST** follow this Tabbed UI architectural pattern to provide a transparent audit trail:
+
+1. **Tab 1: Physical / General Details**
+   - Displays the raw data of the transaction (e.g., recorded vs actual physical count for Opname, or line items purchased for PO).
+
+2. **Tab 2: Jurnal Stok (Stock Moves / Kartu Stok)**
+   - **Data Source**: Always fetch dynamically from `v_stock_moves_ledger` using `source_type` and `source_id` matching the document.
+   - **Purpose**: Allows the user to verify exactly what stock adjustments were made by this specific document, proving the action was executed correctly on the ledger.
+   - **Display Columns**: Product Name, Action Type, Qty Mutasi (with + / - signs and colors), and Saldo Sistem (Running Balance).
+
+3. **Tab 3: Jurnal Keuangan (Financial Journal)**
+   - **Data Source**: The `journal_lines` associated with the document's transaction ID.
+   - **Purpose**: To verify the financial accounting impact (Debit/Credit to Inventory and Adjustment accounts).
 
