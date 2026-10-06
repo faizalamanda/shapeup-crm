@@ -126,3 +126,31 @@ To prevent network bottlenecks on initial modal open, the data for the ledgers *
   - **Data Source**: Lazy-loaded from `transactions` and `journal_lines` based on the document's transaction ID.
   - **Purpose**: To verify the financial accounting impact (Debit/Credit to Inventory and Expense accounts).
 
+### 3. TypeScript Type-Safety for Lazy-Loaded Ledgers
+When writing `useEffect` hooks to lazy-load these ledgers, you must accommodate TypeScript's strict null checking if your document object (e.g., `purchase`) is possibly `null`. 
+**DO NOT** directly access `document.id` inside the `async` closure, as TypeScript cannot guarantee the object remains non-null during the async execution context.
+
+**WRONG (Will fail build):**
+```tsx
+useEffect(() => {
+  if (purchase?.id) {
+    async function fetchLedger() {
+      // Type error: 'purchase' is possibly 'null'
+      const { data } = await supabase.from('...').eq('source_id', purchase.id) 
+    }
+  }
+}, [purchase?.id])
+```
+
+**CORRECT (Extract to const first):**
+```tsx
+useEffect(() => {
+  const purchaseId = purchase?.id;
+  if (purchaseId) {
+    async function fetchLedger() {
+      // TS is happy because purchaseId is extracted synchronously
+      const { data } = await supabase.from('...').eq('source_id', purchaseId)
+    }
+  }
+}, [purchase?.id])
+```
