@@ -19,6 +19,7 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
   const [actualCash, setActualCash] = useState<string>('')
   const [note, setNote] = useState<string>('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [registerId, setRegisterId] = useState<string>('')
 
   // Filter only Cash & Bank accounts (exclude receivables, inventory, and equity)
