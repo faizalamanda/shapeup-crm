@@ -19,8 +19,14 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
   const [actualCash, setActualCash] = useState<string>('')
   const [note, setNote] = useState<string>('')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [registerId, setRegisterId] = useState<string>('')
+
+  // Filter only Cash & Bank accounts (exclude receivables, inventory, and equity)
+  const kasBankAccounts = accounts.filter(a => 
+    a.type === 'ASSET' && 
+    (a.code.startsWith('101') || a.code.startsWith('11') || /kas|bank/i.test(a.name)) &&
+    !/piutang|persediaan|inventory|receivable/i.test(a.name)
+  )
 
   useEffect(() => {
     if (isOpen && posRegisters.length > 0 && !posRegisters.find(r => r.id === registerId)) {
@@ -138,8 +144,8 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
                   onChange={(e) => setTargetAccountCode(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
                 >
-                  {accounts.length > 0 ? (
-                    accounts.map(acc => (
+                  {kasBankAccounts.length > 0 ? (
+                    kasBankAccounts.map(acc => (
                       <option key={acc.code} value={acc.code}>
                         {acc.code} - {acc.name}
                       </option>
@@ -148,7 +154,6 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
                     <>
                       <option value="101100">101100 - Kas Utama / Rekening Bank Utama (Default)</option>
                       <option value="101300">101300 - Kas Kecil / Petty Cash</option>
-                      <option value="301000">301000 - Modal Pemilik / Setoran Tunai</option>
                     </>
                   )}
                 </select>
@@ -218,8 +223,8 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
                   onChange={(e) => setSourceAccountCode(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
                 >
-                  {accounts.length > 0 ? (
-                    accounts.map(acc => (
+                  {kasBankAccounts.length > 0 ? (
+                    kasBankAccounts.map(acc => (
                       <option key={acc.code} value={acc.code}>
                         {acc.code} - {acc.name}
                       </option>
@@ -228,7 +233,6 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
                     <>
                       <option value="101100">101100 - Kas Utama / Rekening Bank Utama (Default)</option>
                       <option value="101300">101300 - Kas Kecil / Petty Cash</option>
-                      <option value="301000">301000 - Modal Pemilik / Setoran Tunai</option>
                     </>
                   )}
                 </select>
