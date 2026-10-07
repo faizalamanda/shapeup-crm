@@ -55,6 +55,10 @@ export default function NewExpensePage() {
   const loading = accountsLoading || suppliersLoading
   const [mounted, setMounted] = useState(false)
   const [submitLoading, setSubmitLoading] = useState(false)
+  
+  // Success Modal State
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [createdExpenseAmount, setCreatedExpenseAmount] = useState<number>(0)
 
   // Form State
   const [formCategoryAccountId, setFormCategoryAccountId] = useState('')
@@ -99,6 +103,27 @@ export default function NewExpensePage() {
 
   useEffect(() => {
     setMounted(true)
+
+    // Handle Duplicate Expense Action
+    const dupData = localStorage.getItem('duplicateExpenseData')
+    if (dupData) {
+      try {
+        const data = JSON.parse(dupData)
+        if (data.amount) setFormAmount(data.amount.toString())
+        if (data.category_account_id) setFormCategoryAccountId(data.category_account_id)
+        if (data.description) setFormDescription(data.description)
+        if (data.vendor_name) {
+          setFormVendorName(data.vendor_name)
+          setVendorSearch(data.vendor_name)
+        }
+        if (data.payment_account_id) setFormPaymentAccountId(data.payment_account_id)
+        // Date intentionally not copied (defaults to today)
+        // Attachment intentionally not copied
+      } catch (e) {
+        console.error('Error parsing duplicate data:', e)
+      }
+      localStorage.removeItem('duplicateExpenseData')
+    }
   }, [])
 
   // Close dropdowns when clicking outside
@@ -335,8 +360,34 @@ export default function NewExpensePage() {
         throw new Error(errData.error || 'Gagal menyimpan pengeluaran')
       }
 
-      router.push('/expenses')
-      router.refresh()
+      const createdData = await res.json()
+
+      // Optimistic cache update for instant read speed on the table
+      if (activeBizId) {
+        try {
+          const cacheKey = `cache_expenses_${activeBizId}`
+          const cached = localStorage.getItem(cacheKey)
+          let exps = cached ? JSON.parse(cached) : []
+          
+          const catAcc = accounts.find(a => a.id === createdData.category_account_id)
+          const payAcc = accounts.find(a => a.id === createdData.payment_account_id)
+          
+          const newExp = {
+            ...createdData,
+            category_account: catAcc ? { id: catAcc.id, code: catAcc.code, name: catAcc.name } : null,
+            payment_account: payAcc ? { id: payAcc.id, code: payAcc.code, name: payAcc.name } : null
+          }
+          
+          // Prepend to array
+          exps = [newExp, ...exps]
+          localStorage.setItem(cacheKey, JSON.stringify(exps))
+        } catch (e) {
+          console.error('Failed to update local cache', e)
+        }
+      }
+
+      setCreatedExpenseAmount(numAmount)
+      setShowSuccessModal(true)
     } catch (err: any) {
       console.error(err)
       alert(err.message)
@@ -936,6 +987,52 @@ export default function NewExpensePage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>,
+        document.body
+      )}
+      {/* Success Modal */}
+      {showSuccessModal && mounted && createPortal(
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex justify-center items-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 text-center space-y-4">
+              <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black shadow-sm">
+                ✓
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-800">Pengeluaran Berhasil!</h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  Rp {new Intl.NumberFormat('id-ID').format(createdExpenseAmount)} telah dicatat ke sistem.
+                </p>
+              </div>
+            </div>
+            <div className="p-4 bg-slate-50 space-y-2 border-t border-slate-100">
+              <button
+                onClick={() => {
+                  setFormAmount('')
+                  setFormDescription('')
+                  setFormVendorName('')
+                  setVendorSearch('')
+                  setFormAttachmentUrl('')
+                  setAmountPaid('')
+                  // reset default date
+                  setFormDate(new Date().toISOString().split('T')[0])
+                  setShowSuccessModal(false)
+                }}
+                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors text-sm cursor-pointer"
+              >
+                Buat Pengeluaran Lagi
+              </button>
+              <button
+                onClick={() => {
+                  router.push('/expenses')
+                  router.refresh()
+                }}
+                className="w-full py-3 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold rounded-lg transition-colors text-sm cursor-pointer"
+              >
+                Selesai & Kembali
+              </button>
+            </div>
           </div>
         </div>,
         document.body

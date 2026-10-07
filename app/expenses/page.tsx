@@ -712,6 +712,22 @@ export default function ExpensesPage() {
               💵 Bayar
             </button>
           )}
+          <button
+            onClick={() => {
+              localStorage.setItem('duplicateExpenseData', JSON.stringify({
+                amount: e.amount,
+                category_account_id: e.category_account_id,
+                description: e.description,
+                vendor_name: e.vendor_name,
+                payment_account_id: e.payment_account_id
+              }));
+              window.location.href = '/expenses/new';
+            }}
+            className="px-2.5 py-1.5 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded border border-indigo-100 transition-colors uppercase font-bold text-[10px] tracking-wider cursor-pointer"
+            title="Duplikat Pengeluaran"
+          >
+            📄 Duplikat
+          </button>
           {e.payment_status === 'paid' ? (
             <span className="px-2.5 py-1.5 text-gray-400 bg-gray-50 rounded border border-gray-150 uppercase font-bold text-[10px] tracking-wider cursor-not-allowed select-none">
               🔒 Terkunci

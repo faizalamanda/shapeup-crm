@@ -178,9 +178,26 @@ export function ExpenseDetailModal({ expense, accounts, onClose }: ExpenseDetail
               <span>{expense.category_account?.name || 'Operasional'}</span>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-[10px] font-black border border-slate-100 px-4 py-2 rounded-sm transition-all uppercase">
-            [ Close ]
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => {
+                localStorage.setItem('duplicateExpenseData', JSON.stringify({
+                  amount: expense.amount,
+                  category_account_id: expense.category_account_id,
+                  description: expense.description,
+                  vendor_name: expense.vendor_name,
+                  payment_account_id: expense.payment_account_id
+                }));
+                window.location.href = '/expenses/new';
+              }}
+              className="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 text-[10px] font-black px-4 py-2 rounded-sm transition-all uppercase flex items-center gap-1 cursor-pointer"
+            >
+              <span>📄 Duplikat</span>
+            </button>
+            <button onClick={onClose} className="text-slate-300 hover:text-slate-600 text-[10px] font-black border border-slate-100 px-4 py-2 rounded-sm transition-all uppercase cursor-pointer">
+              [ Close ]
+            </button>
+          </div>
         </div>
 
         {/* BODY */}
