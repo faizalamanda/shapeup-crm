@@ -1,22 +1,53 @@
 "use client"
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 type Props = {
   isOpen: boolean
   onClose: () => void
   activeShift: any | null
   cashierName: string
-  onOpenShift: (initialCash: number, note: string, sourceAccountCode: string) => Promise<void>
-  onCloseShift: (shiftId: string, actualCash: number, note: string) => Promise<void>
+  accounts?: any[]
+  posRegisters?: any[]
+  onOpenShift: (initialCash: number, note: string, sourceAccountCode: string, registerId: string) => Promise<void>
+  onCloseShift: (shiftId: string, actualCash: number, note: string, targetAccountCode: string) => Promise<void>
 }
 
-export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, onOpenShift, onCloseShift }: Props) {
+export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, accounts = [], posRegisters = [], onOpenShift, onCloseShift }: Props) {
   const [initialCash, setInitialCash] = useState<string>('100000')
   const [sourceAccountCode, setSourceAccountCode] = useState<string>('101100')
+  const [targetAccountCode, setTargetAccountCode] = useState<string>('101100')
   const [actualCash, setActualCash] = useState<string>('')
   const [note, setNote] = useState<string>('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [registerId, setRegisterId] = useState<string>('')
+
+  useEffect(() => {
+    if (isOpen && posRegisters.length > 0 && !posRegisters.find(r => r.id === registerId)) {
+      setRegisterId(posRegisters[0].id)
+    }
+  }, [isOpen, posRegisters, registerId])
+
+  const selectedRegister = posRegisters.find(r => r.id === registerId)
+  const kasPosAccount = accounts.find(a => a.id === selectedRegister?.account_id) || accounts.find(a => a.code === '101000')
+  const kasPosName = kasPosAccount ? `${kasPosAccount.name} (${kasPosAccount.code})` : 'Kas POS (101000)'
+  
+  const sourceAccount = accounts.find(a => a.code === sourceAccountCode)
+  const sourceName = sourceAccount ? `${sourceAccount.name} (${sourceAccount.code})` : sourceAccountCode
+
+  const targetAccount = accounts.find(a => a.code === targetAccountCode)
+  const targetName = targetAccount ? `${targetAccount.name} (${targetAccount.code})` : targetAccountCode
+
+  useEffect(() => {
+    if (isOpen && accounts.length > 0) {
+      if (!accounts.some(a => a.code === sourceAccountCode)) {
+        setSourceAccountCode(accounts[0].code)
+      }
+      if (!accounts.some(a => a.code === targetAccountCode)) {
+        setTargetAccountCode(accounts[0].code)
+      }
+    }
+  }, [isOpen, accounts, sourceAccountCode, targetAccountCode])
 
   if (!isOpen) return null
 
@@ -24,7 +55,7 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
     setIsSubmitting(true)
     setErrorMsg(null)
     try {
-      await onOpenShift(Number(initialCash) || 0, note, sourceAccountCode)
+      await onOpenShift(Number(initialCash) || 0, note, sourceAccountCode, registerId)
       onClose()
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal membuka shift')
@@ -38,7 +69,7 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
     setIsSubmitting(true)
     setErrorMsg(null)
     try {
-      await onCloseShift(activeShift.id, Number(actualCash) || 0, note)
+      await onCloseShift(activeShift.id, Number(actualCash) || 0, note, targetAccountCode)
       onClose()
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal menutup shift')
@@ -100,6 +131,34 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
 
               <div>
                 <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
+                  Setor Kas ke Rekening (Tujuan)
+                </label>
+                <select
+                  value={targetAccountCode}
+                  onChange={(e) => setTargetAccountCode(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                >
+                  {accounts.length > 0 ? (
+                    accounts.map(acc => (
+                      <option key={acc.code} value={acc.code}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="101100">101100 - Kas Utama / Rekening Bank Utama (Default)</option>
+                      <option value="101300">101300 - Kas Kecil / Petty Cash</option>
+                      <option value="301000">301000 - Modal Pemilik / Setoran Tunai</option>
+                    </>
+                  )}
+                </select>
+                <p className="text-[10px] text-gray-500 mt-1">
+                  Jurnal Otomatis: <b>DEBIT {targetName}</b> | <b>KREDIT {kasPosName}</b>
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
                   Catatan Rekonsiliasi (Opsional)
                 </label>
                 <input
@@ -117,6 +176,25 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
               <div className="p-3.5 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-800">
                 ℹ️ Belum ada shift kasir yang aktif. Buka shift terlebih dahulu untuk mencatat transaksi dan laci kasir.
               </div>
+
+              {posRegisters.length > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
+                    Pilih Mesin Kasir / Laci
+                  </label>
+                  <select
+                    value={registerId}
+                    onChange={(e) => setRegisterId(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                  >
+                    {posRegisters.map(reg => (
+                      <option key={reg.id} value={reg.id}>
+                        {reg.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
@@ -140,12 +218,22 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
                   onChange={(e) => setSourceAccountCode(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
                 >
-                  <option value="101100">101100 - Kas Utama / Rekening Bank Utama (Default)</option>
-                  <option value="101300">101300 - Kas Kecil / Petty Cash</option>
-                  <option value="301000">301000 - Modal Pemilik / Setoran Tunai</option>
+                  {accounts.length > 0 ? (
+                    accounts.map(acc => (
+                      <option key={acc.code} value={acc.code}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="101100">101100 - Kas Utama / Rekening Bank Utama (Default)</option>
+                      <option value="101300">101300 - Kas Kecil / Petty Cash</option>
+                      <option value="301000">301000 - Modal Pemilik / Setoran Tunai</option>
+                    </>
+                  )}
                 </select>
                 <p className="text-[10px] text-gray-500 mt-1">
-                  Jurnal Otomatis: <b>DEBIT Kas POS (101000)</b> | <b>KREDIT {sourceAccountCode}</b>
+                  Jurnal Otomatis: <b>DEBIT {kasPosName}</b> | <b>KREDIT {sourceName}</b>
                 </p>
               </div>
 

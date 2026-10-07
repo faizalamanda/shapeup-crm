@@ -68,7 +68,7 @@ export async function POST(req: Request) {
 
     const businessId = profile.active_business_id
     const body = await req.json()
-    const { action, initial_cash = 0, actual_cash = 0, note = '', source_account_code = '101100' } = body
+    const { action, initial_cash = 0, actual_cash = 0, note = '', source_account_code = '101100', target_account_code = '101100', register_id = null } = body
 
     if (action === 'open') {
       // Check if already has an open shift
@@ -89,6 +89,7 @@ export async function POST(req: Request) {
         .insert({
           business_id: businessId,
           user_id: user.id,
+          register_id: register_id,
           cashier_name: profile.full_name || 'Kasir',
           initial_cash: Number(initial_cash),
           expected_cash: Number(initial_cash),
@@ -117,7 +118,16 @@ export async function POST(req: Request) {
           const { postJournalTransaction } = await import('@/lib/journalHelper')
           
           const accountMap = await getOrCreateDefaultAccounts(businessId, supabase)
-          const kasPosAccId = accountMap['101000']
+          let kasPosAccId = accountMap['101000']
+          
+          if (register_id) {
+            const { data: regData } = await supabase
+              .from('pos_registers')
+              .select('account_id')
+              .eq('id', register_id)
+              .maybeSingle()
+            if (regData?.account_id) kasPosAccId = regData.account_id
+          }
           
           // Resolve source credit account ID (defaults to 101100 Kas Utama, 101300 Kas Kecil, or 301000 Modal Pemilik)
           let creditAccId = accountMap[source_account_code] || accountMap['101100']
@@ -165,6 +175,7 @@ export async function POST(req: Request) {
         .single()
 
       const expectedCash = currentShift ? currentShift.expected_cash : 0
+      const shiftRegisterId = currentShift ? currentShift.register_id : null
       const difference = Number(actual_cash) - Number(expectedCash)
 
       const { data: closedShift, error: closeErr } = await supabase
@@ -182,6 +193,54 @@ export async function POST(req: Request) {
 
       if (closeErr) {
         return NextResponse.json({ success: true, message: 'Shift ditutup (Lokal)' })
+      }
+
+      // Record Accounting Entry for Cash Remittance if actual_cash > 0
+      if (Number(actual_cash) > 0 && target_account_code) {
+        try {
+          const { getOrCreateDefaultAccounts } = await import('@/lib/accountHelper')
+          const { postJournalTransaction } = await import('@/lib/journalHelper')
+          
+          const accountMap = await getOrCreateDefaultAccounts(businessId, supabase)
+          let kasPosAccId = accountMap['101000']
+          
+          if (shiftRegisterId) {
+            const { data: regData } = await supabase
+              .from('pos_registers')
+              .select('account_id')
+              .eq('id', shiftRegisterId)
+              .maybeSingle()
+            if (regData?.account_id) kasPosAccId = regData.account_id
+          }
+          
+          let debitAccId = accountMap[target_account_code] || accountMap['101100']
+          
+          if (!debitAccId) {
+            const { data: customAcc } = await supabase
+              .from('accounts')
+              .select('id')
+              .eq('business_id', businessId)
+              .eq('code', target_account_code)
+              .maybeSingle()
+            if (customAcc) debitAccId = customAcc.id
+          }
+
+          if (kasPosAccId && debitAccId) {
+            await postJournalTransaction(
+              businessId,
+              null,
+              new Date().toISOString(),
+              `Setoran Tutup Shift - ${profile.full_name || 'Kasir'}`,
+              [
+                { account_id: debitAccId, debit: Number(actual_cash), credit: 0 },
+                { account_id: kasPosAccId, debit: 0, credit: Number(actual_cash) }
+              ],
+              supabase
+            )
+          }
+        } catch (jErr) {
+          console.warn('Shift Journal Entry Warning:', jErr)
+        }
       }
 
       return NextResponse.json({ success: true, shift: closedShift })

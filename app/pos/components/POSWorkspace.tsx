@@ -40,6 +40,8 @@ export default function POSWorkspace() {
   const [products, setProducts] = useState<any[]>([])
   const [categories, setCategories] = useState<any[]>([])
   const [customers, setCustomers] = useState<any[]>([])
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [posRegisters, setPosRegisters] = useState<any[]>([])
   const [heldOrders, setHeldOrders] = useState<any[]>([])
 
   // Search & Filter State
@@ -115,34 +117,32 @@ export default function POSWorkspace() {
   }, [activeBusiness?.id, ctxProfile, bizLoading])
 
   const loadCatalogAndCustomers = async (bId: string) => {
-    // 1. Products
-    const { data: prods } = await supabase
-      .from('products')
-      .select('*')
-      .eq('business_id', bId)
-      .order('name', { ascending: true })
+    // Jalankan query secara paralel (Performance Rule #2)
+    const [
+      { data: prods },
+      { data: cats },
+      { data: custs },
+      { data: accs },
+      { data: regs }
+    ] = await Promise.all([
+      supabase.from('products').select('*').eq('business_id', bId).order('name', { ascending: true }),
+      supabase.from('categories').select('*').eq('business_id', bId).order('name', { ascending: true }),
+      supabase.from('customer_metrics').select('customer_id, name, phone').eq('business_id', bId).limit(100),
+      supabase.from('accounts').select('id, code, name, type').eq('business_id', bId).in('type', ['ASSET', 'EQUITY']).order('code', { ascending: true }),
+      supabase.from('pos_registers').select('id, name, account_id').eq('business_id', bId).eq('status', 'active').order('name', { ascending: true })
+    ])
 
     setProducts(prods || [])
-
-    // 2. Categories
-    const { data: cats } = await supabase
-      .from('categories')
-      .select('*')
-      .eq('business_id', bId)
-      .order('name', { ascending: true })
-
     setCategories(cats || [])
-
-    // 3. Customers
-    const { data: custs } = await supabase
-      .from('customer_metrics')
-      .select('customer_id, name, phone')
-      .eq('business_id', bId)
-      .limit(100)
-
+    
     if (custs) {
       setCustomers(custs.map(c => ({ id: c.customer_id, name: c.name, phone: c.phone })))
+    } else {
+      setCustomers([])
     }
+    
+    setAccounts(accs || [])
+    setPosRegisters(regs || [])
   }
 
   const checkActiveShift = async () => {
@@ -353,22 +353,22 @@ export default function POSWorkspace() {
   }
 
   // Shift Actions
-  const handleOpenShift = async (initialCash: number, note: string, sourceAccountCode: string) => {
+  const handleOpenShift = async (initialCash: number, note: string, sourceAccountCode: string, registerId: string) => {
     const res = await fetch('/api/pos/shifts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'open', initial_cash: initialCash, note, source_account_code: sourceAccountCode })
+      body: JSON.stringify({ action: 'open', initial_cash: initialCash, note, source_account_code: sourceAccountCode, register_id: registerId })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Gagal membuka shift')
     setActiveShift(data.shift)
   }
 
-  const handleCloseShift = async (shiftId: string, actualCash: number, note: string) => {
+  const handleCloseShift = async (shiftId: string, actualCash: number, note: string, targetAccountCode: string) => {
     const res = await fetch('/api/pos/shifts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'close', shift_id: shiftId, actual_cash: actualCash, note })
+      body: JSON.stringify({ action: 'close', shift_id: shiftId, actual_cash: actualCash, note, target_account_code: targetAccountCode })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Gagal menutup shift')
@@ -1112,6 +1112,8 @@ export default function POSWorkspace() {
         onClose={() => setIsShiftModalOpen(false)}
         activeShift={activeShift}
         cashierName={userProfile?.full_name || 'Kasir'}
+        accounts={accounts}
+        posRegisters={posRegisters}
         onOpenShift={handleOpenShift}
         onCloseShift={handleCloseShift}
       />

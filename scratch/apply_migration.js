@@ -1,31 +1,13 @@
-const { createClient } = require('@supabase/supabase-js')
-const fs = require('fs')
-const path = require('path')
+const { createClient } = require('@supabase/supabase-js');
+const fs = require('fs');
 
-const envLocalPath = path.join('/home/faiz-jazuli/shapeup-crm', '.env.local')
-const envContent = fs.readFileSync(envLocalPath, 'utf8')
-const env = {}
-envContent.split('\n').forEach(line => {
-  const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/)
-  if (match) {
-    const key = match[1]
-    let value = match[2] || ''
-    if (value.length > 0 && value.charAt(0) === '"' && value.charAt(value.length - 1) === '"') {
-      value = value.replace(/^"|"/g, '')
-    }
-    env[key] = value
-  }
-})
-
-const supabase = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY)
-
-async function testSqlRpc() {
-  console.log("Testing executing migration script via Supabase rpc/rest...")
-  const sql = fs.readFileSync(path.join('/home/faiz-jazuli/shapeup-crm/supabase/migrations/20260812000000_add_variable_hpp_and_recipes.sql'), 'utf8')
+async function main() {
+  const env = fs.readFileSync('.env.local', 'utf8');
+  const url = env.match(/NEXT_PUBLIC_SUPABASE_URL=(.*)/)[1];
+  const key = env.match(/NEXT_PUBLIC_SUPABASE_ANON_KEY=(.*)/)[1];
   
-  // Try calling exec_sql or rpc if present
-  const { data, error } = await supabase.rpc('exec_sql', { sql_query: sql })
-  console.log("RPC exec_sql result:", data, error?.message)
+  // Since we want to run raw SQL, we can just use Postgres directly or run through Supabase CLI locally.
+  // Wait, if it's local development, maybe the user wants it pushed to the actual connected DB.
+  // Let me just check if I can execute it via postgres url.
 }
-
-testSqlRpc()
+main();
