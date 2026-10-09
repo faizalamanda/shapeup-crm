@@ -11,6 +11,7 @@ import AddCustomerModal from '../../orders/pos/components/AddCustomerModal'
 import OrderHistoryModal from '../../orders/pos/components/OrderHistoryModal'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
 import { useUserContext } from '@/components/UserContext'
+import { formatDisplayDate } from '@/lib/timeUtils'
 
 // Pastel badge colors for product cards
 const getPastelBadge = (name: string) => {
@@ -398,7 +399,7 @@ export default function POSWorkspace() {
       const receipt: ReceiptData = {
         businessName: userProfile?.full_name ? `${userProfile.full_name}'s Store` : 'ShapeUp POS',
         orderNumber: orderNumber,
-        date: new Date().toLocaleString('id-ID'),
+        date: formatDisplayDate(new Date(), 'datetime', activeBusiness?.timezone),
         cashierName: userProfile?.full_name || 'Kasir',
         customerName: selectedCustomer?.name || 'Walk-in Customer',
         items: cart.map((i) => ({
@@ -1116,6 +1117,7 @@ export default function POSWorkspace() {
         posRegisters={posRegisters}
         onOpenShift={handleOpenShift}
         onCloseShift={handleCloseShift}
+        timezone={activeBusiness?.timezone}
       />
 
       <HoldModal
@@ -1124,6 +1126,7 @@ export default function POSWorkspace() {
         heldOrders={heldOrders}
         onResumeCart={handleResumeHoldOrder}
         onDeleteHold={handleDeleteHoldOrder}
+        timezone={activeBusiness?.timezone}
       />
 
       {isAddCustomerOpen && (

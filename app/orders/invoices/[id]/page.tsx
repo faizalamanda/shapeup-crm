@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { formatDisplayDate } from '@/lib/timeUtils'
 
 type Customer = {
   id: string
@@ -172,6 +173,7 @@ export default function InvoiceDetailPage() {
   // State
   const [invoice, setInvoice] = useState<Invoice | null>(null)
   const [businessName, setBusinessName] = useState<string>('')
+  const [businessTimezone, setBusinessTimezone] = useState<string>('Asia/Jakarta')
   const [loading, setLoading] = useState<boolean>(true)
   const [submitting, setSubmitting] = useState<boolean>(false)
   const [errorMessage, setErrorMessage] = useState<string>('')
@@ -231,12 +233,15 @@ export default function InvoiceDetailPage() {
 
       const { data: profile } = await supabase
         .from('profiles')
-        .select('id, role, active_business_id, businesses!active_business_id(name)')
+        .select('id, role, active_business_id, businesses!active_business_id(name, timezone)')
         .eq('id', user.id)
         .single()
 
       if (!profile?.active_business_id) return
-      setBusinessName((profile.businesses as { name?: string } | null)?.name || 'Bisnis Saya')
+      
+      const bizData = profile.businesses as { name?: string; timezone?: string } | null
+      setBusinessName(bizData?.name || 'Bisnis Saya')
+      setBusinessTimezone(bizData?.timezone || 'Asia/Jakarta')
       setCurrentUserProfile({ id: profile.id, role: profile.role || 'staff' })
 
       const response = await fetch(`/api/orders/invoices/${invoiceId}`)
@@ -506,7 +511,7 @@ export default function InvoiceDetailPage() {
 
             <!-- Tanggal & No Invoice -->
             <div class="flex justify-between items-center" style="font-size: 8pt; font-family: monospace; border-bottom: 0.2mm dashed rgba(0,0,0,0.4); padding-bottom: 1.5mm; margin-bottom: 2mm;">
-              <div>${new Date(invoice.order_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+              <div>${formatDisplayDate(invoice.order_date, 'medium', businessTimezone)}</div>
               <div class="font-bold">#${invoice.order_number}</div>
             </div>
 
@@ -990,22 +995,14 @@ export default function InvoiceDetailPage() {
                 <div className="flex justify-between sm:justify-end gap-4 text-[#70706E]">
                   <span>Tanggal Faktur:</span>
                   <span className="text-[#1C1C1A] font-bold">
-                    {new Date(invoice.order_date).toLocaleDateString('id-ID', {
-                      day: 'numeric',
-                      month: 'long',
-                      year: 'numeric'
-                    })}
+                    {formatDisplayDate(invoice.order_date, 'medium', businessTimezone)}
                   </span>
                 </div>
                 {invoice.raw_source_data?.due_date && (
                   <div className="flex justify-between sm:justify-end gap-4 text-[#70706E]">
                     <span>Tanggal Jatuh Tempo:</span>
                     <span className="text-[#1C1C1A] font-bold">
-                      {new Date(invoice.raw_source_data.due_date).toLocaleDateString('id-ID', {
-                        day: 'numeric',
-                        month: 'long',
-                        year: 'numeric'
-                      })}
+                      {formatDisplayDate(invoice.raw_source_data.due_date, 'medium', businessTimezone)}
                     </span>
                   </div>
                 )}
@@ -1541,7 +1538,7 @@ export default function InvoiceDetailPage() {
                         <div className="flex justify-between items-start">
                           <span className="font-black text-[#1C1C1A] text-[11px]">{tx.description}</span>
                           <span className="text-[10px] text-gray-400 font-mono">
-                            {new Date(tx.date).toLocaleDateString('id-ID')}
+                            {formatDisplayDate(tx.date, 'short', businessTimezone)}
                           </span>
                         </div>
 
@@ -1621,7 +1618,7 @@ export default function InvoiceDetailPage() {
                           
                           <div className="pt-2 mt-2 border-t border-gray-200 flex justify-between items-center">
                             <span className="text-[10px] text-gray-400 font-mono">
-                              {new Date(m.created_at).toLocaleString('id-ID')}
+                              {formatDisplayDate(m.created_at, 'datetime', businessTimezone)}
                             </span>
                             <span className="text-[10px] font-bold text-slate-700">
                               Saldo Sistem: <span className="font-black">{m.system_stock}</span>

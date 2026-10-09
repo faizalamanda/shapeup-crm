@@ -1,0 +1,13 @@
+{
+  "summary": "Standardization of timezone and date formatting across the CRM, prioritizing business settings over local browser time.",
+  "timestamps": {
+    "created": "2026-10-09T08:23:00Z",
+    "last_updated": "2026-10-09T08:23:00Z"
+  },
+  "references": [
+    "lib/timeUtils.ts",
+    "lib/localzone.ts",
+    "app/orders/invoices/[id]/page.tsx",
+    "app/pos/components/POSWorkspace.tsx"
+  ]
+}

@@ -1,5 +1,6 @@
 "use client"
 import { useState, useEffect } from 'react'
+import { formatDisplayDate } from '@/lib/timeUtils'
 
 type Props = {
   isOpen: boolean
@@ -10,9 +11,10 @@ type Props = {
   posRegisters?: any[]
   onOpenShift: (initialCash: number, note: string, sourceAccountCode: string, registerId: string) => Promise<void>
   onCloseShift: (shiftId: string, actualCash: number, note: string, targetAccountCode: string) => Promise<void>
+  timezone?: string
 }
 
-export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, accounts = [], posRegisters = [], onOpenShift, onCloseShift }: Props) {
+export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, accounts = [], posRegisters = [], onOpenShift, onCloseShift, timezone }: Props) {
   const [initialCash, setInitialCash] = useState<string>('100000')
   const [sourceAccountCode, setSourceAccountCode] = useState<string>('101100')
   const [targetAccountCode, setTargetAccountCode] = useState<string>('101100')
@@ -115,7 +117,7 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Waktu Buka:</span>
-                  <span className="font-medium text-gray-800">{new Date(activeShift.opened_at).toLocaleString('id-ID')}</span>
+                  <span className="font-medium text-gray-800">{formatDisplayDate(activeShift.opened_at, 'datetime', timezone)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Modal Awal Kas:</span>

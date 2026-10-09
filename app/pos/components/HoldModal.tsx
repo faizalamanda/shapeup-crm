@@ -1,5 +1,6 @@
 "use client"
 import { useState } from 'react'
+import { formatDisplayDate } from '@/lib/timeUtils'
 
 type Props = {
   isOpen: boolean
@@ -7,9 +8,10 @@ type Props = {
   heldOrders: any[]
   onResumeCart: (heldOrder: any) => void
   onDeleteHold: (holdId: string) => Promise<void>
+  timezone?: string
 }
 
-export default function HoldModal({ isOpen, onClose, heldOrders, onResumeCart, onDeleteHold }: Props) {
+export default function HoldModal({ isOpen, onClose, heldOrders, onResumeCart, onDeleteHold, timezone }: Props) {
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   if (!isOpen) return null
@@ -67,7 +69,7 @@ export default function HoldModal({ isOpen, onClose, heldOrders, onResumeCart, o
                   </div>
                   {h.note && <div className="text-xs text-gray-500 italic">"{h.note}"</div>}
                   <div className="text-[11px] text-gray-400">
-                    Ditahan: {new Date(h.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                    Ditahan: {formatDisplayDate(h.created_at, 'time', timezone)}
                   </div>
                 </div>
 
