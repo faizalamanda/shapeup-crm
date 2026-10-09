@@ -1,0 +1,9 @@
+{
+  "title": "Anti-Pattern: Manual Cancellation of Orders/Invoices",
+  "summary": "Documenting the performance issue (N+1 query) and architecture violation of manually iterating over products to update stock_quantity during cancellation. Explains the correct approach of delegating to syncOrderToLedger.",
+  "createdAt": "2026-10-09T15:07:00+07:00",
+  "references": [
+    "app/api/orders/invoices/[id]/route.ts",
+    "lib/orderLedger.ts"
+  ]
+}

@@ -175,7 +175,7 @@ export default function InvoiceDetailPage() {
   const [loading, setLoading] = useState<boolean>(true)
   const [submitting, setSubmitting] = useState<boolean>(false)
   const [errorMessage, setErrorMessage] = useState<string>('')
-  const [activeTab, setActiveTab] = useState<'actions' | 'design' | 'ledger'>('actions')
+  const [activeTab, setActiveTab] = useState<'actions' | 'design' | 'ledger' | 'stock_ledger'>('actions')
   const [currentUserProfile, setCurrentUserProfile] = useState<{ id: string; role: string } | null>(null)
 
   const canEdit = useMemo(() => {
@@ -209,6 +209,10 @@ export default function InvoiceDetailPage() {
   // Ledger Journal Lines State
   const [ledgerTransactions, setLedgerTransactions] = useState<Transaction[]>([])
   const [loadingLedger, setLoadingLedger] = useState<boolean>(false)
+
+  // Stock Moves State
+  const [stockMoves, setStockMoves] = useState<any[]>([])
+  const [loadingStockMoves, setLoadingStockMoves] = useState<boolean>(false)
 
   // Shipping Label print state
   const [labelShopName, setLabelShopName] = useState<string>('')
@@ -318,6 +322,37 @@ export default function InvoiceDetailPage() {
     }
   }, [invoiceId, supabase])
 
+  // Fetch Stock Moves
+  const fetchStockMoves = useCallback(async () => {
+    setLoadingStockMoves(true)
+    try {
+      const { data, error } = await supabase
+        .from('v_stock_moves_ledger')
+        .select(`
+          id,
+          created_at,
+          type,
+          qty,
+          system_stock,
+          reference,
+          products (
+            name,
+            sku
+          ),
+          origin_location_id
+        `)
+        .eq('source_id', invoiceId)
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+      setStockMoves(data || [])
+    } catch (e) {
+      console.error('Error fetching stock moves:', e)
+    } finally {
+      setLoadingStockMoves(false)
+    }
+  }, [invoiceId, supabase])
+
   useEffect(() => {
     fetchInvoiceDetails()
   }, [fetchInvoiceDetails])
@@ -326,8 +361,10 @@ export default function InvoiceDetailPage() {
   useEffect(() => {
     if (activeTab === 'ledger') {
       fetchLedger()
+    } else if (activeTab === 'stock_ledger') {
+      fetchStockMoves()
     }
-  }, [activeTab, fetchLedger])
+  }, [activeTab, fetchLedger, fetchStockMoves])
 
   // Set default payment date on mount/modal open
   useEffect(() => {
@@ -639,6 +676,29 @@ export default function InvoiceDetailPage() {
 
       fetchInvoiceDetails()
       fetchLedger()
+    } catch (err: any) {
+      setErrorMessage(err.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // Audit Stock Movement
+  const handleAuditStock = async () => {
+    setSubmitting(true)
+    setErrorMessage('')
+    try {
+      const response = await fetch(`/api/orders/invoices/${invoiceId}/audit-stock`, {
+        method: 'POST'
+      })
+
+      if (!response.ok) {
+        const resJson = await response.json()
+        throw new Error(resJson.error || 'Gagal melakukan audit stok')
+      }
+
+      alert('Audit stok selesai! Jika ada penyesuaian yang belum masuk, sistem sudah memprosesnya.')
+      fetchStockMoves() // refresh
     } catch (err: any) {
       setErrorMessage(err.message)
     } finally {
@@ -1126,6 +1186,15 @@ export default function InvoiceDetailPage() {
               >
                 Jurnal Ledger
               </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('stock_ledger')}
+                className={`flex-1 pb-2 border-b-2 text-center transition-all ${
+                  activeTab === 'stock_ledger' ? 'border-[#1E40AF] text-[#1E40AF]' : 'border-transparent text-[#70706E]'
+                }`}
+              >
+                History Stok
+              </button>
             </div>
 
             {/* TAB CONTENT: ACTIONS */}
@@ -1508,6 +1577,59 @@ export default function InvoiceDetailPage() {
                         </table>
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB CONTENT: STOCK LEDGER */}
+            {activeTab === 'stock_ledger' && (
+              <div className="space-y-4 pt-2 text-xs">
+                <div className="flex justify-between items-center">
+                  <h3 className="font-bold text-[#1C1C1A]">History Perpindahan Stok</h3>
+                  <button
+                    type="button"
+                    onClick={handleAuditStock}
+                    disabled={submitting}
+                    className="px-3 py-1.5 bg-blue-50 text-blue-700 font-bold border border-blue-200 rounded-lg hover:bg-blue-100 transition-all text-[10px]"
+                  >
+                    {submitting ? 'Memproses...' : '🔄 Audit Movement Stok'}
+                  </button>
+                </div>
+                {loadingStockMoves ? (
+                  <p className="text-slate-500 font-medium italic animate-pulse">Memuat riwayat stok...</p>
+                ) : stockMoves.length === 0 ? (
+                  <p className="text-slate-400 font-semibold italic text-[11px]">Belum ada perpindahan stok dari invoice ini (Belum dikirim/diproses).</p>
+                ) : (
+                  <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
+                    {stockMoves.map((m) => {
+                      const isPositive = m.type === 'receipt' || m.type === 'refund' || (m.type === 'adjustment' && !m.origin_location_id)
+                      return (
+                        <div key={m.id} className="p-3 bg-gray-50 border border-gray-150 rounded-xl space-y-1">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <div className="font-black text-[#1C1C1A] text-[11px]">{m.products?.name || 'Produk Tidak Ditemukan'}</div>
+                              {m.products?.sku && <div className="text-[10px] text-gray-500 font-mono">SKU: {m.products.sku}</div>}
+                            </div>
+                            <div className="text-right">
+                              <div className={`font-black text-xs ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                {isPositive ? '+' : '-'}{m.qty}
+                              </div>
+                              <div className="text-[9px] font-bold text-gray-500 mt-0.5 uppercase">{m.type}</div>
+                            </div>
+                          </div>
+                          
+                          <div className="pt-2 mt-2 border-t border-gray-200 flex justify-between items-center">
+                            <span className="text-[10px] text-gray-400 font-mono">
+                              {new Date(m.created_at).toLocaleString('id-ID')}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-700">
+                              Saldo Sistem: <span className="font-black">{m.system_stock}</span>
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
