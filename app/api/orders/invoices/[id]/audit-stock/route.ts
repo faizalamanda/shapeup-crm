@@ -4,15 +4,15 @@ import { syncOrderToLedger } from '@/lib/orderLedger'
 
 export async function POST(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { supabase, authError } = await getApiContext()
-    if (authError || !supabase) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { id } = await params
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { supabase } = ctx
 
-    const orderId = params.id
+    const orderId = id
     if (!orderId) {
       return NextResponse.json({ error: 'Missing invoice ID' }, { status: 400 })
     }
