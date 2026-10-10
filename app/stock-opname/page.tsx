@@ -318,6 +318,18 @@ export default function StockOpnamePage() {
       title="Stock Opname"
       description="Lakukan perhitungan fisik stok di gudang secara berkala untuk mencocokkan jumlah sistem serta catat selisih penyusutan."
       width="xl"
+      eyebrow={
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-[9px] font-black tracking-widest text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 uppercase">
+            Produk & Inventori
+          </span>
+          {activeBizName && (
+            <span className="text-[9px] font-black tracking-widest text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 uppercase">
+              📍 {activeBizName}
+            </span>
+          )}
+        </div>
+      }
       actions={
         <button
           onClick={openAddModal}
@@ -758,7 +770,7 @@ export default function StockOpnamePage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 font-semibold text-gray-700">
-                        {selectedOpname.items_json.map((item, idx) => {
+                        {(Array.isArray(selectedOpname.items_json) ? selectedOpname.items_json : []).map((item, idx) => {
                           const diff = item.actual_quantity - item.recorded_quantity
                           return (
                             <tr key={idx} className="hover:bg-gray-50/50">
@@ -857,7 +869,7 @@ export default function StockOpnamePage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 font-medium text-gray-700">
-                        {selectedOpname.transactions.journal_lines.map((jl) => {
+                        {(Array.isArray(selectedOpname.transactions.journal_lines) ? selectedOpname.transactions.journal_lines : []).map((jl) => {
                           const code = jl.accounts?.code || '---'
                           const name = jl.accounts?.name || 'Akun Tidak Ditemukan'
                           const debit = jl.debit || 0
@@ -884,10 +896,10 @@ export default function StockOpnamePage() {
                         <tr>
                           <td className="p-3 uppercase text-[10px] tracking-wider text-gray-500">Total Balancing</td>
                           <td className="p-3 text-right font-mono text-emerald-700">
-                            Rp {selectedOpname.transactions.journal_lines.reduce((s, l) => s + (l.debit || 0), 0).toLocaleString('id-ID')}
+                            Rp {(Array.isArray(selectedOpname.transactions.journal_lines) ? selectedOpname.transactions.journal_lines : []).reduce((s, l) => s + (l.debit || 0), 0).toLocaleString('id-ID')}
                           </td>
                           <td className="p-3 text-right font-mono text-emerald-700">
-                            Rp {selectedOpname.transactions.journal_lines.reduce((s, l) => s + (l.credit || 0), 0).toLocaleString('id-ID')}
+                            Rp {(Array.isArray(selectedOpname.transactions.journal_lines) ? selectedOpname.transactions.journal_lines : []).reduce((s, l) => s + (l.credit || 0), 0).toLocaleString('id-ID')}
                           </td>
                         </tr>
                       </tfoot>
