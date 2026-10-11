@@ -5,6 +5,7 @@ import { useUserContext } from '@/components/UserContext'
 import { PageLayout } from '@/components/ui/PageLayout'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { formatDisplayDate } from '@/lib/timeUtils'
+import { Pagination } from '../components/Pagination'
 
 type Product = {
   id: string
@@ -79,6 +80,12 @@ export default function StockOpnamePage() {
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(15)
+  const [totalCount, setTotalCount] = useState(0)
 
   // Sync & Caching state
   const [syncStatus, setSyncStatus] = useState<'cached' | 'live' | 'syncing'>('syncing')
@@ -115,6 +122,19 @@ export default function StockOpnamePage() {
   const activeBizName = activeBusiness?.name
   const activeTimezone = activeBusiness?.timezone
 
+  // Debounce search query
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery)
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
+  // Reset to page 1 when search changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [debouncedSearch])
+
   // 1. Initial SWR Read-Through from LocalStorage (0ms perceived load)
   useEffect(() => {
     if (!activeBizId) return
@@ -127,6 +147,12 @@ export default function StockOpnamePage() {
         const parsed = JSON.parse(cached)
         if (Array.isArray(parsed) && parsed.length > 0) {
           setOpnames(parsed)
+          setTotalCount(parsed.length)
+          setLoading(false)
+          setSyncStatus('cached')
+        } else if (parsed && Array.isArray(parsed.data) && parsed.data.length > 0) {
+          setOpnames(parsed.data)
+          setTotalCount(parsed.pagination?.totalCount || parsed.data.length)
           setLoading(false)
           setSyncStatus('cached')
         }
@@ -165,22 +191,47 @@ export default function StockOpnamePage() {
     }
   }, [activeBizId])
 
-  // 2. Network Fetch Opnames (Background Reconciliation)
+  // 2. Network Fetch Opnames with Server Pagination
   const fetchOpnames = useCallback(async (isManualRefresh = false) => {
     if (isManualRefresh) setSyncStatus('syncing')
+    setLoading(true)
     try {
-      const res = await fetch('/api/stock-opname')
+      const params = new URLSearchParams({
+        page: currentPage.toString(),
+        limit: pageSize.toString()
+      })
+      if (debouncedSearch.trim()) {
+        params.set('search', debouncedSearch.trim())
+      }
+
+      const res = await fetch(`/api/stock-opname?${params.toString()}`)
       if (!res.ok) throw new Error('Gagal memuat stock opname')
-      const data = await res.json()
-      if (Array.isArray(data)) {
-        setOpnames(data)
-        setSyncStatus('live')
-        if (activeBizId) {
-          try {
-            localStorage.setItem(`su_stock_opnames_${activeBizId}`, JSON.stringify(data))
-          } catch (e) {
-            console.warn('Failed to store opnames in localStorage:', e)
-          }
+      const json = await res.json()
+
+      let items: StockOpname[] = []
+      let count = 0
+
+      if (Array.isArray(json)) {
+        items = json
+        count = json.length
+      } else if (json && Array.isArray(json.data)) {
+        items = json.data
+        count = json.pagination?.totalCount ?? json.data.length
+      }
+
+      setOpnames(items)
+      setTotalCount(count)
+      setSyncStatus('live')
+
+      // Cache first page
+      if (activeBizId && currentPage === 1 && !debouncedSearch.trim()) {
+        try {
+          localStorage.setItem(`su_stock_opnames_${activeBizId}`, JSON.stringify({
+            data: items,
+            pagination: { page: 1, limit: pageSize, totalCount: count }
+          }))
+        } catch (e) {
+          console.warn('Failed to store opnames in localStorage:', e)
         }
       }
     } catch (err) {
@@ -188,7 +239,7 @@ export default function StockOpnamePage() {
     } finally {
       setLoading(false)
     }
-  }, [activeBizId])
+  }, [activeBizId, currentPage, pageSize, debouncedSearch])
 
   useEffect(() => {
     fetchOpnames()
@@ -431,16 +482,20 @@ export default function StockOpnamePage() {
 
       // Optimistic Update List & LocalStorage Cache
       setOpnames(prev => {
-        const updated = [newOpname, ...prev]
+        const updated = [newOpname, ...prev.slice(0, pageSize - 1)]
         if (activeBizId) {
           try {
-            localStorage.setItem(`su_stock_opnames_${activeBizId}`, JSON.stringify(updated))
+            localStorage.setItem(`su_stock_opnames_${activeBizId}`, JSON.stringify({
+              data: updated,
+              pagination: { page: 1, limit: pageSize, totalCount: totalCount + 1 }
+            }))
           } catch (e) {
             console.warn('Failed to update opnames cache:', e)
           }
         }
         return updated
       })
+      setTotalCount(prev => prev + 1)
 
       // Clear draft since it is successfully recorded
       discardDraft()
@@ -517,37 +572,41 @@ export default function StockOpnamePage() {
   return (
     <PageLayout
       title="Stock Opname"
-      description="Lakukan perhitungan fisik stok di gudang secara berkala untuk mencocokkan jumlah sistem serta catat selisih penyusutan."
+      description={
+        <span>
+          <span className="hidden sm:inline">Lakukan perhitungan fisik stok di gudang secara berkala untuk mencocokkan jumlah sistem serta catat selisih penyusutan.</span>
+          <span className="sm:hidden text-xs text-gray-500">Hitung stok fisik & kartu stok gudang.</span>
+        </span>
+      }
       width="xl"
       eyebrow={
-        <div className="flex flex-wrap items-center gap-2 mb-1">
-          <span className="text-[9px] font-black tracking-widest text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 uppercase">
-            Produk & Inventori
+        <div className="flex items-center gap-1.5 flex-nowrap">
+          <span className="text-[9px] font-black tracking-widest text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 uppercase shrink-0">
+            Inventori
           </span>
           {activeBizName && (
-            <span className="text-[9px] font-black tracking-widest text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 uppercase">
+            <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 truncate max-w-[140px] sm:max-w-none">
               📍 {activeBizName}
             </span>
           )}
         </div>
       }
       actions={
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => fetchOpnames(true)}
-            className="p-2 md:px-3 md:py-2 text-gray-600 hover:text-gray-900 bg-white hover:bg-gray-50 rounded-lg border border-gray-200 shadow-2xs transition-colors flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+            className="p-2 sm:px-3 sm:py-2 text-gray-600 hover:text-gray-900 bg-white hover:bg-gray-50 rounded-lg border border-gray-200 shadow-2xs transition-colors flex items-center gap-1.5 text-xs font-bold cursor-pointer"
             title="Segarkan data dari server"
           >
             <span>🔄</span>
-            <span className="hidden md:inline">Segarkan</span>
+            <span className="hidden sm:inline">Segarkan</span>
           </button>
           <button
             onClick={openAddModal}
-            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 active:scale-98 cursor-pointer"
+            className="hidden sm:flex px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm transition-all items-center justify-center gap-2 active:scale-98 cursor-pointer"
           >
             <span>➕</span>
-            <span className="hidden sm:inline">Mulai Stock Opname</span>
-            <span className="sm:hidden">Opname Baru</span>
+            <span>Mulai Stock Opname</span>
           </button>
         </div>
       }
@@ -586,8 +645,8 @@ export default function StockOpnamePage() {
           </div>
         )}
 
-        {/* Sync Status Badge & Search Filter Bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+        {/* Sync Status Badge & Total Info Bar */}
+        <div className="flex items-center justify-between gap-2.5">
           <div className="flex items-center gap-2">
             {syncStatus === 'cached' && (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
@@ -606,7 +665,7 @@ export default function StockOpnamePage() {
             )}
           </div>
           <span className="text-[11px] font-bold text-gray-500">
-            Total {filteredOpnames.length} Dokumen
+            Total {totalCount.toLocaleString('id-ID')} Dokumen
           </span>
         </div>
 
@@ -615,7 +674,7 @@ export default function StockOpnamePage() {
           <span className="text-gray-400 mr-2.5 text-sm">🔍</span>
           <input
             type="text"
-            placeholder="Cari berdasarkan No. Dokumen, Catatan, atau Nama Produk..."
+            placeholder="Cari berdasarkan No. Dokumen atau Catatan..."
             className="flex-1 bg-transparent text-xs font-semibold text-gray-800 outline-none placeholder:text-gray-400 py-0.5"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -749,6 +808,25 @@ export default function StockOpnamePage() {
                 )
               })}
             </div>
+
+            {/* Pagination Controls */}
+            {!loading && totalCount > 0 && (
+              <div className="pt-2">
+                <Pagination
+                  currentPage={currentPage}
+                  totalCount={totalCount}
+                  pageSize={pageSize}
+                  onPageChange={page => setCurrentPage(page)}
+                  onPageSizeChange={size => {
+                    setPageSize(size)
+                    setCurrentPage(1)
+                  }}
+                  pageSizeOptions={[10, 15, 25, 50]}
+                  isLoading={loading}
+                  position="bottom"
+                />
+              </div>
+            )}
           </div>
         )}
 

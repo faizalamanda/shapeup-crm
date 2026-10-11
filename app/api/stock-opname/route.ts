@@ -1,8 +1,21 @@
-import { createClient } from '@/lib/supabaseServer'
 import { recordStockMovements, StockMoveInput } from '@/lib/stockLedger'
 import { NextResponse } from 'next/server'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
 import { getApiContext } from '@/lib/apiContext'
+
+interface RequestOpnameItem {
+  product_id: string
+  name?: string
+  recorded_quantity?: number
+  actual_quantity: number | string
+}
+
+interface NewJournalLine {
+  transaction_id: string
+  account_id: string
+  debit: number
+  credit: number
+}
 
 export async function GET(req: Request) {
   try {
@@ -10,7 +23,52 @@ export async function GET(req: Request) {
     if (ctx.error) return ctx.error
     const { businessId, supabase } = ctx
 
-    const { data: opnames, error: fetchErr } = await supabase
+    const url = new URL(req.url)
+    const all = url.searchParams.get('all') === 'true'
+    const pageParam = url.searchParams.get('page')
+    const limitParam = url.searchParams.get('limit')
+    const search = url.searchParams.get('search')?.trim() || ''
+
+    if (all) {
+      const { data: opnames, error: fetchErr } = await supabase
+        .from('stock_opname')
+        .select(`
+          *,
+          transactions (
+            id,
+            date,
+            description,
+            journal_lines (
+              id,
+              account_id,
+              debit,
+              credit,
+              accounts (
+                id,
+                code,
+                name,
+                type
+              )
+            )
+          )
+        `)
+        .eq('business_id', businessId)
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false })
+
+      if (fetchErr) {
+        return NextResponse.json({ error: fetchErr.message }, { status: 500 })
+      }
+
+      return NextResponse.json(opnames)
+    }
+
+    const page = Math.max(1, parseInt(pageParam || '1', 10))
+    const limit = Math.max(1, parseInt(limitParam || '15', 10))
+    const from = (page - 1) * limit
+    const to = from + limit - 1
+
+    let query = supabase
       .from('stock_opname')
       .select(`
         *,
@@ -31,18 +89,34 @@ export async function GET(req: Request) {
             )
           )
         )
-      `)
+      `, { count: 'exact' })
       .eq('business_id', businessId)
+
+    if (search) {
+      query = query.or(`opname_number.ilike.%${search}%,notes.ilike.%${search}%`)
+    }
+
+    const { data: opnames, count, error: fetchErr } = await query
       .order('date', { ascending: false })
       .order('created_at', { ascending: false })
+      .range(from, to)
 
     if (fetchErr) {
       return NextResponse.json({ error: fetchErr.message }, { status: 500 })
     }
 
-    return NextResponse.json(opnames)
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({
+      data: opnames || [],
+      pagination: {
+        page,
+        limit,
+        totalCount: count || 0,
+        totalPages: Math.ceil((count || 0) / limit)
+      }
+    })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Internal Server Error'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
@@ -74,7 +148,7 @@ export async function POST(req: Request) {
     }
 
     // Fetch all products in batch for cost price
-    const productIds = items.map((i: any) => i.product_id)
+    const productIds = items.map((i: RequestOpnameItem) => i.product_id)
     const { data: products, error: prodErr } = await supabase
       .from('products')
       .select('id, cost_price')
@@ -102,7 +176,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Failed to create ledger transaction: ${txErr?.message}` }, { status: 500 })
     }
 
-    const journalLines: any[] = []
+    const journalLines: NewJournalLine[] = []
 
     // Fetch true system stock directly from ledger to prevent out-of-sync discrepancies
     // Using Promise.all per product to bypass Supabase 1,000 row limit and ensure absolute latest row
@@ -222,8 +296,8 @@ export async function POST(req: Request) {
 
     // Record SaaS Stock Movement Ledger for Opname Adjustments
     const stockMoveInputs: StockMoveInput[] = items
-      .map((item: any) => {
-        const diff = (parseFloat(item.actual_quantity) || 0) - (parseFloat(item.recorded_quantity) || 0)
+      .map((item: RequestOpnameItem) => {
+        const diff = (parseFloat(String(item.actual_quantity)) || 0) - (parseFloat(String(item.recorded_quantity)) || 0)
         return {
           businessId,
           productId: item.product_id,
@@ -240,7 +314,7 @@ export async function POST(req: Request) {
           destinationLocationId: null
         }
       })
-      .filter((m: any) => m.qty > 0)
+      .filter((m: StockMoveInput) => m.qty > 0)
 
     if (stockMoveInputs.length > 0) {
       const moveRes = await recordStockMovements(stockMoveInputs, supabaseAdmin)
@@ -255,7 +329,8 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json(stockOpname)
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Internal Server Error'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
