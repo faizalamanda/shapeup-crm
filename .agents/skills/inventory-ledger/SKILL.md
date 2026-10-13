@@ -17,15 +17,19 @@ This view acts exactly like the `stock_moves` table, but it includes an on-the-f
 ```sql
 SUM(
   CASE
-    WHEN type IN ('receipt', 'refund') THEN qty
-    WHEN type = 'delivery' THEN -qty
-    WHEN type = 'adjustment' AND (origin_location_id IS NULL OR (destination_location_id IS NOT NULL AND origin_location_id IS NULL)) THEN qty
-    WHEN type = 'adjustment' THEN -qty
+    WHEN sm.status = 'done' THEN
+      CASE
+        WHEN sm.type IN ('receipt', 'refund') THEN sm.qty
+        WHEN sm.type = 'delivery' THEN -sm.qty
+        WHEN sm.type = 'adjustment' AND (sm.origin_location_id IS NULL OR (sm.destination_location_id IS NOT NULL AND sm.origin_location_id IS NULL)) THEN sm.qty
+        WHEN sm.type = 'adjustment' THEN -sm.qty
+        ELSE 0
+      END
     ELSE 0
   END
-) OVER (PARTITION BY product_id ORDER BY created_at ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as system_stock
+) OVER (PARTITION BY sm.product_id ORDER BY sm.created_at ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as system_stock
 ```
-This guarantees 100% data integrity even if past transactions are modified or backdated.
+This guarantees that only confirmed movements (`status = 'done'`) alter the active physical on-hand running balance, while `pending` (Quarantine / In-Transit) and `cancelled` movements do not corrupt historical inventory.
 
 ## Usage in API / Frontend
 When fetching stock moves for a product:

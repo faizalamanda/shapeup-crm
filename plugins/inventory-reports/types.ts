@@ -30,6 +30,8 @@ export interface StockMove {
   lot_number?: string | null
   status: MoveStatus
   type: MoveType
+  source_type?: string | null
+  source_id?: string | null
   created_at: string
 }
 
@@ -49,6 +51,8 @@ export interface StockReportItem {
   totalValue: number
   incomingShipments: number
   outgoingItems: number
+  quarantineQty?: number
+  inTransitQty?: number
   locationBreakdown: Record<string, { locationName: string; qty: number; reserved: number }>
 }
 

@@ -293,9 +293,19 @@ export function buildStockReport(products: any[], moves: StockMove[], locations:
       .filter(m => m.type === 'delivery' && m.status === 'pending')
       .reduce((sum, m) => sum + m.qty, 0)
 
-    // Calculate Incoming Shipments (Pending Purchases)
+    // Calculate Quarantine Stock (Pending Returns from Customer Orders)
+    const quarantineQty = prodMoves
+      .filter(m => m.status === 'pending' && m.type === 'receipt' && m.source_type === 'order')
+      .reduce((sum, m) => sum + m.qty, 0)
+
+    // Calculate In-Transit Shipments
+    const inTransitQty = prodMoves
+      .filter(m => (m.status as string) === 'in_transit')
+      .reduce((sum, m) => sum + m.qty, 0)
+
+    // Calculate Incoming Shipments (Pending Purchases from Vendors)
     const incomingShipments = prodMoves
-      .filter(m => m.type === 'receipt' && m.status === 'pending')
+      .filter(m => m.status === 'pending' && m.type === 'receipt' && m.source_type !== 'order')
       .reduce((sum, m) => sum + m.qty, 0)
 
     // Calculate Outgoing Items (Completed Deliveries)
@@ -346,6 +356,8 @@ export function buildStockReport(products: any[], moves: StockMove[], locations:
       onHandQty,
       availableQty,
       reservedQty,
+      quarantineQty,
+      inTransitQty,
       unitCost,
       totalValue,
       incomingShipments,

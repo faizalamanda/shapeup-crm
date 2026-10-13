@@ -218,6 +218,21 @@ export default function ProductDetailModal({
           </div>
         </div>
 
+        {/* Quarantine Alert Banner if applicable */}
+        {Boolean(initialStockItem.quarantineQty && initialStockItem.quarantineQty > 0) && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center justify-between text-xs text-amber-800">
+            <div className="flex items-center gap-2">
+              <span className="text-base">📦</span>
+              <span>
+                Terdapat <strong className="font-bold">{initialStockItem.quarantineQty} {unit}</strong> dalam <strong>Karantina Retur</strong> (retur pelanggan/COD yang belum diverifikasi fisik oleh gudang).
+              </span>
+            </div>
+            <span className="text-[10px] bg-amber-200/80 text-amber-900 font-extrabold px-2.5 py-0.5 rounded-full">
+              Karantina
+            </span>
+          </div>
+        )}
+
         {/* Modal Navigation Tabs */}
         <div className="flex border-b border-[#E2E2DC] bg-white px-4">
           <button
@@ -553,8 +568,17 @@ export default function ProductDetailModal({
                                 <span className="text-[10px] text-[#82827A] font-normal">{unit}</span>
                               </td>
                               <td className="py-2 px-3 text-right font-extrabold text-blue-700 font-mono">
-                                {formatNumber(m.system_stock ?? 0)}{' '}
-                                <span className="text-[10px] text-blue-600/80 font-normal">{unit}</span>
+                                {m.status === 'pending' ? (
+                                  <span className="text-amber-700 font-bold" title="Pending: Belum mempengaruhi saldo gudang aktif">
+                                    {formatNumber(m.system_stock ?? 0)}{' '}
+                                    <span className="text-[9px] font-semibold text-amber-600 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">HOLD</span>
+                                  </span>
+                                ) : (
+                                  <>
+                                    {formatNumber(m.system_stock ?? 0)}{' '}
+                                    <span className="text-[10px] text-blue-600/80 font-normal">{unit}</span>
+                                  </>
+                                )}
                               </td>
                               <td className="py-2 px-3 text-right font-mono text-[11px] text-[#2D2D2A]">
                                 {formatCurrency(m.unit_cost)}

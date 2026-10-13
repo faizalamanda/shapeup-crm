@@ -147,11 +147,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Required accounting accounts could not be resolved' }, { status: 500 })
     }
 
-    // Fetch all products in batch for cost price
+    // Fetch all products in batch for cost price and initial stock fallback
     const productIds = items.map((i: RequestOpnameItem) => i.product_id)
     const { data: products, error: prodErr } = await supabase
       .from('products')
-      .select('id, cost_price')
+      .select('id, cost_price, stock_quantity')
       .in('id', productIds)
       .eq('business_id', businessId)
 
@@ -160,6 +160,7 @@ export async function POST(req: Request) {
     }
 
     const productMap = new Map(products?.map(p => [p.id, p.cost_price || 0]) || [])
+    const productStockMap = new Map(products?.map(p => [p.id, p.stock_quantity || 0]) || [])
 
     // 1. Create Stock Opname Transaction in Ledger
     const { data: tx, error: txErr } = await supabase
@@ -189,7 +190,11 @@ export async function POST(req: Request) {
         .limit(1)
         .maybeSingle()
       
-      return { product_id: pid, system_stock: data?.system_stock || 0 }
+      const resolvedSystemStock = data?.system_stock !== undefined && data?.system_stock !== null
+        ? data.system_stock
+        : (productStockMap.get(pid) || 0)
+      
+      return { product_id: pid, system_stock: resolvedSystemStock }
     })
 
     const resolvedBalances = await Promise.all(balancePromises)

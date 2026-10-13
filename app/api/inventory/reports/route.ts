@@ -174,11 +174,21 @@ export async function GET(req: Request) {
         let destName = m.destination_location_name || (m.destination_location_id ? locMap.get(m.destination_location_id) || 'System' : 'System')
 
         if (m.type === 'receipt') {
-          originName = vendorLoc?.name || 'Pemasok / Vendor'
-          destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+          if (m.source_type === 'order') {
+            if (m.status === 'pending') {
+              originName = 'Transit Pelanggan (Retur)'
+              destName = 'Karantina Retur (Pending)'
+            } else {
+              originName = 'Karantina Retur'
+              destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+            }
+          } else {
+            originName = vendorLoc?.name || 'Pemasok / Vendor'
+            destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+          }
         } else if (m.type === 'delivery') {
           originName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
-          destName = customerLoc?.name || 'Transit Pelanggan'
+          destName = m.status === 'in_transit' ? 'Pengiriman (In-Transit)' : customerLoc?.name || 'Transit Pelanggan'
         } else if (m.type === 'adjustment') {
           const isIncrease = !m.origin_location_id || (m.destination_location_id && !m.origin_location_id)
           originName = isIncrease ? 'Penyesuaian System' : mainLoc?.name || 'Gudang Utama (WH-MAIN)'
