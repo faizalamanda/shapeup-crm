@@ -1,27 +1,64 @@
 import { NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
 import { postJournalTransaction } from '@/lib/journalHelper'
+import { ensureExpenseAccounts } from '@/lib/expenseLedger'
 
 export async function GET(request: Request) {
   const { businessId, supabase, error } = await getApiContext()
   if (error) return error
 
-  // Ambil mutasi stok (tipe: receipt, status: pending) yang berasal dari order
-  const { data: pendingMoves, error: fetchErr } = await supabase
+  // Pure Append-Only: Ambil mutasi karantina dan hitung net balance per referensi
+  let { data: allQuarantineMoves, error: fetchErr } = await supabase
     .from('stock_moves')
     .select(`
-      id, reference, qty, created_at,
+      id, reference, qty, type, created_at, source_type, source_id, product_id,
       product:products(id, name, sku, stock_quantity, cost_price)
     `)
     .eq('business_id', businessId)
-    .eq('status', 'pending')
-    .eq('type', 'receipt')
-    .eq('source_type', 'order')
+    .eq('bucket', 'quarantine')
     .order('created_at', { ascending: false })
 
-  if (fetchErr) {
+  if (fetchErr && fetchErr.message?.includes('bucket')) {
+    const { data: fallbackMoves } = await supabase
+      .from('stock_moves')
+      .select(`
+        id, reference, qty, type, created_at, source_type, source_id, product_id,
+        product:products(id, name, sku, stock_quantity, cost_price)
+      `)
+      .eq('business_id', businessId)
+      .eq('source_type', 'order')
+      .eq('type', 'receipt')
+      .order('created_at', { ascending: false })
+    allQuarantineMoves = fallbackMoves || []
+  } else if (fetchErr) {
     return NextResponse.json({ error: fetchErr.message }, { status: 500 })
   }
+
+  // Hitung pengeluaran karantina (offsetting moves: transfer / adjustment)
+  const outQtyMap = new Map<string, number>()
+  ;(allQuarantineMoves || []).forEach(m => {
+    if (m.type !== 'receipt') {
+      if (m.source_id) {
+        outQtyMap.set(m.source_id, (outQtyMap.get(m.source_id) || 0) + Number(m.qty))
+      }
+      const compositeKey = `${m.product_id}_${m.source_id || m.reference}`
+      outQtyMap.set(compositeKey, (outQtyMap.get(compositeKey) || 0) + Number(m.qty))
+    }
+  })
+
+  // Barang yang masih ada di karantina adalah receipt yang belum memiliki pengeluaran penuh
+  const pendingMoves = (allQuarantineMoves || []).filter(m => {
+    if (m.type !== 'receipt') return false
+
+    const directOut = outQtyMap.get(m.id) || 0
+    if (directOut >= Number(m.qty)) return false
+
+    const compositeKey = `${m.product_id}_${m.source_id || m.reference}`
+    const compositeOut = outQtyMap.get(compositeKey) || 0
+    if (compositeOut >= Number(m.qty)) return false
+
+    return true
+  })
 
   return NextResponse.json(pendingMoves)
 }
@@ -37,7 +74,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'moveId dan action wajib diisi' }, { status: 400 })
   }
 
-  // 1. Ambil detail move
+  // 1. Ambil detail move karantina asal
   const { data: move, error: moveErr } = await supabase
     .from('stock_moves')
     .select('*, product:products(id, name, cost_price)')
@@ -49,39 +86,86 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Mutasi tidak ditemukan' }, { status: 404 })
   }
 
-  if (move.status !== 'pending') {
-    return NextResponse.json({ error: 'Mutasi ini sudah diproses sebelumnya' }, { status: 400 })
-  }
+  const nowIso = new Date().toISOString()
+  const sourceRefId = move.source_id || move.id
 
   if (action === 'terima') {
-    // 2a. Aksi TERIMA: Cukup ubah status jadi 'done' (Trigger otomatis akan menambah stok)
-    const { error: updErr } = await supabase
-      .from('stock_moves')
-      .update({ status: 'done', updated_at: new Date().toISOString() })
-      .eq('id', moveId)
-
-    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
-
-    return NextResponse.json({ message: 'Barang berhasil diterima ke gudang utama' })
-
-  } else if (action === 'hilang') {
-    // 2b. Aksi HILANG: Batalkan mutasi (tidak tambah stok), dan buat Jurnal Kehilangan (502000)
-    
-    // - Batalkan stok move
-    const { error: updErr } = await supabase
-      .from('stock_moves')
-      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-      .eq('id', moveId)
-
-    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
-
-    // - Ambil Chart of Accounts
-    const { data: accounts } = await supabase.from('accounts').select('id, code').eq('business_id', businessId)
-    const accountMap: Record<string, string> = {}
-    if (accounts) {
-      accounts.forEach(a => accountMap[a.code] = a.id)
+    // 2a. Aksi TERIMA (Pure Append-Only Event Sourcing - ZERO UPDATE pada data lama):
+    // 1. Catat pengeluaran dari Karantina (Offsetting move: -qty di karantina)
+    const releaseRow: Record<string, any> = {
+      business_id: businessId,
+      product_id: move.product_id,
+      reference: `${move.reference} (Keluar Karantina)`,
+      bucket: 'quarantine',
+      type: 'transfer',
+      source_type: 'order_return_release',
+      source_id: move.id,
+      qty: move.qty,
+      unit_cost: move.unit_cost || move.product?.cost_price || 0,
+      status: 'done',
+      created_at: nowIso
     }
 
+    let { error: outErr } = await supabase.from('stock_moves').insert(releaseRow)
+    if (outErr && outErr.message?.includes('bucket')) {
+      delete releaseRow.bucket
+      const retry = await supabase.from('stock_moves').insert(releaseRow)
+      outErr = retry.error
+    }
+    if (outErr) return NextResponse.json({ error: outErr.message }, { status: 500 })
+
+    // 2. Catat penerimaan fisik ke Gudang Utama (Arrival move: +qty di rak Gudang Utama)
+    const inRow: Record<string, any> = {
+      business_id: businessId,
+      product_id: move.product_id,
+      reference: `${move.reference} (Terima Gudang)`,
+      bucket: 'main',
+      type: 'receipt',
+      source_type: 'order_return_receive',
+      source_id: move.source_id || move.id,
+      qty: move.qty,
+      unit_cost: move.unit_cost || move.product?.cost_price || 0,
+      status: 'done',
+      created_at: nowIso
+    }
+
+    let { error: inErr } = await supabase.from('stock_moves').insert(inRow)
+    if (inErr && inErr.message?.includes('bucket')) {
+      delete inRow.bucket
+      const retry = await supabase.from('stock_moves').insert(inRow)
+      inErr = retry.error
+    }
+    if (inErr) return NextResponse.json({ error: inErr.message }, { status: 500 })
+
+    return NextResponse.json({ message: 'Barang berhasil diterima ke gudang utama (mutasi penyeimbang dicatat)' })
+
+  } else if (action === 'hilang') {
+    // 2b. Aksi HILANG (Pure Append-Only Event Sourcing - ZERO UPDATE pada data lama):
+    // 1. Catat penghapusan dari Karantina (Scrap/Loss move: -qty di karantina)
+    const lossRow: Record<string, any> = {
+      business_id: businessId,
+      product_id: move.product_id,
+      reference: `${move.reference} (Hilang Ekspedisi)`,
+      bucket: 'quarantine',
+      type: 'adjustment',
+      source_type: 'order_return_loss',
+      source_id: move.id,
+      qty: move.qty,
+      unit_cost: move.unit_cost || move.product?.cost_price || 0,
+      status: 'done',
+      created_at: nowIso
+    }
+
+    let { error: outErr } = await supabase.from('stock_moves').insert(lossRow)
+    if (outErr && outErr.message?.includes('bucket')) {
+      delete lossRow.bucket
+      const retry = await supabase.from('stock_moves').insert(lossRow)
+      outErr = retry.error
+    }
+    if (outErr) return NextResponse.json({ error: outErr.message }, { status: 500 })
+
+    // 2. Buat Jurnal Finansial Kehilangan Ekspedisi pada hari ini
+    const accountMap = await ensureExpenseAccounts(businessId, supabase)
     const lossAccountId = accountMap['502000']
     const inventoryAccountId = accountMap['102000']
 
@@ -94,13 +178,16 @@ export async function POST(request: Request) {
           { account_id: inventoryAccountId, debit: 0, credit: hppValue }
         ]
 
+        const validOrderId = (move.source_type === 'order' && move.source_id) ? move.source_id : null
+
         await postJournalTransaction(
           businessId,
-          move.source_id || move.id,
-          new Date().toISOString(),
+          validOrderId,
+          nowIso,
           `Barang Hilang Ekspedisi: ${move.product?.name || move.reference} (${move.reference})`,
           journalLines,
-          supabase
+          supabase,
+          true
         )
       }
     }

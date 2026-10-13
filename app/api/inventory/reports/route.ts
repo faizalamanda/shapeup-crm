@@ -68,7 +68,8 @@ export async function GET(req: Request) {
         .from('v_stock_moves_ledger')
         .select(`
           id, business_id, product_id, reference, origin_location_id, destination_location_id,
-          qty, unit_cost, lot_number, status, type, created_at, system_stock,
+          qty, unit_cost, lot_number, status, type, source_type, source_id, created_at, system_stock,
+          bucket, quarantine_stock, in_transit_stock,
           products (id, name, sku, unit)
         `, { count: 'exact' })
         .eq('business_id', businessId)
@@ -85,9 +86,32 @@ export async function GET(req: Request) {
         movesQuery = movesQuery.or(`reference.ilike.%${search}%,lot_number.ilike.%${search}%`)
       }
 
-      const { data: rawMoves, count: totalMoves, error: movesErr } = await movesQuery
+      let { data: rawMoves, count: totalMoves, error: movesErr } = await movesQuery
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1)
+
+      if (movesErr && (movesErr.message?.includes('bucket') || movesErr.message?.includes('quarantine_stock'))) {
+        let fallbackQuery = supabase
+          .from('v_stock_moves_ledger')
+          .select(`
+            id, business_id, product_id, reference, origin_location_id, destination_location_id,
+            qty, unit_cost, lot_number, status, type, source_type, source_id, created_at, system_stock,
+            products (id, name, sku, unit)
+          `, { count: 'exact' })
+          .eq('business_id', businessId)
+
+        if (statusFilter !== 'all') fallbackQuery = fallbackQuery.eq('status', statusFilter)
+        if (typeFilter !== 'all') fallbackQuery = fallbackQuery.eq('type', typeFilter)
+        if (search) fallbackQuery = fallbackQuery.or(`reference.ilike.%${search}%,lot_number.ilike.%${search}%`)
+
+        const fbRes = await fallbackQuery
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1)
+
+        rawMoves = (fbRes.data as any) || []
+        totalMoves = fbRes.count
+        movesErr = fbRes.error
+      }
 
       if (movesErr) {
         return NextResponse.json({ error: movesErr.message }, { status: 500 })
@@ -98,16 +122,43 @@ export async function GET(req: Request) {
         let originName = m.origin_location_name || (m.origin_location_id ? locMap.get(m.origin_location_id) || 'System' : 'System')
         let destName = m.destination_location_name || (m.destination_location_id ? locMap.get(m.destination_location_id) || 'System' : 'System')
 
+        const isOrderReturn = m.source_type === 'order' || (typeof m.reference === 'string' && m.reference.toLowerCase().includes('order'))
+        const isOrderReturnReceive = m.source_type === 'order_return_receive' || (typeof m.reference === 'string' && m.reference.toLowerCase().includes('terima gudang'))
+
         if (m.type === 'receipt') {
-          originName = vendorLoc?.name || 'Pemasok / Vendor'
-          destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+          if (isOrderReturnReceive) {
+            originName = 'Karantina Retur'
+            destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+          } else if (isOrderReturn) {
+            if (m.status === 'pending') {
+              originName = 'Transit Pelanggan (Retur)'
+              destName = 'Karantina Retur (Pending)'
+            } else if (m.status === 'transferred') {
+              originName = 'Transit Pelanggan (Retur)'
+              destName = 'Karantina Retur (Selesai)'
+            } else {
+              originName = 'Karantina Retur'
+              destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+            }
+          } else {
+            originName = vendorLoc?.name || 'Pemasok / Vendor'
+            destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+          }
         } else if (m.type === 'delivery') {
           originName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
-          destName = customerLoc?.name || 'Transit Pelanggan'
+          destName = m.status === 'in_transit' ? 'Pengiriman (In-Transit)' : customerLoc?.name || 'Transit Pelanggan'
         } else if (m.type === 'adjustment') {
-          originName = 'Penyesuaian System'
-          destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+          const isIncrease = !m.origin_location_id || (m.destination_location_id && !m.origin_location_id)
+          originName = isIncrease ? 'Penyesuaian System' : mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+          destName = isIncrease ? mainLoc?.name || 'Gudang Utama (WH-MAIN)' : 'Selisih Stok Opname'
         }
+
+        const bucket = m.bucket || (isOrderReturn && (m.status === 'pending' || m.status === 'transferred') ? 'quarantine' : m.status === 'in_transit' ? 'in_transit' : 'main')
+        const bucketLabel = bucket === 'quarantine'
+          ? (m.status === 'transferred' ? 'Karantina (Selesai)' : 'Karantina Retur')
+          : bucket === 'in_transit'
+            ? 'Dalam Pengiriman'
+            : 'Gudang Utama'
 
         const prod = m.products || {}
 
@@ -128,6 +179,11 @@ export async function GET(req: Request) {
           lot_number: m.lot_number || null,
           status: m.status,
           type: m.type,
+          source_type: m.source_type,
+          source_id: m.source_id,
+          bucket,
+          bucket_label: bucketLabel,
+          system_stock: m.system_stock,
           created_at: m.created_at
         }
       })
@@ -151,19 +207,31 @@ export async function GET(req: Request) {
       const offset = (page - 1) * limit
 
       // Query v_stock_moves_ledger urut DESC (terbaru → terlama)
-      const [locations, { data: rawMoves, count: totalMoves }] = await Promise.all([
+      let [locations, movesRes] = await Promise.all([
         getCachedLocations(businessId, supabase),
         supabase
           .from('v_stock_moves_ledger')
-          .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, created_at, system_stock', { count: 'exact' })
+          .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, source_type, source_id, created_at, system_stock, bucket, quarantine_stock, in_transit_stock', { count: 'exact' })
           .eq('business_id', businessId)
           .eq('product_id', productId)
           .order('created_at', { ascending: false })
           .range(offset, offset + limit - 1)
       ])
 
-      let finalMoves: any[] = rawMoves || []
-      let finalTotalCount = totalMoves || finalMoves.length
+      let finalMoves: any[] = movesRes.data || []
+      let finalTotalCount = movesRes.count || finalMoves.length
+
+      if (movesRes.error && (movesRes.error.message?.includes('bucket') || movesRes.error.message?.includes('quarantine_stock'))) {
+        const fbRes = await supabase
+          .from('v_stock_moves_ledger')
+          .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, source_type, source_id, created_at, system_stock', { count: 'exact' })
+          .eq('business_id', businessId)
+          .eq('product_id', productId)
+          .order('created_at', { ascending: false })
+          .range(offset, offset + limit - 1)
+        finalMoves = (fbRes.data as any) || []
+        finalTotalCount = fbRes.count || finalMoves.length
+      }
       const locMap = new Map(locations.map(l => [l.id, l.name]))
       const mainLoc = locations.find(l => l.is_default) || locations[0]
       const vendorLoc = locations.find(l => l.type === 'vendor')
@@ -173,11 +241,20 @@ export async function GET(req: Request) {
         let originName = m.origin_location_name || (m.origin_location_id ? locMap.get(m.origin_location_id) || 'System' : 'System')
         let destName = m.destination_location_name || (m.destination_location_id ? locMap.get(m.destination_location_id) || 'System' : 'System')
 
+        const isOrderReturn = m.source_type === 'order' || (typeof m.reference === 'string' && m.reference.toLowerCase().includes('order'))
+        const isOrderReturnReceive = m.source_type === 'order_return_receive' || (typeof m.reference === 'string' && m.reference.toLowerCase().includes('terima gudang'))
+
         if (m.type === 'receipt') {
-          if (m.source_type === 'order') {
+          if (isOrderReturnReceive) {
+            originName = 'Karantina Retur'
+            destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
+          } else if (isOrderReturn) {
             if (m.status === 'pending') {
               originName = 'Transit Pelanggan (Retur)'
               destName = 'Karantina Retur (Pending)'
+            } else if (m.status === 'transferred') {
+              originName = 'Transit Pelanggan (Retur)'
+              destName = 'Karantina Retur (Selesai)'
             } else {
               originName = 'Karantina Retur'
               destName = mainLoc?.name || 'Gudang Utama (WH-MAIN)'
@@ -195,10 +272,19 @@ export async function GET(req: Request) {
           destName = isIncrease ? mainLoc?.name || 'Gudang Utama (WH-MAIN)' : 'Selisih Stok Opname'
         }
 
+        const bucket = m.bucket || (isOrderReturn && (m.status === 'pending' || m.status === 'transferred') ? 'quarantine' : m.status === 'in_transit' ? 'in_transit' : 'main')
+        const bucketLabel = bucket === 'quarantine'
+          ? (m.status === 'transferred' ? 'Karantina (Selesai)' : 'Karantina Retur')
+          : bucket === 'in_transit'
+            ? 'Dalam Pengiriman'
+            : 'Gudang Utama'
+
         return {
           ...m,
           origin_location_name: originName,
           destination_location_name: destName,
+          bucket,
+          bucket_label: bucketLabel,
         }
       })
 
@@ -424,8 +510,19 @@ export async function GET(req: Request) {
     const locations = (locationsRes.data && locationsRes.data.length > 0)
       ? locationsRes.data as InventoryLocation[]
       : DEFAULT_LOCATIONS(businessId)
+    const productIds = paginatedProducts.map((p: any) => p.id)
+    let activeMoves: any[] = []
+    if (productIds.length > 0) {
+      const { data: mData } = await supabase
+        .from('stock_moves')
+        .select('product_id, qty, status, type, source_type, reference')
+        .eq('business_id', businessId)
+        .in('product_id', productIds)
+        .in('status', ['pending', 'in_transit'])
+      activeMoves = mData || []
+    }
 
-    const stockReportItems = buildStockReport(paginatedProducts, [], locations)
+    const stockReportItems = buildStockReport(paginatedProducts, activeMoves, locations)
 
     return NextResponse.json({
       success: true,

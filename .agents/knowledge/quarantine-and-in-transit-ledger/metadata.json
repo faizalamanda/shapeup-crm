@@ -2,14 +2,16 @@
   "summary": "Multi-Bucket Inventory Architecture: Strict isolation of Quarantine Returns, In-Transit Goods, and Active Sellable On-Hand Stock in PostgreSQL ledger views and API endpoints.",
   "timestamps": {
     "created": "2026-10-13T11:42:00Z",
-    "last_updated": "2026-10-13T11:42:00Z"
+    "last_updated": "2026-10-13T12:31:00Z"
   },
   "references": [
     "supabase/migrations/20261013000200_fix_v_stock_moves_ledger_done_status.sql",
     "app/api/stock-opname/route.ts",
     "app/api/inventory/reports/route.ts",
+    "app/api/inventory/returns/route.ts",
     "plugins/inventory-reports/inventoryHelper.ts",
     "plugins/inventory-reports/components/ProductDetailModal.tsx",
+    "plugins/inventory-reports/components/PendingReturnsTab.tsx",
     ".agents/skills/inventory-ledger/SKILL.md"
   ]
 }

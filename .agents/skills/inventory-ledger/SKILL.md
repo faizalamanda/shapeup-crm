@@ -158,3 +158,27 @@ useEffect(() => {
   }
 }, [purchase?.id])
 ```
+
+---
+
+## Multi-Bucket Inventory & "Tinggal Geser" Return Pattern
+
+### 1. Dedicated Wadah / Bucket Column in Move History
+Move history tables and modals (`ProductDetailModal.tsx`) include a dedicated **Wadah** column to explicitly convey where stock currently resides:
+* 🏢 **Gudang Utama** (`bucket = 'main'`): confirmed movements (`status = 'done'`), affecting active physical on-hand stock.
+* 📦 **Karantina Retur** (`bucket = 'quarantine'`): pending returns awaiting inspection (`status = 'pending'`, `source_type = 'order'`).
+* 🚚 **Dalam Pengiriman** (`bucket = 'in_transit'`): goods in-transit between warehouses or with couriers (`status = 'in_transit'`).
+
+### 2. Pure Append-Only Event Sourcing & Multi-Bucket Running Balances
+To maintain 100% historical accuracy and strict Event Sourcing compliance:
+1. **Zero In-Place Updates (Zero UPDATE)**: The original quarantine row (e.g. `Order #5726` created on 08/10) is **NEVER modified**. Its status, timestamp, and bucket remain immutable audit records forever.
+2. **Accepting Goods into Active Stock ("Terima & Jual")**:
+   - Staff executes "Terima": The system inserts **two immutable offsetting events** at the current timestamp (`new Date().toISOString()`):
+     - **Offsetting Quarantine Release**: `bucket = 'quarantine'`, `type = 'transfer'`, `qty = X`, `status = 'done'`, linking back to `source_id = original_move_id`. This reduces `quarantine_stock` balance back to 0 at the acceptance date.
+     - **Warehouse Arrival**: `bucket = 'main'`, `type = 'receipt'`, `qty = X`, `status = 'done'`, `source_type = 'order_return_receive'`. This increments `system_stock` (on-hand) on the shelf at the real arrival date.
+3. **Goods Lost or Damaged ("Hilang / Rusak")**:
+   - Staff executes "Hilang": The system inserts **one immutable offsetting scrap event** at the current timestamp:
+     - **Offsetting Quarantine Scrap**: `bucket = 'quarantine'`, `type = 'adjustment'`, `qty = X`, `status = 'done'`, linking back to `source_id = original_move_id`. This zeroes out `quarantine_stock` without touching `bucket = 'main'`, and posts the inventory shrinkage financial journal.
+4. **Queue Resolution via Net Balance**: The unhandled quarantine list in `GET /api/inventory/returns` is determined by `Net Qty = In - Out > 0`. Once an offsetting record is inserted, the item naturally drops out of the pending queue.
+5. **Database Engine Calculates All Balances**: All running balances (`system_stock`, `quarantine_stock`, `in_transit_stock`) are calculated directly by PostgreSQL Window Functions in `v_stock_moves_ledger`. Never perform array arithmetic in JavaScript!
+

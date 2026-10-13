@@ -15,6 +15,7 @@ export interface StockMoveInput {
   sourceType?: MoveSourceType
   sourceId?: string
   status?: MoveStatus
+  bucket?: 'main' | 'quarantine' | 'in_transit'
   originLocationId?: string | null
   destinationLocationId?: string | null
   lotNumber?: string | null
@@ -112,6 +113,7 @@ export async function recordStockMovements(
           lot_number: m.lotNumber || null,
           created_at: m.createdAt || new Date().toISOString()
         }
+        if (m.bucket) row.bucket = m.bucket
         if (includeSource && m.sourceType) row.source_type = m.sourceType
         if (includeSource && m.sourceId) row.source_id = m.sourceId
         return row

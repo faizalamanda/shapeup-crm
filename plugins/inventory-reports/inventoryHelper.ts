@@ -293,14 +293,14 @@ export function buildStockReport(products: any[], moves: StockMove[], locations:
       .filter(m => m.type === 'delivery' && m.status === 'pending')
       .reduce((sum, m) => sum + m.qty, 0)
 
-    // Calculate Quarantine Stock (Pending Returns from Customer Orders)
-    const quarantineQty = prodMoves
-      .filter(m => m.status === 'pending' && m.type === 'receipt' && m.source_type === 'order')
-      .reduce((sum, m) => sum + m.qty, 0)
+    // Calculate Quarantine Stock (Bucket quarantine or pending customer returns)
+    const quarantineQty = Math.max(0, prodMoves
+      .filter(m => m.bucket === 'quarantine' || (m.status === 'pending' && m.type === 'receipt' && (m.source_type === 'order' || (typeof m.reference === 'string' && m.reference.toLowerCase().includes('order')))))
+      .reduce((sum, m) => sum + (m.type === 'receipt' ? m.qty : -m.qty), 0))
 
     // Calculate In-Transit Shipments
     const inTransitQty = prodMoves
-      .filter(m => (m.status as string) === 'in_transit')
+      .filter(m => m.bucket === 'in_transit' || (m.status as string) === 'in_transit')
       .reduce((sum, m) => sum + m.qty, 0)
 
     // Calculate Incoming Shipments (Pending Purchases from Vendors)
@@ -561,6 +561,8 @@ export function buildMoveAnalysisPivot(moves: StockMove[], groupBy: 'product' | 
       const statusLabels: Record<string, string> = {
         done: 'Selesai (Done)',
         pending: 'Dalam Proses / Pending',
+        transferred: 'Dialihkan ke Gudang (Transferred)',
+        in_transit: 'Dalam Pengiriman (In-Transit)',
         cancelled: 'Dibatalkan (Cancelled)',
       }
       key = statusLabels[m.status] || m.status

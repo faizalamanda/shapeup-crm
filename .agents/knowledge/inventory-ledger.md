@@ -39,6 +39,19 @@ Backfill hanya boleh memakai UUID produk bila tersedia. Jika perlu fallback SKU/
 
 Sebelum menghapus atau membangun ulang move historis, bandingkan dulu `purchases.items_json.product_id`, `business_id`, dan rows `stock_moves`. Gejala tabel yang tampak duplikat bisa berasal dari fallback UI, bukan data tersimpan. Jalankan perubahan destruktif hanya terhadap dokumen yang sudah diverifikasi dan dengan hasil preview.
 
+## Multi-Bucket Ledger & Pure Append-Only Event Sourcing
+
+- **Single Source of Truth Wadah (`bucket`):** Setiap mutasi memiliki kolom `bucket` bertipe `VARCHAR(50)`:
+  - `main`: Stok on-hand rak gudang aktif (hanya `status = 'done'` yang dihitung oleh trigger ke `products.stock_quantity`).
+  - `quarantine`: Barang retur pelanggan/COD dalam pos inspeksi.
+  - `in_transit`: Barang dalam pengiriman ekspedisi / antar-cabang.
+- **Perhitungan Saldo Berjalan Native (PostgreSQL Engine):** Saldo per wadah (`system_stock`, `quarantine_stock`, `in_transit_stock`) dihitung 100% oleh Database View `v_stock_moves_ledger` menggunakan Window Functions `SUM(...) OVER (PARTITION BY product_id ORDER BY created_at ASC, id ASC)`. Dilarang menghitung saldo menggunakan perulangan array di JavaScript.
+- **Zero In-Place Updates (Zero UPDATE):** Dilarang mengubah status atau timestamp transaksi retur historis (misal: Order #5726 pada 08/10).
+- **Mutasi Penyeimbang (Offsetting Inserts):**
+  - **Aksi Terima:** Append mutasi keluar karantina (`bucket: 'quarantine'`, `type: 'transfer'`, `source_type: 'order_return_release'`, `status: 'done'`) DAN mutasi masuk gudang utama (`bucket: 'main'`, `type: 'receipt'`, `source_type: 'order_return_receive'`, `status: 'done'`) pada tanggal/waktu riil eksekusi (`new Date().toISOString()`).
+  - **Aksi Hilang:** Append mutasi hapus karantina (`bucket: 'quarantine'`, `type: 'adjustment'`, `source_type: 'order_return_loss'`, `status: 'done'`) pada tanggal/waktu riil eksekusi, serta posting Jurnal Kerugian Ekspedisi.
+- **Antrean Retur (Net Balance):** Daftar karantina belum selesai dihitung dari `Net Qty = In - Out > 0`. Begitu mutasi penyeimbang dicatat, item langsung hilang dari antrean secara konsisten tanpa menyentuh data awal.
+
 ## Migrasi
 
 Migrasi schema untuk kolom/constraint ledger harus diterapkan sebelum code writer baru dideploy. Constraint foreign key legacy dapat ditambahkan `NOT VALID` bila data lama belum diaudit; tetap verifikasi dan validasi data legacy dalam pekerjaan terpisah.

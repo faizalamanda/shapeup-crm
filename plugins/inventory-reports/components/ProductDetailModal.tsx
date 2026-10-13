@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { StockReportItem, StockMove, PaginationMeta } from '../types'
+import { useUserContext } from '@/components/UserContext'
+import { formatDisplayDate } from '@/lib/timeUtils'
 
 interface ProductDetailModalProps {
   productId: string | null
@@ -19,6 +21,7 @@ export default function ProductDetailModal({
   initialStockItem,
   onClose,
 }: ProductDetailModalProps) {
+  const { activeBusiness } = useUserContext()
   const [activeTab, setActiveTab] = useState<ModalTab>('details')
 
   // Tab 2 (Valuation) state & loader
@@ -146,6 +149,12 @@ export default function ProductDetailModal({
   const category = initialStockItem.categoryName || 'Tanpa Kategori'
   const unit = initialStockItem.unit || 'Pcs'
 
+  const currentQuarantineQty = moves !== null
+    ? Math.max(0, moves
+        .filter(m => m.bucket === 'quarantine' || (m.status === 'pending' && (m.source_type === 'order' || (typeof m.reference === 'string' && m.reference.toLowerCase().includes('order')))))
+        .reduce((sum, m) => sum + (m.type === 'receipt' ? m.qty : -m.qty), 0))
+    : (initialStockItem.quarantineQty || 0)
+
   const modalContent = (
     <div
       className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-150"
@@ -219,12 +228,12 @@ export default function ProductDetailModal({
         </div>
 
         {/* Quarantine Alert Banner if applicable */}
-        {Boolean(initialStockItem.quarantineQty && initialStockItem.quarantineQty > 0) && (
+        {currentQuarantineQty > 0 && (
           <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center justify-between text-xs text-amber-800">
             <div className="flex items-center gap-2">
               <span className="text-base">📦</span>
               <span>
-                Terdapat <strong className="font-bold">{initialStockItem.quarantineQty} {unit}</strong> dalam <strong>Karantina Retur</strong> (retur pelanggan/COD yang belum diverifikasi fisik oleh gudang).
+                Terdapat <strong className="font-bold">{currentQuarantineQty} {unit}</strong> dalam <strong>Karantina Retur</strong> (retur pelanggan/COD yang belum diverifikasi fisik oleh gudang).
               </span>
             </div>
             <span className="text-[10px] bg-amber-200/80 text-amber-900 font-extrabold px-2.5 py-0.5 rounded-full">
@@ -512,6 +521,7 @@ export default function ProductDetailModal({
                           <th className="py-2.5 px-3">Waktu</th>
                           <th className="py-2.5 px-3">No. Referensi</th>
                           <th className="py-2.5 px-3">Tipe Mutasi</th>
+                          <th className="py-2.5 px-3">Wadah</th>
                           <th className="py-2.5 px-3">Asal / Tujuan</th>
                           <th className="py-2.5 px-3 text-right">Qty</th>
                           <th className="py-2.5 px-3 text-right">Saldo Stok</th>
@@ -542,10 +552,7 @@ export default function ProductDetailModal({
                           return (
                             <tr key={m.id} className="hover:bg-[#F9F9F8]">
                               <td className="py-2 px-3 text-[11px] text-[#6B6B63] whitespace-nowrap">
-                                {new Date(m.created_at && !m.created_at.includes('Z') && !m.created_at.includes('+') ? m.created_at + 'Z' : m.created_at).toLocaleString('id-ID', {
-                                  dateStyle: 'short',
-                                  timeStyle: 'short',
-                                })}
+                                {formatDisplayDate(m.created_at, 'datetime', activeBusiness?.timezone)}
                               </td>
                               <td className="py-2 px-3 font-mono font-bold text-[#1C1C1A]">
                                 {m.reference}
@@ -555,6 +562,20 @@ export default function ProductDetailModal({
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold border ${typeBadge}`}
                                 >
                                   {typeLabel}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 whitespace-nowrap">
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                    m.bucket === 'quarantine'
+                                      ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                      : m.bucket === 'in_transit'
+                                      ? 'bg-purple-50 text-purple-800 border-purple-200'
+                                      : 'bg-slate-50 text-slate-800 border-slate-200'
+                                  }`}
+                                >
+                                  {m.bucket === 'quarantine' ? '📦' : m.bucket === 'in_transit' ? '🚚' : '🏢'}{' '}
+                                  {m.bucket_label || (m.bucket === 'quarantine' ? 'Karantina' : m.bucket === 'in_transit' ? 'In-Transit' : 'Gudang Utama')}
                                 </span>
                               </td>
                               <td className="py-2 px-3 text-[11px] text-[#6B6B63]">
@@ -568,10 +589,12 @@ export default function ProductDetailModal({
                                 <span className="text-[10px] text-[#82827A] font-normal">{unit}</span>
                               </td>
                               <td className="py-2 px-3 text-right font-extrabold text-blue-700 font-mono">
-                                {m.status === 'pending' ? (
-                                  <span className="text-amber-700 font-bold" title="Pending: Belum mempengaruhi saldo gudang aktif">
+                                {m.status !== 'done' ? (
+                                  <span className="text-amber-700 font-bold" title="Belum/tidak mempengaruhi saldo fisik gudang aktif">
                                     {formatNumber(m.system_stock ?? 0)}{' '}
-                                    <span className="text-[9px] font-semibold text-amber-600 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">HOLD</span>
+                                    <span className="text-[9px] font-semibold text-amber-600 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
+                                      {m.status === 'transferred' ? 'TRANSFERRED' : m.status === 'cancelled' ? 'BATAL' : 'HOLD'}
+                                    </span>
                                   </span>
                                 ) : (
                                   <>
@@ -590,10 +613,12 @@ export default function ProductDetailModal({
                                       ? 'bg-emerald-100 text-emerald-800'
                                       : m.status === 'pending'
                                       ? 'bg-amber-100 text-amber-800'
+                                      : m.status === 'transferred'
+                                      ? 'bg-blue-100 text-blue-800'
                                       : 'bg-rose-100 text-rose-800'
                                   }`}
                                 >
-                                  {m.status.toUpperCase()}
+                                  {m.status === 'transferred' ? 'SELESAI' : m.status.toUpperCase()}
                                 </span>
                               </td>
                             </tr>

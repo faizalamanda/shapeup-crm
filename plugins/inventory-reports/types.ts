@@ -11,7 +11,7 @@ export interface InventoryLocation {
 }
 
 export type MoveType = 'receipt' | 'delivery' | 'transfer' | 'adjustment'
-export type MoveStatus = 'done' | 'pending' | 'cancelled'
+export type MoveStatus = 'done' | 'pending' | 'cancelled' | 'transferred' | 'in_transit'
 
 export interface StockMove {
   id: string
@@ -26,12 +26,16 @@ export interface StockMove {
   destination_location_name?: string
   qty: number
   system_stock?: number
+  quarantine_stock?: number
+  in_transit_stock?: number
   unit_cost: number
   lot_number?: string | null
   status: MoveStatus
   type: MoveType
   source_type?: string | null
   source_id?: string | null
+  bucket?: string
+  bucket_label?: string
   created_at: string
 }
 

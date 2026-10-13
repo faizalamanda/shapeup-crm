@@ -1,8 +1,11 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
+import { useUserContext } from '@/components/UserContext'
+import { formatDisplayDate } from '@/lib/timeUtils'
 
 export default function PendingReturnsTab() {
+  const { activeBusiness } = useUserContext()
   const [moves, setMoves] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -105,7 +108,7 @@ export default function PendingReturnsTab() {
               moves.map((m: any) => (
                 <tr key={m.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 whitespace-nowrap">
-                    {new Date(m.created_at).toLocaleDateString('id-ID')}
+                    {formatDisplayDate(m.created_at, 'datetime', activeBusiness?.timezone)}
                   </td>
                   <td className="px-4 py-3 font-medium text-gray-800">
                     {m.reference}
