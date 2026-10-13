@@ -61,6 +61,10 @@
 
 3. **Strict Setting-Driven Triggers:** Pengurangan stok dan jurnal HPP **WAJIB HANYA** terpicu berdasarkan status yang terdaftar di `stockReductionStatuses` dan `journalHppStatuses` hasil konfigurasi bisnis dari database/settings. **Dilarang keras** menumpuk *hardcoded fallback* (seperti `status === 'completed'`) secara manual di kode logika.
 
+4. **Multi-Bucket & Quarantine Isolation:** Mutasi berstatus `pending` (seperti retur COD/pesanan belum di-ACC gudang) dan `in_transit` (barang di perjalanan kurir/antar cabang) **DILARANG KERAS** mempengaruhi saldo berjalan fisik gudang aktif (`system_stock`). Hanya mutasi dengan `status === 'done'` yang boleh memutasi On-Hand Physical Stock.
+
+5. **Semantic Location for Order Returns:** Mutasi pengembalian barang pesanan batal/retur (`source_type === 'order'`) **DILARANG KERAS** dilabeli sebagai penerimaan dari Pemasok/Vendor. Secara semantik, asal barang adalah `Transit Pelanggan (Retur)` menuju `Karantina Retur (Pending)` sampai barang resmi diterima fisik di gudang aktif.
+
 
 ## Research & Planning
 
