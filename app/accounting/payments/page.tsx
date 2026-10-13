@@ -239,6 +239,8 @@ export default function AccountingPaymentsPage() {
               >
                 <option value="all">Semua Saluran</option>
                 <option value="POS">POS (Kasir)</option>
+                <option value="WooCommerce">WooCommerce</option>
+                <option value="Accurate Online">Accurate Online</option>
                 <option value="Invoice">Invoice Penjualan</option>
                 <option value="Purchases">Pembelian Supplier</option>
                 <option value="Expenses">Beban Operasional</option>
@@ -359,6 +361,8 @@ export default function AccountingPaymentsPage() {
                         <td className="px-4 py-3">
                           <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase ${
                             p.channel === 'POS' ? 'bg-purple-50 text-purple-700 border border-purple-200' :
+                            p.channel?.toLowerCase().includes('woo') ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' :
+                            p.channel?.toLowerCase().includes('accurate') ? 'bg-teal-50 text-teal-700 border border-teal-200' :
                             p.channel === 'Invoice' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
                             p.channel === 'Purchases' ? 'bg-amber-50 text-amber-800 border border-amber-200' :
                             'bg-slate-100 text-slate-700 border border-slate-200'
