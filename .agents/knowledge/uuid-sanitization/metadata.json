@@ -1,0 +1,14 @@
+{
+  "summary": "Standardization of UUID input sanitization across API routes and React client components to prevent PostgreSQL 'invalid input syntax for type uuid' errors.",
+  "timestamps": {
+    "created": "2026-10-13T10:42:00Z",
+    "last_updated": "2026-10-13T10:42:00Z"
+  },
+  "references": [
+    "app/api/pos/shifts/route.ts",
+    "app/api/pos/order/route.ts",
+    "app/pos/components/ShiftModal.tsx",
+    "app/pos/components/POSWorkspace.tsx",
+    "app/pos/components/POSHub.tsx"
+  ]
+}

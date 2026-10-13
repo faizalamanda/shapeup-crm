@@ -220,6 +220,30 @@ Untuk aturan fallback riwayat, backfill, dan perbaikan data legacy, baca [knowle
 
 ---
 
+### 10. UUID Input Sanitization & Optional Foreign Keys
+
+Kolom bertipe data PostgreSQL `UUID` (seperti `register_id`, `shift_id`, `customer_id`, dll.) akan memicu *fatal crash* (`invalid input syntax for type uuid: ""`) jika menerima string kosong `""`.
+
+Destructuring dengan default parameter seperti `const { register_id = null } = body` **tidak akan mencegah error** karena string kosong adalah nilai yang *defined*.
+
+```typescript
+// Helper UUID regex guard
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+export const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v)
+
+// Sanitasi sebelum kueri database / insert / update:
+const cleanRegisterId = isUuid(register_id) ? register_id : null
+const cleanShiftId = isUuid(shift_id) ? shift_id : null
+```
+
+Di sisi React / Client payload, selalu kirim `id || null` bukan string kosong:
+```typescript
+body: JSON.stringify({ register_id: registerId || null })
+```
+Untuk detail lengkap, baca [knowledge uuid-sanitization](../../knowledge/uuid-sanitization/artifacts/explanation.md).
+
+---
+
 ## ⚡ Performance Rules
 
 1. **Auth:** `getApiContext()` uses JWT fast-path → ~0-5ms (no network call to Supabase Auth)
