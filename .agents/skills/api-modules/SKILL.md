@@ -227,9 +227,7 @@ Kolom bertipe data PostgreSQL `UUID` (seperti `register_id`, `shift_id`, `custom
 Destructuring dengan default parameter seperti `const { register_id = null } = body` **tidak akan mencegah error** karena string kosong adalah nilai yang *defined*.
 
 ```typescript
-// Helper UUID regex guard
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-export const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v)
+import { isUuid } from '@/lib/utils'
 
 // Sanitasi sebelum kueri database / insert / update:
 const cleanRegisterId = isUuid(register_id) ? register_id : null
@@ -241,6 +239,69 @@ Di sisi React / Client payload, selalu kirim `id || null` bukan string kosong:
 body: JSON.stringify({ register_id: registerId || null })
 ```
 Untuk detail lengkap, baca [knowledge uuid-sanitization](../../knowledge/uuid-sanitization/artifacts/explanation.md).
+
+---
+
+### 11. Vercel Serverless & Edge Input Parsing Standards
+
+Untuk memastikan keandalan 100% pada lingkungan Vercel Serverless Functions:
+
+1. **Safe Request Body Parsing:**
+   `await request.json()` pada Vercel akan melempar *unhandled SyntaxError* jika payload kosong atau format tidak valid.
+   **Wajib:**
+   ```typescript
+   let body: any
+   try {
+     body = await request.json()
+   } catch {
+     return NextResponse.json({ error: 'Payload JSON tidak valid atau kosong' }, { status: 400 })
+   }
+   ```
+
+2. **Safe Pagination & Number Parsing (Anti-NaN):**
+   `parseInt('abc', 10)` menghasilkan `NaN`. Operasi `Math.max(1, NaN)` di JavaScript tetap menghasilkan `NaN`, yang merusak rentang `.range(NaN, NaN)` di Supabase.
+   **Wajib:**
+   ```typescript
+   const rawPage = parseInt(url.searchParams.get('page') || '1', 10)
+   const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1
+
+   const rawLimit = parseInt(url.searchParams.get('limit') || '50', 10)
+   const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(500, rawLimit) : 50
+   ```
+
+3. **PostgREST Filter Delimiter Safety:**
+   Pada pencarian dengan `.or(...)`, karakter koma `,` dan tanda kurung `()` adalah delimiter sintaks internal PostgREST. Jika user mencari `baju, merah`, kueri akan gagal dengan error 400 Bad Request.
+   **Wajib:** Sanitize string pencarian:
+   ```typescript
+   const rawSearch = url.searchParams.get('search') || ''
+   const search = rawSearch.replace(/[,()]/g, ' ').trim()
+   ```
+
+4. **Client-Side Safe Response Parsing:**
+   Ketika endpoint serverless mengalami timeout (504) atau gateway error (502), response berupa halaman HTML, bukan JSON. Memanggil `await res.json()` langsung akan memicu crash `SyntaxError: Unexpected token '<'`.
+   **Wajib:**
+   ```typescript
+   const json = await res.json().catch(() => null)
+   if (!res.ok) throw new Error(json?.error || `Gagal memuat data (Status: ${res.status})`)
+   ```
+
+---
+
+### 12. PostgreSQL Database Views & Row Level Security (RLS)
+
+1. **`WITH (security_invoker = true)` pada Database Views:**
+   Secara default di PostgreSQL, View dieksekusi dengan hak akses pemilik view (*SECURITY DEFINER* / postgres), yang **melewati (bypass) aturan RLS** pada tabel asal.
+   **Wajib:** Setiap View yang dibuat harus menyertakan opsi `WITH (security_invoker = true)`:
+   ```sql
+   CREATE VIEW public.v_quarantine_returns
+   WITH (security_invoker = true) AS
+   SELECT ...
+   ```
+   Ini memastikan PostgreSQL menegakkan aturan RLS tabel asal (`stock_moves`, `products`) berdasarkan kredensial pengguna yang sedang login (`auth.uid()`).
+
+2. **Defense-in-Depth Tenant Isolation:**
+   Di API Route, selalu kombinasikan RLS database dengan filter eksplisit `.eq('business_id', businessId)` yang bersumber dari `getApiContext()`. Jangan pernah mengandalkan satu lapisan keamanan saja.
+
 
 ---
 

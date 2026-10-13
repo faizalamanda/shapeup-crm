@@ -7,6 +7,7 @@ import {
   calculateValuation,
 } from '@/plugins/inventory-reports/inventoryHelper'
 import { InventoryLocation, StockMove } from '@/plugins/inventory-reports/types'
+import { isUuid } from '@/lib/utils'
 
 const DEFAULT_LOCATIONS = (businessId: string): InventoryLocation[] => [
   { id: 'wh-main', business_id: businessId, name: 'Gudang Utama (WH-MAIN)', type: 'internal', code: 'WH-MAIN', is_default: true, created_at: new Date().toISOString() },
@@ -41,9 +42,18 @@ export async function GET(req: Request) {
     const url = new URL(req.url)
     const action = url.searchParams.get('action') || 'summary'
     const productId = url.searchParams.get('productId')
-    const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10))
-    const limit = Math.max(1, Math.min(500, parseInt(url.searchParams.get('limit') || '50', 10)))
-    const search = url.searchParams.get('search') || ''
+
+    // Safe Vercel Parameter Parsing (Mencegah NaN / Overflow)
+    const rawPage = parseInt(url.searchParams.get('page') || '1', 10)
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1
+
+    const rawLimit = parseInt(url.searchParams.get('limit') || '50', 10)
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(500, rawLimit) : 50
+
+    // PostgREST Filter Delimiter Safety (Karakter koma dan tanda kurung di-sanitize)
+    const rawSearch = url.searchParams.get('search') || ''
+    const search = rawSearch.replace(/[,()]/g, ' ').trim()
+
     const categoryFilter = url.searchParams.get('category') || ''
     
     const sortField = url.searchParams.get('sortField') || 'productName'
@@ -203,17 +213,27 @@ export async function GET(req: Request) {
     // ─────────────────────────────────────────────────────────────────────
     // ⚡ ACTION: product_moves — Tab 3 modal (lazy). Window Function Calculation.
     // ─────────────────────────────────────────────────────────────────────
-    if (action === 'product_moves' && productId) {
+    if (action === 'product_moves') {
+      if (!isUuid(productId)) {
+        return NextResponse.json({ error: 'productId harus berupa format UUID yang valid' }, { status: 400 })
+      }
       const offset = (page - 1) * limit
+      const bucketFilter = url.searchParams.get('bucket') || 'main'
+
+      let movesQuery = supabase
+        .from('v_stock_moves_ledger')
+        .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, source_type, source_id, created_at, system_stock, bucket, quarantine_stock, in_transit_stock', { count: 'exact' })
+        .eq('business_id', businessId)
+        .eq('product_id', productId)
+
+      if (bucketFilter !== 'all') {
+        movesQuery = movesQuery.eq('bucket', bucketFilter)
+      }
 
       // Query v_stock_moves_ledger urut DESC (terbaru → terlama)
       let [locations, movesRes] = await Promise.all([
         getCachedLocations(businessId, supabase),
-        supabase
-          .from('v_stock_moves_ledger')
-          .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, source_type, source_id, created_at, system_stock, bucket, quarantine_stock, in_transit_stock', { count: 'exact' })
-          .eq('business_id', businessId)
-          .eq('product_id', productId)
+        movesQuery
           .order('created_at', { ascending: false })
           .range(offset, offset + limit - 1)
       ])
@@ -222,11 +242,13 @@ export async function GET(req: Request) {
       let finalTotalCount = movesRes.count || finalMoves.length
 
       if (movesRes.error && (movesRes.error.message?.includes('bucket') || movesRes.error.message?.includes('quarantine_stock'))) {
-        const fbRes = await supabase
+        let fbQuery = supabase
           .from('v_stock_moves_ledger')
           .select('id, product_id, reference, origin_location_id, destination_location_id, qty, unit_cost, lot_number, status, type, source_type, source_id, created_at, system_stock', { count: 'exact' })
           .eq('business_id', businessId)
           .eq('product_id', productId)
+
+        const fbRes = await fbQuery
           .order('created_at', { ascending: false })
           .range(offset, offset + limit - 1)
         finalMoves = (fbRes.data as any) || []
@@ -304,7 +326,10 @@ export async function GET(req: Request) {
     // ─────────────────────────────────────────────────────────────────────
     // ⚡ ACTION: product_valuation — Tab 2 modal (lazy).
     // ─────────────────────────────────────────────────────────────────────
-    if (action === 'product_valuation' && productId) {
+    if (action === 'product_valuation') {
+      if (!isUuid(productId)) {
+        return NextResponse.json({ error: 'productId harus berupa format UUID yang valid' }, { status: 400 })
+      }
       const unitCostParam = url.searchParams.get('unitCost')
       const onHandQtyParam = url.searchParams.get('onHandQty')
       const unitCost = Number(unitCostParam || 0)

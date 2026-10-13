@@ -2,79 +2,121 @@ import { NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
 import { postJournalTransaction } from '@/lib/journalHelper'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
+import { isUuid } from '@/lib/utils'
 
 export async function GET(request: Request) {
   const { businessId, supabase, error } = await getApiContext()
   if (error) return error
 
-  // Pure Append-Only: Ambil mutasi karantina dan hitung net balance per referensi
+  // 1. Database-Driven View: Single Source of Truth langsung dari PostgreSQL (Zero in-app logic)
+  const { data: viewReturns, error: viewErr } = await supabase
+    .from('v_quarantine_returns')
+    .select('*')
+    .eq('business_id', businessId)
+    .order('return_date', { ascending: false })
+
+  if (!viewErr && viewReturns) {
+    return NextResponse.json(viewReturns)
+  }
+
+  // 2. Graceful Fallback jika SQL View v_quarantine_returns belum dieksekusi di Supabase SQL Editor
   let { data: allQuarantineMoves, error: fetchErr } = await supabase
     .from('stock_moves')
     .select(`
       id, reference, qty, type, created_at, source_type, source_id, product_id,
-      product:products(id, name, sku, stock_quantity, cost_price)
+      product:products(id, name, sku, unit, cost_price)
     `)
     .eq('business_id', businessId)
-    .eq('bucket', 'quarantine')
+    .or('bucket.eq.quarantine,and(type.eq.receipt,source_type.eq.order)')
     .order('created_at', { ascending: false })
 
-  if (fetchErr && fetchErr.message?.includes('bucket')) {
-    const { data: fallbackMoves } = await supabase
-      .from('stock_moves')
-      .select(`
-        id, reference, qty, type, created_at, source_type, source_id, product_id,
-        product:products(id, name, sku, stock_quantity, cost_price)
-      `)
-      .eq('business_id', businessId)
-      .eq('source_type', 'order')
-      .eq('type', 'receipt')
-      .order('created_at', { ascending: false })
-    allQuarantineMoves = fallbackMoves || []
-  } else if (fetchErr) {
+  if (fetchErr) {
     return NextResponse.json({ error: fetchErr.message }, { status: 500 })
   }
 
-  // Hitung pengeluaran karantina (offsetting moves: transfer / adjustment)
-  const outQtyMap = new Map<string, number>()
-  ;(allQuarantineMoves || []).forEach(m => {
-    if (m.type !== 'receipt') {
-      if (m.source_id) {
-        outQtyMap.set(m.source_id, (outQtyMap.get(m.source_id) || 0) + Number(m.qty))
-      }
-      const compositeKey = `${m.product_id}_${m.source_id || m.reference}`
-      outQtyMap.set(compositeKey, (outQtyMap.get(compositeKey) || 0) + Number(m.qty))
+  const receipts = (allQuarantineMoves || []).filter(m => m.type === 'receipt')
+  const releases = (allQuarantineMoves || []).filter(m => m.type !== 'receipt')
+
+  const releaseMap = new Map<string, any>()
+  releases.forEach(r => {
+    if (r.source_id && !releaseMap.has(r.source_id)) {
+      releaseMap.set(r.source_id, r)
     }
   })
 
-  // Barang yang masih ada di karantina adalah receipt yang belum memiliki pengeluaran penuh
-  const pendingMoves = (allQuarantineMoves || []).filter(m => {
-    if (m.type !== 'receipt') return false
+  const mappedFallback = receipts.map((m: any) => {
+    const rel = releaseMap.get(m.id)
+    let status = 'pending'
+    let statusLabel = 'Menunggu Verifikasi'
 
-    const directOut = outQtyMap.get(m.id) || 0
-    if (directOut >= Number(m.qty)) return false
+    if (rel) {
+      if (rel.source_type === 'order_return_release') {
+        status = 'received'
+        statusLabel = 'Diterima di Gudang'
+      } else if (rel.source_type === 'order_return_loss') {
+        status = 'lost'
+        statusLabel = 'Hilang di Ekspedisi'
+      }
+    }
 
-    const compositeKey = `${m.product_id}_${m.source_id || m.reference}`
-    const compositeOut = outQtyMap.get(compositeKey) || 0
-    if (compositeOut >= Number(m.qty)) return false
-
-    return true
+    return {
+      move_id: m.id,
+      business_id: businessId,
+      product_id: m.product_id,
+      reference: m.reference,
+      return_qty: Number(m.qty || 0),
+      return_date: m.created_at,
+      product_name: m.product?.name || 'Produk',
+      product_sku: m.product?.sku || null,
+      product_unit: m.product?.unit || 'Pcs',
+      cost_price: Number(m.product?.cost_price || 0),
+      status,
+      status_label: statusLabel,
+      resolved_at: rel ? rel.created_at : null,
+      resolution_reference: rel ? rel.reference : null,
+      is_actionable: !rel
+    }
   })
 
-  return NextResponse.json(pendingMoves)
+  return NextResponse.json(mappedFallback)
 }
 
 export async function POST(request: Request) {
   const { businessId, supabase, error } = await getApiContext()
   if (error) return error
 
-  const body = await request.json()
-  const { moveId, action } = body // action: 'terima' | 'hilang'
-
-  if (!moveId || !action) {
-    return NextResponse.json({ error: 'moveId dan action wajib diisi' }, { status: 400 })
+  // Safe Vercel Body Parse (Mencegah SyntaxError jika payload kosong atau rusak)
+  let body: any
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Payload JSON tidak valid atau kosong' }, { status: 400 })
   }
 
-  // 1. Ambil detail move karantina asal
+  const { moveId, action } = body || {}
+
+  // Strict UUID Input Sanitization (PostgreSQL Zero-Tolerance Rule)
+  if (!isUuid(moveId)) {
+    return NextResponse.json({ error: 'moveId harus berupa format UUID yang valid' }, { status: 400 })
+  }
+
+  if (action !== 'terima' && action !== 'hilang') {
+    return NextResponse.json({ error: 'action harus bernilai "terima" atau "hilang"' }, { status: 400 })
+  }
+
+  // Idempotency Guard: Pastikan move belum pernah diselesaikan
+  const { data: existingRelease } = await supabase
+    .from('stock_moves')
+    .select('id')
+    .eq('source_id', moveId)
+    .in('type', ['transfer', 'adjustment'])
+    .maybeSingle()
+
+  if (existingRelease) {
+    return NextResponse.json({ error: 'Barang retur ini sudah pernah diproses sebelumnya.' }, { status: 400 })
+  }
+
+  // 1. Ambil detail move karantina asal (Tenant-isolated via business_id)
   const { data: move, error: moveErr } = await supabase
     .from('stock_moves')
     .select('*, product:products(id, name, cost_price)')
@@ -83,11 +125,11 @@ export async function POST(request: Request) {
     .single()
 
   if (moveErr || !move) {
-    return NextResponse.json({ error: 'Mutasi tidak ditemukan' }, { status: 404 })
+    return NextResponse.json({ error: 'Mutasi tidak ditemukan atau tidak memiliki hak akses' }, { status: 404 })
   }
 
   const nowIso = new Date().toISOString()
-  const sourceRefId = move.source_id || move.id
+  const sourceRefId = isUuid(move.source_id) ? move.source_id : move.id
 
   if (action === 'terima') {
     // 2a. Aksi TERIMA (Pure Append-Only Event Sourcing - ZERO UPDATE pada data lama):
@@ -100,8 +142,8 @@ export async function POST(request: Request) {
       type: 'transfer',
       source_type: 'order_return_release',
       source_id: move.id,
-      qty: move.qty,
-      unit_cost: move.unit_cost || move.product?.cost_price || 0,
+      qty: Number(move.qty || 1),
+      unit_cost: Number(move.unit_cost || move.product?.cost_price || 0),
       status: 'done',
       created_at: nowIso
     }
@@ -122,9 +164,9 @@ export async function POST(request: Request) {
       bucket: 'main',
       type: 'receipt',
       source_type: 'order_return_receive',
-      source_id: move.source_id || move.id,
-      qty: move.qty,
-      unit_cost: move.unit_cost || move.product?.cost_price || 0,
+      source_id: sourceRefId,
+      qty: Number(move.qty || 1),
+      unit_cost: Number(move.unit_cost || move.product?.cost_price || 0),
       status: 'done',
       created_at: nowIso
     }
@@ -150,8 +192,8 @@ export async function POST(request: Request) {
       type: 'adjustment',
       source_type: 'order_return_loss',
       source_id: move.id,
-      qty: move.qty,
-      unit_cost: move.unit_cost || move.product?.cost_price || 0,
+      qty: Number(move.qty || 1),
+      unit_cost: Number(move.unit_cost || move.product?.cost_price || 0),
       status: 'done',
       created_at: nowIso
     }
@@ -170,7 +212,7 @@ export async function POST(request: Request) {
     const inventoryAccountId = accountMap['102000']
 
     if (lossAccountId && inventoryAccountId) {
-      const hppValue = Number(move.qty) * Number(move.product?.cost_price || move.unit_cost || 0)
+      const hppValue = Number(move.qty || 1) * Number(move.product?.cost_price || move.unit_cost || 0)
       
       if (hppValue > 0) {
         const journalLines = [
@@ -178,7 +220,7 @@ export async function POST(request: Request) {
           { account_id: inventoryAccountId, debit: 0, credit: hppValue }
         ]
 
-        const validOrderId = (move.source_type === 'order' && move.source_id) ? move.source_id : null
+        const validOrderId = (move.source_type === 'order' && isUuid(move.source_id)) ? move.source_id : null
 
         await postJournalTransaction(
           businessId,
@@ -197,3 +239,4 @@ export async function POST(request: Request) {
 
   return NextResponse.json({ error: 'Aksi tidak valid' }, { status: 400 })
 }
+

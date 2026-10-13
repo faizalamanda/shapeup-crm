@@ -33,6 +33,7 @@ export default function ProductDetailModal({
   const [moves, setMoves] = useState<StockMove[] | null>(null)
   const [movesLimit, setMovesLimit] = useState<number>(50)
   const [movesPage, setMovesPage] = useState<number>(1)
+  const [selectedBucket, setSelectedBucket] = useState<'main' | 'quarantine' | 'all'>('main')
   const [movesMeta, setMovesMeta] = useState<PaginationMeta>({
     page: 1,
     limit: 50,
@@ -61,12 +62,12 @@ export default function ProductDetailModal({
       const unitCost = initialStockItem?.unitCost ?? 0
       const onHandQty = initialStockItem?.onHandQty ?? 0
       fetch(`/api/inventory/reports?action=product_valuation&productId=${productId}&unitCost=${unitCost}&onHandQty=${onHandQty}`)
-        .then(res => res.json())
+        .then(res => res.json().catch(() => null))
         .then(json => {
-          if (json.success && json.valuation) {
+          if (json?.success && json?.valuation) {
             setValuationData(json.valuation)
           } else {
-            setErrorValuation(json.error || 'Gagal memuat valuasi persediaan')
+            setErrorValuation(json?.error || 'Gagal memuat valuasi persediaan')
           }
         })
         .catch(err => setErrorValuation(err.message || 'Gagal memuat valuasi persediaan'))
@@ -76,9 +77,9 @@ export default function ProductDetailModal({
 
   // ⚡ SWR Fast Cache Fetcher for Move History
   const fetchMoveHistory = useCallback(
-    async (targetPage = movesPage, targetLimit = movesLimit) => {
+    async (targetPage = movesPage, targetLimit = movesLimit, targetBucket = selectedBucket) => {
       if (!productId) return
-      const cacheKey = `${productId}_${targetPage}_${targetLimit}`
+      const cacheKey = `${productId}_${targetPage}_${targetLimit}_${targetBucket}`
       const cached = moveHistoryCache.get(cacheKey)
 
       if (cached) {
@@ -96,10 +97,10 @@ export default function ProductDetailModal({
       setErrorMoves(null)
 
       try {
-        const res = await fetch(`/api/inventory/reports?action=product_moves&productId=${productId}&page=${targetPage}&limit=${targetLimit}`)
-        const json = await res.json()
+        const res = await fetch(`/api/inventory/reports?action=product_moves&productId=${productId}&page=${targetPage}&limit=${targetLimit}&bucket=${targetBucket}`)
+        const json = await res.json().catch(() => null)
 
-        if (json.success && json.moves) {
+        if (json?.success && json?.moves) {
           setMoves(json.moves)
           const meta = json.pagination || { page: targetPage, limit: targetLimit, totalItems: json.moves.length, totalPages: 1 }
           setMovesMeta(meta)
@@ -111,7 +112,7 @@ export default function ProductDetailModal({
           })
           setIsFromCache(false)
         } else if (!cached) {
-          setErrorMoves(json.error || 'Gagal memuat mutasi stok')
+          setErrorMoves(json?.error || 'Gagal memuat mutasi stok')
         }
       } catch (err: any) {
         if (!cached) {
@@ -122,19 +123,26 @@ export default function ProductDetailModal({
         setIsRevalidating(false)
       }
     },
-    [productId, movesPage, movesLimit]
+    [productId, movesPage, movesLimit, selectedBucket]
   )
 
   // Trigger fetch when tab moves is opened or limit/page changes
   useEffect(() => {
     if (activeTab === 'moves' && productId) {
-      fetchMoveHistory(movesPage, movesLimit)
+      fetchMoveHistory(movesPage, movesLimit, selectedBucket)
     }
-  }, [activeTab, movesPage, movesLimit, productId, fetchMoveHistory])
+  }, [activeTab, movesPage, movesLimit, selectedBucket, productId, fetchMoveHistory])
 
   const handleLimitChange = (newLimit: number) => {
     setMovesLimit(newLimit)
     setMovesPage(1)
+    fetchMoveHistory(1, newLimit, selectedBucket)
+  }
+
+  const handleBucketChange = (newBucket: 'main' | 'quarantine' | 'all') => {
+    setSelectedBucket(newBucket)
+    setMovesPage(1)
+    fetchMoveHistory(1, movesLimit, newBucket)
   }
 
   if (!productId || !initialStockItem) return null
@@ -459,20 +467,62 @@ export default function ProductDetailModal({
           {/* TAB 3: MOVE HISTORY (Ultra-Fast & Paginated) */}
           {activeTab === 'moves' && (
             <div className="space-y-3 animate-in fade-in duration-100">
-              {/* Controls bar: Limit selector & Refresh & Cache Sync Status */}
-              <div className="flex flex-wrap items-center justify-between gap-2 bg-[#F7F7F5] p-2.5 rounded-xl border border-[#E2E2DC] text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-[#1C1C1A]">Tampilkan:</span>
-                  <select
-                    value={movesLimit}
-                    onChange={e => handleLimitChange(Number(e.target.value))}
-                    className="bg-white border border-[#E2E2DC] rounded px-2 py-1 text-xs font-medium focus:outline-none focus:border-blue-500 cursor-pointer"
-                  >
-                    <option value={20}>20 baris</option>
-                    <option value={50}>50 baris</option>
-                    <option value={100}>100 baris</option>
-                    <option value={200}>200 baris</option>
-                  </select>
+              {/* Controls bar: Limit selector & Wadah selector & Cache Sync Status */}
+              <div className="flex flex-wrap items-center justify-between gap-2.5 bg-[#F7F7F5] p-2.5 rounded-xl border border-[#E2E2DC] text-xs">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-[#1C1C1A]">Tampilkan:</span>
+                    <select
+                      value={movesLimit}
+                      onChange={e => handleLimitChange(Number(e.target.value))}
+                      className="bg-white border border-[#E2E2DC] rounded px-2 py-1 text-xs font-medium focus:outline-none focus:border-blue-500 cursor-pointer"
+                    >
+                      <option value={20}>20 baris</option>
+                      <option value={50}>50 baris</option>
+                      <option value={100}>100 baris</option>
+                      <option value={200}>200 baris</option>
+                    </select>
+                  </div>
+
+                  {/* Wadah Selector: Gudang Utama (Default) / Karantina Retur / Semua */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-[#1C1C1A]">Wadah:</span>
+                    <div className="inline-flex rounded-lg border border-[#E2E2DC] p-0.5 bg-white text-xs shadow-2xs">
+                      <button
+                        onClick={() => handleBucketChange('main')}
+                        className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${
+                          selectedBucket === 'main'
+                            ? 'bg-blue-50 text-blue-700 shadow-2xs border border-blue-200'
+                            : 'text-[#6B6B63] hover:text-[#1C1C1A]'
+                        }`}
+                        title="Hanya tampilkan stok fisik di Gudang Utama (Rak Siap Jual)"
+                      >
+                        🏢 Gudang Utama
+                      </button>
+                      <button
+                        onClick={() => handleBucketChange('quarantine')}
+                        className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${
+                          selectedBucket === 'quarantine'
+                            ? 'bg-amber-100 text-amber-900 shadow-2xs border border-amber-300'
+                            : 'text-[#6B6B63] hover:text-[#1C1C1A]'
+                        }`}
+                        title="Tampilkan pergerakan pos karantina barang retur"
+                      >
+                        📦 Karantina
+                      </button>
+                      <button
+                        onClick={() => handleBucketChange('all')}
+                        className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${
+                          selectedBucket === 'all'
+                            ? 'bg-slate-100 text-[#1C1C1A] shadow-2xs border border-slate-300'
+                            : 'text-[#6B6B63] hover:text-[#1C1C1A]'
+                        }`}
+                        title="Tampilkan semua pergerakan lintas wadah"
+                      >
+                        Semua
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-3">

@@ -19,3 +19,13 @@ export function formatPhoneNumberSmart(phone: string): string {
 
   return cleaned;
 }
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Validates whether a value is a valid non-empty PostgreSQL UUID.
+ * Prevents fatal crash: "invalid input syntax for type uuid: ''".
+ */
+export function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID_REGEX.test(value.trim())
+}
