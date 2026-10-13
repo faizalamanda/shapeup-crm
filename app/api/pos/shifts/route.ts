@@ -1,27 +1,21 @@
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
+import { getApiContext } from '@/lib/apiContext'
 import { NextResponse } from 'next/server'
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v)
 
 // GET /api/pos/shifts - Get active open shift or shift history
 export async function GET(req: Request) {
-  const supabase = await createClient()
-
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId, supabase } = ctx
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('active_business_id, full_name')
+      .select('full_name')
       .eq('id', user.id)
-      .single()
-
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
+      .maybeSingle()
 
     // Check active shift
     const { data: activeShift, error: shiftErr } = await supabase
@@ -39,7 +33,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       activeShift: activeShift || null,
-      cashierName: profile.full_name || 'Kasir'
+      cashierName: profile?.full_name || user.user_metadata?.full_name || 'Kasir'
     })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
@@ -48,27 +42,31 @@ export async function GET(req: Request) {
 
 // POST /api/pos/shifts - Open a new shift or Close current shift
 export async function POST(req: Request) {
-  const supabase = await createClient()
-
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId, supabase } = ctx
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('active_business_id, full_name')
+      .select('full_name')
       .eq('id', user.id)
-      .single()
+      .maybeSingle()
 
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
+    const cashierName = profile?.full_name || user.user_metadata?.full_name || 'Kasir'
 
-    const businessId = profile.active_business_id
     const body = await req.json()
-    const { action, initial_cash = 0, actual_cash = 0, note = '', source_account_code = '101100', target_account_code = '101100', register_id = null } = body
+    const { 
+      action, 
+      initial_cash = 0, 
+      actual_cash = 0, 
+      note = '', 
+      source_account_code = '101100', 
+      target_account_code = '101100', 
+      register_id 
+    } = body
+
+    const cleanRegisterId = isUuid(register_id) ? register_id : null
 
     if (action === 'open') {
       // Check if already has an open shift
@@ -89,8 +87,8 @@ export async function POST(req: Request) {
         .insert({
           business_id: businessId,
           user_id: user.id,
-          register_id: register_id,
-          cashier_name: profile.full_name || 'Kasir',
+          register_id: cleanRegisterId,
+          cashier_name: cashierName,
           initial_cash: Number(initial_cash),
           expected_cash: Number(initial_cash),
           status: 'open',
@@ -105,7 +103,7 @@ export async function POST(req: Request) {
 
       const activeShiftObj = newShift || {
         id: 'local-shift-' + Date.now(),
-        cashier_name: profile.full_name || 'Kasir',
+        cashier_name: cashierName,
         opened_at: new Date().toISOString(),
         initial_cash: Number(initial_cash),
         status: 'open'
@@ -120,11 +118,11 @@ export async function POST(req: Request) {
           const accountMap = await getOrCreateDefaultAccounts(businessId, supabase)
           let kasPosAccId = accountMap['101000']
           
-          if (register_id) {
+          if (cleanRegisterId) {
             const { data: regData } = await supabase
               .from('pos_registers')
               .select('account_id')
-              .eq('id', register_id)
+              .eq('id', cleanRegisterId)
               .maybeSingle()
             if (regData?.account_id) kasPosAccId = regData.account_id
           }
@@ -147,7 +145,7 @@ export async function POST(req: Request) {
               businessId,
               null,
               new Date().toISOString(),
-              `Modal Awal Kasir Shift - ${profile.full_name || 'Kasir'}`,
+              `Modal Awal Kasir Shift - ${cashierName}`,
               [
                 { account_id: kasPosAccId, debit: Number(initial_cash), credit: 0 },
                 { account_id: creditAccId, debit: 0, credit: Number(initial_cash) }
@@ -168,6 +166,10 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'shift_id wajib diisi' }, { status: 400 })
       }
 
+      if (!isUuid(shift_id)) {
+        return NextResponse.json({ success: true, message: 'Shift ditutup (Lokal)' })
+      }
+
       const { data: currentShift } = await supabase
         .from('pos_shifts')
         .select('*')
@@ -175,7 +177,7 @@ export async function POST(req: Request) {
         .single()
 
       const expectedCash = currentShift ? currentShift.expected_cash : 0
-      const shiftRegisterId = currentShift ? currentShift.register_id : null
+      const shiftRegisterId = currentShift && isUuid(currentShift.register_id) ? currentShift.register_id : null
       const difference = Number(actual_cash) - Number(expectedCash)
 
       const { data: closedShift, error: closeErr } = await supabase
@@ -230,7 +232,7 @@ export async function POST(req: Request) {
               businessId,
               null,
               new Date().toISOString(),
-              `Setoran Tutup Shift - ${profile.full_name || 'Kasir'}`,
+              `Setoran Tutup Shift - ${cashierName}`,
               [
                 { account_id: debitAccId, debit: Number(actual_cash), credit: 0 },
                 { account_id: kasPosAccId, debit: 0, credit: Number(actual_cash) }

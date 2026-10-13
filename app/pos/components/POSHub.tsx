@@ -120,7 +120,7 @@ export default function POSHub({ onOpenWorkspace }: Props) {
   }, [bizLoading, activeBusiness?.id, loadData])
 
   // Shift Management Handlers
-  const handleOpenShift = async (initialCash: number, note: string, sourceAccountCode: string, registerId: string) => {
+  const handleOpenShift = async (initialCash: number, note: string, sourceAccountCode: string, registerId?: string | null) => {
     const res = await fetch('/api/pos/shifts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -129,7 +129,7 @@ export default function POSHub({ onOpenWorkspace }: Props) {
         initial_cash: initialCash,
         note,
         source_account_code: sourceAccountCode,
-        register_id: registerId
+        register_id: registerId || null
       })
     })
     const data = await res.json()

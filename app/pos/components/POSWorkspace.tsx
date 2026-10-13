@@ -354,11 +354,11 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   }
 
   // Shift Actions
-  const handleOpenShift = async (initialCash: number, note: string, sourceAccountCode: string, registerId: string) => {
+  const handleOpenShift = async (initialCash: number, note: string, sourceAccountCode: string, registerId?: string | null) => {
     const res = await fetch('/api/pos/shifts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'open', initial_cash: initialCash, note, source_account_code: sourceAccountCode, register_id: registerId })
+      body: JSON.stringify({ action: 'open', initial_cash: initialCash, note, source_account_code: sourceAccountCode, register_id: registerId || null })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Gagal membuka shift')

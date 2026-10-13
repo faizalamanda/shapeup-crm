@@ -9,7 +9,7 @@ type Props = {
   cashierName: string
   accounts?: any[]
   posRegisters?: any[]
-  onOpenShift: (initialCash: number, note: string, sourceAccountCode: string, registerId: string) => Promise<void>
+  onOpenShift: (initialCash: number, note: string, sourceAccountCode: string, registerId?: string | null) => Promise<void>
   onCloseShift: (shiftId: string, actualCash: number, note: string, targetAccountCode: string) => Promise<void>
   timezone?: string
 }
@@ -64,7 +64,7 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
     setIsSubmitting(true)
     setErrorMsg(null)
     try {
-      await onOpenShift(Number(initialCash) || 0, note, sourceAccountCode, registerId)
+      await onOpenShift(Number(initialCash) || 0, note, sourceAccountCode, registerId || null)
       onClose()
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal membuka shift')
