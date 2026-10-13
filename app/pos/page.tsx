@@ -1,10 +1,11 @@
-import POSWorkspace from './components/POSWorkspace'
+import POSContainer from './POSContainer'
 
 export const metadata = {
-  title: 'ShapeUp POS Workspace',
-  description: 'Aplikasi Kasir Point of Sale ShapeUp CRM'
+  title: 'ShapeUp POS — Hub & Transaksi Kasir',
+  description: 'Aplikasi Kasir Point of Sale dan Session Hub ShapeUp CRM'
 }
 
 export default function POSPage() {
-  return <POSWorkspace />
+  return <POSContainer />
 }
+

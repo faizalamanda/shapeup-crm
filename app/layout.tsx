@@ -186,6 +186,7 @@ const menuItems: MenuItem[] = [
   {
     name: 'Akuntansi', href: '/accounting/transactions', icon: Icons.accounting,
     children: [
+      { name: 'Pembayaran & Kas', href: '/accounting/payments' },
       { name: 'Transaksi & Jurnal', href: '/accounting/transactions' },
       { name: 'Laporan Arus Kas', href: '/accounting/cash-flow' },
       { name: 'Laporan Laba Rugi', href: '/accounting/profit-loss' },

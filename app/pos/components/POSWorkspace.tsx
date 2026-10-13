@@ -28,7 +28,7 @@ const getPastelBadge = (name: string) => {
   return styles[Math.abs(hash) % styles.length]
 }
 
-export default function POSWorkspace() {
+export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void } = {}) {
   // Using singleton supabase client from @/lib/supabase
 
   // Auth & Profile State
@@ -442,7 +442,11 @@ export default function POSWorkspace() {
           subtotal: subtotal,
           discount_amount: discountAmount,
           grand_total: grandTotal,
-          order_number: orderNumber
+          order_number: orderNumber,
+          cash_received: paymentInfo.cashReceived,
+          change_amount: paymentInfo.changeAmount,
+          shift_id: activeShift?.id || null,
+          register_id: activeShift?.register_id || null
         })
       })
       .then(async (res) => {
@@ -729,12 +733,22 @@ export default function POSWorkspace() {
       {/* Top Navbar Header */}
       <header className="h-14 bg-slate-900 text-white px-4 flex items-center justify-between shrink-0 shadow-md z-20">
         <div className="flex items-center gap-3">
-          <Link
-            href="/dashboard"
-            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold flex items-center gap-1 transition"
-          >
-            <span>←</span> <span className="hidden sm:inline">CRM</span>
-          </Link>
+          {onBackToHub ? (
+            <button
+              onClick={onBackToHub}
+              className="px-2.5 py-1 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-700/60 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
+              title="Kembali ke Hub Kasir"
+            >
+              <span>←</span> <span>Hub Kasir</span>
+            </button>
+          ) : (
+            <Link
+              href="/dashboard"
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold flex items-center gap-1 transition"
+            >
+              <span>←</span> <span className="hidden sm:inline">CRM</span>
+            </Link>
+          )}
           <div className="h-4 w-px bg-slate-700 hidden sm:block"></div>
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-500 to-violet-500 text-white font-black flex items-center justify-center text-xs shadow-md">

@@ -304,7 +304,7 @@ export async function syncOrderToLedger(
             { account_id: accountMap[payAccountCode], debit: parseFloat(grand_total) || 0, credit: 0 },
             { account_id: accountMap['103000'], debit: 0, credit: parseFloat(grand_total) || 0 }
           ]
-          await postJournalTransaction(
+          const postResult = await postJournalTransaction(
             businessId,
             orderId,
             paymentDate,
@@ -313,6 +313,44 @@ export async function syncOrderToLedger(
             supabase,
             isNewOrder
           )
+
+          // 6.3 RECORD UNIFIED ORDER PAYMENT ENTRY (Single Source of Truth)
+          try {
+            const raw = order.raw_source_data || {}
+            const cashReceived = Number(order.cash_received || raw.cash_received || 0)
+            const changeAmount = Number(order.change_amount || raw.change_amount || 0)
+            const payAmount = parseFloat(grand_total) || 0
+            const isCashMethod = String(order.payment_method || '').toLowerCase() === 'cash'
+
+            const { data: existingPay } = await supabase
+              .from('order_payments')
+              .select('id')
+              .eq('order_id', orderId)
+              .eq('payment_kind', 'payment')
+              .limit(1)
+              .maybeSingle()
+
+            // amount > 0 CHECK: skip zero-total orders (e.g. 100% discount)
+            if (!existingPay && payAmount > 0) {
+              const { error: insErr } = await supabase.from('order_payments').insert({
+                payment_kind: 'payment',
+                business_id: businessId,
+                order_id: orderId,
+                transaction_id: postResult?.transactionId || null,
+                shift_id: order.shift_id || null,
+                date: paymentDate ? paymentDate.split('T')[0] : new Date().toISOString().split('T')[0],
+                amount: payAmount,
+                payment_method: order.payment_method || (isCod ? 'Cash/COD' : 'Bank/Gateway'),
+                payment_method_account_id: accountMap[payAccountCode],
+                cash_received: cashReceived || (isCashMethod ? payAmount : 0),
+                change_amount: changeAmount,
+                notes: `Pembayaran ${platform} #${orderNumber}`
+              })
+              if (insErr) console.warn('[orderLedger] order_payments insert error:', insErr.message)
+            }
+          } catch (payErr) {
+            console.warn('[orderLedger] Failed to record order_payments entry (non-fatal):', payErr)
+          }
         }
       } else if (isCod && status !== 'completed') {
         if (paymentTx && !reversalPaymentTx) {
@@ -404,6 +442,36 @@ export async function syncOrderToLedger(
         await postJournalTransaction(
           businessId, orderId, new Date().toISOString(), `Retur Pembayaran ${platform} #${orderNumber}`, reversalLines, supabase
         )
+      }
+    }
+
+    // 6.4 RECORD REFUND EVENT (append-only) when a paid order is reversed
+    const isReversalStatus = ['cancelled', 'failed', 'refunded', 'returned'].includes(status)
+      || (isCod && status !== 'completed' && !!paymentTx)
+    if (isReversalStatus) {
+      try {
+        const { data: pays } = await supabase
+          .from('order_payments')
+          .select('id, payment_kind, amount, payment_method, payment_method_account_id, shift_id')
+          .eq('order_id', orderId)
+        const original = (pays || []).find((p: any) => p.payment_kind === 'payment')
+        const hasRefund = (pays || []).some((p: any) => p.payment_kind === 'refund')
+        if (original && !hasRefund) {
+          const { error: refErr } = await supabase.from('order_payments').insert({
+            payment_kind: 'refund',
+            business_id: businessId,
+            order_id: orderId,
+            shift_id: original.shift_id || null,
+            date: new Date().toISOString().split('T')[0],
+            amount: original.amount,
+            payment_method: original.payment_method,
+            payment_method_account_id: original.payment_method_account_id,
+            notes: `Refund/Pembatalan ${platform} #${orderNumber}`
+          })
+          if (refErr) console.warn('[orderLedger] order_payments refund insert error:', refErr.message)
+        }
+      } catch (refundErr) {
+        console.warn('[orderLedger] Failed to record refund event (non-fatal):', refundErr)
       }
     }
 

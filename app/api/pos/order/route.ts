@@ -4,6 +4,9 @@ import { syncOrderToLedger } from '@/lib/orderLedger'
 import { NextResponse } from 'next/server'
 import { after } from 'next/server'
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v)
+
 export async function POST(req: Request) {
   try {
     // 1. Auth + Business ID — uses JWT fast-path + cached profile
@@ -12,7 +15,20 @@ export async function POST(req: Request) {
     const { user, businessId, supabase } = ctx
 
     const body = await req.json()
-    const { customer_id, items, payment_method, discount_amount = 0, grand_total, subtotal, order_number: clientOrderNumber } = body
+    const { 
+      customer_id, 
+      items, 
+      payment_method, 
+      discount_amount = 0, 
+      grand_total, 
+      subtotal, 
+      order_number: clientOrderNumber,
+      cash_received = 0,
+      change_amount = 0,
+      shift_id = null,
+      register_id = null,
+      reference_number = null
+    } = body
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'Keranjang belanja tidak boleh kosong' }, { status: 400 })
@@ -131,10 +147,12 @@ export async function POST(req: Request) {
         first_name: 'POS',
         last_name: 'Order'
       },
+      cash_received: Number(cash_received) || 0,
+      change_amount: Number(change_amount) || 0,
       line_items: lineItems
     }
 
-    const orderPayload = {
+    const orderPayload: any = {
       business_id: businessId,
       customer_id: resolvedCustomerId,
       order_number: orderNumber,
@@ -150,7 +168,9 @@ export async function POST(req: Request) {
       payment_method: payment_method === 'cash' ? 'Cash' : 'Bank/QRIS',
       status: 'completed',
       items_json: lineItems,
-      raw_source_data: rawSourceData
+      raw_source_data: rawSourceData,
+      shift_id: isUuid(shift_id) ? shift_id : null,
+      register_id: isUuid(register_id) ? register_id : null
     }
 
     const { data: order, error: orderInsertErr } = await supabase
