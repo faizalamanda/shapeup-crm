@@ -302,6 +302,48 @@ Untuk memastikan keandalan 100% pada lingkungan Vercel Serverless Functions:
 2. **Defense-in-Depth Tenant Isolation:**
    Di API Route, selalu kombinasikan RLS database dengan filter eksplisit `.eq('business_id', businessId)` yang bersumber dari `getApiContext()`. Jangan pernah mengandalkan satu lapisan keamanan saja.
 
+---
+
+### 13. POS Session & Order Payments Integration
+
+1. **Session Gating:**
+   Setiap endpoint kasir wajib memverifikasi keberadaan shift aktif pengguna:
+   ```typescript
+   const { data: activeShift } = await supabase
+     .from('pos_shifts')
+     .select('id, register_id')
+     .eq('business_id', businessId)
+     .eq('user_id', user.id)
+     .eq('status', 'open')
+     .maybeSingle()
+
+   if (!activeShift) {
+     return NextResponse.json({ error: 'Sesi kasir belum dibuka.' }, { status: 403 })
+   }
+   ```
+
+2. **Multi-Tender & Split Payments (`order_payments`):**
+   Gunakan tabel `order_payments` sebagai *Single Source of Truth* untuk penerimaan pembayaran (1:N terhadap `orders`). Catat setiap metode tender terpisah beserta akun GL dan `shift_id`.
+
+3. **Append-Only Void & Refund:**
+   Dilarang keras melakukan `DELETE` pada riwayat pembayaran. Pembatalan pembayaran (void) dan refund pesanan dicatat sebagai event penyeimbang (`payment_kind = 'void' | 'refund'`) yang mengacu pada `voided_payment_id`.
+
+---
+
+### 14. `lib/paymentLedger.ts` — Universal Payment Specialist (Cicilan & Void)
+
+Pahami pemisahan tanggung jawab antara **`syncOrderToLedger()`** dan **`lib/paymentLedger.ts`**:
+
+1. **`syncOrderToLedger()` (Master Order Orchestrator):**
+   - **Kapan Digunakan:** Saat pesanan baru dibuat atau berubah status (WooCommerce webhook, POS checkout baru, penerbitan Invoice baru, sinkronisasi Accurate ERP, dan Order Manual).
+   - **Tanggung Jawab:** Mutasi stok fisik rak gudang (`stock_moves`), kalkulasi HPP WAC, jurnal pengakuan pendapatan (`401000`), jurnal kas/bank pembayaran awal, pencatatan baris pembayaran ke `order_payments`, dan loyalty points.
+
+2. **`lib/paymentLedger.ts` (Subsequent Payment & Void Specialist):**
+   - **Kapan Digunakan:** Saat pesanan sudah ada di sistem sebelumnya (stok dan penjualan sudah diakui di masa lalu), lalu ada transaksi keuangan lanjutan.
+   - **Fungsi Utama:**
+     - `recordOrderPayment()`: Pelunasan cicilan / DP susulan (murni Debit Kas/Bank `101000`/`101200` dan Kredit Piutang Usaha `103000` tanpa memicu mutasi stok ulang).
+     - `voidOrderPayment()`: Pembatalan satu baris pembayaran yang salah tender secara *append-only* (Debit Piutang, Kredit Kas/Bank).
+     - `recalculateOrderPaymentStatus()`: Sinkronisasi ulang `amount_paid` dan `payment_status` (`unpaid`, `partial`, `paid`).
 
 ---
 
@@ -326,7 +368,8 @@ Untuk memastikan keandalan 100% pada lingkungan Vercel Serverless Functions:
 API Route (POS/Invoice/Webhook/etc.)
   ├── lib/apiContext.ts          → Auth + Business ID
   ├── lib/guestCustomer.ts       → Guest customer (POS only)
-  └── lib/orderLedger.ts         → Main orchestrator
+  ├── lib/paymentLedger.ts       → Subsequent installments & payment voids (murni kas & piutang)
+  └── lib/orderLedger.ts         → Main order orchestrator (WooCommerce, POS, Invoice, ERP)
         ├── lib/accountHelper.ts    → COA accounts
         ├── lib/inventoryHelper.ts  → Stock + product matching
         │     └── lib/recipeHelper.ts → HPP batch (cached)

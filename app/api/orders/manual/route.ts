@@ -1,59 +1,87 @@
-import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
-import { formatPhoneNumberSmart } from '@/lib/utils';
+import { NextResponse } from 'next/server'
+import { getApiContext } from '@/lib/apiContext'
+import { formatPhoneNumberSmart } from '@/lib/utils'
+import { syncOrderToLedger } from '@/lib/orderLedger'
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const { name, phone, items, total_amount } = body;
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId, supabase, supabaseAdmin } = ctx
 
-    // 1. Cuci Nomor HP
-    const cleanPhone = formatPhoneNumberSmart(phone);
+    const body = await req.json().catch(() => null)
+    if (!body) {
+      return NextResponse.json({ error: 'Body permintaan tidak valid' }, { status: 400 })
+    }
 
-    // 2. UPSERT Customer (Cek HP, jika tidak ada buat baru)
-    const { data: customer, error: custError } = await supabase
+    const { name, phone, items, total_amount, payment_method = 'Cash' } = body
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return NextResponse.json({ error: 'Daftar produk tidak boleh kosong' }, { status: 400 })
+    }
+
+    // 1. Sanitize Phone
+    const cleanPhone = formatPhoneNumberSmart(phone || '0')
+
+    // 2. UPSERT Customer
+    const { data: customer, error: custError } = await supabaseAdmin
       .from('customers')
       .upsert({ 
+        business_id: businessId,
         phone: cleanPhone, 
-        name: name
+        name: name || 'Pelanggan Manual'
       }, { onConflict: 'phone' })
-      .select()
-      .single();
+      .select('id')
+      .single()
 
-    if (custError) throw custError;
+    if (custError) throw custError
 
-    // 3. INSERT ke Tabel Orders (Kepala)
-    const { data: order, error: orderError } = await supabase
+    const orderNumber = 'MAN-' + Date.now().toString().slice(-8)
+    const numTotal = Number(total_amount) || 0
+
+    const lineItems = items.map((item: any, idx: number) => ({
+      id: idx + 1,
+      name: item.product_name,
+      quantity: Number(item.quantity || 1),
+      price: Number(item.price || 0),
+      total: String(Number(item.quantity || 1) * Number(item.price || 0))
+    }))
+
+    // 3. INSERT ke Tabel Orders
+    const { data: order, error: orderError } = await supabaseAdmin
       .from('orders')
       .insert({
+        business_id: businessId,
+        user_id: user.id,
         customer_id: customer.id,
-        total_amount: total_amount,
-        source: 'manual',
-        status: 'completed' // Default untuk manual biasanya langsung lunas/selesai
+        order_number: orderNumber,
+        source_platform: 'Manual',
+        status: 'completed',
+        payment_status: 'paid',
+        amount_paid: numTotal,
+        payment_method: payment_method,
+        grand_total: numTotal,
+        subtotal: numTotal,
+        total_qty: items.reduce((sum: number, i: any) => sum + Number(i.quantity || 1), 0),
+        items_json: lineItems,
+        order_date: new Date().toISOString(),
+        order_date_utc: new Date().toISOString()
       })
-      .select()
-      .single();
+      .select('id, order_number')
+      .single()
 
-    if (orderError) throw orderError;
+    if (orderError) throw orderError
 
-    // 4. INSERT ke Tabel Order_Items (Banyak Baris)
-    const preparedItems = items.map((item: any) => ({
-      order_id: order.id,
-      product_name: item.product_name,
-      quantity: item.quantity,
-      price: item.price,
-      subtotal: item.quantity * item.price
-    }));
+    // 4. Synchronize to Accounting & Payment Ledger
+    try {
+      await syncOrderToLedger(order.id, supabaseAdmin)
+    } catch (syncErr) {
+      console.warn('[Manual Order Sync] Warning syncing to ledger:', syncErr)
+    }
 
-    const { error: itemsError } = await supabase
-      .from('order_items')
-      .insert(preparedItems);
-
-    if (itemsError) throw itemsError;
-
-    return NextResponse.json({ success: true, orderId: order.id });
-
+    return NextResponse.json({ success: true, orderId: order.id, order_number: order.order_number })
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error('Manual order create error:', error)
+    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 })
   }
 }

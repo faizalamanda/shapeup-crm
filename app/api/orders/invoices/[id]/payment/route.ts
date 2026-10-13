@@ -75,6 +75,8 @@ export async function POST(
       .update({
         status: 'completed',
         payment_method: payment_method,
+        payment_status: 'paid',
+        amount_paid: Number(invoice.grand_total),
         updated_at: new Date().toISOString()
       })
       .eq('id', id)

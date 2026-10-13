@@ -110,20 +110,86 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
           {activeShift ? (
             // Close Shift Mode
             <div className="space-y-4">
-              <div className="p-3.5 bg-indigo-50/60 border border-indigo-100 rounded-xl space-y-1.5 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Status Shift:</span>
-                  <span className="font-bold text-emerald-600 uppercase">AKTIF (OPEN)</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Waktu Buka:</span>
-                  <span className="font-medium text-gray-800">{formatDisplayDate(activeShift.opened_at, 'datetime', timezone)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Modal Awal Kas:</span>
-                  <span className="font-semibold text-gray-900">Rp {Number(activeShift.initial_cash || 0).toLocaleString('id-ID')}</span>
-                </div>
-              </div>
+              {/* Dynamic Drawer Balancing Sheet */}
+              {(() => {
+                const initialCashVal = Number(activeShift.initial_cash || 0)
+                const cashSalesVal = Number(activeShift.calculated_cash_sales || 0)
+                const cashRefundsVal = Number(activeShift.calculated_cash_refunds || 0)
+                const cashInVal = Number(activeShift.calculated_cash_in || 0)
+                const cashOutVal = Number(activeShift.calculated_cash_out || 0)
+                const expectedCashVal = activeShift.calculated_expected_cash !== undefined
+                  ? Number(activeShift.calculated_expected_cash)
+                  : (initialCashVal + cashSalesVal - cashRefundsVal + cashInVal - cashOutVal)
+                const actualCashNum = Number(actualCash) || 0
+                const diffVal = actualCash ? (actualCashNum - expectedCashVal) : 0
+
+                return (
+                  <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 text-xs">
+                    <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                      <span className="font-bold text-slate-700 uppercase tracking-wider text-[11px]">Neraca Laci Kasir</span>
+                      <span className="font-extrabold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full text-[10px]">
+                        SHIFT AKTIF
+                      </span>
+                    </div>
+
+                    <div className="space-y-1 text-slate-600">
+                      <div className="flex justify-between">
+                        <span>Waktu Buka Shift:</span>
+                        <span className="font-medium text-slate-800">{formatDisplayDate(activeShift.opened_at, 'datetime', timezone)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Modal Awal Kas:</span>
+                        <span className="font-semibold text-slate-900">Rp {initialCashVal.toLocaleString('id-ID')}</span>
+                      </div>
+                      <div className="flex justify-between text-emerald-700">
+                        <span>Total Penjualan Tunai (+):</span>
+                        <span className="font-bold">+Rp {cashSalesVal.toLocaleString('id-ID')}</span>
+                      </div>
+                      {cashInVal > 0 && (
+                        <div className="flex justify-between text-emerald-700">
+                          <span>Kas Masuk (+):</span>
+                          <span className="font-bold">+Rp {cashInVal.toLocaleString('id-ID')}</span>
+                        </div>
+                      )}
+                      {cashOutVal > 0 && (
+                        <div className="flex justify-between text-rose-600">
+                          <span>Kas Keluar (-):</span>
+                          <span className="font-bold">-Rp {cashOutVal.toLocaleString('id-ID')}</span>
+                        </div>
+                      )}
+                      {cashRefundsVal > 0 && (
+                        <div className="flex justify-between text-rose-600">
+                          <span>Refund Tunai (-):</span>
+                          <span className="font-bold">-Rp {cashRefundsVal.toLocaleString('id-ID')}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Expected Cash Box */}
+                    <div className="pt-2 border-t border-slate-200/80 flex justify-between items-center text-sm font-black text-indigo-950 bg-indigo-50/60 p-2.5 rounded-xl">
+                      <span>Uang Seharusnya di Laci:</span>
+                      <span className="text-base font-black text-indigo-700">
+                        Rp {expectedCashVal.toLocaleString('id-ID')}
+                      </span>
+                    </div>
+
+                    {/* Real-time Variance Badge */}
+                    {actualCash !== '' && (
+                      <div className={`p-2 rounded-xl text-center font-bold text-xs border ${
+                        diffVal === 0 
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                          : diffVal < 0 
+                            ? 'bg-rose-50 border-rose-300 text-rose-800'
+                            : 'bg-blue-50 border-blue-300 text-blue-800'
+                      }`}>
+                        {diffVal === 0 && '✓ Uang Fisik Pas / Cocok Sempurna (Selisih: Rp 0)'}
+                        {diffVal < 0 && `⚠️ Selisih Kurang (Short): -Rp ${Math.abs(diffVal).toLocaleString('id-ID')}`}
+                        {diffVal > 0 && `ℹ️ Selisih Lebih (Over): +Rp ${diffVal.toLocaleString('id-ID')}`}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
 
               <div>
                 <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">

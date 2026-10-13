@@ -14,18 +14,43 @@ export async function POST(req: Request) {
     if (ctx.error) return ctx.error
     const { user, businessId, supabase } = ctx
 
-    const body = await req.json()
+    // 2. POS Session Gating: Enforce Active Shift
+    const { data: activeShift, error: shiftErr } = await supabase
+      .from('pos_shifts')
+      .select('id, register_id, cashier_name')
+      .eq('business_id', businessId)
+      .eq('user_id', user.id)
+      .eq('status', 'open')
+      .order('opened_at', { ascending: false })
+      .maybeSingle()
+
+    if (shiftErr && !shiftErr.message?.includes('does not exist')) {
+      return NextResponse.json({ error: 'Gagal memverifikasi status shift kasir' }, { status: 500 })
+    }
+
+    if (!activeShift) {
+      return NextResponse.json({
+        error: 'Sesi kasir belum dibuka. Anda harus membuka shift kasir terlebih dahulu sebelum melayani transaksi.'
+      }, { status: 403 })
+    }
+
+    const body = await req.json().catch(() => null)
+    if (!body) {
+      return NextResponse.json({ error: 'Body permintaan tidak valid' }, { status: 400 })
+    }
+
     const { 
       customer_id, 
       items, 
       payment_method, 
+      payments, // Optional array for split payments
+      amount_paid, // Optional explicit paid amount for partial payments/cicilan
       discount_amount = 0, 
       grand_total, 
       subtotal, 
       order_number: clientOrderNumber,
       cash_received = 0,
       change_amount = 0,
-      shift_id = null,
       register_id = null,
       reference_number = null
     } = body
@@ -34,7 +59,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Keranjang belanja tidak boleh kosong' }, { status: 400 })
     }
 
-    // 2. Validate products & check stock
+    const numGrandTotal = Number(grand_total) || 0
+
+    // 3. Validate products & check stock
     const productIds = items.filter((i: any) => !String(i.id).startsWith('custom-')).map((i: any) => i.id)
 
     const productMap = new Map<string, any>()
@@ -49,9 +76,6 @@ export async function POST(req: Request) {
       }
       dbProducts.forEach(p => productMap.set(p.id, p))
     }
-
-
-    let totalCogs = 0
 
     for (const item of items) {
       const isCustom = String(item.id).startsWith('custom-')
@@ -73,20 +97,49 @@ export async function POST(req: Request) {
           }, { status: 400 })
         }
       }
-
-      // Calculate COGS if product is physical and has cost_price
-      if (dbProd.type === 'physical' && dbProd.cost_price > 0) {
-        totalCogs += dbProd.cost_price * item.quantity
-      }
     }
 
-    // 3. Resolve Guest Customer — uses cached guest ID per business
+    // 4. Resolve Guest Customer — uses cached guest ID per business
     let resolvedCustomerId = customer_id
     if (!resolvedCustomerId || resolvedCustomerId === 'guest' || resolvedCustomerId === '0') {
       resolvedCustomerId = await resolveGuestCustomerId(businessId, ctx.supabaseAdmin)
     }
 
-    // 4. Format to WooCommerce compatibility
+    // 5. Build Payments List & Calculate Status (Multi-Tender / Installment Support)
+    const effectivePayments: Array<{
+      method: string
+      amount: number
+      cash_received: number
+      change_amount: number
+      reference_number: string | null
+      notes: string | null
+    }> = Array.isArray(payments) && payments.length > 0
+      ? payments.map((p: any) => ({
+          method: String(p.method || 'cash').toLowerCase(),
+          amount: Number(p.amount) || 0,
+          cash_received: Number(p.cash_received || p.amount || 0),
+          change_amount: Number(p.change_amount || 0),
+          reference_number: p.reference_number || null,
+          notes: p.notes || null
+        }))
+      : [
+          {
+            method: String(payment_method || 'cash').toLowerCase(),
+            amount: Number(amount_paid !== undefined ? amount_paid : numGrandTotal) || 0,
+            cash_received: Number(cash_received || numGrandTotal) || 0,
+            change_amount: Number(change_amount || 0),
+            reference_number: reference_number || null,
+            notes: null
+          }
+        ]
+
+    const totalPaid = effectivePayments.reduce((sum, p) => sum + p.amount, 0)
+    const paymentStatus: 'paid' | 'partial' | 'unpaid' = 
+      totalPaid >= numGrandTotal - 0.01 
+        ? 'paid' 
+        : (totalPaid > 0 ? 'partial' : 'unpaid')
+
+    // 6. Format Line Items
     const orderNumber = clientOrderNumber || ('POS-' + Date.now().toString().slice(-8))
     
     const lineItems = items.map((item: any, idx: number) => {
@@ -95,18 +148,12 @@ export async function POST(req: Request) {
       const sku = isCustom ? 'CUSTOM' : (productMap.get(item.id).sku || '')
       
       const metaData: any[] = []
-      if (item.discount > 0) {
-        metaData.push({ key: 'Discount', value: String(item.discount) })
-      }
-      if (item.variantName) {
-        metaData.push({ key: 'Variant', value: String(item.variantName) })
-      }
+      if (item.discount > 0) metaData.push({ key: 'Discount', value: String(item.discount) })
+      if (item.variantName) metaData.push({ key: 'Variant', value: String(item.variantName) })
       if (item.modifiers && Array.isArray(item.modifiers) && item.modifiers.length > 0) {
         metaData.push({ key: 'Modifiers', value: item.modifiers.map((m: any) => `${m.group}: ${m.name}`).join(', ') })
       }
-      if (item.note) {
-        metaData.push({ key: 'Note', value: String(item.note) })
-      }
+      if (item.note) metaData.push({ key: 'Note', value: String(item.note) })
 
       return {
         id: idx + 1,
@@ -133,24 +180,20 @@ export async function POST(req: Request) {
       id: orderNumber,
       status: 'completed',
       currency: 'IDR',
-      total: String(grand_total),
+      total: String(numGrandTotal),
       discount_total: String(discount_amount),
       shipping_total: '0.00',
       payment_method: payment_method === 'cash' ? 'cod' : 'bacs',
       payment_method_title: payment_method === 'cash' ? 'Cash (Tunai)' : 'Bank Card / QRIS',
-      billing: {
-        first_name: 'POS',
-        last_name: 'Order',
-        phone: '0'
-      },
-      shipping: {
-        first_name: 'POS',
-        last_name: 'Order'
-      },
       cash_received: Number(cash_received) || 0,
       change_amount: Number(change_amount) || 0,
+      payments: effectivePayments,
+      amount_paid: totalPaid,
+      payment_status: paymentStatus,
       line_items: lineItems
     }
+
+    const assignedRegisterId = isUuid(register_id) ? register_id : (activeShift.register_id || null)
 
     const orderPayload: any = {
       business_id: businessId,
@@ -160,17 +203,19 @@ export async function POST(req: Request) {
       order_date: new Date().toISOString(),
       order_date_utc: new Date().toISOString(),
       total_qty: items.reduce((acc: number, item: any) => acc + item.quantity, 0),
-      subtotal: subtotal || grand_total + discount_amount,
+      subtotal: subtotal || numGrandTotal + discount_amount,
       shipping_cost: 0,
       discount_amount: discount_amount,
       other_fees: 0,
-      grand_total: grand_total,
-      payment_method: payment_method === 'cash' ? 'Cash' : 'Bank/QRIS',
+      grand_total: numGrandTotal,
+      payment_method: payment_method === 'cash' ? 'Cash' : (effectivePayments.length > 1 ? 'Split Payment' : 'Bank/QRIS'),
       status: 'completed',
+      payment_status: paymentStatus,
+      amount_paid: totalPaid,
       items_json: lineItems,
       raw_source_data: rawSourceData,
-      shift_id: isUuid(shift_id) ? shift_id : null,
-      register_id: isUuid(register_id) ? register_id : null
+      shift_id: activeShift.id,
+      register_id: assignedRegisterId
     }
 
     const { data: order, error: orderInsertErr } = await supabase
@@ -183,16 +228,63 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Gagal membuat pesanan: ' + orderInsertErr.message }, { status: 500 })
     }
 
+    // 7. Insert Order Payments (Single Source of Truth)
+    try {
+      const { getOrCreateDefaultAccounts } = await import('@/lib/accountHelper')
+      const accountMap = await getOrCreateDefaultAccounts(businessId, supabase)
+
+      let shiftCashAccId = accountMap['101000']
+      if (assignedRegisterId) {
+        const { data: regData } = await supabase
+          .from('pos_registers')
+          .select('account_id')
+          .eq('id', assignedRegisterId)
+          .maybeSingle()
+        if (regData?.account_id) shiftCashAccId = regData.account_id
+      }
+
+      const paymentInserts = effectivePayments
+        .filter((p) => p.amount > 0)
+        .map((p) => {
+          const isCash = p.method === 'cash'
+          const accId = isCash ? shiftCashAccId : accountMap['101200']
+          return {
+            business_id: businessId,
+            order_id: order.id,
+            shift_id: activeShift.id,
+            date: new Date().toISOString().split('T')[0],
+            amount: p.amount,
+            payment_method: isCash ? 'cash' : (p.method || 'bank'),
+            payment_method_account_id: isUuid(accId) ? accId : null,
+            cash_received: p.cash_received || p.amount,
+            change_amount: p.change_amount || 0,
+            reference_number: p.reference_number || null,
+            notes: p.notes || `Pembayaran POS #${orderNumber}`,
+            payment_kind: 'payment'
+          }
+        })
+
+      if (paymentInserts.length > 0) {
+        const { error: payErr } = await supabase
+          .from('order_payments')
+          .insert(paymentInserts)
+
+        if (payErr) {
+          console.warn('[POS Order] order_payments insert warning:', payErr.message)
+        }
+      }
+    } catch (payExc) {
+      console.warn('[POS Order] Exception inserting order payments:', payExc)
+    }
+
     const fullOrder = { id: order.id, ...orderPayload }
 
-    // 5. Record Ledger transaction, stock reduction & journal lines in the background
-    // We use Next.js after() so it doesn't block the client response
+    // 8. Record Ledger transaction, stock reduction & journal lines in background
     after(async () => {
       try {
         const syncRes = await syncOrderToLedger(order.id, supabase, fullOrder)
         if (!syncRes.success) {
           console.error(`[Background Sync] Failed to sync order ${order.id} to ledger:`, syncRes.message)
-          // Todo: Retry logic or update sync_status='failed' once DB column is added
         }
       } catch (syncErr) {
         console.error(`[Background Sync] Exception syncing order ${order.id}:`, syncErr)
@@ -202,7 +294,10 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       order_id: order.id,
-      order_number: orderNumber
+      order_number: orderNumber,
+      payment_status: paymentStatus,
+      amount_paid: totalPaid,
+      outstanding: Math.max(0, numGrandTotal - totalPaid)
     }, { status: 200 })
 
   } catch (err: any) {

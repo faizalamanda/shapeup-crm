@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import VariantSelectorModal from './VariantSelectorModal'
-import CashPaymentModal from './CashPaymentModal'
+import CashPaymentModal, { type PaymentResult } from './CashPaymentModal'
 import ReceiptPreviewModal from './ReceiptPreviewModal'
 import ShiftModal from './ShiftModal'
 import HoldModal from './HoldModal'
@@ -377,7 +377,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   }
 
   // Checkout Execution
-  const handleConfirmCheckout = async (paymentInfo: { method: 'cash' | 'bank' | 'qris'; cashReceived: number; changeAmount: number }) => {
+  const handleConfirmCheckout = async (paymentInfo: PaymentResult) => {
     setCheckingOut(true)
     try {
       const itemsPayload = cart.map((item) => ({
@@ -394,6 +394,12 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
 
       // Optimistic UI: Generate Order Number locally
       const orderNumber = 'POS-' + Date.now().toString().slice(-8)
+
+      const paymentTitle = paymentInfo.isPartial 
+        ? `Cicilan (DP Rp ${paymentInfo.amountPaid.toLocaleString('id-ID')})`
+        : (paymentInfo.method === 'split' 
+            ? 'Split Payment' 
+            : (paymentInfo.method === 'cash' ? 'Tunai (Cash)' : paymentInfo.method === 'qris' ? 'QRIS' : 'Transfer/Kartu'))
 
       // 1. Build Receipt immediately
       const receipt: ReceiptData = {
@@ -415,12 +421,12 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         discountTotal: discountAmount,
         taxTotal: 0,
         grandTotal: grandTotal,
-        paymentMethod: paymentInfo.method === 'cash' ? 'Tunai (Cash)' : paymentInfo.method === 'qris' ? 'QRIS' : 'Transfer/Kartu',
+        paymentMethod: paymentTitle,
         cashReceived: paymentInfo.cashReceived,
         changeAmount: paymentInfo.changeAmount
       }
 
-      // 2. Show receipt & clear cart BEFORE waiting for server
+      // 1. Instant Optimistic Action (0ms Latency for Customer & Cashier)
       setReceiptData(receipt)
       setIsPaymentModalOpen(false)
       setIsMobileCartOpen(false)
@@ -431,7 +437,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       setGlobalDiscountInput('')
       setCheckingOut(false)
 
-      // 3. Background Sync (Fire and Forget)
+      // 2. Background Sync (Fire-and-Forget)
       fetch('/api/pos/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -439,6 +445,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           customer_id: selectedCustomer?.id || 'guest',
           items: itemsPayload,
           payment_method: paymentInfo.method,
+          payments: paymentInfo.payments,
+          amount_paid: paymentInfo.amountPaid,
           subtotal: subtotal,
           discount_amount: discountAmount,
           grand_total: grandTotal,
@@ -451,14 +459,15 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       })
       .then(async (res) => {
         if (!res.ok) {
-          const result = await res.json()
-          alert(`⚠️ Peringatan: Pesanan #${orderNumber} gagal disimpan ke server.\nPesan: ${result.error || 'Server error'}`)
+          const result = await res.json().catch(() => null)
+          console.error(`[POS Sync Error] Pesanan #${orderNumber} gagal tersimpan:`, result?.error)
+          alert(`⚠️ Peringatan: Pesanan #${orderNumber} gagal disimpan ke server.\nPesan: ${result?.error || 'Server error'}`)
         }
       })
-      .catch(err => {
-         alert(`⚠️ Peringatan: Koneksi terputus. Pesanan #${orderNumber} gagal dikirim ke server.`)
+      .catch((err) => {
+        console.error(`[POS Sync Error] Koneksi terputus untuk pesanan #${orderNumber}:`, err)
+        alert(`⚠️ Peringatan: Koneksi terputus. Pesanan #${orderNumber} gagal dikirim ke server.`)
       })
-      
     } catch (err: any) {
       alert(err.message || 'Terjadi kesalahan pada aplikasi kasir.')
       setCheckingOut(false)
@@ -717,11 +726,21 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
             Hold
           </button>
           <button
-            onClick={() => setIsPaymentModalOpen(true)}
+            onClick={() => {
+              if (!activeShift) {
+                setIsShiftModalOpen(true)
+              } else {
+                setIsPaymentModalOpen(true)
+              }
+            }}
             disabled={cart.length === 0}
-            className="flex-1 py-3.5 px-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 active:scale-[0.99] disabled:opacity-40 text-white font-bold rounded-2xl text-sm transition shadow-md shadow-indigo-500/20 text-center"
+            className={`flex-1 py-3.5 px-4 font-bold rounded-2xl text-sm transition shadow-md active:scale-[0.99] disabled:opacity-40 text-center text-white ${
+              !activeShift
+                ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/20'
+                : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 shadow-indigo-500/20'
+            }`}
           >
-            Bayar Sekarang (Checkout) →
+            {!activeShift ? 'Buka Shift Dulu untuk Bayar 🔑' : 'Bayar Sekarang (Checkout) →'}
           </button>
         </div>
       </div>

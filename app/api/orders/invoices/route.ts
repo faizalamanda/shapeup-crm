@@ -345,10 +345,12 @@ export async function POST(req: Request) {
         grand_total: Number(grand_total),
         payment_method: status === 'completed' ? (payment_method || 'Bank Transfer') : null,
         status: status,
+        payment_status: status === 'completed' ? 'paid' : 'unpaid',
+        amount_paid: status === 'completed' ? Number(grand_total) : 0,
         items_json: lineItems,
         raw_source_data: rawSourceData
       })
-      .select('id, order_number, grand_total, status, payment_method, order_date')
+      .select('id, order_number, grand_total, status, payment_status, amount_paid, payment_method, order_date')
       .single()
 
     if (insertErr) throw insertErr

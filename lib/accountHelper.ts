@@ -21,6 +21,7 @@ export async function getOrCreateDefaultAccounts(
     { code: '402000', name: 'Pendapatan Ongkir', type: 'REVENUE', business_id: businessId },
     { code: '403000', name: 'Pendapatan Lain-lain / Admin', type: 'REVENUE', business_id: businessId },
     { code: '501000', name: 'Harga Pokok Penjualan (HPP)', type: 'EXPENSE', business_id: businessId },
+    { code: '503000', name: 'Beban Selisih Kas / Operasional Lainnya', type: 'EXPENSE', business_id: businessId },
     { code: '102000', name: 'Persediaan Barang', type: 'ASSET', business_id: businessId }
   ]
 
