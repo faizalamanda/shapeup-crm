@@ -13,23 +13,52 @@ This skill documents the standard architecture for querying and displaying inven
 - **DO USE** PostgreSQL's native Engine capabilities (Window Functions) via the Database View: `v_stock_moves_ledger`.
 
 ## The `v_stock_moves_ledger` View
-This view acts exactly like the `stock_moves` table, but it includes an on-the-fly calculated `system_stock` column using:
+This view acts exactly like the `stock_moves` table, but it includes on-the-fly calculated running balance columns calculated natively by PostgreSQL Window Functions:
 ```sql
+-- 1. Saldo Berjalan Gudang Utama (On-Hand Siap Jual di Rak)
 SUM(
   CASE
-    WHEN sm.status = 'done' THEN
+    WHEN sm.status = 'done' AND sm.bucket = 'main' THEN
       CASE
         WHEN sm.type IN ('receipt', 'refund') THEN sm.qty
         WHEN sm.type = 'delivery' THEN -sm.qty
         WHEN sm.type = 'adjustment' AND (sm.origin_location_id IS NULL OR (sm.destination_location_id IS NOT NULL AND sm.origin_location_id IS NULL)) THEN sm.qty
         WHEN sm.type = 'adjustment' THEN -sm.qty
+        WHEN sm.type = 'transfer' AND sm.destination_location_id IS NOT NULL THEN sm.qty
+        WHEN sm.type = 'transfer' THEN -sm.qty
         ELSE 0
       END
     ELSE 0
   END
-) OVER (PARTITION BY sm.product_id ORDER BY sm.created_at ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as system_stock
+) OVER (PARTITION BY sm.product_id ORDER BY sm.created_at ASC, sm.id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as system_stock,
+
+-- 2. Saldo Berjalan Karantina Retur
+SUM(
+  CASE
+    WHEN sm.bucket = 'quarantine' AND sm.status != 'cancelled' THEN
+      CASE
+        WHEN sm.type = 'receipt' THEN sm.qty
+        WHEN sm.type IN ('delivery', 'transfer', 'adjustment') THEN -sm.qty
+        ELSE 0
+      END
+    ELSE 0
+  END
+) OVER (PARTITION BY sm.product_id ORDER BY sm.created_at ASC, sm.id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as quarantine_stock,
+
+-- 3. Saldo Berjalan Dalam Pengiriman (In-Transit)
+SUM(
+  CASE
+    WHEN sm.bucket = 'in_transit' AND sm.status != 'cancelled' THEN
+      CASE
+        WHEN sm.type = 'delivery' THEN sm.qty
+        WHEN sm.type IN ('receipt', 'transfer') THEN -sm.qty
+        ELSE 0
+      END
+    ELSE 0
+  END
+) OVER (PARTITION BY sm.product_id ORDER BY sm.created_at ASC, sm.id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as in_transit_stock
 ```
-This guarantees that only confirmed movements (`status = 'done'`) alter the active physical on-hand running balance, while `pending` (Quarantine / In-Transit) and `cancelled` movements do not corrupt historical inventory.
+This guarantees that only confirmed movements in the main warehouse (`status = 'done' AND bucket = 'main'`) alter the active physical on-hand running balance (`system_stock`), while `quarantine` and `in_transit` moves are strictly isolated into their respective bucket running balances without corrupting active inventory.
 
 ## Usage in API / Frontend
 When fetching stock moves for a product:
@@ -166,7 +195,7 @@ useEffect(() => {
 ### 1. Dedicated Wadah / Bucket Column in Move History
 Move history tables and modals (`ProductDetailModal.tsx`) include a dedicated **Wadah** column to explicitly convey where stock currently resides:
 * 🏢 **Gudang Utama** (`bucket = 'main'`): confirmed movements (`status = 'done'`), affecting active physical on-hand stock.
-* 📦 **Karantina Retur** (`bucket = 'quarantine'`): pending returns awaiting inspection (`status = 'pending'`, `source_type = 'order'`).
+* 📦 **Karantina Retur** (`bucket = 'quarantine'`): order returns safely isolated in quarantine (`status = 'done'`, `source_type = 'order'`).
 * 🚚 **Dalam Pengiriman** (`bucket = 'in_transit'`): goods in-transit between warehouses or with couriers (`status = 'in_transit'`).
 
 ### 2. Pure Append-Only Event Sourcing & Multi-Bucket Running Balances

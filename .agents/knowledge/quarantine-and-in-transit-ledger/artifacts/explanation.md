@@ -35,7 +35,7 @@ $$\begin{aligned}
 | Dimensi Stok | Kolom `bucket` | Status di `stock_moves` | Pengaruh ke Saldo Rak Gudang? | Deskripsi Operasional |
 | :--- | :--- | :--- | :---: | :--- |
 | **Stok Fisik (On-Hand)** | `bucket = 'main'` | `status = 'done'` | **YA (100%)** | Barang fisik yang sudah resmi terverifikasi berada di rak gudang aktif. |
-| **Stok Karantina (Quarantine)** | `bucket = 'quarantine'` | `status = 'pending'` / `'done'` | **TIDAK** | Barang retur dari pelanggan/COD yang berada di pos inspeksi/karantina. |
+| **Stok Karantina (Quarantine)** | `bucket = 'quarantine'` | `status = 'done'` | **TIDAK** | Barang retur dari pelanggan/COD yang berada di pos inspeksi/karantina. |
 | **Stok Pengiriman (In-Transit)** | `bucket = 'in_transit'` | `status = 'in_transit'` | **TIDAK** | Barang dalam perjalanan antar gudang/cabang atau kurir ekspedisi. |
 | **Stok Terkunci (Reserved)** | `bucket = 'main'` | `status = 'pending'`, `type = 'delivery'` | **TIDAK** (Hanya potong *Available*) | Barang sudah dipesan pembeli (menunggu dipacking/dikirim). |
 

@@ -231,6 +231,10 @@ export async function applyStockMovement(
     const moveInfo = targetMoves.get(pId)
     if (!moveInfo || moveInfo.qty <= 0) continue
 
+    const isOrderReturn = direction === 'restore' && sourceType === 'order'
+    const assignedBucket = isOrderReturn ? 'quarantine' : 'main'
+    const assignedStatus = isOrderReturn ? 'done' : status
+
     stockMoveInputs.push({
       businessId,
       productId: pId,
@@ -240,7 +244,8 @@ export async function applyStockMovement(
       type: moveType,
       sourceType,
       sourceId,
-      status,
+      status: assignedStatus,
+      bucket: assignedBucket,
       createdAt
     })
   }

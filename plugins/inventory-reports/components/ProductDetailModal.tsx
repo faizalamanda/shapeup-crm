@@ -588,8 +588,22 @@ export default function ProductDetailModal({
                               </span>
                                 <span className="text-[10px] text-[#82827A] font-normal">{unit}</span>
                               </td>
-                              <td className="py-2 px-3 text-right font-extrabold text-blue-700 font-mono">
-                                {m.status !== 'done' ? (
+                              <td className="py-2 px-3 text-right font-extrabold font-mono">
+                                {m.bucket === 'quarantine' ? (
+                                  <span className="text-amber-800 font-bold" title="Saldo berjalan di pos karantina retur">
+                                    {formatNumber(m.quarantine_stock ?? 1)}{' '}
+                                    <span className="text-[9px] font-semibold text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
+                                      KARANTINA
+                                    </span>
+                                  </span>
+                                ) : m.bucket === 'in_transit' ? (
+                                  <span className="text-purple-800 font-bold" title="Saldo berjalan dalam pengiriman">
+                                    {formatNumber(m.in_transit_stock ?? 0)}{' '}
+                                    <span className="text-[9px] font-semibold text-purple-700 bg-purple-50 px-1 py-0.5 rounded border border-purple-200">
+                                      IN-TRANSIT
+                                    </span>
+                                  </span>
+                                ) : m.status !== 'done' ? (
                                   <span className="text-amber-700 font-bold" title="Belum/tidak mempengaruhi saldo fisik gudang aktif">
                                     {formatNumber(m.system_stock ?? 0)}{' '}
                                     <span className="text-[9px] font-semibold text-amber-600 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
@@ -597,10 +611,10 @@ export default function ProductDetailModal({
                                     </span>
                                   </span>
                                 ) : (
-                                  <>
+                                  <span className="text-blue-700">
                                     {formatNumber(m.system_stock ?? 0)}{' '}
                                     <span className="text-[10px] text-blue-600/80 font-normal">{unit}</span>
-                                  </>
+                                  </span>
                                 )}
                               </td>
                               <td className="py-2 px-3 text-right font-mono text-[11px] text-[#2D2D2A]">
