@@ -458,6 +458,55 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, shift: closedShift })
     }
 
+    // ─── ACTION: CASH MOVEMENT (PETTY CASH IN / OUT) ───────────────────────────
+    if (action === 'cash_movement') {
+      const { shift_id, type, amount, note: movNote = '' } = body
+      if (!isUuid(shift_id)) {
+        return NextResponse.json({ error: 'shift_id tidak valid' }, { status: 400 })
+      }
+      if (!['cash_in', 'cash_out'].includes(type)) {
+        return NextResponse.json({ error: 'Tipe mutasi kas harus cash_in atau cash_out' }, { status: 400 })
+      }
+      const numAmount = Number(amount)
+      if (!Number.isFinite(numAmount) || numAmount <= 0) {
+        return NextResponse.json({ error: 'Nominal mutasi kas harus lebih dari 0' }, { status: 400 })
+      }
+
+      // Verify active shift
+      const { data: shift, error: shiftErr } = await supabase
+        .from('pos_shifts')
+        .select('id, status')
+        .eq('id', shift_id)
+        .eq('business_id', businessId)
+        .maybeSingle()
+
+      if (shiftErr || !shift || shift.status !== 'open') {
+        return NextResponse.json({ error: 'Shift kasir tidak ditemukan atau sudah ditutup' }, { status: 400 })
+      }
+
+      const { data: movement, error: movErr } = await supabase
+        .from('pos_shift_movements')
+        .insert({
+          shift_id,
+          business_id: businessId,
+          type,
+          amount: numAmount,
+          note: movNote || (type === 'cash_in' ? 'Kas Masuk (Modal Tambahan)' : 'Kas Keluar (Petty Cash Operasional)')
+        })
+        .select()
+        .single()
+
+      if (movErr) {
+        return NextResponse.json({ error: movErr.message }, { status: 500 })
+      }
+
+      return NextResponse.json({
+        success: true,
+        movement,
+        message: type === 'cash_in' ? 'Kas masuk berhasil dicatat' : 'Kas keluar (petty cash) berhasil dicatat'
+      })
+    }
+
     return NextResponse.json({ error: 'Aksi tidak valid' }, { status: 400 })
 
   } catch (err: any) {
