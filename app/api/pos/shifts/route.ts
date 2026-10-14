@@ -138,22 +138,23 @@ export async function GET(req: Request) {
 
     // ─── Mode: Cashier Historical Shifts (Shift Ledger) ─────────────────────────
     if (mode === 'history') {
-      const limitVal = Math.min(Math.max(parseInt(searchParams.get('limit') || '20', 10) || 20, 1), 60)
+      const limitVal = Math.min(Math.max(parseInt(searchParams.get('limit') || '15', 10) || 15, 1), 60)
+      const offsetVal = Math.max(parseInt(searchParams.get('offset') || '0', 10) || 0, 0)
       const filterStatus = searchParams.get('status') // 'all', 'closed', 'open'
 
       let shiftQuery = supabase
         .from('pos_shifts')
-        .select('*')
+        .select('*', { count: 'exact' })
         .eq('business_id', businessId)
         .eq('user_id', user.id)
         .order('opened_at', { ascending: false })
-        .limit(limitVal)
+        .range(offsetVal, offsetVal + limitVal - 1)
 
       if (filterStatus && filterStatus !== 'all') {
         shiftQuery = shiftQuery.eq('status', filterStatus)
       }
 
-      const { data: pastShifts, error: historyErr } = await shiftQuery
+      const { data: pastShifts, error: historyErr, count: totalCount } = await shiftQuery
       if (historyErr) {
         return NextResponse.json({ error: historyErr.message }, { status: 500 })
       }
@@ -186,9 +187,12 @@ export async function GET(req: Request) {
         }
       })
 
+      const totalNum = totalCount || 0
       return NextResponse.json({
         success: true,
-        shifts: enrichedHistory
+        shifts: enrichedHistory,
+        totalCount: totalNum,
+        hasMore: (offsetVal + shiftList.length) < totalNum
       })
     }
 
