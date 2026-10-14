@@ -1,5 +1,6 @@
 "use client"
 import { useState, useEffect } from 'react'
+import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { formatDisplayDate } from '@/lib/timeUtils'
 
 type Props = {
@@ -57,9 +58,6 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
       }
     }
   }, [isOpen, accounts, sourceAccountCode, targetAccountCode])
-
-  if (!isOpen) return null
-
   const handleOpen = async () => {
     setIsSubmitting(true)
     setErrorMsg(null)
@@ -88,25 +86,45 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-        {/* Header */}
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
-          <div>
-            <h3 className="font-bold text-gray-900 text-lg">Manajemen Shift Kasir</h3>
-            <p className="text-xs text-gray-500">Kasir: <span className="font-semibold text-gray-800">{cashierName}</span></p>
-          </div>
-          <button 
-            onClick={onClose} 
+    <FullScreenModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Manajemen Shift Kasir"
+      description={`Kasir: ${cashierName}`}
+      desktopSize="md"
+      footer={
+        <div className="flex gap-3 w-full">
+          <button
+            type="button"
+            onClick={onClose}
             disabled={isSubmitting}
-            className="w-8 h-8 rounded-full bg-gray-100 text-gray-500 hover:text-gray-700 flex items-center justify-center"
+            className="py-2.5 px-4 border border-gray-300 hover:bg-gray-100 text-gray-700 font-semibold rounded-xl text-xs transition"
           >
-            ✕
+            Batal
           </button>
+          {activeShift ? (
+            <button
+              type="button"
+              onClick={handleClose}
+              disabled={isSubmitting || !actualCash}
+              className="flex-1 py-2.5 px-4 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl text-xs transition shadow-sm text-center disabled:opacity-50"
+            >
+              {isSubmitting ? 'Tutup Shift...' : 'Tutup Shift & Rekonsiliasi'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleOpen}
+              disabled={isSubmitting}
+              className="flex-1 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-xs transition shadow-sm text-center"
+            >
+              {isSubmitting ? 'Membuka...' : 'Buka Shift Baru'}
+            </button>
+          )}
         </div>
-
-        {/* Content */}
-        <div className="p-5 space-y-4 text-sm">
+      }
+    >
+      <div className="space-y-4 text-sm">
           {activeShift ? (
             // Close Shift Mode
             <div className="space-y-4">
@@ -330,36 +348,7 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
               ⚠️ {errorMsg}
             </div>
           )}
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-gray-100 bg-gray-50 flex gap-3">
-          <button
-            onClick={onClose}
-            disabled={isSubmitting}
-            className="py-2.5 px-4 border border-gray-300 hover:bg-gray-100 text-gray-700 font-semibold rounded-xl text-xs transition"
-          >
-            Batal
-          </button>
-          {activeShift ? (
-            <button
-              onClick={handleClose}
-              disabled={isSubmitting || !actualCash}
-              className="flex-1 py-2.5 px-4 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl text-xs transition shadow-sm text-center disabled:opacity-50"
-            >
-              {isSubmitting ? 'Tutup Shift...' : 'Tutup Shift & Rekonsiliasi'}
-            </button>
-          ) : (
-            <button
-              onClick={handleOpen}
-              disabled={isSubmitting}
-              className="flex-1 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-xs transition shadow-sm text-center"
-            >
-              {isSubmitting ? 'Membuka...' : 'Buka Shift Baru'}
-            </button>
-          )}
-        </div>
       </div>
-    </div>
+    </FullScreenModal>
   )
 }

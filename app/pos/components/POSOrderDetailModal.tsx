@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { formatDisplayDate } from '@/lib/timeUtils'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
 import ReceiptPreviewModal from './ReceiptPreviewModal'
@@ -43,7 +44,7 @@ export default function POSOrderDetailModal({
   onRefundSuccess,
   onOrderUpdated
 }: Props) {
-  // ─── ALL HOOKS UNCONDITIONALLY AT TOP (ZERO HOOK VIOLATIONS) ────────────────
+  // ─── 1. ALL HOOKS UNCONDITIONALLY AT TOP (ZERO REACT HOOKS VIOLATIONS) ──────
   const [currentOrder, setCurrentOrder] = useState<any | null>(order)
   const [payments, setPayments] = useState<PaymentRecord[]>([])
   const [loadingPayments, setLoadingPayments] = useState(false)
@@ -95,7 +96,6 @@ export default function POSOrderDetailModal({
 
       if (error) {
         console.warn('Fetch order_payments warning:', error.message)
-        // Fallback to raw_source_data if RLS or query fails
         const rawPayments = currentOrder?.raw_source_data?.payments || []
         if (rawPayments.length > 0) {
           const mapped: PaymentRecord[] = rawPayments.map((rp: any, idx: number) => ({
@@ -118,7 +118,6 @@ export default function POSOrderDetailModal({
       }
 
       const rows = (data as PaymentRecord[]) || []
-      // If table is empty, check raw_source_data for legacy display
       if (rows.length === 0 && currentOrder?.raw_source_data?.payments) {
         const rawList = currentOrder.raw_source_data.payments
         const mapped: PaymentRecord[] = rawList.map((rp: any, idx: number) => ({
@@ -152,16 +151,6 @@ export default function POSOrderDetailModal({
       setPayments([])
     }
   }, [isOpen, orderId, fetchPayments])
-
-  // Escape key listener for fast dismissal
-  useEffect(() => {
-    if (!isOpen) return
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose])
 
   // Set of voided payment IDs to identify cancelled lines
   const voidedPaymentIds = useMemo(() => {
@@ -205,9 +194,6 @@ export default function POSOrderDetailModal({
     }
   }, [currentOrder?.customer])
 
-  // ─── EARLY RETURN AFTER ALL HOOKS ───────────────────────────────────────────
-  if (!isOpen || !currentOrder) return null
-
   // ─── COMPUTED FINANCIAL VALUES ──────────────────────────────────────────────
   const formatIDR = (val: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -217,21 +203,22 @@ export default function POSOrderDetailModal({
     }).format(val || 0)
   }
 
-  const isCompleted = currentOrder.status === 'completed'
-  const isCancelled = currentOrder.status === 'cancelled'
+  const isCompleted = currentOrder?.status === 'completed'
+  const isCancelled = currentOrder?.status === 'cancelled'
 
-  const grandTotal = Number(currentOrder.grand_total || 0)
-  const amountPaid = Number(currentOrder.amount_paid ?? (isCompleted ? grandTotal : 0))
+  const grandTotal = Number(currentOrder?.grand_total || 0)
+  const amountPaid = Number(currentOrder?.amount_paid ?? (isCompleted ? grandTotal : 0))
   const outstanding = Math.max(0, grandTotal - amountPaid)
   const isPaid = isCompleted && outstanding <= 0.01
   const isPartial = isCompleted && outstanding > 0.01 && amountPaid > 0
 
-  const raw = currentOrder.raw_source_data || {}
+  const raw = currentOrder?.raw_source_data || {}
   const cashReceivedFallback = Number(raw.cash_received || 0)
   const changeAmountFallback = Number(raw.change_amount || 0)
 
   // ─── HANDLER: PRINT RECEIPT ─────────────────────────────────────────────────
   const handleOpenReceipt = () => {
+    if (!currentOrder) return
     const settings = getStoredReceiptSettings(businessName)
     const items = parsedItems.map((item: any) => ({
       name: item.name || 'Produk',
@@ -243,7 +230,6 @@ export default function POSOrderDetailModal({
       note: item.note || undefined
     }))
 
-    // Find latest cash payment info if available from order_payments
     const cashPay = payments.slice().reverse().find((p) => p.payment_kind === 'payment' && p.payment_method === 'cash')
     const recCash = cashPay ? Number(cashPay.cash_received || cashPay.amount) : cashReceivedFallback
     const recChange = cashPay ? Number(cashPay.change_amount || 0) : changeAmountFallback
@@ -273,6 +259,7 @@ export default function POSOrderDetailModal({
 
   // ─── HANDLER: REFUND ORDER ──────────────────────────────────────────────────
   const handleRefund = async () => {
+    if (!currentOrder) return
     const confirmed = window.confirm(
       `Apakah Anda yakin ingin membatalkan & refund pesanan #${currentOrder.order_number}?\n\n• Stok barang akan dikembalikan ke gudang.\n• Jurnal akuntansi pembalikan akan dibuat otomatis.\n• Pembayaran tunai/bank akan disesuaikan di laci kasir.`
     )
@@ -306,6 +293,7 @@ export default function POSOrderDetailModal({
 
   // ─── HANDLER: PAY REMAINING BALANCE ─────────────────────────────────────────
   const handleConfirmPayRemaining = async (paymentResult: PaymentResult) => {
+    if (!currentOrder) return
     try {
       for (const item of paymentResult.payments) {
         const res = await fetch('/api/pos/order/pay', {
@@ -327,7 +315,6 @@ export default function POSOrderDetailModal({
           throw new Error(data.error || 'Gagal memproses pembayaran')
         }
 
-        // Update local order status
         setCurrentOrder((prev: any) => ({
           ...prev,
           amount_paid: data.amount_paid,
@@ -410,61 +397,72 @@ export default function POSOrderDetailModal({
 
   return (
     <>
-      {/* ─── DEDICATED MODAL OVERLAY (Z-70 PLACED OVER SHIFT MODAL) ─────────────── */}
-      <div
-        className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-3 sm:p-4 animate-in fade-in duration-150"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) onClose()
-        }}
-      >
-        <div className="w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-slate-200/90 overflow-hidden flex flex-col max-h-[92vh]">
-          {/* ─── MODAL HEADER ───────────────────────────────────────────────── */}
-          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/90">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center text-lg font-black shadow-sm">
-                🧾
-              </div>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="font-black text-slate-900 text-base sm:text-lg">
-                    Nota #{currentOrder.order_number}
-                  </h3>
-                  {isCancelled ? (
-                    <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200">
-                      Dibatalkan / Direfund
-                    </span>
-                  ) : isPaid ? (
-                    <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-                      Lunas
-                    </span>
-                  ) : isPartial ? (
-                    <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-                      Cicilan / DP
-                    </span>
-                  ) : (
-                    <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200">
-                      Belum Dibayar
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Waktu: {formatDisplayDate(currentOrder.created_at, 'datetime', timezone)}
-                </p>
-              </div>
+      {/* ─── STANDAR SHAPEUP CRM: FullScreenModal ───────────────────────────── */}
+      <FullScreenModal
+        isOpen={isOpen && Boolean(currentOrder)}
+        onClose={onClose}
+        title={
+          <div className="flex items-center gap-2 flex-wrap">
+            <span>Nota #{currentOrder?.order_number || ''}</span>
+            {isCancelled ? (
+              <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200">
+                Dibatalkan / Direfund
+              </span>
+            ) : isPaid ? (
+              <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                Lunas
+              </span>
+            ) : isPartial ? (
+              <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                Cicilan / DP
+              </span>
+            ) : (
+              <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200">
+                Belum Dibayar
+              </span>
+            )}
+          </div>
+        }
+        description={currentOrder?.created_at ? `Waktu Transaksi: ${formatDisplayDate(currentOrder.created_at, 'datetime', timezone)}` : undefined}
+        desktopSize="lg"
+        footer={
+          <div className="flex items-center justify-between w-full flex-wrap gap-2">
+            <div>
+              {isCompleted && !isCancelled && (
+                <button
+                  type="button"
+                  disabled={processingRefund}
+                  onClick={handleRefund}
+                  className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs border border-rose-200 transition disabled:opacity-50"
+                  title="Batalkan transaksi ini dan kembalikan stok fisik ke gudang"
+                >
+                  {processingRefund ? 'Memproses Refund...' : '↩️ Refund Pesanan Lengkap'}
+                </button>
+              )}
             </div>
 
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-9 h-9 rounded-xl bg-slate-200/70 hover:bg-slate-200 text-slate-600 hover:text-slate-900 flex items-center justify-center font-bold text-sm transition"
-              title="Tutup Rincian Pesanan"
-            >
-              ✕
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleOpenReceipt}
+                className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-xs border border-indigo-200 transition flex items-center gap-1.5"
+                title="Cetak ulang struk nota ini ke printer thermal"
+              >
+                <span>🖨️ Cetak Struk</span>
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-extrabold rounded-xl text-xs transition"
+              >
+                Tutup
+              </button>
+            </div>
           </div>
-
-          {/* ─── MODAL BODY (SCROLLABLE) ────────────────────────────────────── */}
-          <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5 text-xs">
+        }
+      >
+        {currentOrder ? (
+          <div className="space-y-5 text-xs">
             {refundError && (
               <div className="p-3 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl font-medium">
                 ⚠️ {refundError}
@@ -707,7 +705,6 @@ export default function POSOrderDetailModal({
                             </span>
                           </div>
 
-                          {/* Action: Void Button */}
                           {isRegularPayment && !isCancelled && !p.id.startsWith('raw-') && (
                             <button
                               type="button"
@@ -762,43 +759,10 @@ export default function POSOrderDetailModal({
               </div>
             </div>
           </div>
-
-          {/* ─── MODAL FOOTER ───────────────────────────────────────────────── */}
-          <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/90 flex items-center justify-between gap-3 flex-wrap">
-            <div>
-              {isCompleted && !isCancelled && (
-                <button
-                  type="button"
-                  disabled={processingRefund}
-                  onClick={handleRefund}
-                  className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs border border-rose-200 transition disabled:opacity-50"
-                  title="Batalkan transaksi ini dan kembalikan stok fisik ke gudang"
-                >
-                  {processingRefund ? 'Memproses Refund...' : '↩️ Refund Pesanan Lengkap'}
-                </button>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleOpenReceipt}
-                className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-xs border border-indigo-200 transition flex items-center gap-1.5"
-                title="Cetak ulang struk nota ini ke printer thermal"
-              >
-                <span>🖨️ Cetak Struk</span>
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-extrabold rounded-xl text-xs transition"
-              >
-                Tutup
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+        ) : (
+          <div className="py-12 text-center text-slate-400">Memuat rincian pesanan...</div>
+        )}
+      </FullScreenModal>
 
       {/* Modal Preview Struk */}
       {isReceiptPreviewOpen && (
@@ -810,7 +774,7 @@ export default function POSOrderDetailModal({
       )}
 
       {/* Reusable Universal Payment Modal untuk Pelunasan Sisa Tagihan */}
-      {isPayModalOpen && (
+      {isPayModalOpen && currentOrder && (
         <CashPaymentModal
           isOpen={isPayModalOpen}
           onClose={() => setIsPayModalOpen(false)}
