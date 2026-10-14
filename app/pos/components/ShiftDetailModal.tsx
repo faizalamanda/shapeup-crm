@@ -453,18 +453,25 @@ export default function ShiftDetailModal({
                       {filteredOrders.map((ord) => {
                         const isCompleted = ord.status === 'completed'
                         const isCancelled = ord.status === 'cancelled'
-                        const itemsCount = (ord.items_json || []).length
+                        const parsedItems = Array.isArray(ord.items_json)
+                          ? ord.items_json
+                          : typeof ord.items_json === 'string'
+                          ? (() => { try { const p = JSON.parse(ord.items_json); return Array.isArray(p) ? p : [] } catch { return [] } })()
+                          : []
+                        const itemsCount = parsedItems.length || ord.total_qty || 1
                         const methodStr = String(ord.payment_method || 'cash').toLowerCase()
 
                         return (
                           <div
                             key={ord.id}
-                            className="pt-2 first:pt-0 group flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-2xl border border-slate-200/70 hover:border-indigo-400 hover:bg-indigo-50/20 transition"
+                            onClick={() => onOpenOrderDetail && onOpenOrderDetail(ord)}
+                            className="pt-2 first:pt-0 group flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-2xl border border-slate-200/70 hover:border-indigo-400 hover:bg-indigo-50/20 transition cursor-pointer"
+                            title="Klik untuk membuka rincian pesanan & mutasi pembayaran"
                           >
                             <div className="space-y-1 min-w-0 flex-1">
                               <div className="flex items-center gap-2">
-                                <span className="font-black text-slate-900 text-xs">
-                                  {ord.order_number}
+                                <span className="font-black text-slate-900 text-xs group-hover:text-indigo-600 transition">
+                                  #{ord.order_number}
                                 </span>
                                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
                                   isCompleted ? 'bg-emerald-100 text-emerald-800' : isCancelled ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
@@ -479,7 +486,7 @@ export default function ShiftDetailModal({
 
                               <div className="text-xs text-slate-500 flex items-center gap-2 truncate">
                                 <span className="font-bold text-slate-700">
-                                  👤 {ord.customer?.name || 'Pelanggan Walk-in'}
+                                  👤 {ord.customer?.name || (Array.isArray(ord.customer) ? ord.customer[0]?.name : 'Pelanggan Walk-in')}
                                 </span>
                                 <span>•</span>
                                 <span>{itemsCount} Item Produk</span>
@@ -499,7 +506,11 @@ export default function ShiftDetailModal({
                               <div className="flex items-center gap-1.5">
                                 {onReprintOrder && (
                                   <button
-                                    onClick={() => onReprintOrder(ord)}
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      onReprintOrder(ord)
+                                    }}
                                     className="p-2 rounded-xl bg-slate-100 hover:bg-indigo-600 hover:text-white text-slate-700 text-xs font-bold transition shadow-xs"
                                     title="Cetak Ulang Struk Nota"
                                   >
@@ -508,8 +519,12 @@ export default function ShiftDetailModal({
                                 )}
                                 {onOpenOrderDetail && (
                                   <button
-                                    onClick={() => onOpenOrderDetail(ord)}
-                                    className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold transition"
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      onOpenOrderDetail(ord)
+                                    }}
+                                    className="p-2 rounded-xl bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 text-xs font-bold transition border border-transparent hover:border-indigo-200"
                                     title="Lihat Detail Pesanan"
                                   >
                                     🔍

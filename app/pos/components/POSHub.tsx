@@ -998,19 +998,21 @@ export default function POSHub({ onOpenWorkspace }: Props) {
       />
 
       {/* 5. Order Detail & Payment Ledger Modal */}
-      <POSOrderDetailModal
-        isOpen={isOrderDetailOpen}
-        onClose={() => {
-          setIsOrderDetailOpen(false)
-          setSelectedOrder(null)
-        }}
-        order={selectedOrder}
-        timezone={timezone}
-        businessName={activeBusiness?.name || 'ShapeUp Store'}
-        cashierName={cashierName}
-        onRefundSuccess={loadData}
-        onOrderUpdated={loadData}
-      />
+      {selectedOrder && (
+        <POSOrderDetailModal
+          isOpen={isOrderDetailOpen}
+          onClose={() => {
+            setIsOrderDetailOpen(false)
+            setSelectedOrder(null)
+          }}
+          order={selectedOrder}
+          timezone={timezone}
+          businessName={activeBusiness?.name || 'ShapeUp Store'}
+          cashierName={cashierName}
+          onRefundSuccess={loadData}
+          onOrderUpdated={loadData}
+        />
+      )}
 
       {/* 6. Quick Print Receipt Preview Modal */}
       <ReceiptPreviewModal
