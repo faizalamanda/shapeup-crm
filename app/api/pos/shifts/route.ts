@@ -136,6 +136,162 @@ export async function GET(req: Request) {
       })
     }
 
+    // ─── Mode: Cashier Historical Shifts (Shift Ledger) ─────────────────────────
+    if (mode === 'history') {
+      const limitVal = Math.min(Math.max(parseInt(searchParams.get('limit') || '20', 10) || 20, 1), 60)
+      const filterStatus = searchParams.get('status') // 'all', 'closed', 'open'
+
+      let shiftQuery = supabase
+        .from('pos_shifts')
+        .select('*')
+        .eq('business_id', businessId)
+        .eq('user_id', user.id)
+        .order('opened_at', { ascending: false })
+        .limit(limitVal)
+
+      if (filterStatus && filterStatus !== 'all') {
+        shiftQuery = shiftQuery.eq('status', filterStatus)
+      }
+
+      const { data: pastShifts, error: historyErr } = await shiftQuery
+      if (historyErr) {
+        return NextResponse.json({ error: historyErr.message }, { status: 500 })
+      }
+
+      const shiftList = pastShifts || []
+      const shiftIds = shiftList.map((s: any) => s.id)
+      const metricsMap = await calculateShiftMetrics(supabase, shiftIds)
+
+      const enrichedHistory = shiftList.map((s: any) => {
+        const m = metricsMap.get(s.id) || {
+          cash_sales: 0,
+          non_cash_sales: 0,
+          cash_refunds: 0,
+          cash_in: 0,
+          cash_out: 0,
+          total_transactions: 0
+        }
+        const initialCash = Number(s.initial_cash || 0)
+        const currentDrawerCash = initialCash + m.cash_sales - m.cash_refunds + m.cash_in - m.cash_out
+        const totalSales = m.cash_sales + m.non_cash_sales
+
+        return {
+          ...s,
+          metrics: {
+            ...m,
+            initial_cash: initialCash,
+            current_drawer_cash: currentDrawerCash,
+            total_sales: totalSales
+          }
+        }
+      })
+
+      return NextResponse.json({
+        success: true,
+        shifts: enrichedHistory
+      })
+    }
+
+    // ─── Mode: Specific Shift Details & Encapsulated Orders ─────────────────────
+    if (mode === 'shift_details') {
+      const shiftId = searchParams.get('shift_id')
+      if (!isUuid(shiftId)) {
+        return NextResponse.json({ error: 'shift_id tidak valid' }, { status: 400 })
+      }
+
+      const [
+        { data: shiftData, error: shiftErr },
+        { data: ordersData, error: ordersErr },
+        { data: movementsData, error: movErr },
+        { data: paymentsData, error: payErr }
+      ] = await Promise.all([
+        supabase
+          .from('pos_shifts')
+          .select('*')
+          .eq('id', shiftId)
+          .eq('business_id', businessId)
+          .maybeSingle(),
+        supabase
+          .from('orders')
+          .select(`
+            id,
+            order_number,
+            created_at,
+            grand_total,
+            total_qty,
+            status,
+            payment_status,
+            amount_paid,
+            payment_method,
+            raw_source_data,
+            items_json,
+            customer:customers(name, phone)
+          `)
+          .eq('shift_id', shiftId)
+          .eq('business_id', businessId)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('pos_shift_movements')
+          .select('*')
+          .eq('shift_id', shiftId)
+          .eq('business_id', businessId)
+          .order('created_at', { ascending: true }),
+        supabase
+          .from('order_payments')
+          .select('*')
+          .eq('shift_id', shiftId)
+          .order('created_at', { ascending: true })
+      ])
+
+      if (shiftErr || !shiftData) {
+        return NextResponse.json({ error: 'Shift tidak ditemukan' }, { status: 404 })
+      }
+
+      // Tender breakdown calculation
+      const tenderBreakdown = {
+        cash: { amount: 0, count: 0 },
+        qris: { amount: 0, count: 0 },
+        card: { amount: 0, count: 0 },
+        other: { amount: 0, count: 0 }
+      }
+
+      if (paymentsData) {
+        for (const p of paymentsData) {
+          if (p.payment_kind === 'void') continue
+          const amt = Number(p.amount) || 0
+          const method = String(p.payment_method || '').toLowerCase()
+          if (method.includes('cash') || method.includes('tunai')) {
+            tenderBreakdown.cash.amount += amt
+            tenderBreakdown.cash.count += 1
+          } else if (method.includes('qris')) {
+            tenderBreakdown.qris.amount += amt
+            tenderBreakdown.qris.count += 1
+          } else if (method.includes('card') || method.includes('edc') || method.includes('debit') || method.includes('credit')) {
+            tenderBreakdown.card.amount += amt
+            tenderBreakdown.card.count += 1
+          } else {
+            tenderBreakdown.other.amount += amt
+            tenderBreakdown.other.count += 1
+          }
+        }
+      }
+
+      // Format customer
+      const formattedOrders = (ordersData || []).map((o: any) => ({
+        ...o,
+        customer: Array.isArray(o.customer) ? o.customer[0] : o.customer
+      }))
+
+      return NextResponse.json({
+        success: true,
+        shift: shiftData,
+        orders: formattedOrders,
+        movements: movementsData || [],
+        payments: paymentsData || [],
+        tenderBreakdown
+      })
+    }
+
     // ─── Default Mode: Cashier Active Shift ─────────────────────────────────────
     const { data: profile } = await supabase
       .from('profiles')
