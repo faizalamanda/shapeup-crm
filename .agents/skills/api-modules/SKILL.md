@@ -112,6 +112,13 @@ const syncRes = await syncOrderToLedger(orderId, supabase, preloadedOrder)
 - **Default Bisnis Baru:** `global_stock_reduction_status = ['shipped', 'completed']`, `global_journal_hpp_status = ['shipped', 'completed']`, `global_default_hpp_percentage = 0%`.
 - **Strict Setting-Driven:** Pengurangan stok (`applyStockMovement`) dan HPP Journal Lines **TIDAK BOLEH** di-override dengan hardcoded fallback seperti `status === 'completed'`. Selalu patuhi `stockReductionStatuses.includes(status)` dan `journalHppStatuses.includes(status)` dari setting database.
 
+**Aturan Siklus Hidup Pembayaran (Two-Dimensional Lifecycle & Omnichannel Settlement):**
+- **Two-Dimensional Separation:** Pisahkan status logistik (`orders.status`: `pending`, `processing`, `shipped`, `completed`) dari status keuangan (`orders.payment_status`: `unpaid`, `partial`, `paid`). Jangan pernah mengasumsikan pesanan baru lunas jika `status === 'completed'`.
+- **Settlement Non-COD vs COD:**
+  - *Non-COD (Transfer Bank, Gateway, QRIS, Kartu Kredit):* Pelanggan membayar di muka. Saat pesanan `processing`, `shipped`, `completed`, atau memiliki `date_paid`, status pembayarannya adalah `'paid'`, piutang nol (`amount_paid = grand_total`), dan kas diakui seketika di jurnal.
+  - *COD (Bayar di Tempat):* Saat `processing` atau `shipped`, status pembayaran adalah `'unpaid'` dan mencatat Piutang COD (`103000`). Status baru berubah menjadi `'paid'` setelah pesanan `completed` (kurir menyetor dana).
+- **Auto-Sync to `order_payments`:** Setiap pesanan non-COD yang terbayar otomatis dijamin memiliki baris rekaman di tabel `order_payments` serta memperbarui `orders.payment_status` dan `orders.amount_paid` secara atomik di database.
+
 ---
 
 ### 4. `lib/accountHelper.ts` — COA Account Resolution (Sales)
@@ -155,7 +162,8 @@ await postJournalTransaction(
 ```
 
 **Fitur:**
-- Idempotency: cek existing transaction sebelum insert (bisa di-skip untuk new order)
+- Idempotency: Cek existing transaction (`business_id, order_id, description`) sebelum insert.
+- Anti-Duplikasi (Strict): Dilarang mengasumsikan `isNewOrder = Boolean(preloadedOrder)`. Di `orderLedger.ts`, existing transactions wajib selalu di-fetch via `order_id` dan `skipExistingCheck` diset `false` agar tidak menghasilkan duplikasi transaksi Penjualan.
 - Self-healing: partial commit (header tanpa lines) otomatis diperbaiki
 - Dipakai oleh `orderLedger.ts` dan `pos/shifts/route.ts`
 
@@ -328,6 +336,11 @@ Untuk memastikan keandalan 100% pada lingkungan Vercel Serverless Functions:
 3. **Append-Only Void & Refund:**
    Dilarang keras melakukan `DELETE` pada riwayat pembayaran. Pembatalan pembayaran (void) dan refund pesanan dicatat sebagai event penyeimbang (`payment_kind = 'void' | 'refund'`) yang mengacu pada `voided_payment_id`.
 
+4. **Two-Dimensional Order Lifecycle & Payment Ledger UI:**
+   Antarmuka pesanan (`/orders`, `OrderTable.tsx`, `OrderDetailModal.tsx`) memisahkan status logistik (`orders.status`) dan status keuangan (`orders.payment_status`).
+   - Riwayat pembayaran di tab modal wajib dimuat langsung dari tabel `order_payments` lengkap dengan referensi akun kas/bank dan status konfirmasi.
+   - Pesanan e-commerce non-COD yang masuk wajib langsung diakui sebagai lunas (`paid`) dan saldo piutang lunas (`amount_paid = grand_total`), serta memiliki baris kas di `order_payments`.
+
 ---
 
 ### 14. `lib/paymentLedger.ts` — Universal Payment Specialist (Cicilan & Void)
@@ -361,6 +374,7 @@ Pahami pemisahan tanggung jawab antara **`syncOrderToLedger()`** dan **`lib/paym
 10. **Immediate Frontend Fetching:** Pemuatan data utama halaman (seperti `fetchPurchases`) dilakukan seketika di *mount* tanpa menunggu resolution profile *client-side*, karena API route sudah menangani otentikasi via cookie `getApiContext()`.
 11. **Location Caching:** Di API route laporan inventory (`inventory/reports/route.ts`), kueri `inventory_locations` di-cache 5 menit di memori server untuk mempercepat kueri mutasi terindeks (~3ms).
 12. **Client SWR & Cache Sync Status:** Komponen UI yang menampilkan Move History (modal / tab) wajib menggunakan client-side SWR cache (`0ms` instant load). Jika data bersumber dari cache, UI wajib menampilkan badge status `⚡ Sync: Data Tampil dari Cache (0ms)`.
+13. **High-Speed Database-Level Order Payment RPC:** Status pembayaran (`payment_status`) dan total terbayar (`amount_paid`) diagregasikan langsung pada tingkat PostgreSQL RPC (`get_order_list` dan `get_order_analytics_metrics`) menggunakan indeks komposit `(business_id, payment_status, created_at DESC)`. Dilarang melakukan komputasi pembayaran N+1 di client-side.
 
 ## 🔗 Dependency Graph
 

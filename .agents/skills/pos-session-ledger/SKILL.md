@@ -116,4 +116,41 @@ Dilarang keras melakukan `DELETE` atau menghapus rekaman pembayaran historis.
 - **`lib/paymentLedger.ts` (Payment Lifecycle Specialist):**
   Mengelola transaksi pembayaran susulan: Pembayaran Cicilan Tahap 2 dst, Pelunasan Sisa Piutang, dan Pembatalan (Void) Baris Tender. Bekerja murni pada mutasi Kas/Bank dan Piutang Usaha (`103000`) tanpa memicu mutasi stok ulang.
 
+---
+
+## 6. Omnichannel & Two-Dimensional Order Payment Lifecycle
+
+### 6.1 State Machine Pemisahan Dua Dimensi (Separation of Concerns)
+Dalam siklus hidup pesanan modern omnichannel (POS, Online Store/WooCommerce, Invoice Penjualan, Accurate ERP), status pesanan dipecah menjadi dua mesin status (*state machines*) independen:
+1. **Fulfillment / Operational Status (`orders.status`):**
+   - Menggambarkan pergerakan fisik barang atau tahapan logistik: `pending` $\rightarrow$ `processing` $\rightarrow$ `shipped` $\rightarrow$ `completed` (atau `cancelled`).
+2. **Financial / Settlement Status (`orders.payment_status`):**
+   - Menggambarkan penyelesaian transaksi finansial kas/piutang: `unpaid` $\rightarrow$ `partial` $\rightarrow$ `paid`.
+   - Dilengkapi nominal terbayar `orders.amount_paid` dan saldo piutang $\text{Piutang} = \max(0, \text{grand\_total} - \text{amount\_paid})$.
+
+**Dilarang Keras:** Menjadikan `orders.status === 'completed'` sebagai satu-satunya indikator pesanan lunas. Pesanan online transfer berstatus `shipped` atau `processing` uangnya telah masuk ke rekening bank sejak awal, sehingga berstatus `paid`.
+
+### 6.2 Aturan Settlement Non-COD vs COD (World-Class E-Commerce Standard)
+| Metode Pembayaran | Fulfillment Status | Settlement Status (`payment_status`) | Waktu Pengakuan Kas di Jurnal Akuntansi & `order_payments` |
+| :--- | :--- | :--- | :--- |
+| **Non-COD** (Transfer Bank, Gateway, QRIS, CC) | `processing` / `shipped` / `completed` | **`paid` (Lunas)** | Seketika saat pesanan dibuat / diproses (pelanggan bayar di muka). `amount_paid = grand_total`. |
+| **COD** (Cash on Delivery) | `processing` / `shipped` | **`unpaid` (Belum Bayar)** | Kas belum diterima (barang masih di kurir). `amount_paid = 0`. Jurnal mencatat piutang COD (`103000`). |
+| **COD** (Cash on Delivery) | `completed` | **`paid` (Lunas)** | Diakui saat kurir menyetorkan uang remitansi kas/bank. `amount_paid = grand_total`. |
+
+### 6.3 Single Source of Truth & Zero-Orphan Payment Records
+- Setiap pesanan yang berstatus lunas (`paid`) atau cicilan (`partial`) **WAJIB** memiliki baris rekaman di tabel `order_payments`.
+- Pada sinkronisasi pesanan (`syncOrderToLedger`), sistem melakukan *idempotent check*: jika pesanan non-COD berstatus dibayar namun belum ada baris di `order_payments`, sistem otomatis meng-insert baris pembayaran penyeimbang yang berelasi ke akun Bank/Kas tujuan.
+- Riwayat pembayaran di Modal Detail Pesanan (`OrderDetailModal.tsx` & `POSOrderDetailModal.tsx`) membaca langsung dari `order_payments` dengan relasi ke akun buku besar, nama kasir/shift, referensi dokumen, dan status *append-only*.
+
+### 6.4 Standar Kecepatan Akses Database (High-Performance Zero N+1)
+- Untuk menyajikan status pembayaran dan ringkasan finansial di tabel pesanan (`OrderTable.tsx`), **DILARANG KERAS** melakukan query terpisah atau perhitungan loop di sisi JavaScript / client.
+- Status pembayaran (`payment_status`) dan total terbayar (`amount_paid`) diagregasikan langsung pada tingkat PostgreSQL RPC (`get_order_list` dan `get_order_analytics_metrics`).
+- Database PostgreSQL dioptimalkan dengan indeks komposit:
+  ```sql
+  CREATE INDEX IF NOT EXISTS idx_orders_business_payment_status 
+  ON public.orders (business_id, payment_status, created_at DESC);
+  ```
+- Pemfilteran multi-status (`unpaid`, `partial`, `paid`) dieksekusi di database server menggunakan klausa `AND (filter_payment_status IS NULL OR o.payment_status = ANY(filter_payment_status))`.
+
+
 

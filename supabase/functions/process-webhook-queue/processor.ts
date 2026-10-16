@@ -191,6 +191,13 @@ export async function processWooOrder(
   }
 
   // 4. UPSERT ORDER
+  const isCodOrder = (woo.payment_method_title || woo.payment_method || "").toLowerCase().includes("cod")
+  const hasDatePaid = !!woo.date_paid
+  const isPaidOnline = !isCodOrder && (hasDatePaid || ["processing", "shipped", "completed"].includes(woo.status))
+  const numGrandTotal = toNum(woo.total)
+  const initialPaymentStatus = isPaidOnline || woo.status === "completed" ? "paid" : "unpaid"
+  const initialAmountPaid = initialPaymentStatus === "paid" ? numGrandTotal : 0
+
   const { data: orderData, error: orderError } = await supabase
     .from("orders")
     .upsert({
@@ -202,12 +209,14 @@ export async function processWooOrder(
       order_date: woo.date_created,
       order_date_utc: orderDateUtc,
       status: woo.status,
+      payment_status: initialPaymentStatus,
+      amount_paid: initialAmountPaid,
       total_qty: woo.line_items?.reduce((acc: number, item: any) => acc + toNum(item.quantity), 0) || 0,
       subtotal: calculatedSubtotal,
       discount_amount: toNum(woo.discount_total),
       shipping_cost: toNum(woo.shipping_total),
       other_fees: other_fees,
-      grand_total: toNum(woo.total),
+      grand_total: numGrandTotal,
       payment_method: woo.payment_method_title || "Manual",
       items_json: woo.line_items || [],
       raw_source_data: woo,

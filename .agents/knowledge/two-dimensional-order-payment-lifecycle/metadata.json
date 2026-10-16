@@ -1,0 +1,19 @@
+{
+  "summary": "Two-Dimensional Order Lifecycle Architecture: Separation of Logistics/Fulfillment state from Financial Settlement state, Omnichannel Non-COD upfront vs COD completion settlement rules, zero N+1 RPC aggregations, and idempotent order_payments ledger synchronization.",
+  "timestamps": {
+    "created": "2026-10-16T09:44:00Z",
+    "last_updated": "2026-10-16T09:44:00Z"
+  },
+  "references": [
+    "supabase/migrations/20261014000000_add_payment_status_to_order_rpcs.sql",
+    "supabase/migrations/20261016000000_reconcile_woocommerce_payment_statuses.sql",
+    "lib/orderLedger.ts",
+    "supabase/functions/process-webhook-queue/processor.ts",
+    "app/orders/components/OrderTable.tsx",
+    "app/orders/components/FilterBar.tsx",
+    "app/orders/components/OrderDetailModal.tsx",
+    ".agents/skills/pos-session-ledger/SKILL.md",
+    ".agents/skills/api-modules/SKILL.md",
+    ".agents/AGENTS.md"
+  ]
+}

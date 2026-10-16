@@ -88,7 +88,7 @@ export async function syncOrderToLedger(
   try {
     // 1. Fetch the order if not preloaded
     let order = preloadedOrder
-    if (!order) {
+    if (!order || order.subtotal === undefined || order.items_json === undefined) {
       const { data: fetchedOrder, error: orderErr } = await supabase
         .from('orders')
         .select('*')
@@ -106,15 +106,7 @@ export async function syncOrderToLedger(
     const isCod = isCodOrder(order)
     const items = Array.isArray(order.items_json) ? order.items_json : []
 
-    // FIX: isNewOrder = true jika order datang dari preloadedOrder (baru di-insert)
-    //      isNewOrder = false jika dipanggil untuk order existing (update/resync)
-    //      Sebelumnya: Boolean(preloadedOrder) — keliru karena Edge Fn tidak pass preloadedOrder
-    //      Sekarang: !preloadedOrder berarti order harus di-fetch → sudah ada di DB → bukan baru
-    const isNewOrder = Boolean(preloadedOrder)
-
-    // FIX: Parallelkan 3 calls independen (accounts + config + products)
-    //      Sebelumnya serial: accounts → config → products (~300–450ms)
-    //      Sekarang parallel: semua berjalan bersamaan (~100–150ms)
+    // FIX: Parallelkan 2 calls independen (accounts + config)
     const [accountMap, integrationConfigResult] = await Promise.all([
       getOrCreateDefaultAccounts(businessId, supabase),
       getIntegrationConfigs(businessId, platform, supabase),
@@ -125,21 +117,20 @@ export async function syncOrderToLedger(
     // resolveOrderProducts dijalankan setelah config selesai (butuh defaultHppPct)
     const matchedProducts = await resolveOrderProducts(items, businessId, defaultHppPct, supabase)
 
-    // 4. Fetch existing transactions (Skip query for brand new orders!)
+    // 4. Fetch existing transactions — ALWAYS check DB to prevent duplicate sales/payment transactions
     let salesTx: any = undefined
     let paymentTx: any = undefined
     let reversalSalesTx: any = undefined
     let reversalPaymentTx: any = undefined
 
-    if (!isNewOrder) {
-      const { data: txs, error: txsErr } = await supabase
-        .from('transactions')
-        .select('*, journal_lines(*)')
-        .eq('order_id', orderId)
+    const { data: txs, error: txsErr } = await supabase
+      .from('transactions')
+      .select('*, journal_lines(*)')
+      .eq('order_id', orderId)
 
-      if (txsErr) {
-        throw new Error(`Failed to fetch existing transactions: ${txsErr.message}`)
-      }
+    if (txsErr) {
+      throw new Error(`Failed to fetch existing transactions: ${txsErr.message}`)
+    }
 
       const isSalesTx = (tx: any) => 
         (tx.description.includes('Penjualan') || tx.description.includes('Penerbitan') || tx.description.includes('Sales')) && 
@@ -161,19 +152,18 @@ export async function syncOrderToLedger(
       paymentTx = txs?.find(isPaymentTx)
       reversalSalesTx = txs?.find(isReversalSalesTx)
       reversalPaymentTx = txs?.find(isReversalPaymentTx)
-    }
 
     // Determine payment date
     let paymentDate = new Date().toISOString()
     if (platform === 'WooCommerce') {
       const raw = order.raw_source_data || {}
       if (isCod) {
-        if (raw.date_completed_gmt) paymentDate = new Date(raw.date_completed_gmt + 'Z').toISOString()
-        else if (raw.date_completed) paymentDate = new Date(raw.date_completed).toISOString()
+        if (raw.date_completed_gmt) paymentDate = new Date(raw.date_completed_gmt.endsWith('Z') ? raw.date_completed_gmt : raw.date_completed_gmt + 'Z').toISOString()
+        else if (raw.date_completed) paymentDate = new Date(raw.date_completed.includes('+') || raw.date_completed.endsWith('Z') ? raw.date_completed : raw.date_completed + '+07:00').toISOString()
         else paymentDate = order.order_date_utc || order.order_date || new Date().toISOString()
       } else {
-        if (raw.date_paid_gmt) paymentDate = new Date(raw.date_paid_gmt + 'Z').toISOString()
-        else if (raw.date_paid) paymentDate = new Date(raw.date_paid).toISOString()
+        if (raw.date_paid_gmt) paymentDate = new Date(raw.date_paid_gmt.endsWith('Z') ? raw.date_paid_gmt : raw.date_paid_gmt + 'Z').toISOString()
+        else if (raw.date_paid) paymentDate = new Date(raw.date_paid.includes('+') || raw.date_paid.endsWith('Z') ? raw.date_paid : raw.date_paid + '+07:00').toISOString()
         else paymentDate = order.order_date_utc || order.order_date || new Date().toISOString()
       }
     }
@@ -268,7 +258,7 @@ export async function syncOrderToLedger(
             `Penjualan ${platform} #${orderNumber}`, 
             journalLines, 
             supabase,
-            isNewOrder
+            false // Always check existing to prevent duplicate transactions
           )
         }
       } else {
@@ -296,24 +286,27 @@ export async function syncOrderToLedger(
       }
 
       // 6.2 PAYMENT POSTING
-      const paidAmountFromOrder = order.amount_paid !== undefined && order.amount_paid !== null 
-        ? Number(order.amount_paid) 
-        : parseFloat(grand_total) || 0
-      const isUnpaidOrder = order.payment_status === 'unpaid' && paidAmountFromOrder <= 0
-      const isOrderPaid = !isUnpaidOrder && (status === 'completed' || (platform === 'WooCommerce' && !isCod && status !== 'pending'))
+      const numGrandTotal = parseFloat(grand_total) || 0
+      const rawOrderData = order.raw_source_data || {}
+      const hasDatePaid = !!rawOrderData.date_paid
+      const isWooNonCodPaid = platform === 'WooCommerce' && !isCod && (hasDatePaid || ['processing', 'shipped', 'completed'].includes(status))
+      const isExplicitPaid = order.payment_status === 'paid' || (order.amount_paid !== undefined && Number(order.amount_paid) >= numGrandTotal - 0.01 && numGrandTotal > 0)
+      const isCompletedPaid = status === 'completed'
+      const isOrderPaid = isExplicitPaid || isCompletedPaid || isWooNonCodPaid
 
       if (isOrderPaid) {
+        // Check if order_payments already has entries
+        const { data: existingOrderPays } = await supabase
+          .from('order_payments')
+          .select('*')
+          .eq('order_id', orderId)
+          .eq('payment_kind', 'payment')
+
+        let paymentLines: any[] = []
+        let totalPaymentAmount = 0
+        let effectivePostResult: any = null
+
         if (!paymentTx) {
-          // Check if order_payments already has entries (e.g. from POS checkout)
-          const { data: existingOrderPays } = await supabase
-            .from('order_payments')
-            .select('*')
-            .eq('order_id', orderId)
-            .eq('payment_kind', 'payment')
-
-          let paymentLines: any[] = []
-          let totalPaymentAmount = 0
-
           if (existingOrderPays && existingOrderPays.length > 0) {
             // Multi-tender / Split / Partial payment from order_payments
             for (const p of existingOrderPays) {
@@ -337,7 +330,7 @@ export async function syncOrderToLedger(
           } else {
             // Single-payment fallback (e.g. WooCommerce or legacy orders)
             const payAccountCode = isCod ? '101000' : '101200'
-            const effectivePayAmount = paidAmountFromOrder > 0 ? paidAmountFromOrder : (parseFloat(grand_total) || 0)
+            const effectivePayAmount = numGrandTotal
             if (effectivePayAmount > 0) {
               paymentLines = [
                 { account_id: accountMap[payAccountCode], debit: effectivePayAmount, credit: 0 },
@@ -348,55 +341,90 @@ export async function syncOrderToLedger(
           }
 
           if (paymentLines.length > 0 && totalPaymentAmount > 0) {
-            const postResult = await postJournalTransaction(
+            effectivePostResult = await postJournalTransaction(
               businessId,
               orderId,
               paymentDate,
               `Pembayaran ${platform} #${orderNumber}`,
               paymentLines,
               supabase,
-              isNewOrder
+              false // Always check existing to prevent duplicate transactions
             )
 
             // Link transaction_id back to order_payments if they existed without transaction_id
-            if (postResult?.transactionId && existingOrderPays && existingOrderPays.length > 0) {
-              const unlinkedIds = existingOrderPays.filter((p: any) => !p.transaction_id).map((p: any) => p.id)
-              if (unlinkedIds.length > 0) {
+            if (effectivePostResult?.transactionId && existingOrderPays && existingOrderPays.length > 0) {
+              const allPayIds = existingOrderPays.map((p: any) => p.id)
+              if (allPayIds.length > 0) {
                 await supabase
                   .from('order_payments')
-                  .update({ transaction_id: postResult.transactionId })
-                  .in('id', unlinkedIds)
-              }
-            }
-
-            // 6.3 RECORD UNIFIED ORDER PAYMENT ENTRY (If none existed)
-            if (!existingOrderPays || existingOrderPays.length === 0) {
-              try {
-                const raw = order.raw_source_data || {}
-                const cashReceived = Number(order.cash_received || raw.cash_received || 0)
-                const changeAmount = Number(order.change_amount || raw.change_amount || 0)
-                const isCashMethod = String(order.payment_method || '').toLowerCase() === 'cash'
-                const payAccountCode = isCod ? '101000' : '101200'
-
-                await supabase.from('order_payments').insert({
-                  payment_kind: 'payment',
-                  business_id: businessId,
-                  order_id: orderId,
-                  transaction_id: postResult?.transactionId || null,
-                  shift_id: order.shift_id || null,
-                  date: paymentDate ? paymentDate.split('T')[0] : new Date().toISOString().split('T')[0],
-                  amount: totalPaymentAmount,
-                  payment_method: order.payment_method || (isCod ? 'Cash/COD' : 'Bank/Gateway'),
-                  payment_method_account_id: accountMap[payAccountCode],
-                  cash_received: cashReceived || (isCashMethod ? totalPaymentAmount : 0),
-                  change_amount: changeAmount,
-                  notes: `Pembayaran ${platform} #${orderNumber}`
-                })
-              } catch (payErr) {
-                console.warn('[orderLedger] Failed to record fallback order_payments entry:', payErr)
+                  .update({ 
+                    transaction_id: effectivePostResult.transactionId,
+                    created_at: paymentDate,
+                    date: paymentDate ? paymentDate.split('T')[0] : undefined
+                  })
+                  .in('id', allPayIds)
               }
             }
           }
+        } else if (paymentTx && existingOrderPays && existingOrderPays.length > 0) {
+          // Align transaction_id and created_at if paymentTx exists
+          const unlinkedIds = existingOrderPays.filter((p: any) => !p.transaction_id).map((p: any) => p.id)
+          if (unlinkedIds.length > 0) {
+            await supabase
+              .from('order_payments')
+              .update({ 
+                transaction_id: paymentTx.id,
+                created_at: paymentTx.date || paymentDate,
+                date: (paymentTx.date || paymentDate).split('T')[0]
+              })
+              .in('id', unlinkedIds)
+          }
+        }
+
+        // 6.3 RECORD UNIFIED ORDER PAYMENT ENTRY (Single Source of Truth)
+        // If order_payments has 0 rows, ensure a line is inserted so Payment History is never blank
+        let finalAmountPaid = numGrandTotal
+        if (!existingOrderPays || existingOrderPays.length === 0) {
+          try {
+            const txId = effectivePostResult?.transactionId || paymentTx?.id || null
+            const cashReceived = Number(order.cash_received || rawOrderData.cash_received || 0)
+            const changeAmount = Number(order.change_amount || rawOrderData.change_amount || 0)
+            const isCashMethod = String(order.payment_method || '').toLowerCase() === 'cash'
+            const payAccountCode = isCod ? '101000' : '101200'
+            const effectivePayAmount = totalPaymentAmount > 0 ? totalPaymentAmount : numGrandTotal
+
+            await supabase.from('order_payments').insert({
+              payment_kind: 'payment',
+              business_id: businessId,
+              order_id: orderId,
+              transaction_id: txId,
+              shift_id: order.shift_id || null,
+              date: paymentDate ? paymentDate.split('T')[0] : new Date().toISOString().split('T')[0],
+              amount: effectivePayAmount,
+              payment_method: order.payment_method || (isCod ? 'Cash/COD' : 'Bank Transfer'),
+              payment_method_account_id: accountMap[payAccountCode],
+              cash_received: cashReceived || (isCashMethod ? effectivePayAmount : 0),
+              change_amount: changeAmount,
+              notes: `Pembayaran ${platform} #${orderNumber}`,
+              created_at: paymentDate || new Date().toISOString()
+            })
+            finalAmountPaid = effectivePayAmount
+          } catch (payErr) {
+            console.warn('[orderLedger] Failed to record fallback order_payments entry:', payErr)
+          }
+        } else {
+          finalAmountPaid = existingOrderPays.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0)
+        }
+
+        // 6.4 SYNCHRONIZE orders.payment_status & orders.amount_paid
+        const finalPaymentStatus: 'paid' | 'partial' | 'unpaid' = 
+          finalAmountPaid >= numGrandTotal - 0.01 ? 'paid' : (finalAmountPaid > 0 ? 'partial' : 'unpaid')
+
+        if (order.payment_status !== finalPaymentStatus || Number(order.amount_paid) !== finalAmountPaid) {
+          await supabase.from('orders').update({
+            payment_status: finalPaymentStatus,
+            amount_paid: finalAmountPaid
+          }).eq('id', orderId)
         }
       } else if (isCod && status !== 'completed') {
         if (paymentTx && !reversalPaymentTx) {

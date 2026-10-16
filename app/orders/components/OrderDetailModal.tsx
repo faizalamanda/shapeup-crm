@@ -90,6 +90,11 @@ export function OrderDetailModal({
             reference_number,
             notes,
             created_at,
+            transaction_id,
+            transactions (
+              id,
+              date
+            ),
             pos_shifts (
               id,
               cashier_name
@@ -324,7 +329,7 @@ export function OrderDetailModal({
                             return (
                               <tr key={p.id} className="hover:bg-slate-50/50">
                                 <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600">
-                                  {formatDisplayDate(p.created_at || p.date, 'datetime', timezone)}
+                                  {formatDisplayDate(p.transactions?.date || p.created_at || p.date, 'datetime', timezone)}
                                 </td>
                                 <td className="py-2.5 px-3">
                                   <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider ${
