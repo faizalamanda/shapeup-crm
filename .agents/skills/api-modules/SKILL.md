@@ -111,6 +111,11 @@ const syncRes = await syncOrderToLedger(orderId, supabase, preloadedOrder)
 **Aturan Default Pengaturan Bisnis Baru & Trigger Stok:**
 - **Default Bisnis Baru:** `global_stock_reduction_status = ['shipped', 'completed']`, `global_journal_hpp_status = ['shipped', 'completed']`, `global_default_hpp_percentage = 0%`.
 - **Strict Setting-Driven:** Pengurangan stok (`applyStockMovement`) dan HPP Journal Lines **TIDAK BOLEH** di-override dengan hardcoded fallback seperti `status === 'completed'`. Selalu patuhi `stockReductionStatuses.includes(status)` dan `journalHppStatuses.includes(status)` dari setting database.
+- **Unified Sales & HPP Journal Trigger & Date Basis (`journalHppStatuses`):**
+  - **Single Source of Truth:** Setting No. 2 (`journal_hpp_status` / `global_journal_hpp_status`) mengendalikan kapan jurnal penjualan & HPP diterbitkan serta penanggalan transaksinya (Setting No. 4 yang redundant telah dihapus).
+  - **Dynamic Dating:** Jika konfigurasi mencakup status operasional (`'processing'`, `'shipped'`, `'completed'`), transaksi jurnal dicatat pada tanggal/jam kejadian operasional (`paymentDate` / `orderMoveDate` / `updated_at`). Jika hanya mencakup status awal (`'pending'`), jurnal dicatat pada waktu checkout pemesanan (`order_date_utc` / `order_date`).
+  - **Flexible Multi-Select & Single-Select:** Pengguna bebas memilih hanya satu status (misal hanya `Processing` atau hanya `Completed`) atau beberapa status; sistem di `syncOrderToLedger()` secara pintar mengecek status dan mencegah duplikasi (*zero duplicate*) berkat idempotensi `salesTx`.
+
 
 **Aturan Siklus Hidup Pembayaran (Two-Dimensional Lifecycle & Omnichannel Settlement):**
 - **Two-Dimensional Separation:** Pisahkan status logistik (`orders.status`: `pending`, `processing`, `shipped`, `completed`) dari status keuangan (`orders.payment_status`: `unpaid`, `partial`, `paid`). Jangan pernah mengasumsikan pesanan baru lunas jika `status === 'completed'`.

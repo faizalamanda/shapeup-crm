@@ -1,0 +1,15 @@
+{
+  "summary": "Unified Sales & HPP Journal Trigger & Dynamic Dating Architecture: Single Source of Truth via Setting No. 2 (journal_hpp_status), elimination of redundant Setting No. 4, dynamic operational dating (paymentDate/orderMoveDate/updated_at), and idempotent single/multi-status mapping.",
+  "timestamps": {
+    "created": "2026-10-16T14:52:00Z",
+    "last_updated": "2026-10-16T14:52:00Z"
+  },
+  "references": [
+    "lib/orderLedger.ts",
+    "app/settings/inventory/page.tsx",
+    "app/settings/integrations/page.tsx",
+    "app/api/settings/inventory/route.ts",
+    ".agents/skills/api-modules/SKILL.md",
+    ".agents/AGENTS.md"
+  ]
+}

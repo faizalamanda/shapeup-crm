@@ -5,8 +5,43 @@ description: "Create or update full-screen mobile/PWA modal flows using the shar
 
 # Mobile Modal UX — ShapeUp CRM
 
-Untuk modal baru yang berfungsi sebagai layar fokus di mobile/PWA, gunakan `FullScreenModal` dari `@/components/ui/FullScreenModal` sebagai outer shell. Mobile selalu fullscreen; desktop menggunakan card `md` secara default. Atur `desktopSize` menjadi `sm`, `md`, `lg`, `xl`, atau `fullscreen` sesuai kepadatan konten. Letakkan konten fitur pada `children` dan aksi yang harus tetap terlihat pada `footer`.
+Panduan standar pembuatan dan pembaruan modal fitur pada ShapeUp CRM untuk menjamin pengalaman optimal di mobile/PWA dan desktop.
 
-`FullScreenModal` sudah menangani portal, `aria-modal`, fokus awal, body-scroll lock, safe-area viewport, Escape desktop, serta history Back LIFO melalui `useModalBackHandler`. Berikan `isOpen` dan `onClose` yang mengubah state menjadi tertutup. Registry ini memiliki prioritas di atas Back halaman, sehingga modal teratas selalu ditutup sebelum navigasi halaman berjalan. Jangan menambah `createPortal`, listener `popstate`, `history.pushState`, atau body scroll lock di pemakai.
+## 1. Outer Shell Terpusat (`FullScreenModal`)
 
-Untuk contoh dan batasan pemakaian, baca [knowledge mobile modal UX](../../knowledge/mobile-modal-ux.md). Modal ringkas seperti konfirmasi kecil tidak perlu dipaksa menggunakan shell fullscreen.
+Semua modal fitur yang berfungsi sebagai layar kerja/detail (misal: Detail Pesanan, Tagihan Pembelian, Detail Shift, Form Entri Data) **WAJIB** menggunakan `FullScreenModal` dari `@/components/ui/FullScreenModal` sebagai outer shell.
+
+- **Mobile / PWA:** Otomatis 100% full-screen (`h-[100dvh] w-screen`) dengan safe-area insets (`env(safe-area-inset-top)` & `env(safe-area-inset-bottom)`).
+- **Desktop:** Tampil sebagai card terpusat dengan proporsi `desktopSize`:
+  - `sm` (`max-w-md`): Konfirmasi singkat atau formulir mini.
+  - `md` (`max-w-2xl`, default): Formulir entri standar (tambah pelanggan, petty cash).
+  - `lg` (`max-w-4xl`): Detail pesanan POS, ringkasan transaksi, laporan kasir.
+  - `xl` (`max-w-6xl`): Detail pesanan omnichannel, tagihan pembelian (multi-kolom & multi-tab).
+  - `fullscreen`: Workspace penuh desktop (misal: kanban, canvas perancang).
+
+## 2. Enam Aturan Emas Mobile Modal UX
+
+1. **Zero Manual Portals & Scroll Locks:**
+   `FullScreenModal` sudah menangani portal ke `document.body`, `aria-modal`, fokus awal, Escape key desktop, serta body-scroll lock terpusat via *reference counting*. **DILARANG KERAS** memanggil `createPortal` atau memanipulasi `document.body.style.overflow` manual di pemakai.
+
+2. **LIFO Hardware Back Navigation Integration:**
+   Tombol Back perangkat / browser ditangani otomatis melalui `useModalBackHandler` dalam `FullScreenModal`. Menekan Back pada mobile selalu menutup modal aktif teratas lebih dahulu sebelum navigasi halaman berjalan. **DILARANG** menambahkan listener `popstate`, `history.pushState`, atau memanggil `window.history.back()` secara manual.
+
+3. **Thumb-Zone Sticky Footer (Aksi Utama):**
+   Tombol aksi utama (seperti *Chat WhatsApp*, *Bayar Tagihan*, *Refund*, *Cetak Struk*, dan *Tutup*) **WAJIB** ditempatkan pada prop `footer`. Ini menjamin tombol aksi selalu lengket (*sticky*) di bawah layar mobile tepat di atas home bar, tanpa terkubur oleh scroll konten.
+
+4. **Single Scroll Viewport (Anti-Pattern Nested Scroll):**
+   Kontainer `children` dalam `FullScreenModal` sudah memiliki `overflow-y-auto overscroll-contain`. **DILARANG** menumpuk kontainer `overflow-y-auto` dengan ketinggian kaku (`h-[...]`, `max-h-[...]`) di dalam `children` pada tampilan mobile karena memicu *Scroll-Chaining* (jebakan scroll bertingkat).
+
+5. **Responsive Layout Stacking & Prioritas Informasi:**
+   Pada modal kompleks 2-kolom (seperti Detail Order/Pembelian):
+   - **Desktop (`lg:`):** Tampilkan 2 kolom berdampingan (kiri: Tab Konten/Item, kanan: Sidebar Ringkasan Finansial & Logistik).
+   - **Mobile:** Tumpuk secara vertikal. Gunakan utilitas urutan CSS (`order-1 lg:order-2` untuk ringkasan/status dan `order-2 lg:order-1` untuk tabs) agar pengguna mobile langsung melihat angka krusial (Grand Total, Status Bayar, Kurir/Alamat) di bagian atas tanpa harus menggulir puluhan baris item produk.
+
+6. **Touch-Friendly Tab Pills & Responsive Tables:**
+   - Tab navigasi internal wajib berbentuk pil yang ramah sentuhan jempol (*touch target* min. 40px) dan dibungkus `overflow-x-auto no-scrollbar`.
+   - Tabel dalam tab (seperti Riwayat Pembayaran dan Jurnal Akuntansi) wajib dibungkus `<div className="overflow-x-auto">` dengan batas lebar minimum (`min-w-[...]`) agar tidak terpotong pada layar ponsel 360px.
+
+---
+
+Untuk contoh implementasi lengkap, batasan, dan studi kasus, baca [knowledge mobile modal UX](../../knowledge/mobile-modal-ux.md).
