@@ -192,7 +192,7 @@ export async function POST(req: Request) {
             external_id: woo.id.toString(),
             source_platform: 'WooCommerce',
             order_number: woo.number,
-            order_date: woo.date_created,
+            order_date: orderDateUtc || (woo.date_created ? `${woo.date_created}+07:00` : new Date().toISOString()),
             order_date_utc: orderDateUtc,
             status: woo.status,
             total_qty: woo.line_items?.reduce((acc: number, item: any) => acc + toNum(item.quantity), 0) || 0,

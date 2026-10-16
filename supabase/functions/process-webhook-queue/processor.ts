@@ -206,7 +206,7 @@ export async function processWooOrder(
       external_id: woo.id.toString(),
       source_platform: "WooCommerce",
       order_number: woo.number,
-      order_date: woo.date_created,
+      order_date: orderDateUtc || (woo.date_created ? `${woo.date_created}+07:00` : new Date().toISOString()),
       order_date_utc: orderDateUtc,
       status: woo.status,
       payment_status: initialPaymentStatus,

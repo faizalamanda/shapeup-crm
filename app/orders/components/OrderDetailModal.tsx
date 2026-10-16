@@ -213,7 +213,7 @@ export function OrderDetailModal({
               <span className="h-3 w-[1px] bg-slate-200"></span>
               <span>{order.customer?.phone ? `+${order.customer.phone}` : '-'}</span>
               <span className="h-3 w-[1px] bg-slate-200"></span>
-              <span>{formatDisplayDate(order.order_date, 'datetime', timezone)}</span>
+              <span>{formatDisplayDate(order.order_date_utc || order.order_date, 'datetime', timezone)}</span>
             </div>
           </div>
           <button 
