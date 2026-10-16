@@ -97,6 +97,8 @@ export default function ShiftDetailModal({
       return {
         initialCash: 0,
         cashSales: 0,
+        cashArCollections: 0,
+        cashRefunds: 0,
         cashIn: 0,
         cashOut: 0,
         expectedCash: 0,
@@ -107,7 +109,10 @@ export default function ShiftDetailModal({
     }
 
     const initialCash = Number(shift.initial_cash || 0)
-    const cashSales = tenderBreakdown.cash.amount || 0
+    const tb: any = tenderBreakdown || {}
+    const cashSales = Number(tb.cash_sales ?? (tb.cash?.amount || 0))
+    const cashArCollections = Number(tb.cash_ar_collections || 0)
+    const cashRefunds = Number(tb.cash_refunds || 0)
 
     let cashIn = 0
     let cashOut = 0
@@ -117,19 +122,21 @@ export default function ShiftDetailModal({
       else if (m.type === 'cash_out') cashOut += amt
     })
 
-    const expectedCash = Number(shift.expected_cash || (initialCash + cashSales + cashIn - cashOut))
+    const expectedCash = Number(shift.expected_cash || (initialCash + cashSales + cashArCollections - cashRefunds + cashIn - cashOut))
     const actualCash = Number(shift.actual_cash || 0)
     const difference = shift.difference !== undefined && shift.difference !== null
       ? Number(shift.difference)
       : (shift.status === 'closed' ? actualCash - expectedCash : 0)
 
     const totalSales = orders
-      .filter((o) => o.status === 'completed')
+      .filter((o) => o.status === 'completed' && !o.is_cross_shift)
       .reduce((sum, o) => sum + Number(o.grand_total || 0), 0)
 
     return {
       initialCash,
       cashSales,
+      cashArCollections,
+      cashRefunds,
       cashIn,
       cashOut,
       expectedCash,
@@ -162,6 +169,18 @@ export default function ShiftDetailModal({
           price: cashMetrics.cashSales,
           subtotal: cashMetrics.cashSales
         },
+        ...(cashMetrics.cashArCollections > 0 ? [{
+          name: 'Pelunasan Piutang (+)',
+          quantity: 1,
+          price: cashMetrics.cashArCollections,
+          subtotal: cashMetrics.cashArCollections
+        }] : []),
+        ...(cashMetrics.cashRefunds > 0 ? [{
+          name: 'Refund Kasir Keluar (-)',
+          quantity: 1,
+          price: -cashMetrics.cashRefunds,
+          subtotal: -cashMetrics.cashRefunds
+        }] : []),
         {
           name: 'Penjualan QRIS (+)',
           quantity: tenderBreakdown.qris.count || 0,
@@ -504,15 +523,21 @@ export default function ShiftDetailModal({
                           title="Klik untuk membuka rincian pesanan & mutasi pembayaran"
                         >
                           <div className="space-y-1 min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-black text-slate-900 text-xs group-hover:text-indigo-600 transition">
                                 #{ord.order_number}
                               </span>
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                                isCompleted ? 'bg-emerald-100 text-emerald-800' : isCancelled ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
-                              }`}>
-                                {isCompleted ? 'Selesai' : isCancelled ? 'Batal' : 'Draft'}
-                              </span>
+                              {ord.is_cross_shift ? (
+                                <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-purple-100 text-purple-800 border border-purple-200">
+                                  Pelunasan Piutang
+                                </span>
+                              ) : (
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                                  isCompleted ? 'bg-emerald-100 text-emerald-800' : isCancelled ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                                }`}>
+                                  {isCompleted ? 'Selesai' : isCancelled ? 'Batal' : 'Draft'}
+                                </span>
+                              )}
                               <span className="text-slate-300 text-xs">•</span>
                               <span className="text-xs text-slate-500 font-medium">
                                 {formatDisplayDate(ord.created_at, 'time', timezone)}
@@ -530,11 +555,15 @@ export default function ShiftDetailModal({
 
                           <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-0 border-slate-100">
                             <div className="text-left sm:text-right">
-                              <div className="font-black text-slate-900 text-xs sm:text-sm tabular-nums">
-                                {formatIDR(ord.grand_total)}
+                              <div className={`font-black text-xs sm:text-sm tabular-nums ${ord.is_cross_shift ? 'text-purple-700' : 'text-slate-900'}`}>
+                                {ord.is_cross_shift
+                                  ? `+${formatIDR(ord.shift_net_tender || ord.amount_paid)}`
+                                  : formatIDR(ord.grand_total)}
                               </div>
                               <span className="text-[10px] font-bold text-slate-400">
-                                {methodStr.includes('cash') ? '💵 Tunai' : methodStr.includes('qris') ? '📱 QRIS' : '💳 Kartu'}
+                                {ord.is_cross_shift
+                                  ? 'Diterima di Shift Ini'
+                                  : (methodStr.includes('cash') ? '💵 Tunai' : methodStr.includes('qris') ? '📱 QRIS' : '💳 Kartu')}
                               </span>
                             </div>
 

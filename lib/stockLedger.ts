@@ -2,7 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 
 export type MoveType = 'receipt' | 'delivery' | 'transfer' | 'adjustment' | 'refund'
 export type MoveStatus = 'done' | 'pending' | 'cancelled'
-export type MoveSourceType = 'purchase' | 'order' | 'stock_opname' | 'refund' | 'manual'
+export type MoveSourceType = 'purchase' | 'order' | 'stock_opname' | 'refund' | 'manual' | 'order_exchange'
 
 export interface StockMoveInput {
   businessId: string

@@ -11,6 +11,7 @@ import ShiftDetailModal from './ShiftDetailModal'
 import ReceiptSettingsModal from './ReceiptSettingsModal'
 import ReceiptPreviewModal from './ReceiptPreviewModal'
 import POSOrderDetailModal from './POSOrderDetailModal'
+import OrderHistoryModal from '../../orders/pos/components/OrderHistoryModal'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
 
 type Props = {
@@ -45,6 +46,7 @@ export default function POSHub({ onOpenWorkspace }: Props) {
   const [isOrderDetailOpen, setIsOrderDetailOpen] = useState(false)
   const [quickPrintReceipt, setQuickPrintReceipt] = useState<ReceiptData | null>(null)
   const [isReceiptPreviewOpen, setIsReceiptPreviewOpen] = useState(false)
+  const [isOrderHistoryOpen, setIsOrderHistoryOpen] = useState(false)
 
   // Shift History Filters
   const [shiftStatusFilter, setShiftStatusFilter] = useState<'all' | 'closed' | 'open'>('all')
@@ -426,6 +428,18 @@ export default function POSHub({ onOpenWorkspace }: Props) {
                     </button>
                   </div>
 
+                  {/* Layanan Nota & Piutang */}
+                  <button
+                    type="button"
+                    onClick={() => setIsOrderHistoryOpen(true)}
+                    className="px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 font-bold rounded-2xl text-xs sm:text-sm transition flex items-center justify-center gap-1.5"
+                    title="Pusat Layanan Nota: Pelunasan Piutang, Tukar Ukuran, dan Refund"
+                  >
+                    <span>📋</span>
+                    <span className="hidden sm:inline">Layanan Nota & Piutang</span>
+                    <span className="sm:hidden">Layanan</span>
+                  </button>
+
                   {/* Tutup Shift Button */}
                   <button
                     onClick={() => setIsShiftModalOpen(true)}
@@ -437,13 +451,24 @@ export default function POSHub({ onOpenWorkspace }: Props) {
                   </button>
                 </>
               ) : (
-                <button
-                  onClick={() => setIsShiftModalOpen(true)}
-                  className="flex-1 sm:flex-none px-7 py-3.5 bg-gradient-to-r from-indigo-600 via-indigo-700 to-violet-700 hover:from-indigo-700 hover:to-violet-800 active:scale-[0.99] text-white font-black rounded-2xl text-sm transition shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2"
-                >
-                  <span>🔑</span>
-                  <span>Buka Shift Kasir Baru</span>
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setIsOrderHistoryOpen(true)}
+                    className="px-5 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl text-xs sm:text-sm transition flex items-center justify-center gap-1.5"
+                    title="Pusat Layanan Nota: Pelunasan Piutang, Tukar Ukuran, dan Refund"
+                  >
+                    <span>📋</span>
+                    <span>Layanan Nota & Piutang</span>
+                  </button>
+                  <button
+                    onClick={() => setIsShiftModalOpen(true)}
+                    className="flex-1 sm:flex-none px-7 py-3.5 bg-gradient-to-r from-indigo-600 via-indigo-700 to-violet-700 hover:from-indigo-700 hover:to-violet-800 active:scale-[0.99] text-white font-black rounded-2xl text-sm transition shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2"
+                  >
+                    <span>🔑</span>
+                    <span>Buka Shift Kasir Baru</span>
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -1023,6 +1048,22 @@ export default function POSHub({ onOpenWorkspace }: Props) {
         }}
         receipt={quickPrintReceipt}
       />
+
+      {/* 7. Pusat Layanan Nota & Piutang POS */}
+      {isOrderHistoryOpen && activeBusiness?.id && (
+        <OrderHistoryModal
+          isOpen={isOrderHistoryOpen}
+          onClose={() => setIsOrderHistoryOpen(false)}
+          businessId={activeBusiness.id}
+          timezone={timezone}
+          onSelectOrder={(ord) => {
+            setIsOrderHistoryOpen(false)
+            setSelectedOrder(ord)
+            setIsOrderDetailOpen(true)
+          }}
+          onRefundCompleted={loadData}
+        />
+      )}
     </div>
   )
 }

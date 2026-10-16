@@ -92,6 +92,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false)
   const [isOrderHistoryOpen, setIsOrderHistoryOpen] = useState(false)
   const [selectedOrderForDetail, setSelectedOrderForDetail] = useState<any | null>(null)
+  const [unpaidOrdersCount, setUnpaidOrdersCount] = useState<number>(0)
 
   // Receipt & Payment Data
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null)
@@ -126,13 +127,15 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       { data: cats },
       { data: custs },
       { data: accs },
-      { data: regs }
+      { data: regs },
+      { count: unpCount }
     ] = await Promise.all([
       supabase.from('products').select('*').eq('business_id', bId).order('name', { ascending: true }),
       supabase.from('categories').select('*').eq('business_id', bId).order('name', { ascending: true }),
       supabase.from('customer_metrics').select('customer_id, name, phone').eq('business_id', bId).limit(100),
       supabase.from('accounts').select('id, code, name, type').eq('business_id', bId).in('type', ['ASSET', 'EQUITY']).order('code', { ascending: true }),
-      supabase.from('pos_registers').select('id, name, account_id').eq('business_id', bId).eq('status', 'active').order('name', { ascending: true })
+      supabase.from('pos_registers').select('id, name, account_id').eq('business_id', bId).eq('status', 'active').order('name', { ascending: true }),
+      supabase.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', bId).eq('source_platform', 'POS').in('payment_status', ['partial', 'unpaid']).neq('status', 'cancelled')
     ])
 
     setProducts(prods || [])
@@ -146,6 +149,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
     
     setAccounts(accs || [])
     setPosRegisters(regs || [])
+    setUnpaidOrdersCount(unpCount || 0)
   }
 
   const checkActiveShift = async () => {
@@ -811,9 +815,16 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
 
           <button
             onClick={() => setIsOrderHistoryOpen(true)}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition"
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition relative"
+            title="Pusat Layanan Nota: Pelunasan Piutang, Tukar Ukuran, dan Refund"
           >
-            <span>📋 <span className="hidden sm:inline">Riwayat</span></span>
+            <span>📋</span>
+            <span className="hidden sm:inline">Layanan Nota</span>
+            {unpaidOrdersCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black flex items-center justify-center animate-pulse">
+                {unpaidOrdersCount}
+              </span>
+            )}
           </button>
         </div>
       </header>
@@ -886,6 +897,22 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                 </button>
               </div>
             </div>
+
+            {/* Quick helper when cashier searches for receipt number */}
+            {searchQuery && (searchQuery.toLowerCase().includes('pos-') || searchQuery.toLowerCase().startsWith('pos') || /^#?\d{4,}$/.test(searchQuery)) && (
+              <div className="p-2.5 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-between text-xs animate-in fade-in">
+                <span className="text-indigo-950 font-bold">
+                  Nota <strong>#{searchQuery}</strong> terdeteksi! Mau proses pelunasan, tukar, atau refund?
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsOrderHistoryOpen(true)}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-[11px] transition shadow-xs shrink-0"
+                >
+                  Buka Layanan Nota →
+                </button>
+              </div>
+            )}
 
             {/* Category Filter Pills */}
             {activeTab === 'catalog' && (

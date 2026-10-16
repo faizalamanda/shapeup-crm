@@ -40,7 +40,8 @@ async function calculateShiftMetrics(supabase: any, shiftIds: string[]) {
       if (!metric) continue
 
       const amt = Number(p.amount) || 0
-      const isCash = String(p.payment_method || '').toLowerCase() === 'cash'
+      const method = String(p.payment_method || '').toLowerCase()
+      const isCash = method.includes('cash') || method.includes('tunai')
       const isOutbound = p.payment_kind === 'refund' || p.payment_kind === 'void'
 
       if (isCash) {
@@ -203,9 +204,10 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: 'shift_id tidak valid' }, { status: 400 })
       }
 
+      // 1. Initial queries
       const [
         { data: shiftData, error: shiftErr },
-        { data: ordersData, error: ordersErr },
+        { data: initialOrdersData, error: ordersErr },
         { data: movementsData, error: movErr },
         { data: paymentsData, error: payErr }
       ] = await Promise.all([
@@ -229,6 +231,7 @@ export async function GET(req: Request) {
             payment_method,
             raw_source_data,
             items_json,
+            shift_id,
             customer:customers(name, phone)
           `)
           .eq('shift_id', shiftId)
@@ -251,40 +254,103 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: 'Shift tidak ditemukan' }, { status: 404 })
       }
 
-      // Tender breakdown calculation
+      // 2. Cross-Shift Resolution: Include orders where payments/refunds occurred in this shift
+      let combinedOrders = initialOrdersData || []
+      const existingOrderIds = new Set(combinedOrders.map((o: any) => o.id))
+      const paymentOrderIds = (paymentsData || []).map((p: any) => p.order_id).filter(Boolean)
+      const missingOrderIds = paymentOrderIds.filter((id: string) => !existingOrderIds.has(id))
+
+      if (missingOrderIds.length > 0) {
+        const { data: crossOrders } = await supabase
+          .from('orders')
+          .select(`
+            id,
+            order_number,
+            created_at,
+            grand_total,
+            total_qty,
+            status,
+            payment_status,
+            amount_paid,
+            payment_method,
+            raw_source_data,
+            items_json,
+            shift_id,
+            customer:customers(name, phone)
+          `)
+          .in('id', missingOrderIds)
+          .eq('business_id', businessId)
+
+        if (crossOrders && crossOrders.length > 0) {
+          combinedOrders = [...combinedOrders, ...crossOrders]
+        }
+      }
+
+      // 3. World-Class Tender Breakdown Calculation (Audited Separation)
       const tenderBreakdown = {
         cash: { amount: 0, count: 0 },
         qris: { amount: 0, count: 0 },
         card: { amount: 0, count: 0 },
-        other: { amount: 0, count: 0 }
+        other: { amount: 0, count: 0 },
+        cash_sales: 0,
+        cash_ar_collections: 0,
+        cash_refunds: 0
       }
+
+      const initialOrderIdsSet = new Set((initialOrdersData || []).map((o: any) => o.id))
 
       if (paymentsData) {
         for (const p of paymentsData) {
           if (p.payment_kind === 'void') continue
           const amt = Number(p.amount) || 0
+          const isOutbound = p.payment_kind === 'refund'
           const method = String(p.payment_method || '').toLowerCase()
-          if (method.includes('cash') || method.includes('tunai')) {
-            tenderBreakdown.cash.amount += amt
-            tenderBreakdown.cash.count += 1
+          const isCash = method.includes('cash') || method.includes('tunai')
+
+          if (isCash) {
+            if (isOutbound) {
+              tenderBreakdown.cash_refunds += amt
+              tenderBreakdown.cash.amount -= amt
+            } else {
+              tenderBreakdown.cash.amount += amt
+              tenderBreakdown.cash.count += 1
+              const isDirectShiftSale = initialOrderIdsSet.has(p.order_id)
+              if (isDirectShiftSale) {
+                tenderBreakdown.cash_sales += amt
+              } else {
+                tenderBreakdown.cash_ar_collections += amt
+              }
+            }
           } else if (method.includes('qris')) {
-            tenderBreakdown.qris.amount += amt
-            tenderBreakdown.qris.count += 1
+            tenderBreakdown.qris.amount += isOutbound ? -amt : amt
+            if (!isOutbound) tenderBreakdown.qris.count += 1
           } else if (method.includes('card') || method.includes('edc') || method.includes('debit') || method.includes('credit')) {
-            tenderBreakdown.card.amount += amt
-            tenderBreakdown.card.count += 1
+            tenderBreakdown.card.amount += isOutbound ? -amt : amt
+            if (!isOutbound) tenderBreakdown.card.count += 1
           } else {
-            tenderBreakdown.other.amount += amt
-            tenderBreakdown.other.count += 1
+            tenderBreakdown.other.amount += isOutbound ? -amt : amt
+            if (!isOutbound) tenderBreakdown.other.count += 1
           }
         }
       }
 
-      // Format customer
-      const formattedOrders = (ordersData || []).map((o: any) => ({
-        ...o,
-        customer: Array.isArray(o.customer) ? o.customer[0] : o.customer
-      }))
+      // Format customer & enrich with cross-shift indicator
+      const formattedOrders = combinedOrders.map((o: any) => {
+        const isCrossShift = o.shift_id !== shiftId
+        const orderPays = (paymentsData || []).filter((p: any) => p.order_id === o.id)
+        const shiftNetTender = orderPays.reduce((sum: number, p: any) => {
+          if (p.payment_kind === 'refund') return sum - Number(p.amount || 0)
+          if (p.payment_kind === 'payment') return sum + Number(p.amount || 0)
+          return sum
+        }, 0)
+
+        return {
+          ...o,
+          is_cross_shift: isCrossShift,
+          shift_net_tender: shiftNetTender,
+          customer: Array.isArray(o.customer) ? o.customer[0] : o.customer
+        }
+      })
 
       return NextResponse.json({
         success: true,

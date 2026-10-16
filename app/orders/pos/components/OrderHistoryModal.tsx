@@ -200,8 +200,8 @@ export default function OrderHistoryModal({
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center px-6 py-4 bg-white border-b border-slate-200 gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-black tracking-widest uppercase bg-blue-50 text-blue-700 px-2.5 py-0.5 rounded-full border border-blue-200">
-                POS Financial & Order Ledger
+              <span className="text-[10px] font-black tracking-widest uppercase bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full border border-indigo-200">
+                Unified Post-Purchase Service Hub
               </span>
               {unpaidCount > 0 && (
                 <span className="text-[10px] font-black bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-300 animate-pulse">
@@ -210,7 +210,7 @@ export default function OrderHistoryModal({
               )}
             </div>
             <h3 className="text-base font-black text-slate-900 uppercase tracking-tight mt-1">
-              Riwayat Transaksi POS & Pelunasan Piutang
+              Pusat Layanan Nota & Transaksi POS (Pelunasan • Tukar • Refund)
             </h3>
           </div>
 
@@ -424,10 +424,10 @@ export default function OrderHistoryModal({
                               className={`px-3 py-1.5 rounded-xl font-extrabold text-[11px] transition shadow-2xs ${
                                 !isPaid && !isCancelled
                                   ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-200'
-                                  : 'bg-slate-900 hover:bg-slate-800 text-white'
+                                  : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100'
                               }`}
                             >
-                              {!isPaid && !isCancelled ? '➕ Bayar / Detail' : '🔍 Detail'}
+                              {!isPaid && !isCancelled ? '💳 Lunasi / Detail' : '🔄 Layanan (Tukar/Detail)'}
                             </button>
                           )}
 
