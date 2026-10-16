@@ -81,12 +81,14 @@ export async function forgotPasswordAction(formData: FormData) {
   const email = rawEmail.trim().toLowerCase()
   const supabase = await createClient()
 
-  let origin = process.env.NEXT_PUBLIC_SITE_URL || ''
+  let origin = ''
   try {
     const { headers } = await import('next/headers')
     const headersList = await headers()
     const host = headersList.get('x-forwarded-host') || headersList.get('host')
-    const proto = headersList.get('x-forwarded-proto') || 'https'
+    const forwardedProto = headersList.get('x-forwarded-proto')
+    const isLocal = !forwardedProto && (host?.includes('localhost') || host?.includes('127.0.0.1') || process.env.NODE_ENV === 'development')
+    const proto = forwardedProto || (isLocal ? 'http' : 'https')
     if (host) {
       origin = `${proto}://${host}`
     }
@@ -95,7 +97,7 @@ export async function forgotPasswordAction(formData: FormData) {
   }
 
   if (!origin) {
-    origin = 'http://localhost:3000'
+    origin = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
   }
 
   const redirectTo = `${origin}/auth/callback?next=/reset-password`

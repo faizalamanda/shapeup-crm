@@ -3,6 +3,7 @@ import { useState, useEffect, Suspense } from 'react'
 import { loginAction } from '@/app/auth/actions'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import Link from 'next/link'
 
 function LoginForm() {
   const [email, setEmail] = useState('')
@@ -94,12 +95,12 @@ function LoginForm() {
           <div>
             <div className="flex items-center justify-between mb-2 px-1">
               <label className="block text-sm font-bold text-slate-700">Password</label>
-              <a 
+              <Link 
                 href="/forgot-password" 
                 className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline transition-colors"
               >
                 Lupa Password?
-              </a>
+              </Link>
             </div>
             <div className="relative">
               <input 
@@ -156,7 +157,7 @@ function LoginForm() {
         )}
 
         <div className="mt-8 pt-6 border-t border-slate-100 text-center text-sm font-medium text-slate-600">
-          Belum punya akun? <a href="/register" className="text-blue-600 font-bold hover:underline">Daftar di sini</a>
+          Belum punya akun? <Link href="/register" className="text-blue-600 font-bold hover:underline">Daftar di sini</Link>
         </div>
       </div>
     </div>

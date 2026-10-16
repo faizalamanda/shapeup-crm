@@ -37,6 +37,15 @@ function ResetPasswordForm() {
           }
         }
 
+        // If URL contains hash fragment (implicit recovery flow), give Supabase client time to parse
+        const hasHashParams = typeof window !== 'undefined' && (
+          window.location.hash.includes('access_token') ||
+          window.location.hash.includes('type=recovery')
+        )
+        if (hasHashParams) {
+          await new Promise(r => setTimeout(r, 600))
+        }
+
         // Check if there is already an active session
         const { data: { session } } = await supabase.auth.getSession()
         if (session && mounted) {

@@ -24,7 +24,15 @@ function isSubPageSegment(segment: string): boolean {
  * Determine parent path or onboarding destination dynamically based on URL segments
  */
 export function getParentPath(pathname: string): string | null {
-  if (!pathname || pathname === '/' || pathname === '/onboarding' || pathname === '/login' || pathname === '/register') {
+  if (
+    !pathname ||
+    pathname === '/' ||
+    pathname === '/onboarding' ||
+    pathname === '/login' ||
+    pathname === '/register' ||
+    pathname === '/forgot-password' ||
+    pathname === '/reset-password'
+  ) {
     return null
   }
 

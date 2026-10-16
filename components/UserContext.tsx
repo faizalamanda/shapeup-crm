@@ -241,7 +241,12 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
       clearCachedUserData()
       if (typeof window !== 'undefined') {
         const currentPath = window.location.pathname
-        const isPublicRoute = currentPath === '/login' || currentPath === '/register' || currentPath === '/'
+        const isPublicRoute =
+          currentPath === '/login' ||
+          currentPath === '/register' ||
+          currentPath === '/' ||
+          currentPath === '/forgot-password' ||
+          currentPath === '/reset-password'
         if (!isPublicRoute) {
           window.location.href = `/login?next=${encodeURIComponent(currentPath)}`
         }

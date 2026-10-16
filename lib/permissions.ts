@@ -24,7 +24,14 @@ export function canAccessPath(href: string, context: AccessContext): boolean {
   }
 
   // 2. Public / Always accessible routes
-  if (href.startsWith('/onboarding') || href === '/') {
+  if (
+    href.startsWith('/onboarding') ||
+    href === '/' ||
+    href.startsWith('/login') ||
+    href.startsWith('/register') ||
+    href.startsWith('/forgot-password') ||
+    href.startsWith('/reset-password')
+  ) {
     return true
   }
 
