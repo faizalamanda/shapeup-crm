@@ -152,5 +152,59 @@ Dalam siklus hidup pesanan modern omnichannel (POS, Online Store/WooCommerce, In
   ```
 - Pemfilteran multi-status (`unpaid`, `partial`, `paid`) dieksekusi di database server menggunakan klausa `AND (filter_payment_status IS NULL OR o.payment_status = ANY(filter_payment_status))`.
 
+---
+
+## 7. Unified Post-Purchase Service Hub (World-Class POS Standard)
+
+Sesuai standar POS modern kelas dunia (Shopify POS & Lightspeed Retail), layanan purna jual kasir disatukan ke dalam **Pusat Layanan Nota & Transaksi POS**:
+1. **Pelunasan Piutang / Cicilan (AR Collections)**
+2. **Tukar Barang (Exchanges / Return & Replace)**
+3. **Pengembalian Dana (Refunds)**
+
+### 7.1 Pertukaran Barang Atomik (Atomic Exchange)
+Transaksi tukar barang diproses secara atomik via `POST /api/pos/order/exchange`:
+- **Isolasi Mutasi Stok Event-Sourced:**
+  - Setiap sesi penukaran menggunakan ID dokumen unik (`exchangeId = crypto.randomUUID()`) dan `sourceType: 'order_exchange'`.
+  - Ini mencegah tabrakan pada PostgreSQL unique constraint `uq_stock_moves_document_product_type (business_id, source_type, source_id, product_id, type)` meskipun pelanggan menukar barang dengan varian/produk yang sama dengan saat checkout awal.
+- **Multi-Bucket Condition Routing:**
+  - Barang retur kondisi layak jual (`condition: 'good'`) langsung masuk ke `bucket: 'main'` (+stok rak gudang aktif).
+  - Barang retur cacat/rusak/kotor (`condition: 'damaged'`) masuk ke `bucket: 'quarantine'` tanpa mencemari stok siap jual.
+  - Barang pengganti baru keluar dari `bucket: 'main'` (-stok rak gudang aktif).
+- **Penyeimbangan Jurnal HPP & Persediaan:**
+  - Sistem menghitung dampak selisih harga pokok: $\text{netCogs} = \text{newItemsCost} - \text{returnGoodCost}$.
+  - Jika $\text{netCogs} > 0$: Debit `501000 HPP`, Credit `102000 Persediaan Barang`.
+  - Jika $\text{netCogs} < 0$: Debit `102000 Persediaan Barang`, Credit `501000 HPP`.
+
+### 7.2 Logika Matematika Penukaran pada Pesanan Piutang / Cicilan (Partial Debt)
+Jika pesanan yang ditukar belum lunas (`amount_paid < grand_total`):
+- $\Delta = \text{Nilai Barang Baru} - \text{Nilai Kredit Barang Retur}$.
+- $\text{Total Baru} = \text{Grand Total Lama} + \Delta$.
+- **Kasus A: Tukar Tambah ($\Delta > 0$):**
+  Pelanggan membayar selisih $\Delta$ di kasir saat itu juga (`Debit Kas/Bank`, `Credit Penjualan`). Sisa pokok piutang pesanan tetap terjaga utuh.
+- **Kasus B: Tukar Turun ($\Delta < 0$):**
+  - **Jika Pembayaran Awal $\le$ Total Baru:**
+    Pelanggan masih berhutang pada toko, sehingga **DILARANG KERAS** mengeluarkan uang tunai dari laci kasir! Selisih harga $\Delta$ otomatis memotong sisa piutang (`Debit Penjualan 401000`, `Credit Piutang Usaha 103000`).
+  - **Jika Pembayaran Awal $>$ Total Baru:**
+    Kasir hanya mengembalikan kelebihan uang fisik riil ($\text{Cash Refund} = \text{Paid} - \text{Total Baru}$) melalui `order_payments` bertipe `refund`, dan sisa tagihan dinyatakan lunas.
+
+---
+
+## 8. Cross-Shift Reconciliation & Audited Tender Breakdown
+
+### 8.1 Atribusi Kas Fisik Lintas Shift
+Ketika kasir pada Shift B menerima pelunasan tagihan piutang atau mengeluarkan refund kasir atas pesanan yang dibuat pada Shift A:
+- Arus kas masuk/keluar dicatat ke `order_payments` dengan `shift_id = Shift B.id`.
+- Uang fisik di laci Shift B bertambah (pelunasan) atau berkurang (refund).
+- Endpoint `GET /api/pos/shifts?mode=shift_details` otomatis menarik nota-nota lintas shift tersebut (`is_cross_shift = true`) via query `order_payments.order_id`.
+
+### 8.2 Pemisahan Rincian Tender Z-Report (Tender Breakdown Separation)
+Pada Z-Report penutupan kasir, saldo kas dipisahkan secara teraudit:
+- **`cash_sales`:** Penjualan tunai langsung atas pesanan shift ini.
+- **`cash_ar_collections`:** Penerimaan pelunasan piutang atas pesanan masa lalu / shift lain.
+- **`cash_refunds`:** Pengeluaran kasir untuk refund tunai.
+- Saldo laci kasir riil:
+  $$\text{Drawer Cash} = \text{Initial Cash} + \text{cash\_sales} + \text{cash\_ar\_collections} - \text{cash\_refunds} + \text{cash\_in} - \text{cash\_out}$$
+
+
 
 

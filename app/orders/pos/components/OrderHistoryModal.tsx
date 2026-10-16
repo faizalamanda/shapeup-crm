@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { createPortal } from 'react-dom'
+import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { supabase } from '@/lib/supabase'
 import { formatDisplayDate, DEFAULT_TIMEZONE } from '@/lib/timeUtils'
 
@@ -43,16 +43,11 @@ export default function OrderHistoryModal({
   onSelectOrder,
   onRefundCompleted
 }: OrderHistoryModalProps) {
-  const [mounted, setMounted] = useState(false)
   const [orders, setOrders] = useState<POSOrderHistoryItem[]>([])
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [tabFilter, setTabFilter] = useState<'all' | 'unpaid' | 'paid'>('all')
   const [processingRefundId, setProcessingRefundId] = useState<string | null>(null)
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
 
   const fetchOrders = useCallback(async () => {
     if (!businessId) return
@@ -117,10 +112,6 @@ export default function OrderHistoryModal({
   useEffect(() => {
     if (isOpen && businessId) {
       fetchOrders()
-      document.body.style.overflow = 'hidden'
-      return () => {
-        document.body.style.overflow = ''
-      }
     }
   }, [isOpen, businessId, fetchOrders])
 
@@ -159,7 +150,7 @@ export default function OrderHistoryModal({
 
   const handleRefund = async (orderId: string, orderNumber: string) => {
     const confirm = window.confirm(
-      `Apakah Anda yakin ingin membatalkan & refund pesanan #${orderNumber}?\n\n• Jurnal akuntansi pembalikan akan dibuat otomatis.\n• Stok akan dikembalikan ke gudang.`
+      `Apakah Anda yakin ingin membatalkan & refund pesanan #${orderNumber}?\n\n• Jurnal akuntansi pembalikan akan dibuat otomatis.\n• Stok barang fisik akan dikembalikan ke gudang.\n• Kas tunai akan dipotong dari laci shift kasir aktif.`
     )
     if (!confirm) return
 
@@ -168,7 +159,10 @@ export default function OrderHistoryModal({
       const res = await fetch('/api/pos/refund', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order_id: orderId })
+        body: JSON.stringify({
+          order_id: orderId,
+          refund_reason: 'Refund langsung dari Pusat Layanan Nota POS'
+        })
       })
 
       const json = await res.json()
@@ -187,53 +181,68 @@ export default function OrderHistoryModal({
     }
   }
 
-  if (!isOpen || !mounted) return null
-
-  return createPortal(
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex justify-center items-center p-3 sm:p-5 overflow-y-auto z-[10000] animate-in fade-in duration-200">
-      <div 
-        className="bg-white border border-slate-200 rounded-3xl shadow-2xl w-full max-w-5xl flex flex-col h-[90vh] overflow-hidden transform scale-100 transition-all duration-200"
-        role="dialog"
-        aria-modal="true"
-      >
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center px-6 py-4 bg-white border-b border-slate-200 gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-black tracking-widest uppercase bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full border border-indigo-200">
-                Unified Post-Purchase Service Hub
-              </span>
-              {unpaidCount > 0 && (
-                <span className="text-[10px] font-black bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-300 animate-pulse">
-                  ⚠️ {unpaidCount} Tagihan Belum Lunas
-                </span>
-              )}
-            </div>
-            <h3 className="text-base font-black text-slate-900 uppercase tracking-tight mt-1">
-              Pusat Layanan Nota & Transaksi POS (Pelunasan • Tukar • Refund)
-            </h3>
-          </div>
-
-          <button 
-            type="button"
-            onClick={onClose} 
-            className="self-end sm:self-auto p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors focus:outline-none"
-            aria-label="Tutup"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+  // Header Title Component
+  const modalTitle = (
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 w-full pr-2">
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-black tracking-widest uppercase bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full border border-indigo-200">
+            Post-Purchase Service Hub
+          </span>
+          {unpaidCount > 0 && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-black bg-amber-500 text-white px-2.5 py-0.5 rounded-full shadow-xs animate-pulse">
+              ⚠️ {unpaidCount} Tagihan Piutang
+            </span>
+          )}
         </div>
+        <h2 className="text-base sm:text-lg font-black text-slate-900 uppercase tracking-tight">
+          Pusat Layanan Nota & Transaksi POS
+        </h2>
+        <p className="text-xs text-slate-500 font-medium">
+          Pelunasan Piutang Kasir • Tukar Barang (Exchange) • Pengembalian Dana (Refund)
+        </p>
+      </div>
+    </div>
+  )
 
-        {/* Toolbar: Search & Filter Tabs */}
-        <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+  // Footer Component
+  const modalFooter = (
+    <div className="flex flex-col sm:flex-row justify-between items-center gap-3 w-full">
+      <div className="flex items-center gap-2 text-xs text-slate-500">
+        <span>Menampilkan <strong className="text-slate-800">{filteredOrders.length}</strong> transaksi POS</span>
+        {unpaidCount > 0 && (
+          <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-200">
+            {unpaidCount} tagihan belum lunas
+          </span>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        className="w-full sm:w-auto px-5 py-2.5 border border-slate-300 rounded-xl text-xs font-black uppercase tracking-wider text-slate-700 hover:bg-slate-100 transition active:scale-95"
+      >
+        Tutup
+      </button>
+    </div>
+  )
+
+  return (
+    <FullScreenModal
+      isOpen={isOpen}
+      onClose={onClose}
+      desktopSize="xl"
+      title={modalTitle}
+      footer={modalFooter}
+    >
+      <div className="space-y-4">
+        {/* Toolbar: Search & Segmented Filter Tabs */}
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 p-3 bg-slate-50 border border-slate-200/80 rounded-2xl">
           {/* Filter Tabs */}
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
             <button
               type="button"
               onClick={() => setTabFilter('all')}
-              className={`px-3 py-1.5 text-xs font-extrabold rounded-xl transition ${
+              className={`px-3 py-1.5 text-xs font-black rounded-xl transition ${
                 tabFilter === 'all'
                   ? 'bg-slate-900 text-white shadow-xs'
                   : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
@@ -244,7 +253,7 @@ export default function OrderHistoryModal({
             <button
               type="button"
               onClick={() => setTabFilter('unpaid')}
-              className={`px-3 py-1.5 text-xs font-extrabold rounded-xl transition flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 text-xs font-black rounded-xl transition flex items-center gap-1.5 ${
                 tabFilter === 'unpaid'
                   ? 'bg-amber-600 text-white shadow-xs'
                   : 'bg-white border border-amber-200 text-amber-800 hover:bg-amber-50'
@@ -260,7 +269,7 @@ export default function OrderHistoryModal({
             <button
               type="button"
               onClick={() => setTabFilter('paid')}
-              className={`px-3 py-1.5 text-xs font-extrabold rounded-xl transition ${
+              className={`px-3 py-1.5 text-xs font-black rounded-xl transition ${
                 tabFilter === 'paid'
                   ? 'bg-emerald-700 text-white shadow-xs'
                   : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
@@ -277,7 +286,7 @@ export default function OrderHistoryModal({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="🔍 Cari No. Order / Pelanggan / HP..."
-              className="w-full pl-3 pr-8 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full pl-3.5 pr-8 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
             />
             {searchQuery && (
               <button
@@ -291,27 +300,28 @@ export default function OrderHistoryModal({
           </div>
         </div>
 
-        {/* Body Table */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-100/60">
-          {loading ? (
-            <div className="flex flex-col items-center justify-center h-full space-y-3">
-              <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-              <p className="text-xs font-bold text-slate-500">Memuat riwayat transaksi POS...</p>
-            </div>
-          ) : filteredOrders.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center p-8 border border-dashed border-slate-300 rounded-2xl bg-white">
-              <span className="text-4xl mb-2">📄</span>
-              <p className="text-sm font-extrabold text-slate-800">Tidak Ada Transaksi Ditemukan</p>
-              <p className="text-xs text-slate-500 mt-1 max-w-sm">
-                {searchQuery
-                  ? `Tidak ada pesanan yang sesuai dengan kata kunci "${searchQuery}".`
-                  : tabFilter === 'unpaid'
-                  ? 'Kabar baik! Semua pesanan POS telah lunas sepenuhnya.'
-                  : 'Belum ada transaksi POS yang tercatat.'}
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto border border-slate-200/90 rounded-2xl bg-white shadow-xs">
+        {/* Loading State */}
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-16 space-y-3">
+            <div className="w-9 h-9 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-xs font-bold text-slate-500">Memuat riwayat transaksi POS...</p>
+          </div>
+        ) : filteredOrders.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center p-8 border border-dashed border-slate-300 rounded-3xl bg-white">
+            <span className="text-4xl mb-2">📄</span>
+            <p className="text-sm font-black text-slate-800">Tidak Ada Transaksi Ditemukan</p>
+            <p className="text-xs text-slate-500 mt-1 max-w-sm">
+              {searchQuery
+                ? `Tidak ada pesanan yang sesuai dengan kata kunci "${searchQuery}".`
+                : tabFilter === 'unpaid'
+                ? 'Semua pesanan POS telah lunas sepenuhnya (Saldo piutang Rp 0).'
+                : 'Belum ada transaksi POS yang tercatat.'}
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* ─── DESKTOP TABLE VIEW (hidden md:block) ─────────────────────────── */}
+            <div className="hidden md:block overflow-x-auto border border-slate-200/90 rounded-2xl bg-white shadow-xs">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-slate-50/90 border-b border-slate-200 text-slate-500 font-extrabold uppercase tracking-wider text-[10px]">
@@ -322,7 +332,7 @@ export default function OrderHistoryModal({
                     <th className="px-4 py-3.5">Status Pembayaran</th>
                     <th className="px-4 py-3.5 text-center">Metode</th>
                     <th className="px-4 py-3.5 text-center">Status</th>
-                    <th className="px-4 py-3.5 text-right">Aksi</th>
+                    <th className="px-4 py-3.5 text-right min-w-[210px]">Pusat Layanan (Aksi)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
@@ -337,12 +347,12 @@ export default function OrderHistoryModal({
                     return (
                       <tr 
                         key={order.id} 
-                        className={`hover:bg-blue-50/40 transition-colors ${
+                        className={`hover:bg-indigo-50/30 transition-colors ${
                           !isPaid && !isCancelled ? 'bg-amber-50/20' : ''
                         }`}
                       >
                         {/* No Order */}
-                        <td className="px-4 py-3.5 font-mono font-extrabold text-slate-900">
+                        <td className="px-4 py-3.5 font-mono font-black text-slate-900">
                           #{order.order_number}
                         </td>
 
@@ -383,7 +393,7 @@ export default function OrderHistoryModal({
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-black bg-amber-100 border border-amber-300 text-amber-900 uppercase tracking-wider">
                                 <span>⚠️</span> {amountPaid > 0 ? 'Cicilan / DP' : 'Belum Bayar'}
                               </span>
-                              <div className="text-[10px] text-amber-800 font-extrabold font-mono">
+                              <div className="text-[10px] text-amber-800 font-black font-mono">
                                 Sisa: {formatIDR(outstanding)}
                               </div>
                             </div>
@@ -414,34 +424,88 @@ export default function OrderHistoryModal({
                           )}
                         </td>
 
-                        {/* Aksi */}
-                        <td className="px-4 py-3.5 text-right whitespace-nowrap space-x-1.5">
-                          {/* Tombol Lunasi / Detail */}
-                          {onSelectOrder && (
-                            <button
-                              type="button"
-                              onClick={() => onSelectOrder(order)}
-                              className={`px-3 py-1.5 rounded-xl font-extrabold text-[11px] transition shadow-2xs ${
-                                !isPaid && !isCancelled
-                                  ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-200'
-                                  : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100'
-                              }`}
-                            >
-                              {!isPaid && !isCancelled ? '💳 Lunasi / Detail' : '🔄 Layanan (Tukar/Detail)'}
-                            </button>
-                          )}
-
-                          {/* Tombol Refund jika sudah lunas dan completed */}
-                          {isCompleted && isPaid && (
-                            <button
-                              type="button"
-                              disabled={processingRefundId !== null}
-                              onClick={() => handleRefund(order.id, order.order_number)}
-                              className="px-2.5 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl hover:bg-rose-100 transition font-bold text-[10px] uppercase tracking-wider disabled:opacity-50"
-                              title="Batalkan & Refund Pesanan"
-                            >
-                              {processingRefundId === order.id ? '...' : 'Refund'}
-                            </button>
+                        {/* ─── DESKTOP ACTION COLUMN (Aesthetic & Segmented) ─── */}
+                        <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                          {!isPaid && !isCancelled ? (
+                            /* Case 1: Tagihan Piutang (Action: Pelunasan Utama) */
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => onSelectOrder?.(order)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-black text-xs shadow-xs hover:shadow-md transition-all active:scale-95 group"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <rect x="2" y="5" width="20" height="14" rx="2" strokeWidth="2.5"/>
+                                  <line x1="2" y1="10" x2="22" y2="10" strokeWidth="2.5"/>
+                                </svg>
+                                <span>Lunasi</span>
+                                <span className="bg-amber-800/60 text-amber-100 text-[10px] px-1.5 py-0.5 rounded-md font-mono">
+                                  {formatIDR(outstanding)}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onSelectOrder?.(order)}
+                                className="p-1.5 rounded-xl border border-slate-200 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 hover:border-indigo-200 transition active:scale-95"
+                                title="Lihat Rincian Nota"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                </svg>
+                              </button>
+                            </div>
+                          ) : isPaid && isCompleted ? (
+                            /* Case 2: Lunas & Selesai (Action: Layanan Tukar, Refund, Detail) */
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => onSelectOrder?.(order)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-indigo-600 text-white font-extrabold text-xs shadow-xs hover:shadow-md transition-all active:scale-95 group"
+                              >
+                                <svg className="w-3.5 h-3.5 text-indigo-300 group-hover:rotate-180 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                                </svg>
+                                <span>Layanan & Tukar</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={processingRefundId === order.id}
+                                onClick={() => handleRefund(order.id, order.order_number)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200/80 font-bold text-xs transition active:scale-95 disabled:opacity-50"
+                                title="Refund Pesanan Kasir"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h10a5 5 0 015 5v2a5 5 0 01-5 5H6m-3-12l4-4m-4 4l4 4"/>
+                                </svg>
+                                <span>{processingRefundId === order.id ? '...' : 'Refund'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onSelectOrder?.(order)}
+                                className="p-1.5 rounded-xl border border-slate-200 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 hover:border-indigo-200 transition active:scale-95"
+                                title="Lihat Rincian Nota"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                </svg>
+                              </button>
+                            </div>
+                          ) : (
+                            /* Case 3: Batal / Direfund */
+                            <div className="flex items-center justify-end">
+                              <button
+                                type="button"
+                                onClick={() => onSelectOrder?.(order)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition active:scale-95"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                </svg>
+                                <span>Rincian Nota</span>
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -450,25 +514,123 @@ export default function OrderHistoryModal({
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
 
-        {/* Footer */}
-        <div className="px-6 py-4 bg-white border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-3">
-          <p className="text-xs text-slate-500">
-            Menampilkan <span className="font-bold text-slate-800">{filteredOrders.length}</span> transaksi POS
-          </p>
+            {/* ─── MOBILE CARD VIEW (block md:hidden) ───────────────────────────── */}
+            <div className="block md:hidden space-y-3">
+              {filteredOrders.map((order) => {
+                const isCompleted = order.status === 'completed'
+                const isCancelled = order.status === 'cancelled'
+                const grandTotal = order.grand_total
+                const amountPaid = order.amount_paid || 0
+                const outstanding = Math.max(0, grandTotal - amountPaid)
+                const isPaid = order.payment_status === 'paid' && outstanding <= 0.01
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-full sm:w-auto px-5 py-2.5 border border-slate-300 rounded-xl text-xs font-extrabold uppercase tracking-wider text-slate-700 hover:bg-slate-100 transition-colors"
-          >
-            Tutup
-          </button>
-        </div>
+                return (
+                  <div
+                    key={order.id}
+                    className={`p-4 bg-white border rounded-2xl shadow-xs space-y-3 transition ${
+                      !isPaid && !isCancelled
+                        ? 'border-amber-300/80 bg-amber-50/15'
+                        : 'border-slate-200'
+                    }`}
+                  >
+                    {/* Top Row: Order Number & Status */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-black text-slate-900 text-xs">
+                          #{order.order_number}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {formatDisplayDate(order.order_date || order.created_at, 'datetime', timezone)}
+                        </span>
+                      </div>
+                      {isPaid ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          ✓ Lunas
+                        </span>
+                      ) : isCancelled ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500">
+                          Direfund
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300">
+                          ⚠️ Sisa: {formatIDR(outstanding)}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Middle Row: Customer & Total */}
+                    <div className="flex items-start justify-between text-xs pt-1 border-t border-slate-100">
+                      <div>
+                        <p className="font-bold text-slate-800">👤 {order.customer?.name || 'Pelanggan Tamu'}</p>
+                        {order.customer?.phone && order.customer?.phone !== '0' && (
+                          <p className="text-[10px] text-slate-400 font-mono">📞 +{order.customer.phone}</p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <p className="font-black text-slate-900 text-sm font-mono">{formatIDR(grandTotal)}</p>
+                        <span className="text-[10px] uppercase font-bold text-slate-400">{order.payment_method}</span>
+                      </div>
+                    </div>
+
+                    {/* Bottom Action Strip (Thumb-Friendly Touch Targets) */}
+                    <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
+                      {!isPaid && !isCancelled ? (
+                        <button
+                          type="button"
+                          onClick={() => onSelectOrder?.(order)}
+                          className="w-full py-2.5 px-3 bg-gradient-to-r from-amber-500 to-amber-600 active:from-amber-600 active:to-amber-700 text-white rounded-xl font-black text-xs shadow-xs flex items-center justify-center gap-2"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <rect x="2" y="5" width="20" height="14" rx="2" strokeWidth="2.5"/>
+                            <line x1="2" y1="10" x2="22" y2="10" strokeWidth="2.5"/>
+                          </svg>
+                          <span>Lunasi Sisa Tagihan</span>
+                          <span className="bg-amber-800/70 text-amber-100 text-[10px] px-1.5 py-0.5 rounded-md font-mono">
+                            {formatIDR(outstanding)}
+                          </span>
+                        </button>
+                      ) : isPaid && isCompleted ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onSelectOrder?.(order)}
+                            className="flex-1 py-2 px-3 bg-slate-900 active:bg-indigo-600 text-white rounded-xl font-black text-xs flex items-center justify-center gap-1.5 shadow-xs"
+                          >
+                            <svg className="w-3.5 h-3.5 text-indigo-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                            </svg>
+                            <span>Layanan & Tukar</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={processingRefundId === order.id}
+                            onClick={() => handleRefund(order.id, order.order_number)}
+                            className="py-2 px-3 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl font-bold text-xs"
+                          >
+                            {processingRefundId === order.id ? '...' : '↩️ Refund'}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onSelectOrder?.(order)}
+                          className="w-full py-2 bg-slate-100 text-slate-700 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                          </svg>
+                          <span>Lihat Rincian Nota</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
       </div>
-    </div>,
-    document.body
+    </FullScreenModal>
   )
 }

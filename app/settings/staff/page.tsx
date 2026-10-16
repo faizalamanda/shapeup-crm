@@ -36,6 +36,7 @@ export default function StaffSettings() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showCreatePassword, setShowCreatePassword] = useState(false)
   const [name, setName] = useState('')
   const [role, setRole] = useState('staff')
   const [permissions, setPermissions] = useState<string[]>([])
@@ -53,6 +54,7 @@ export default function StaffSettings() {
   const [editingStaff, setEditingStaff] = useState<any>(null)
   const [editEmail, setEditEmail] = useState('')
   const [editPassword, setEditPassword] = useState('')
+  const [showEditPassword, setShowEditPassword] = useState(false)
   const [editName, setEditName] = useState('')
   const [editRole, setEditRole] = useState('staff')
   const [editPermissions, setEditPermissions] = useState<string[]>([])
@@ -94,6 +96,8 @@ export default function StaffSettings() {
   // Self Password State
   const [myPassword, setMyPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [showMyPassword, setShowMyPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [myPasswordLoading, setMyPasswordLoading] = useState(false)
   const [myPasswordMessage, setMyPasswordMessage] = useState({ text: '', type: '' })
 
@@ -588,19 +592,61 @@ export default function StaffSettings() {
         <form onSubmit={handleSelfPasswordUpdate} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Password Baru</label>
-            <input 
-              type="password" placeholder="Minimal 6 karakter" required
-              className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-              value={myPassword} onChange={e => setMyPassword(e.target.value)}
-            />
+            <div className="relative">
+              <input 
+                type={showMyPassword ? 'text' : 'password'} placeholder="Minimal 6 karakter" required
+                className="w-full px-3.5 py-2.5 pr-10 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                value={myPassword} onChange={e => setMyPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setShowMyPassword(!showMyPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                tabIndex={-1}
+                aria-label={showMyPassword ? 'Sembunyikan password' : 'Lihat password'}
+              >
+                {showMyPassword ? (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                    <line x1="1" y1="1" x2="23" y2="23"/>
+                  </svg>
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
           <div>
             <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Konfirmasi Password Baru</label>
-            <input 
-              type="password" placeholder="Ulangi password baru" required
-              className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-              value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
-            />
+            <div className="relative">
+              <input 
+                type={showConfirmPassword ? 'text' : 'password'} placeholder="Ulangi password baru" required
+                className="w-full px-3.5 py-2.5 pr-10 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                tabIndex={-1}
+                aria-label={showConfirmPassword ? 'Sembunyikan password' : 'Lihat password'}
+              >
+                {showConfirmPassword ? (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                    <line x1="1" y1="1" x2="23" y2="23"/>
+                  </svg>
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
           <button 
             type="submit" 
@@ -700,11 +746,32 @@ export default function StaffSettings() {
                   {!emailExists && (
                     <div>
                       <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Password Awal</label>
-                      <input 
-                        type="password" placeholder="Minimal 6 karakter" required minLength={6}
-                        className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                        value={password} onChange={e => setPassword(e.target.value)}
-                      />
+                      <div className="relative">
+                        <input 
+                          type={showCreatePassword ? 'text' : 'password'} placeholder="Minimal 6 karakter" required minLength={6}
+                          className="w-full px-3.5 py-2.5 pr-10 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                          value={password} onChange={e => setPassword(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowCreatePassword(!showCreatePassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                          tabIndex={-1}
+                          aria-label={showCreatePassword ? 'Sembunyikan password' : 'Lihat password'}
+                        >
+                          {showCreatePassword ? (
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                              <line x1="1" y1="1" x2="23" y2="23"/>
+                            </svg>
+                          ) : (
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                              <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -858,11 +925,32 @@ export default function StaffSettings() {
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Ubah Password (Opsional)</label>
-                    <input 
-                      type="password" placeholder="Kosongkan jika tidak diubah" minLength={6}
-                      className="w-full px-3.5 py-2.5 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                      value={editPassword} onChange={e => setEditPassword(e.target.value)}
-                    />
+                    <div className="relative">
+                      <input 
+                        type={showEditPassword ? 'text' : 'password'} placeholder="Kosongkan jika tidak diubah" minLength={6}
+                        className="w-full px-3.5 py-2.5 pr-10 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                        value={editPassword} onChange={e => setEditPassword(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowEditPassword(!showEditPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                        tabIndex={-1}
+                        aria-label={showEditPassword ? 'Sembunyikan password' : 'Lihat password'}
+                      >
+                        {showEditPassword ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                            <line x1="1" y1="1" x2="23" y2="23"/>
+                          </svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                          </svg>
+                        )}
+                      </button>
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Role Peran</label>

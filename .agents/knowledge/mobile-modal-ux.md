@@ -130,6 +130,12 @@ Ketika modal menampilkan banyak informasi (rincian item, riwayat bayar, jurnal a
 </FullScreenModal>
 ```
 
+### Pola C: Modal Tabel Data Transaksi (Hybrid Table & Mobile Cards)
+
+Pada modal yang menampilkan daftar/tabel data bertransaksi (seperti Riwayat Transaksi POS, Daftar Nota Layanan, Pelunasan Piutang):
+- **Desktop (`hidden md:block`):** Tampilkan tabel dengan kolom aksi bersegmentasi (Action Capsule) dengan pembeda warna tajam (Amber untuk tagihan piutang dengan nominal sisa, Slate/Indigo untuk layanan purna jual tukar/refund).
+- **Mobile (`block md:hidden`):** Jangan paksa tabel horizontal 8 kolom! Tampilkan sebagai **Kartu Transaksi Interaktif (Mobile Cards)** dengan tombol aksi berukuran penuh ($\ge 42\text{px}$) di strip bawah kartu yang ramah jempol (*anti fat-finger*).
+
 ---
 
 ## 4. Anti-Patterns yang Wajib Dihindari
@@ -154,3 +160,5 @@ Ketika modal menampilkan banyak informasi (rincian item, riwayat bayar, jurnal a
    ```
 5. **The Naive Date Formatting Trap:**
    Menggunakan `.toLocaleString()` atau `.toLocaleDateString()` mentah. Selalu gunakan helper `formatDisplayDate(date, mode, timezone)` dari `@/lib/timeUtils.ts`.
+6. **The Cramped Horizontal Table Trap on Mobile:**
+   Memaksa tabel 8 kolom ditampilkan pada layar ponsel 360px. Kasir harus menggeser layar 500px ke kanan hanya untuk mencari tombol aksi. Gunakan teknik hybrid: tabel di desktop (`hidden md:block`), kartu interaktif di mobile (`block md:hidden`).

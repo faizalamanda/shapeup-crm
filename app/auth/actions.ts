@@ -71,3 +71,69 @@ export async function logoutAction() {
   await supabase.auth.signOut()
   return { success: true }
 }
+
+export async function forgotPasswordAction(formData: FormData) {
+  const rawEmail = formData.get('email') as string
+  if (!rawEmail) {
+    return { error: 'Email harus diisi.' }
+  }
+
+  const email = rawEmail.trim().toLowerCase()
+  const supabase = await createClient()
+
+  let origin = process.env.NEXT_PUBLIC_SITE_URL || ''
+  try {
+    const { headers } = await import('next/headers')
+    const headersList = await headers()
+    const host = headersList.get('x-forwarded-host') || headersList.get('host')
+    const proto = headersList.get('x-forwarded-proto') || 'https'
+    if (host) {
+      origin = `${proto}://${host}`
+    }
+  } catch (e) {
+    // fallback if headers() fails in environment
+  }
+
+  if (!origin) {
+    origin = 'http://localhost:3000'
+  }
+
+  const redirectTo = `${origin}/auth/callback?next=/reset-password`
+
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo,
+  })
+
+  if (error) {
+    return { error: error.message }
+  }
+
+  return { success: true }
+}
+
+export async function resetPasswordAction(formData: FormData) {
+  const password = formData.get('password') as string
+  const confirmPassword = formData.get('confirmPassword') as string
+
+  if (!password || !confirmPassword) {
+    return { error: 'Password baru dan konfirmasi password harus diisi.' }
+  }
+
+  if (password.length < 6) {
+    return { error: 'Password minimal harus 6 karakter.' }
+  }
+
+  if (password !== confirmPassword) {
+    return { error: 'Konfirmasi password tidak cocok.' }
+  }
+
+  const supabase = await createClient()
+  const { error } = await supabase.auth.updateUser({ password })
+
+  if (error) {
+    return { error: error.message }
+  }
+
+  return { success: true }
+}
+

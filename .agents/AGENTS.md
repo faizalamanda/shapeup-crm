@@ -29,6 +29,15 @@
 11. **PostgreSQL Views RLS (`security_invoker = true`):**
    - Setiap PostgreSQL View yang dibuat di Supabase wajib menyertakan `WITH (security_invoker = true)` agar aturan RLS tabel asal ditegakkan otomatis berdasarkan identitas pemanggil (`auth.uid()`), dipadukan dengan filter `.eq('business_id', businessId)` di API Route.
 
+12. **Authentication & Password Recovery Standards:**
+   - Alur pemulihan kata sandi (`forgotPasswordAction`) wajib mendeteksi host/protokol secara dinamis via request headers (`x-forwarded-host`, `x-forwarded-proto`) dengan fallback `NEXT_PUBLIC_SITE_URL` agar tautan reset password selalu valid di semua domain/environment.
+   - Route callback PKCE (`app/auth/callback/route.ts`) yang menerima `next.startsWith('/reset-password')` wajib mengalihkan kegagalan kode ke `/forgot-password?error=...` dengan pesan ramah bahasa Indonesia.
+   - Halaman `/forgot-password` wajib masuk `isAuthRoute` di `middleware.ts`, sedangkan `/reset-password` **DILARANG** dimasukkan ke `isAuthRoute` (agar sesi pemulihan tidak ter-redirect sebelum pengguna sempat mengganti password) dan tidak dimasukkan ke `isProtectedRoute`.
+
+13. **Universal Password Input Visibility Standard (Tombol Mata):**
+   - Setiap kolom input kata sandi di seluruh antarmuka aplikasi (Login, Register, Reset Password, Pengaturan Staf) **WAJIB** menyertakan tombol mata (*Show/Hide Password*) dengan state `showPassword` (`type={showPassword ? 'text' : 'password'}`), padding kanan yang proporsional (`pr-12`), dan atribut aksesibilitas (`tabIndex={-1}`, dinamis `aria-label`).
+   - Formulir pembuatan/reset kata sandi baru wajib menyertakan validasi real-time (panjang minimal 6 karakter dan indikator kecocokan konfirmasi password).
+
 
 ## Performance Rules
 
@@ -141,6 +150,13 @@
 
 8. **Automatic Payment Status Synchronization in `syncOrderToLedger()`:**
    Setiap kali `syncOrderToLedger()` memproses pembayaran pesanan, sistem **WAJIB** menyelaraskan kolom `orders.payment_status` dan `orders.amount_paid` serta menjamin baris pembayaran tersimpan di `order_payments` agar tab Riwayat Pembayaran pada antarmuka pengguna tidak pernah kosong atau terputus dari jurnal akuntansi.
+
+9. **Cross-Shift Tender Separation & Cash Attribution:**
+   Uang masuk (Pelunasan Piutang) dan uang keluar (Refund Kasir) atas pesanan historis **WAJIB** diatribusikan ke shift kasir aktif saat ini (`shift_id: activeShift.id`). Dalam pelaporan rincian shift (Z-Report), penerimaan kas **WAJIB** dipisahkan secara teraudit antara `cash_sales` (penjualan shift ini), `cash_ar_collections` (pelunasan piutang), dan `cash_refunds`.
+
+10. **Unified Post-Purchase Exchange & Partial Debt Settlement:**
+   Penukaran barang (Exchange) menggunakan event sourcing independen (`sourceType: 'order_exchange'`, `sourceId: exchangeId`) untuk menghindari tabrakan PostgreSQL unique constraint. Jika pesanan bertipe cicilan/DP (`amount_paid < grand_total`) dan nilai tukar turun ($\Delta < 0$), kasir dilarang mengeluarkan uang tunai jika saldo terbayar $\le$ total baru; selisih harga wajib memotong sisa piutang secara otomatis.
+
 
 
 

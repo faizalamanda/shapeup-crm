@@ -48,5 +48,10 @@ export async function GET(request: Request) {
   }
 
   // return the user to an error page with instructions
+  if (next && next.startsWith('/reset-password')) {
+    return NextResponse.redirect(`${origin}/forgot-password?error=${encodeURIComponent('Tautan reset password sudah tidak berlaku atau kedaluwarsa. Silakan minta tautan baru.')}`)
+  }
+
   return NextResponse.redirect(`${origin}/login?error=Tidak dapat memverifikasi kredensial`)
 }
+

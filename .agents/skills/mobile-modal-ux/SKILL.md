@@ -42,6 +42,11 @@ Semua modal fitur yang berfungsi sebagai layar kerja/detail (misal: Detail Pesan
    - Tab navigasi internal wajib berbentuk pil yang ramah sentuhan jempol (*touch target* min. 40px) dan dibungkus `overflow-x-auto no-scrollbar`.
    - Tabel dalam tab (seperti Riwayat Pembayaran dan Jurnal Akuntansi) wajib dibungkus `<div className="overflow-x-auto">` dengan batas lebar minimum (`min-w-[...]`) agar tidak terpotong pada layar ponsel 360px.
 
+7. **Action Column UX & Hybrid Table-Card Responsiveness:**
+   Pada modal yang menampilkan daftar/tabel data transaksi (seperti Riwayat Transaksi POS, Daftar Nota, atau Pelunasan):
+   - **Desktop (`hidden md:table`):** Gunakan tombol aksi bersegmentasi dengan hierarki visual yang jelas (Action Capsule), bukan tombol teks panjang yang monoton. Berikan pembeda warna tajam antara tagihan berpiutang (gradient amber dengan nominal sisa) dan layanan purna jual (dark/slate untuk tukar barang, soft rose untuk refund).
+   - **Mobile (`block md:hidden`):** DILARANG memaksa tabel horizontal 8 kolom yang membuat kasir harus menggeser layar 500px ke kanan hanya untuk mencari tombol bayar. Tampilkan sebagai **Kartu Transaksi Interaktif (Mobile Cards)** dengan tombol aksi berukuran penuh ($\ge 42\text{px}$) di strip bawah kartu yang ramah jempol (*anti fat-finger*).
+
 ---
 
 Untuk contoh implementasi lengkap, batasan, dan studi kasus, baca [knowledge mobile modal UX](../../knowledge/mobile-modal-ux.md).

@@ -64,6 +64,36 @@ const {
 
 ---
 
+### 1c. `app/auth/actions.ts` — Auth & Password Lifecycle (Forgot & Reset Password)
+
+Modul terpusat untuk alur otentikasi dan pemulihan akun berbasis Supabase Auth dan Next.js Server Actions.
+
+```typescript
+import { loginAction, registerAction, forgotPasswordAction, resetPasswordAction, logoutAction } from '@/app/auth/actions'
+```
+
+1. **`forgotPasswordAction(formData)`:**
+   - Menerima `email`, men-trim dan me-lowercase.
+   - Menyelesaikan *origin* secara dinamis dari request headers (`x-forwarded-host`, `x-forwarded-proto`) dengan *fallback* ke `NEXT_PUBLIC_SITE_URL` agar valid di semua environment (localhost, preview, domain kustom).
+   - Memanggil `supabase.auth.resetPasswordForEmail(email, { redirectTo: `${origin}/auth/callback?next=/reset-password` })`.
+   - Mengembalikan `{ success: true }` atau `{ error: string }`.
+
+2. **`resetPasswordAction(formData)`:**
+   - Menerima `password` dan `confirmPassword`.
+   - Validasi panjang minimal 6 karakter dan kecocokan password.
+   - Memperbarui kata sandi pengguna via `supabase.auth.updateUser({ password })`.
+
+3. **Supabase PKCE Callback (`app/auth/callback/route.ts`):**
+   - Menukar token `code` dari email pengguna menjadi sesi auth aktif via `exchangeCodeForSession(code)`.
+   - Mengarahkan ke parameter `next` (yaitu `/reset-password`).
+   - Jika link telah kedaluwarsa atau tidak valid, otomatis me-redirect ke `/forgot-password?error=...` dengan pesan bahasa Indonesia yang informatif.
+
+4. **Middleware Isolation Rules (`middleware.ts`):**
+   - `/forgot-password` terdaftar di `isAuthRoute` (pengguna yang sudah login otomatis dialihkan ke dashboard/onboarding).
+   - `/reset-password` **DILARANG KERAS** dimasukkan ke `isAuthRoute` (karena sesi pemulihan baru saja ditukar dari email; jika masuk `isAuthRoute`, user akan ditendang ke dashboard sebelum sempat mengisi password baru) dan **DILARANG** dimasukkan ke `isProtectedRoute` (agar token/kode dapat diverifikasi terlebih dahulu di sisi client/server).
+
+---
+
 ### 2. `lib/guestCustomer.ts` — Guest Customer Resolution
 
 Gunakan saat perlu resolve "Customer Tamu" (walk-in) di POS.
@@ -362,6 +392,31 @@ Pahami pemisahan tanggung jawab antara **`syncOrderToLedger()`** dan **`lib/paym
      - `recordOrderPayment()`: Pelunasan cicilan / DP susulan (murni Debit Kas/Bank `101000`/`101200` dan Kredit Piutang Usaha `103000` tanpa memicu mutasi stok ulang).
      - `voidOrderPayment()`: Pembatalan satu baris pembayaran yang salah tender secara *append-only* (Debit Piutang, Kredit Kas/Bank).
      - `recalculateOrderPaymentStatus()`: Sinkronisasi ulang `amount_paid` dan `payment_status` (`unpaid`, `partial`, `paid`).
+
+---
+
+### 15. Password Visibility & Security UX Standards (Tombol Mata)
+
+Setiap kolom input password di seluruh aplikasi **WAJIB** menerapkan tombol mata (*Show/Hide Password Toggle*) untuk kenyamanan dan keamanan pengguna:
+
+1. **State & Toggle Icon:**
+   - Kolom password wajib memiliki kontrol state `const [showPassword, setShowPassword] = useState(false)`.
+   - Input menggunakan `type={showPassword ? 'text' : 'password'}` dengan padding kanan (`pr-12` atau `pr-10`).
+   - Tombol toggle menggunakan `type="button"`, `tabIndex={-1}`, dan `aria-label` yang dinamis ("Lihat password" / "Sembunyikan password").
+   - Ikon mata terbuka (Lucide Eye) saat tersembunyi, dan mata tercoret (Lucide EyeOff) saat teks terbuka.
+
+2. **Real-time Feedback & Match Indicators:**
+   - Pada form penetapan password baru (`/reset-password`, pengaturan staf):
+     - Sediakan indikator kekuatan password (*minimal 6 karakter*).
+     - Sediakan verifikasi kesesuaian real-time (*Password cocok* dengan ikon centang hijau atau peringatan saat belum cocok).
+     - Tombol simpan wajib dinonaktifkan (`disabled`) jika panjang belum memenuhi syarat atau konfirmasi belum cocok.
+
+3. **Konsistensi UI:**
+   - Standar ini diterapkan seragam pada:
+     - Halaman Masuk (`/login`)
+     - Halaman Registrasi (`/register`)
+     - Halaman Reset Password (`/reset-password`)
+     - Formulir Ganti Password Mandiri & Modal Staf (`/settings/staff`)
 
 ---
 

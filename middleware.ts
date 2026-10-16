@@ -21,7 +21,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/suppliers') ||
     pathname.startsWith('/stock-opname')
 
-  const isAuthRoute = pathname === '/login' || pathname === '/register'
+  const isAuthRoute = pathname === '/login' || pathname === '/register' || pathname === '/forgot-password'
   const isRoot = pathname === '/'
 
   // Check if any Supabase auth cookies are present in the request

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from 'react'
-import { createPortal } from 'react-dom'
+import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { supabase } from '@/lib/supabase'
 
 type Props = {
@@ -190,41 +190,51 @@ export default function ExchangeModal({
     }
   }
 
-  if (!isOpen || !mounted) return null
+  const modalTitle = (
+    <div>
+      <span className="text-[10px] font-black tracking-widest uppercase bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-full border border-indigo-200">
+        Layanan Purna Jual POS
+      </span>
+      <h3 className="text-base font-black text-slate-900 mt-1">
+        🔄 Tukar Barang (Exchange Ticket) — #{order?.order_number}
+      </h3>
+    </div>
+  )
 
-  return createPortal(
-    <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs flex justify-center items-center p-3 sm:p-5 z-[10001] animate-in fade-in duration-150">
-      <div 
-        className="bg-white border border-slate-200 rounded-3xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[92vh] overflow-hidden"
-        role="dialog"
-        aria-modal="true"
+  const modalFooter = (
+    <div className="flex items-center justify-end gap-2.5 w-full">
+      <button
+        type="button"
+        onClick={onClose}
+        className="px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 font-bold text-slate-700 text-xs transition active:scale-95"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50">
-          <div>
-            <span className="text-[10px] font-black tracking-widest uppercase bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-full border border-indigo-200">
-              Layanan Purna Jual POS
-            </span>
-            <h3 className="text-base font-black text-slate-900 mt-1">
-              🔄 Tukar Barang (Exchange Ticket) — #{order?.order_number}
-            </h3>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-xl transition"
-          >
-            ✕
-          </button>
-        </div>
+        Batal
+      </button>
+      <button
+        type="button"
+        disabled={!selectedNewProduct || submitting}
+        onClick={handleConfirmExchange}
+        className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-xs transition shadow-md shadow-indigo-200 flex items-center gap-1.5 active:scale-95"
+      >
+        {submitting ? 'Menyimpan...' : '✓ Selesaikan Penukaran'}
+      </button>
+    </div>
+  )
 
-        {/* Content Body */}
-        <div className="p-6 overflow-y-auto space-y-6 text-xs flex-1">
-          {errorMsg && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 font-bold">
-              ⚠️ {errorMsg}
-            </div>
-          )}
+  return (
+    <FullScreenModal
+      isOpen={isOpen}
+      onClose={onClose}
+      desktopSize="lg"
+      title={modalTitle}
+      footer={modalFooter}
+    >
+      <div className="space-y-6 text-xs">
+        {errorMsg && (
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 font-bold">
+            ⚠️ {errorMsg}
+          </div>
+        )}
 
           {/* STEP 1: Pilih Barang yang Dikembalikan Pelanggan */}
           <div className="space-y-2">
@@ -442,28 +452,7 @@ export default function ExchangeModal({
               </div>
             </div>
           )}
-        </div>
-
-        {/* Footer Actions */}
-        <div className="flex items-center justify-end gap-2.5 px-6 py-4 bg-slate-50 border-t border-slate-200">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 font-bold text-slate-700 text-xs transition"
-          >
-            Batal
-          </button>
-          <button
-            type="button"
-            disabled={!selectedNewProduct || submitting}
-            onClick={handleConfirmExchange}
-            className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-xs transition shadow-md shadow-indigo-200 flex items-center gap-1.5"
-          >
-            {submitting ? 'Menyimpan...' : '✓ Selesaikan Penukaran'}
-          </button>
-        </div>
       </div>
-    </div>,
-    document.body
+    </FullScreenModal>
   )
 }
