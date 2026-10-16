@@ -107,6 +107,19 @@ export async function forgotPasswordAction(formData: FormData) {
   })
 
   if (error) {
+    const errorMsg = error.message?.toLowerCase() || ''
+    const errorCode = (error as any).code || ''
+    if (
+      errorCode === 'over_email_send_rate_limit' ||
+      errorMsg.includes('for security purposes') ||
+      errorMsg.includes('60 seconds')
+    ) {
+      return {
+        success: true,
+        alreadySent: true,
+        message: 'Tautan reset kata sandi sudah dikirim ke email Anda baru-baru ini. Demi keamanan, tautan hanya dapat dikirim 1 kali per menit. Silakan cek kotak masuk atau folder spam Anda.',
+      }
+    }
     return { error: error.message }
   }
 

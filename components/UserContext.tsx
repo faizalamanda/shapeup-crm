@@ -242,11 +242,12 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
       if (typeof window !== 'undefined') {
         const currentPath = window.location.pathname
         const isPublicRoute =
-          currentPath === '/login' ||
-          currentPath === '/register' ||
           currentPath === '/' ||
-          currentPath === '/forgot-password' ||
-          currentPath === '/reset-password'
+          currentPath.startsWith('/login') ||
+          currentPath.startsWith('/register') ||
+          currentPath.startsWith('/forgot-password') ||
+          currentPath.startsWith('/reset-password') ||
+          currentPath.startsWith('/auth')
         if (!isPublicRoute) {
           window.location.href = `/login?next=${encodeURIComponent(currentPath)}`
         }

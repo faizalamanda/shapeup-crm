@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { forgotPasswordAction } from '@/app/auth/actions'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
@@ -9,8 +9,24 @@ function ForgotPasswordForm() {
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const [success, setSuccess] = useState(false)
+  const [infoMsg, setInfoMsg] = useState('')
   const [cooldown, setCooldown] = useState(0)
+  const [loadingStep, setLoadingStep] = useState(0)
+  const isSubmittingRef = useRef(false)
   const searchParams = useSearchParams()
+
+  useEffect(() => {
+    let timer: any
+    if (loading) {
+      setLoadingStep(0)
+      timer = setTimeout(() => {
+        setLoadingStep(1)
+      }, 2500)
+    } else {
+      setLoadingStep(0)
+    }
+    return () => clearTimeout(timer)
+  }, [loading])
 
   useEffect(() => {
     const errorParam = searchParams.get('error')
@@ -29,10 +45,12 @@ function ForgotPasswordForm() {
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
-    if (!email) return
+    if (!email || isSubmittingRef.current || loading || cooldown > 0) return
 
+    isSubmittingRef.current = true
     setLoading(true)
     setErrorMsg('')
+    setInfoMsg('')
 
     try {
       const formData = new FormData()
@@ -45,14 +63,23 @@ function ForgotPasswordForm() {
         const lower = msg.toLowerCase()
         if (lower.includes('user not found')) {
           msg = 'Akun dengan email ini tidak ditemukan.'
-        } else if (lower.includes('for security purposes') || lower.includes('rate limit')) {
-          msg = 'Terlalu banyak permintaan. Silakan tunggu 60 detik sebelum mencoba lagi.'
+        } else if (lower.includes('for security purposes') || lower.includes('rate limit') || lower.includes('60 seconds')) {
+          // If rate limited, Supabase already sent an email within the last 60 seconds
+          setSuccess(true)
+          setInfoMsg('Tautan reset sudah dikirim ke email Anda baru-baru ini. Demi keamanan, tautan hanya dapat dikirim 1 kali per menit. Silakan cek kotak masuk atau folder spam Anda.')
+          setCooldown(60)
+          setLoading(false)
+          return
         } else if (lower.includes('invalid email')) {
           msg = 'Format alamat email tidak valid.'
         }
         setErrorMsg(msg)
         setLoading(false)
         return
+      }
+
+      if ((res as any)?.alreadySent) {
+        setInfoMsg((res as any).message || 'Tautan reset sudah dikirim ke email Anda baru-baru ini.')
       }
 
       setSuccess(true)
@@ -62,6 +89,7 @@ function ForgotPasswordForm() {
       setErrorMsg(err?.message || 'Terjadi kesalahan saat mengirim instruksi reset kata sandi.')
     } finally {
       setLoading(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -104,7 +132,11 @@ function ForgotPasswordForm() {
               </div>
               <h3 className="text-base font-bold text-slate-900 mb-1">Periksa Kotak Masuk</h3>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Kami telah mengirimkan tautan reset kata sandi ke <span className="font-bold text-slate-800">{email}</span>. Silakan klik tautan di email untuk membuat kata sandi baru.
+                {infoMsg || (
+                  <>
+                    Kami telah mengirimkan tautan reset kata sandi ke <span className="font-bold text-slate-800">{email}</span>. Silakan klik tautan di email untuk membuat kata sandi baru.
+                  </>
+                )}
               </p>
               <div className="mt-3 text-[11px] text-slate-500 font-medium bg-white/60 py-2 px-3 rounded-lg border border-blue-100/50">
                 💡 <span className="font-semibold">Tip:</span> Jika tidak ada di kotak masuk, periksa folder <i>Spam</i> atau <i>Promosi</i>.
@@ -149,7 +181,8 @@ function ForgotPasswordForm() {
                   placeholder="nama@bisnis.com"
                   value={email} 
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-slate-900 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all font-medium" 
+                  disabled={loading}
+                  className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-slate-900 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all font-medium disabled:opacity-60 disabled:cursor-not-allowed" 
                   required 
                   autoFocus
                 />
@@ -161,8 +194,8 @@ function ForgotPasswordForm() {
 
             <button 
               type="submit" 
-              disabled={loading}
-              className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl hover:bg-blue-700 shadow-xl shadow-blue-200 transform active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+              disabled={loading || !email.trim()}
+              className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl hover:bg-blue-700 shadow-xl shadow-blue-200 transform active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
             >
               {loading ? (
                 <>
@@ -170,7 +203,7 @@ function ForgotPasswordForm() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
-                  <span>Mengirim Tautan...</span>
+                  <span>{loadingStep === 1 ? 'Menghubungkan ke email...' : 'Mengirim Tautan...'}</span>
                 </>
               ) : (
                 'Kirim Tautan Reset Password'
