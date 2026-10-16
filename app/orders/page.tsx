@@ -340,6 +340,7 @@ export default function OrderPage() {
             <OrderTable
               orders={orders}
               onSelectOrder={(order) => setSelectedOrder(order)}
+              timezone={activeBiz?.timezone}
             />
             <Pagination
               currentPage={currentPage}
@@ -358,7 +359,11 @@ export default function OrderPage() {
       </div>
 
       {/* ── Order Detail Modal ────────────────────────────────────────────── */}
-      <OrderDetailModal order={selectedOrder} onClose={() => setSelectedOrder(null)} />
+      <OrderDetailModal 
+        order={selectedOrder} 
+        onClose={() => setSelectedOrder(null)} 
+        timezone={activeBiz?.timezone}
+      />
     </div>
   )
 }

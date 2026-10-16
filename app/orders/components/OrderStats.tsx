@@ -47,6 +47,8 @@ export interface OrderStatsData {
   net_sales: number
   aov: number
   avg_items_per_order: number
+  total_collected?: number
+  total_unpaid?: number
 }
 
 export function OrderStats({ stats }: { stats: OrderStatsData | null }) {
@@ -56,6 +58,7 @@ export function OrderStats({ stats }: { stats: OrderStatsData | null }) {
   const netSales = stats?.net_sales ?? 0
   const aov = stats?.aov ?? 0
   const avgItemsPerOrder = stats?.avg_items_per_order ?? 0
+  const totalUnpaid = stats?.total_unpaid ?? 0
 
   return (
     <div style={{
@@ -88,12 +91,21 @@ export function OrderStats({ stats }: { stats: OrderStatsData | null }) {
         sub="Nilai belanja rata-rata"
         accentColor="var(--su-accent)"
       />
-      <StatCard
-        label="Total Diskon"
-        value={<span style={{ color: 'var(--su-danger)', fontSize: '16px' }} title={formatIDR(totalDiscounts)}>-{formatIDR(totalDiscounts)}</span>}
-        sub="Potongan harga yang diberikan"
-        accentColor="var(--su-danger)"
-      />
+      {totalUnpaid > 0 ? (
+        <StatCard
+          label="Piutang Belum Lunas"
+          value={<span style={{ color: '#D97706', fontSize: '16px' }} title={formatIDR(totalUnpaid)}>{formatIDR(totalUnpaid)}</span>}
+          sub="Sisa tagihan pending / DP"
+          accentColor="#D97706"
+        />
+      ) : (
+        <StatCard
+          label="Total Diskon"
+          value={<span style={{ color: 'var(--su-danger)', fontSize: '16px' }} title={formatIDR(totalDiscounts)}>-{formatIDR(totalDiscounts)}</span>}
+          sub="Potongan harga yang diberikan"
+          accentColor="var(--su-danger)"
+        />
+      )}
       <StatCard
         label="Avg Items / Order"
         value={<span style={{ color: '#7C3AED' }}>{avgItemsPerOrder.toFixed(1)}<span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--su-text-faint)', marginLeft: '4px' }}>item</span></span>}

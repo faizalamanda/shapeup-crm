@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 
 export interface OrderFilterRule {
   id: string
-  field: 'grand_total' | 'total_qty' | 'status' | 'payment_method' | 'order_date' | 'product_name' | 'source_platform'
+  field: 'grand_total' | 'total_qty' | 'status' | 'payment_status' | 'payment_method' | 'order_date' | 'product_name' | 'source_platform'
   operator: 'greater_or_equal' | 'less_or_equal' | 'equal' | 'after' | 'before' | 'between' | 'is' | 'is_not' | 'in' | 'not_in' | 'contains'
   value: string
 }
@@ -41,7 +41,7 @@ export function FilterBar({
 
   // FB Ads Unified Filter Popover State
   const [popoverOpen, setPopoverOpen] = useState(false)
-  const [activeCategory, setActiveCategory] = useState<'main' | 'product' | 'status' | 'source' | 'payment' | 'total' | 'date'>('main')
+  const [activeCategory, setActiveCategory] = useState<'main' | 'product' | 'status' | 'payment_status' | 'source' | 'payment' | 'total' | 'date'>('main')
 
   // FB Ads Product Filter Form State
   const existingProductRule = pendingRules.find(r => r.field === 'product_name')
@@ -163,14 +163,14 @@ export function FilterBar({
     }
   }
 
-  // Quick Multi-select Helper for Status, Source, Payment Method
-  const getFieldValues = (fieldName: 'status' | 'source_platform' | 'payment_method'): string[] => {
+  // Quick Multi-select Helper for Status, Payment Status, Source, Payment Method
+  const getFieldValues = (fieldName: 'status' | 'payment_status' | 'source_platform' | 'payment_method'): string[] => {
     const rule = pendingRules.find(r => r.field === fieldName)
     if (!rule || !rule.value) return []
     return rule.value.split(',').map(s => s.trim()).filter(Boolean)
   }
 
-  const toggleFieldValue = (fieldName: 'status' | 'source_platform' | 'payment_method', valueToToggle: string) => {
+  const toggleFieldValue = (fieldName: 'status' | 'payment_status' | 'source_platform' | 'payment_method', valueToToggle: string) => {
     const current = getFieldValues(fieldName)
     const exists = current.some(v => v.toLowerCase() === valueToToggle.toLowerCase())
     let updated: string[]
@@ -196,8 +196,15 @@ export function FilterBar({
   }
 
   // Format Chip Text for FB Ads Search Container
-  const getRuleChipLabel = (rule: OrderFilterRule): { fieldLabel: string; valueLabel: string; category: 'product' | 'status' | 'source' | 'payment' | 'total' | 'date' } => {
-    if (rule.field === 'status') return { fieldLabel: 'Status', valueLabel: rule.value.toUpperCase(), category: 'status' }
+  const getRuleChipLabel = (rule: OrderFilterRule): { fieldLabel: string; valueLabel: string; category: 'product' | 'status' | 'payment_status' | 'source' | 'payment' | 'total' | 'date' } => {
+    if (rule.field === 'status') return { fieldLabel: 'Status Order', valueLabel: rule.value.toUpperCase(), category: 'status' }
+    if (rule.field === 'payment_status') {
+      const valLabel = rule.value.split(',').map(v => {
+        const trimmed = v.trim().toLowerCase()
+        return trimmed === 'paid' ? 'LUNAS' : trimmed === 'partial' ? 'SEBAGIAN' : 'BELUM BAYAR'
+      }).join(', ')
+      return { fieldLabel: 'Status Bayar', valueLabel: valLabel, category: 'payment_status' }
+    }
     if (rule.field === 'source_platform') return { fieldLabel: 'Sumber', valueLabel: rule.value, category: 'source' }
     if (rule.field === 'payment_method') {
       const pmLabel = rule.value.toLowerCase().includes('bacs') ? 'BANK TRANSFER' : rule.value.toUpperCase()
@@ -214,6 +221,7 @@ export function FilterBar({
   }
 
   const selectedStatuses = getFieldValues('status')
+  const selectedPaymentStatuses = getFieldValues('payment_status')
   const selectedSources  = getFieldValues('source_platform')
   const selectedPayments = getFieldValues('payment_method')
 
@@ -280,10 +288,10 @@ export function FilterBar({
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: '6px',
                       padding: '4px 10px', borderRadius: '7px', cursor: 'pointer',
-                      background: rule.field === 'product_name' ? '#FEF3C7' : 'var(--su-primary-light)',
-                      border: rule.field === 'product_name' ? '1px solid rgba(245,158,11,0.35)' : '1px solid rgba(37,99,235,0.25)',
+                      background: rule.field === 'product_name' ? '#FEF3C7' : rule.field === 'payment_status' ? '#ECFDF5' : 'var(--su-primary-light)',
+                      border: rule.field === 'product_name' ? '1px solid rgba(245,158,11,0.35)' : rule.field === 'payment_status' ? '1px solid rgba(5,150,105,0.3)' : '1px solid rgba(37,99,235,0.25)',
                       fontSize: '12px', fontWeight: 700,
-                      color: rule.field === 'product_name' ? '#B45309' : 'var(--su-primary)',
+                      color: rule.field === 'product_name' ? '#B45309' : rule.field === 'payment_status' ? '#059669' : 'var(--su-primary)',
                       boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
                       transition: 'transform 0.1s',
                     }}
@@ -444,6 +452,7 @@ export function FilterBar({
                    activeCategory === 'date' ? 'Rentang Tanggal' :
                    activeCategory === 'product' ? 'Produk' :
                    activeCategory === 'status' ? 'Status Pesanan' :
+                   activeCategory === 'payment_status' ? 'Status Pembayaran' :
                    activeCategory === 'source' ? 'Sumber Order' :
                    activeCategory === 'payment' ? 'Metode Pembayaran' : 'Total Belanja Minimum'}
                 </span>
@@ -566,6 +575,32 @@ export function FilterBar({
                           <div>Status Pesanan</div>
                           <div style={{ fontSize: '11px', color: 'var(--su-text-muted)', fontWeight: 400 }}>
                             {selectedStatuses.length > 0 ? selectedStatuses.join(', ').toUpperCase() : 'Completed, Processing, Pending, dll.'}
+                          </div>
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '12px', color: 'var(--su-primary)', fontWeight: 700 }}>Pilih ▾</span>
+                    </button>
+
+                    {/* 3b. Payment Status Category */}
+                    <button
+                      onClick={() => setActiveCategory('payment_status')}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--su-border)',
+                        background: 'white', cursor: 'pointer', textAlign: 'left',
+                        fontSize: '13px', fontWeight: 600, color: 'var(--su-text)', transition: 'all 0.12s',
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--su-bg)' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'white' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '16px' }}>💰</span>
+                        <div>
+                          <div>Status Pembayaran</div>
+                          <div style={{ fontSize: '11px', color: 'var(--su-text-muted)', fontWeight: 400 }}>
+                            {selectedPaymentStatuses.length > 0
+                              ? selectedPaymentStatuses.map(s => s === 'paid' ? 'Lunas' : s === 'partial' ? 'Sebagian' : 'Belum Bayar').join(', ')
+                              : 'Lunas, Sebagian / DP, Belum Bayar'}
                           </div>
                         </div>
                       </div>
@@ -786,6 +821,71 @@ export function FilterBar({
                     <button
                       type="button"
                       onClick={() => toggleFieldValue('status', availableStatuses.join(','))}
+                      style={{ border: 'none', background: 'none', fontSize: '11px', color: 'var(--su-primary)', cursor: 'pointer', fontWeight: 700 }}
+                    >
+                      Pilih Semua
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPopoverOpen(false)
+                        setActiveCategory('main')
+                      }}
+                      style={{
+                        padding: '6px 16px', borderRadius: '7px', cursor: 'pointer',
+                        background: '#2563EB', border: 'none', color: 'white',
+                        fontSize: '12px', fontWeight: 800,
+                      }}
+                    >
+                      Selesai
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── 3b. PAYMENT STATUS MULTI-SELECT ────────────────────────── */}
+              {activeCategory === 'payment_status' && (
+                <div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '240px', overflowY: 'auto', marginBottom: '12px' }}>
+                    {[
+                      { value: 'paid', label: 'Lunas', desc: 'Tagihan sudah terbayar lunas' },
+                      { value: 'partial', label: 'Sebagian / DP', desc: 'Pembayaran bertahap / uang muka' },
+                      { value: 'unpaid', label: 'Belum Bayar', desc: 'Belum ada pembayaran masuk' }
+                    ].map(opt => {
+                      const checked = selectedPaymentStatuses.some(v => v.toLowerCase() === opt.value.toLowerCase())
+                      return (
+                        <label
+                          key={opt.value}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '10px',
+                            padding: '8px 10px', borderRadius: '7px', cursor: 'pointer',
+                            background: checked ? 'var(--su-bg)' : 'transparent',
+                            border: checked ? '1px solid var(--su-border)' : '1px solid transparent',
+                            transition: 'all 0.1s',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleFieldValue('payment_status', opt.value)}
+                            style={{ cursor: 'pointer' }}
+                          />
+                          <div>
+                            <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--su-text)' }}>
+                              {opt.label}
+                            </div>
+                            <div style={{ fontSize: '10px', color: 'var(--su-text-faint)' }}>
+                              {opt.desc}
+                            </div>
+                          </div>
+                        </label>
+                      )
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: '1px solid var(--su-border)' }}>
+                    <button
+                      type="button"
+                      onClick={() => toggleFieldValue('payment_status', 'paid,partial,unpaid')}
                       style={{ border: 'none', background: 'none', fontSize: '11px', color: 'var(--su-primary)', cursor: 'pointer', fontWeight: 700 }}
                     >
                       Pilih Semua

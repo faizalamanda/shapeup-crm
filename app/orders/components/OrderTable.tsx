@@ -1,17 +1,28 @@
 "use client"
 import { useRef, useState, useEffect } from 'react'
+import { formatDisplayDate, DEFAULT_TIMEZONE } from '@/lib/timeUtils'
 
-const ROW_HEIGHT    = 68   // px per row
+const ROW_HEIGHT = 68   // px per row
 
 const formatIDR = (val: any) => {
   const num = Number(val) || 0
   return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(num)
 }
 
-function OrderRow({ o, onSelect, style }: { o: any; onSelect: (o: any) => void; style: React.CSSProperties }) {
+function OrderRow({
+  o,
+  onSelect,
+  style,
+  timezone = DEFAULT_TIMEZONE,
+}: {
+  o: any
+  onSelect: (o: any) => void
+  style: React.CSSProperties
+  timezone?: string
+}) {
   const [hovered, setHovered] = useState(false)
 
-  // Status badge colors
+  // Operational / Fulfillment status badge colors
   const statusColor = (status: string) => {
     const s = (status || '').toLowerCase()
     if (['completed', 'selesai'].includes(s)) {
@@ -29,14 +40,33 @@ function OrderRow({ o, onSelect, style }: { o: any; onSelect: (o: any) => void; 
     return { bg: '#F7F7F5', color: '#6B6B63', border: 'var(--su-border)' }
   }
 
+  // Financial / Settlement status badge colors & labels
+  const paymentStatusColor = (payStatus?: string, orderStatus?: string) => {
+    const ps = (payStatus || (orderStatus === 'completed' ? 'paid' : 'unpaid')).toLowerCase()
+    if (ps === 'paid') {
+      return { label: 'Lunas', bg: '#ECFDF5', color: '#059669', border: 'rgba(5, 150, 105, 0.2)' }
+    }
+    if (ps === 'partial') {
+      return { label: 'Sebagian / DP', bg: '#FFFBEB', color: '#D97706', border: 'rgba(217, 119, 6, 0.25)' }
+    }
+    return { label: 'Belum Bayar', bg: '#FEF2F2', color: '#DC2626', border: 'rgba(220, 38, 38, 0.2)' }
+  }
+
   const sc = statusColor(o.status)
+  const psc = paymentStatusColor(o.payment_status, o.status)
+
+  const effectivePayStatus = (o.payment_status || (o.status === 'completed' ? 'paid' : 'unpaid')).toLowerCase()
+  const isPartial = effectivePayStatus === 'partial'
+  const grandTotalNum = Number(o.grand_total) || 0
+  const amountPaidNum = Number(o.amount_paid) || 0
+  const outstanding = Math.max(0, grandTotalNum - amountPaidNum)
 
   return (
     <div
       style={{
         ...style,
         display: 'grid',
-        gridTemplateColumns: '90px 180px 100px 240px 60px 110px 100px 100px 130px 110px 60px',
+        gridTemplateColumns: '90px 180px 100px 210px 50px 100px 90px 90px 130px 105px 115px 55px',
         alignItems: 'center',
         gap: 0,
         cursor: 'pointer',
@@ -67,10 +97,10 @@ function OrderRow({ o, onSelect, style }: { o: any; onSelect: (o: any) => void; 
         </p>
       </div>
 
-      {/* Order Date */}
+      {/* Order Date (Strict Timezone-Aware) */}
       <div style={{ padding: '0 8px', fontSize: '11px', color: 'var(--su-text-muted)' }}>
         {o.order_date
-          ? new Date(o.order_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: '2-digit' })
+          ? formatDisplayDate(o.order_date, 'short', timezone)
           : '—'}
       </div>
 
@@ -121,27 +151,45 @@ function OrderRow({ o, onSelect, style }: { o: any; onSelect: (o: any) => void; 
       <div style={{
         padding: '0 12px', textAlign: 'right', fontSize: '13px', fontWeight: 800,
         color: 'var(--su-text)', background: hovered ? '#FFFDE0' : '#FAFAF8',
-        height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+        height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center',
         borderLeft: '1px solid var(--su-border)', borderRight: '1px solid var(--su-border)',
         boxSizing: 'border-box',
       }}>
-        {formatIDR(o.grand_total)}
+        <div>{formatIDR(o.grand_total)}</div>
+        {isPartial && outstanding > 0 && (
+          <div style={{ fontSize: '9px', fontWeight: 700, color: '#D97706', marginTop: '2px', letterSpacing: '-0.01em' }}>
+            Sisa: {formatIDR(outstanding)}
+          </div>
+        )}
       </div>
 
-      {/* Status Badge */}
-      <div style={{ padding: '0 8px', textAlign: 'center' }}>
+      {/* Status Order Badge */}
+      <div style={{ padding: '0 6px', textAlign: 'center' }}>
         <span style={{
-          fontSize: '9px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em',
-          padding: '2px 8px', borderRadius: '5px',
+          fontSize: '9px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em',
+          padding: '2px 6px', borderRadius: '5px',
           background: sc.bg, color: sc.color, border: `1px solid ${sc.border}`,
-          display: 'inline-block',
+          display: 'inline-block', whiteSpace: 'nowrap',
         }}>
           {o.status}
         </span>
       </div>
 
+      {/* Status Pembayaran Badge (World-Class Financial Separation) */}
+      <div style={{ padding: '0 6px', textAlign: 'center' }}>
+        <span style={{
+          fontSize: '9px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em',
+          padding: '2px 7px', borderRadius: '5px',
+          background: psc.bg, color: psc.color, border: `1px solid ${psc.border}`,
+          display: 'inline-flex', alignItems: 'center', gap: '3px', whiteSpace: 'nowrap',
+        }}>
+          {effectivePayStatus === 'paid' && <span style={{ fontSize: '9px' }}>✓</span>}
+          {psc.label}
+        </span>
+      </div>
+
       {/* WhatsApp chat button */}
-      <div style={{ padding: '0 12px 0 8px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+      <div style={{ padding: '0 10px 0 6px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
         {o.customer?.phone ? (
           <a
             href={`https://wa.me/${o.customer.phone}`}
@@ -172,9 +220,11 @@ function OrderRow({ o, onSelect, style }: { o: any; onSelect: (o: any) => void; 
 export function OrderTable({
   orders,
   onSelectOrder,
+  timezone = DEFAULT_TIMEZONE,
 }: {
   orders: any[]
   onSelectOrder: (o: any) => void
+  timezone?: string
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -187,8 +237,8 @@ export function OrderTable({
 
   const colHeader = (label: string, align: 'left' | 'center' | 'right' = 'left', extraStyles?: React.CSSProperties) => (
     <div style={{
-      fontSize: '9px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.16em',
-      color: 'var(--su-text-faint)', textAlign: align, padding: '0 8px', ...extraStyles
+      fontSize: '9px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.14em',
+      color: 'var(--su-text-faint)', textAlign: align, padding: '0 6px', ...extraStyles
     }}>
       {label}
     </div>
@@ -208,7 +258,7 @@ export function OrderTable({
         {/* Table Header */}
         <div style={{
           display: 'grid',
-          gridTemplateColumns: '90px 180px 100px 240px 60px 110px 100px 100px 130px 110px 60px',
+          gridTemplateColumns: '90px 180px 100px 210px 50px 100px 90px 90px 130px 105px 115px 55px',
           background: '#FAFAF8',
           borderBottom: '1px solid var(--su-border)',
           height: '36px',
@@ -226,7 +276,8 @@ export function OrderTable({
           {colHeader('Ongkir', 'right')}
           {colHeader('Diskon', 'right')}
           {colHeader('Total Order', 'right', { paddingRight: '12px' })}
-          {colHeader('Status', 'center')}
+          {colHeader('Status Order', 'center')}
+          {colHeader('Status Bayar', 'center')}
           {colHeader('Aksi', 'center')}
         </div>
 
@@ -246,6 +297,7 @@ export function OrderTable({
                 o={o}
                 onSelect={onSelectOrder}
                 style={{ minHeight: `${ROW_HEIGHT}px` }}
+                timezone={timezone}
               />
             ))}
           </div>
