@@ -190,8 +190,9 @@ export default function OrderHistoryModal({
             Post-Purchase Service Hub
           </span>
           {unpaidCount > 0 && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-black bg-amber-500 text-white px-2.5 py-0.5 rounded-full shadow-xs animate-pulse">
-              ⚠️ {unpaidCount} Tagihan Piutang
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-black bg-rose-600 text-white px-2.5 py-0.5 rounded-full shadow-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+              {unpaidCount} Tagihan Piutang
             </span>
           )}
         </div>
@@ -211,7 +212,7 @@ export default function OrderHistoryModal({
       <div className="flex items-center gap-2 text-xs text-slate-500">
         <span>Menampilkan <strong className="text-slate-800">{filteredOrders.length}</strong> transaksi POS</span>
         {unpaidCount > 0 && (
-          <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-200">
+          <span className="px-2.5 py-0.5 rounded-md text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200">
             {unpaidCount} tagihan belum lunas
           </span>
         )}
@@ -255,13 +256,13 @@ export default function OrderHistoryModal({
               onClick={() => setTabFilter('unpaid')}
               className={`px-3 py-1.5 text-xs font-black rounded-xl transition flex items-center gap-1.5 ${
                 tabFilter === 'unpaid'
-                  ? 'bg-amber-600 text-white shadow-xs'
-                  : 'bg-white border border-amber-200 text-amber-800 hover:bg-amber-50'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'bg-white border border-rose-200 text-rose-700 hover:bg-rose-50'
               }`}
             >
-              <span>⚠️ Belum Lunas</span>
+              <span>Belum Lunas</span>
               <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                tabFilter === 'unpaid' ? 'bg-amber-800 text-white' : 'bg-amber-100 text-amber-900'
+                tabFilter === 'unpaid' ? 'bg-rose-800 text-white' : 'bg-rose-100 text-rose-800 font-bold'
               }`}>
                 {unpaidCount}
               </span>
@@ -348,7 +349,7 @@ export default function OrderHistoryModal({
                       <tr 
                         key={order.id} 
                         className={`hover:bg-indigo-50/30 transition-colors ${
-                          !isPaid && !isCancelled ? 'bg-amber-50/20' : ''
+                          !isPaid && !isCancelled ? 'bg-rose-50/15' : ''
                         }`}
                       >
                         {/* No Order */}
@@ -390,10 +391,11 @@ export default function OrderHistoryModal({
                             </span>
                           ) : (
                             <div className="space-y-0.5">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-black bg-amber-100 border border-amber-300 text-amber-900 uppercase tracking-wider">
-                                <span>⚠️</span> {amountPaid > 0 ? 'Cicilan / DP' : 'Belum Bayar'}
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[10px] font-black bg-rose-50 border border-rose-200 text-rose-700 uppercase tracking-wider">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+                                {amountPaid > 0 ? 'Cicilan / DP' : 'Belum Bayar'}
                               </span>
-                              <div className="text-[10px] text-amber-800 font-black font-mono">
+                              <div className="text-[10px] text-rose-700 font-black font-mono">
                                 Sisa: {formatIDR(outstanding)}
                               </div>
                             </div>
@@ -432,14 +434,15 @@ export default function OrderHistoryModal({
                               <button
                                 type="button"
                                 onClick={() => onSelectOrder?.(order)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-black text-xs shadow-xs hover:shadow-md transition-all active:scale-95 group"
+                                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-xs hover:shadow-md transition-all active:scale-95 group cursor-pointer"
+                                title="Pelunasan Sisa Tagihan Nota"
                               >
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg className="w-3.5 h-3.5 text-emerald-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <rect x="2" y="5" width="20" height="14" rx="2" strokeWidth="2.5"/>
                                   <line x1="2" y1="10" x2="22" y2="10" strokeWidth="2.5"/>
                                 </svg>
                                 <span>Lunasi</span>
-                                <span className="bg-amber-800/60 text-amber-100 text-[10px] px-1.5 py-0.5 rounded-md font-mono">
+                                <span className="bg-emerald-950/40 text-emerald-100 text-[10px] px-2 py-0.5 rounded-md font-mono font-bold">
                                   {formatIDR(outstanding)}
                                 </span>
                               </button>
@@ -530,7 +533,7 @@ export default function OrderHistoryModal({
                     key={order.id}
                     className={`p-4 bg-white border rounded-2xl shadow-xs space-y-3 transition ${
                       !isPaid && !isCancelled
-                        ? 'border-amber-300/80 bg-amber-50/15'
+                        ? 'border-rose-200 bg-rose-50/15'
                         : 'border-slate-200'
                     }`}
                   >
@@ -553,8 +556,9 @@ export default function OrderHistoryModal({
                           Direfund
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300">
-                          ⚠️ Sisa: {formatIDR(outstanding)}
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                          Sisa: {formatIDR(outstanding)}
                         </span>
                       )}
                     </div>
@@ -579,14 +583,14 @@ export default function OrderHistoryModal({
                         <button
                           type="button"
                           onClick={() => onSelectOrder?.(order)}
-                          className="w-full py-2.5 px-3 bg-gradient-to-r from-amber-500 to-amber-600 active:from-amber-600 active:to-amber-700 text-white rounded-xl font-black text-xs shadow-xs flex items-center justify-center gap-2"
+                          className="w-full py-2.5 px-3 bg-emerald-600 active:bg-emerald-700 text-white rounded-xl font-black text-xs shadow-xs flex items-center justify-center gap-2 cursor-pointer"
                         >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg className="w-4 h-4 text-emerald-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <rect x="2" y="5" width="20" height="14" rx="2" strokeWidth="2.5"/>
                             <line x1="2" y1="10" x2="22" y2="10" strokeWidth="2.5"/>
                           </svg>
                           <span>Lunasi Sisa Tagihan</span>
-                          <span className="bg-amber-800/70 text-amber-100 text-[10px] px-1.5 py-0.5 rounded-md font-mono">
+                          <span className="bg-emerald-950/40 text-emerald-100 text-[10px] px-2 py-0.5 rounded-md font-mono font-bold">
                             {formatIDR(outstanding)}
                           </span>
                         </button>

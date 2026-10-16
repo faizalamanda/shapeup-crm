@@ -1,5 +1,6 @@
 "use client"
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { ReceiptData, getPrinterAdapter, PaperSize } from '@/lib/pos/printerAdapter'
 
 type Props = {
@@ -9,11 +10,16 @@ type Props = {
 }
 
 export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props) {
+  const [mounted, setMounted] = useState(false)
   const [paperSize, setPaperSize] = useState<PaperSize>('58mm')
   const [isPrinting, setIsPrinting] = useState(false)
   const [printMessage, setPrintMessage] = useState<string | null>(null)
 
-  if (!isOpen || !receipt) return null
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!isOpen || !receipt || !mounted) return null
 
   const handlePrint = async () => {
     setIsPrinting(true)
@@ -33,8 +39,8 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+  return createPortal(
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 overflow-y-auto">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Modal Header */}
         <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between bg-gray-50/80">
@@ -189,6 +195,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

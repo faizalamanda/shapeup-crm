@@ -1,5 +1,6 @@
 "use client"
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 
 export type PaymentMethod = 'cash' | 'bank' | 'qris'
 
@@ -39,6 +40,8 @@ export default function CashPaymentModal({
   defaultMode = 'full',
   onConfirmPayment
 }: Props) {
+  const [mounted, setMounted] = useState(false)
+
   // Mode: 'full' | 'partial' | 'split'
   const [payMode, setPayMode] = useState<'full' | 'partial' | 'split'>(defaultMode)
   
@@ -60,6 +63,10 @@ export default function CashPaymentModal({
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
     if (isOpen) {
       setPayMode(defaultMode)
       setMethod('cash')
@@ -77,7 +84,7 @@ export default function CashPaymentModal({
     }
   }, [isOpen, grandTotal])
 
-  if (!isOpen) return null
+  if (!isOpen || !mounted) return null
 
   // Calculations for Full mode
   const singleChangeAmount = Math.max(0, cashReceived - grandTotal)
@@ -247,9 +254,9 @@ export default function CashPaymentModal({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+  return createPortal(
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between bg-gray-50/80">
           <div>
@@ -304,13 +311,13 @@ export default function CashPaymentModal({
             {payMode === 'partial' && (
               <div className="mt-2 pt-2 border-t border-indigo-200/50 flex justify-between text-xs font-medium px-2 text-indigo-900">
                 <span>Dibayar: <strong>Rp {numPartialAmount.toLocaleString('id-ID')}</strong></span>
-                <span className="text-amber-700 font-bold">Sisa Tagihan: Rp {Math.max(0, grandTotal - numPartialAmount).toLocaleString('id-ID')}</span>
+                <span className="text-rose-600 font-black">Sisa Tagihan: Rp {Math.max(0, grandTotal - numPartialAmount).toLocaleString('id-ID')}</span>
               </div>
             )}
             {payMode === 'split' && (
               <div className="mt-2 pt-2 border-t border-indigo-200/50 flex justify-between text-xs font-medium px-2 text-indigo-900">
                 <span>Total Tender: <strong>Rp {totalSplitTender.toLocaleString('id-ID')}</strong></span>
-                <span className={totalSplitTender >= grandTotal ? 'text-emerald-700 font-bold' : 'text-amber-700 font-bold'}>
+                <span className={totalSplitTender >= grandTotal ? 'text-emerald-700 font-bold' : 'text-rose-600 font-black'}>
                   {totalSplitTender >= grandTotal ? 'Lunas ✓' : `Sisa: Rp ${(grandTotal - totalSplitTender).toLocaleString('id-ID')}`}
                 </span>
               </div>
@@ -367,7 +374,7 @@ export default function CashPaymentModal({
                       setCustomInput(raw)
                     }}
                     placeholder="Masukkan nominal DP..."
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 text-lg font-black text-gray-900 focus:ring-2 focus:ring-indigo-500 outline-none bg-amber-50/50"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-lg font-black text-gray-900 focus:ring-2 focus:ring-indigo-500 outline-none bg-slate-50 focus:bg-white"
                   />
                 </div>
               )}
@@ -539,7 +546,7 @@ export default function CashPaymentModal({
               (payMode === 'partial' && method === 'cash' && isPartialCashInsufficient) ||
               (payMode === 'split' && isSplitCashInsufficient)
             }
-            className="flex-1 py-3 px-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold rounded-xl text-xs sm:text-sm transition shadow-sm text-center"
+            className="flex-1 py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-[0.99] disabled:opacity-50 text-white font-bold rounded-xl text-xs sm:text-sm transition shadow-sm text-center"
           >
             {isSubmitting 
               ? 'Memproses Bayar...' 
@@ -552,6 +559,7 @@ export default function CashPaymentModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

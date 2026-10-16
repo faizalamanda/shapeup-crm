@@ -416,7 +416,8 @@ export default function POSOrderDetailModal({
                 Lunas
               </span>
             ) : isPartial ? (
-              <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+              <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
                 Cicilan / DP
               </span>
             ) : (
@@ -484,24 +485,32 @@ export default function POSOrderDetailModal({
 
             {/* Banner Status Sisa Tagihan */}
             {isCompleted && !isCancelled && outstanding > 0.01 && (
-              <div className="p-4 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-1.5 font-bold text-amber-900 text-sm">
-                    <span>⚠️ Tagihan Belum Lunas</span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-200/80 text-amber-800 font-bold">
+              <div className="p-4 bg-slate-900 text-white rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md border border-slate-800">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2.5 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30 font-black text-[10px] uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-ping" />
+                      Tagihan Belum Lunas
+                    </span>
+                    <span className="text-white font-black font-mono text-sm">
                       Sisa: {formatIDR(outstanding)}
                     </span>
                   </div>
-                  <p className="text-amber-700 text-xs">
-                    Total Belanja {formatIDR(grandTotal)}, baru diterima {formatIDR(amountPaid)}.
+                  <p className="text-slate-400 text-xs">
+                    Total Belanja <strong className="text-slate-200 font-mono">{formatIDR(grandTotal)}</strong>, baru diterima <strong className="text-slate-200 font-mono">{formatIDR(amountPaid)}</strong>.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsPayModalOpen(true)}
-                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition shadow-sm self-start sm:self-auto shrink-0"
+                  className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs transition shadow-md flex items-center justify-center gap-2 active:scale-95 self-start sm:self-auto shrink-0 cursor-pointer"
+                  title="Buka popup pelunasan sisa tagihan kasir"
                 >
-                  ➕ Bayar Sisa Tagihan
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <rect x="2" y="5" width="20" height="14" rx="2" strokeWidth="2.5"/>
+                    <line x1="2" y1="10" x2="22" y2="10" strokeWidth="2.5"/>
+                  </svg>
+                  <span>Bayar Sisa Tagihan</span>
                 </button>
               </div>
             )}
@@ -653,7 +662,7 @@ export default function POSOrderDetailModal({
                             : isVoidRecord
                             ? 'bg-rose-50/40'
                             : isRefundRecord
-                            ? 'bg-amber-50/40'
+                            ? 'bg-rose-50/30'
                             : 'hover:bg-slate-50/60'
                         }`}
                       >
@@ -669,7 +678,7 @@ export default function POSOrderDetailModal({
                               </span>
                             )}
                             {isRefundRecord && (
-                              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-extrabold text-[9px] uppercase border border-amber-200">
+                              <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-extrabold text-[9px] uppercase border border-rose-200">
                                 Refund (Pengembalian)
                               </span>
                             )}
