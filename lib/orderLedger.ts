@@ -15,7 +15,6 @@ const integrationConfigCache: Record<string, {
   defaultHppPct: number
   stockReductionStatuses: Record<string, string[]>
   journalHppStatuses: Record<string, string[]>
-  salesJournalDateBasis: Record<string, 'processing_date' | 'order_date'>
   timestamp: number
 }> = {}
 
@@ -37,15 +36,13 @@ async function getIntegrationConfigs(businessId: string, platform: string, supab
     return {
       defaultHppPct: cached.defaultHppPct,
       stockReductionStatuses: cached.stockReductionStatuses[pKey] || ['shipped', 'completed'],
-      journalHppStatuses: cached.journalHppStatuses[pKey] || ['shipped', 'completed'],
-      salesJournalDateBasis: cached.salesJournalDateBasis?.[pKey] || 'processing_date'
+      journalHppStatuses: cached.journalHppStatuses[pKey] || ['shipped', 'completed']
     }
   }
 
   let defaultHppPct = 0
   let stockReductionStatuses = ['shipped', 'completed']
   let journalHppStatuses = ['shipped', 'completed']
-  let salesJournalDateBasis: 'processing_date' | 'order_date' = 'processing_date'
 
   try {
     const { data: configRows } = await supabase
@@ -80,24 +77,17 @@ async function getIntegrationConfigs(businessId: string, platform: string, supab
       journalHppStatuses = globalCreds.global_journal_hpp_status
     }
 
-    if (!useGlobal && platformCreds.sales_journal_date_basis) {
-      salesJournalDateBasis = platformCreds.sales_journal_date_basis === 'order_date' ? 'order_date' : 'processing_date'
-    } else if (globalCreds.global_sales_journal_date_basis) {
-      salesJournalDateBasis = globalCreds.global_sales_journal_date_basis === 'order_date' ? 'order_date' : 'processing_date'
-    }
-
     integrationConfigCache[businessId] = {
       defaultHppPct,
       stockReductionStatuses: { ...(cached?.stockReductionStatuses || {}), [pKey]: stockReductionStatuses },
       journalHppStatuses: { ...(cached?.journalHppStatuses || {}), [pKey]: journalHppStatuses },
-      salesJournalDateBasis: { ...(cached?.salesJournalDateBasis || {}), [pKey]: salesJournalDateBasis },
       timestamp: now
     }
   } catch (err) {
     console.warn('Failed to load integration config:', err)
   }
 
-  return { defaultHppPct, stockReductionStatuses, journalHppStatuses, salesJournalDateBasis }
+  return { defaultHppPct, stockReductionStatuses, journalHppStatuses }
 }
 
 export async function syncOrderToLedger(
@@ -132,7 +122,8 @@ export async function syncOrderToLedger(
       getIntegrationConfigs(businessId, platform, supabase),
     ])
 
-    const { defaultHppPct, stockReductionStatuses, journalHppStatuses, salesJournalDateBasis } = integrationConfigResult
+    const { defaultHppPct, stockReductionStatuses, journalHppStatuses } = integrationConfigResult
+    const isDelayedJournalTrigger = journalHppStatuses.some((s: string) => ['processing', 'shipped', 'completed'].includes(s))
 
     // resolveOrderProducts dijalankan setelah config selesai (butuh defaultHppPct)
     const matchedProducts = await resolveOrderProducts(items, businessId, defaultHppPct, supabase)
@@ -263,7 +254,8 @@ export async function syncOrderToLedger(
         }
 
         let salesDate = order.order_date_utc || order.order_date || new Date().toISOString()
-        if (salesJournalDateBasis === 'processing_date') {
+        // Setting No. 2: Jika jurnal dipicu pada status processing, shipped, atau completed, gunakan timestamp operasional/pembayaran
+        if (isDelayedJournalTrigger) {
           if (paymentDate && !isCod) {
             salesDate = paymentDate
           } else if (orderMoveDate) {
@@ -315,9 +307,9 @@ export async function syncOrderToLedger(
           }
         }
 
-        // Align salesTx.date with setting if different
+        // Align salesTx.date dengan Setting No. 2 (journalHppStatuses) jika berbeda
         let expectedSalesDate = order.order_date_utc || order.order_date || new Date().toISOString()
-        if (salesJournalDateBasis === 'processing_date') {
+        if (isDelayedJournalTrigger) {
           if (paymentDate && !isCod) {
             expectedSalesDate = paymentDate
           } else if (orderMoveDate) {

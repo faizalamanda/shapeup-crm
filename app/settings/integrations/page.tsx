@@ -49,7 +49,6 @@ export default function IntegrationsSettingsPage() {
     use_global_settings: boolean
     stock_reduction_status: string[]
     journal_hpp_status: string[]
-    sales_journal_date_basis: 'processing_date' | 'order_date'
   }>({
     store_url: '',
     consumer_key: '',
@@ -57,8 +56,7 @@ export default function IntegrationsSettingsPage() {
     is_active: true,
     use_global_settings: true,
     stock_reduction_status: ['shipped', 'completed'],
-    journal_hpp_status: ['shipped', 'completed'],
-    sales_journal_date_basis: 'processing_date'
+    journal_hpp_status: ['shipped', 'completed']
   })
 
   // YCloud Form State
@@ -138,8 +136,7 @@ export default function IntegrationsSettingsPage() {
             is_active: item.is_active ?? true,
             use_global_settings: creds.use_global_settings ?? true,
             stock_reduction_status: stockStatuses,
-            journal_hpp_status: journalStatuses,
-            sales_journal_date_basis: creds.sales_journal_date_basis === 'order_date' ? 'order_date' : 'processing_date'
+            journal_hpp_status: journalStatuses
           })
         } else if (pluginId === 'ycloud') {
           const creds = item.api_credentials || {}
@@ -206,7 +203,6 @@ export default function IntegrationsSettingsPage() {
           use_global_settings: wooForm.use_global_settings,
           stock_reduction_status: wooForm.stock_reduction_status,
           journal_hpp_status: wooForm.journal_hpp_status,
-          sales_journal_date_basis: wooForm.sales_journal_date_basis,
         }),
       })
 
@@ -1319,43 +1315,6 @@ export default function IntegrationsSettingsPage() {
                       <span className="text-[10px] text-slate-500 block">
                         Pencatatan rincian HPP line item terpisah (Debit HPP & Kredit Persediaan per produk) akan terbit saat status khusus ini terpenuhi.
                       </span>
-                    </div>
-
-                    {/* Acuan Tanggal Jurnal Penjualan Khusus WooCommerce */}
-                    <div className="space-y-1.5 pt-2 border-t border-purple-200/60">
-                      <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
-                        Acuan Tanggal Jurnal Penjualan:
-                      </label>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setWooForm({ ...wooForm, sales_journal_date_basis: 'processing_date' })}
-                          className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
-                            wooForm.sales_journal_date_basis === 'processing_date'
-                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                          }`}
-                        >
-                          <div className="font-bold text-xs">Saat Diproses / Dibayar</div>
-                          <div className={`text-[10px] ${wooForm.sales_journal_date_basis === 'processing_date' ? 'text-blue-100' : 'text-slate-500'}`}>
-                            Tanggal jurnal mengikuti waktu diproses di jam kerja (Opsi A)
-                          </div>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setWooForm({ ...wooForm, sales_journal_date_basis: 'order_date' })}
-                          className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
-                            wooForm.sales_journal_date_basis === 'order_date'
-                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                          }`}
-                        >
-                          <div className="font-bold text-xs">Saat Pesanan Masuk</div>
-                          <div className={`text-[10px] ${wooForm.sales_journal_date_basis === 'order_date' ? 'text-blue-100' : 'text-slate-500'}`}>
-                            Tanggal jurnal mengikuti waktu checkout pembeli
-                          </div>
-                        </button>
-                      </div>
                     </div>
                   </div>
                 )}

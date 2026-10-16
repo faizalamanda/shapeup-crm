@@ -109,11 +109,11 @@
 2. **Strict UTC Ingestion for Webhooks & Third-Party Integrations:**
    Setiap data waktu dari webhook pihak ketiga (seperti WooCommerce `date_created`, `date_paid`) yang berupa string waktu lokal tanpa penanda zona waktu (`+07:00` atau `Z`), **WAJIB** dikonversi atau disematkan offset zona waktu sebelum disimpan ke kolom PostgreSQL bertipe `TIMESTAMPTZ` (seperti `orders.order_date`, `transactions.date`). Lebih diutamakan selalu menggunakan field GMT/UTC murni (contoh: `woo.date_created_gmt + 'Z'`) agar tersimpan sebagai UTC sejati di basis data dan terhindar dari pergeseran ganda (*Double Timezone Shift* +7 jam) saat diformat ke zona waktu bisnis di antarmuka.
 
-3. **Dynamic Sales Journal Recognition Basis (`sales_journal_date_basis`):**
-   Sistem mendukung penentuan tanggal pencatatan jurnal penjualan yang dapat disesuaikan per unit bisnis (`global_sales_journal_date_basis` / `sales_journal_date_basis`):
-   - `processing_date` (Default): Tanggal jurnal penjualan dicatat mengikuti waktu pesanan diproses atau diverifikasi pembayarannya (jam kerja operasional / `date_paid`).
-   - `order_date`: Tanggal jurnal penjualan dicatat mengikuti waktu pertama kali pelanggan membuat pesanan di web.
-   Fungsi orkestrasi `syncOrderToLedger()` wajib membaca acuan ini secara dinamis dari `getIntegrationConfigs()` dan dilarang meng-hardcode salah satu acuan tanggal.
+3. **Unified Sales & HPP Journal Trigger & Date Basis (`journalHppStatuses`):**
+   Tanggal pencatatan dan penerbitan transaksi jurnal penjualan & HPP di buku besar akuntansi dikendalikan secara tunggal (*Single Source of Truth*) melalui **Setting No. 2 (`global_journal_hpp_status` / `journal_hpp_status`)**:
+   - Jika konfigurasi mencakup status proses operasional/lanjutan (`'processing'`, `'shipped'`, `'completed'`), jurnal diterbitkan dan diberi penanggalan sesuai waktu aktual kejadian operasional (waktu verifikasi pembayaran / `date_paid` atau mutasi gudang / `updated_at`).
+   - Jika konfigurasi hanya mencakup status awal (`'pending'`), jurnal diterbitkan dan diberi penanggalan sesuai waktu checkout pemesanan awal (`order_date_utc` / `order_date`).
+   Fungsi orkestrasi `syncOrderToLedger()` wajib menggunakan `journalHppStatuses` sebagai acuan tunggal terpadu tanpa memerlukan pengaturan redundan terpisah.
 
 ## POS & Payment Ledger Standards
 
