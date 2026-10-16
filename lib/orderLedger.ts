@@ -15,8 +15,19 @@ const integrationConfigCache: Record<string, {
   defaultHppPct: number
   stockReductionStatuses: Record<string, string[]>
   journalHppStatuses: Record<string, string[]>
+  salesJournalDateBasis: Record<string, 'processing_date' | 'order_date'>
   timestamp: number
 }> = {}
+
+export function invalidateIntegrationConfigCache(businessId?: string) {
+  if (businessId) {
+    delete integrationConfigCache[businessId]
+  } else {
+    for (const k of Object.keys(integrationConfigCache)) {
+      delete integrationConfigCache[k]
+    }
+  }
+}
 
 async function getIntegrationConfigs(businessId: string, platform: string, supabase: SupabaseClient) {
   const now = Date.now()
@@ -26,13 +37,15 @@ async function getIntegrationConfigs(businessId: string, platform: string, supab
     return {
       defaultHppPct: cached.defaultHppPct,
       stockReductionStatuses: cached.stockReductionStatuses[pKey] || ['shipped', 'completed'],
-      journalHppStatuses: cached.journalHppStatuses[pKey] || ['shipped', 'completed']
+      journalHppStatuses: cached.journalHppStatuses[pKey] || ['shipped', 'completed'],
+      salesJournalDateBasis: cached.salesJournalDateBasis?.[pKey] || 'processing_date'
     }
   }
 
   let defaultHppPct = 0
   let stockReductionStatuses = ['shipped', 'completed']
   let journalHppStatuses = ['shipped', 'completed']
+  let salesJournalDateBasis: 'processing_date' | 'order_date' = 'processing_date'
 
   try {
     const { data: configRows } = await supabase
@@ -67,17 +80,24 @@ async function getIntegrationConfigs(businessId: string, platform: string, supab
       journalHppStatuses = globalCreds.global_journal_hpp_status
     }
 
+    if (!useGlobal && platformCreds.sales_journal_date_basis) {
+      salesJournalDateBasis = platformCreds.sales_journal_date_basis === 'order_date' ? 'order_date' : 'processing_date'
+    } else if (globalCreds.global_sales_journal_date_basis) {
+      salesJournalDateBasis = globalCreds.global_sales_journal_date_basis === 'order_date' ? 'order_date' : 'processing_date'
+    }
+
     integrationConfigCache[businessId] = {
       defaultHppPct,
       stockReductionStatuses: { ...(cached?.stockReductionStatuses || {}), [pKey]: stockReductionStatuses },
       journalHppStatuses: { ...(cached?.journalHppStatuses || {}), [pKey]: journalHppStatuses },
+      salesJournalDateBasis: { ...(cached?.salesJournalDateBasis || {}), [pKey]: salesJournalDateBasis },
       timestamp: now
     }
   } catch (err) {
     console.warn('Failed to load integration config:', err)
   }
 
-  return { defaultHppPct, stockReductionStatuses, journalHppStatuses }
+  return { defaultHppPct, stockReductionStatuses, journalHppStatuses, salesJournalDateBasis }
 }
 
 export async function syncOrderToLedger(
@@ -112,7 +132,7 @@ export async function syncOrderToLedger(
       getIntegrationConfigs(businessId, platform, supabase),
     ])
 
-    const { defaultHppPct, stockReductionStatuses, journalHppStatuses } = integrationConfigResult
+    const { defaultHppPct, stockReductionStatuses, journalHppStatuses, salesJournalDateBasis } = integrationConfigResult
 
     // resolveOrderProducts dijalankan setelah config selesai (butuh defaultHppPct)
     const matchedProducts = await resolveOrderProducts(items, businessId, defaultHppPct, supabase)
@@ -242,6 +262,17 @@ export async function syncOrderToLedger(
           if (hppLines.length > 0) journalLines.push(...hppLines)
         }
 
+        let salesDate = order.order_date_utc || order.order_date || new Date().toISOString()
+        if (salesJournalDateBasis === 'processing_date') {
+          if (paymentDate && !isCod) {
+            salesDate = paymentDate
+          } else if (orderMoveDate) {
+            salesDate = orderMoveDate
+          } else if (order.updated_at) {
+            salesDate = new Date(order.updated_at).toISOString()
+          }
+        }
+
         if (isPartialCommit && salesTx) {
           const dbJournalLines = journalLines.map(line => ({
             transaction_id: salesTx.id,
@@ -254,7 +285,7 @@ export async function syncOrderToLedger(
           await postJournalTransaction(
             businessId, 
             orderId, 
-            order.order_date_utc || order.order_date || new Date().toISOString(), 
+            salesDate, 
             `Penjualan ${platform} #${orderNumber}`, 
             journalLines, 
             supabase,
@@ -282,6 +313,22 @@ export async function syncOrderToLedger(
             }))
             await supabase.from('journal_lines').insert(dbHppLines)
           }
+        }
+
+        // Align salesTx.date with setting if different
+        let expectedSalesDate = order.order_date_utc || order.order_date || new Date().toISOString()
+        if (salesJournalDateBasis === 'processing_date') {
+          if (paymentDate && !isCod) {
+            expectedSalesDate = paymentDate
+          } else if (orderMoveDate) {
+            expectedSalesDate = orderMoveDate
+          } else if (order.updated_at) {
+            expectedSalesDate = new Date(order.updated_at).toISOString()
+          }
+        }
+        if (salesTx && expectedSalesDate && salesTx.date !== expectedSalesDate) {
+          await supabase.from('transactions').update({ date: expectedSalesDate }).eq('id', salesTx.id)
+          salesTx.date = expectedSalesDate
         }
       }
 

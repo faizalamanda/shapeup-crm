@@ -19,10 +19,12 @@ export default function GlobalInventorySettingsPage() {
     global_stock_reduction_status: string[]
     global_journal_hpp_status: string[]
     global_default_hpp_percentage: number
+    global_sales_journal_date_basis: 'processing_date' | 'order_date'
   }>({
     global_stock_reduction_status: ['shipped', 'completed'],
     global_journal_hpp_status: ['shipped', 'completed'],
-    global_default_hpp_percentage: 0
+    global_default_hpp_percentage: 0,
+    global_sales_journal_date_basis: 'processing_date'
   })
 
   // Fetch Active Business Inventory Settings
@@ -45,7 +47,10 @@ export default function GlobalInventorySettingsPage() {
             : ['shipped', 'completed'],
           global_default_hpp_percentage: typeof json.settings.global_default_hpp_percentage === 'number'
             ? json.settings.global_default_hpp_percentage
-            : 0
+            : 0,
+          global_sales_journal_date_basis: json.settings.global_sales_journal_date_basis === 'order_date'
+            ? 'order_date'
+            : 'processing_date'
         })
       }
     } catch (err) {
@@ -283,6 +288,71 @@ export default function GlobalInventorySettingsPage() {
                 </div>
                 <span className="text-[11px] text-amber-700/80 block">
                   Contoh: Jika diset 0%, produk baru dari integrasi akan ber-HPP Rp 0. Jika diset 60% dan harga jual Rp 100.000, HPP awal otomatis terisi Rp 60.000.
+                </span>
+              </div>
+
+              {/* Acuan Tanggal Jurnal Penjualan */}
+              <div className="p-5 bg-emerald-50/50 border border-emerald-200 rounded-xl space-y-3">
+                <div>
+                  <h3 className="font-bold text-xs text-emerald-900 uppercase tracking-wider">
+                    4. Acuan Tanggal Jurnal Penjualan
+                  </h3>
+                  <p className="text-xs text-emerald-800 mt-1 leading-relaxed">
+                    Tentukan waktu yang dijadikan tanggal pencatatan transaksi jurnal penjualan di buku besar akuntansi.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setGlobalForm({ ...globalForm, global_sales_journal_date_basis: 'processing_date' })}
+                    className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+                      globalForm.global_sales_journal_date_basis === 'processing_date'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-bold text-xs uppercase tracking-wider">
+                        Saat Pesanan Diproses / Dibayar
+                      </span>
+                      {globalForm.global_sales_journal_date_basis === 'processing_date' && (
+                        <span className="text-[10px] font-extrabold bg-white/20 px-2 py-0.5 rounded-full">Dipilih</span>
+                      )}
+                    </div>
+                    <p className={`text-[11px] leading-relaxed ${
+                      globalForm.global_sales_journal_date_basis === 'processing_date' ? 'text-emerald-100' : 'text-slate-500'
+                    }`}>
+                      Jurnal penjualan bertanggal saat pesanan mulai diproses/dibayar di jam kerja operasional (Opsi A - Rekomendasi).
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setGlobalForm({ ...globalForm, global_sales_journal_date_basis: 'order_date' })}
+                    className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+                      globalForm.global_sales_journal_date_basis === 'order_date'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-bold text-xs uppercase tracking-wider">
+                        Saat Pesanan Masuk (Order Date)
+                      </span>
+                      {globalForm.global_sales_journal_date_basis === 'order_date' && (
+                        <span className="text-[10px] font-extrabold bg-white/20 px-2 py-0.5 rounded-full">Dipilih</span>
+                      )}
+                    </div>
+                    <p className={`text-[11px] leading-relaxed ${
+                      globalForm.global_sales_journal_date_basis === 'order_date' ? 'text-emerald-100' : 'text-slate-500'
+                    }`}>
+                      Jurnal penjualan bertanggal saat pembeli pertama kali membuat pesanan (waktu checkout di toko online).
+                    </p>
+                  </button>
+                </div>
+                <span className="text-[11px] text-emerald-700/80 block">
+                  Pengaturan ini fleksibel dan berlaku untuk pengakuan tanggal transaksi buku besar unit bisnis ini.
                 </span>
               </div>
 

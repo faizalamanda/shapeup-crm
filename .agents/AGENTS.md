@@ -109,6 +109,12 @@
 2. **Strict UTC Ingestion for Webhooks & Third-Party Integrations:**
    Setiap data waktu dari webhook pihak ketiga (seperti WooCommerce `date_created`, `date_paid`) yang berupa string waktu lokal tanpa penanda zona waktu (`+07:00` atau `Z`), **WAJIB** dikonversi atau disematkan offset zona waktu sebelum disimpan ke kolom PostgreSQL bertipe `TIMESTAMPTZ` (seperti `orders.order_date`, `transactions.date`). Lebih diutamakan selalu menggunakan field GMT/UTC murni (contoh: `woo.date_created_gmt + 'Z'`) agar tersimpan sebagai UTC sejati di basis data dan terhindar dari pergeseran ganda (*Double Timezone Shift* +7 jam) saat diformat ke zona waktu bisnis di antarmuka.
 
+3. **Dynamic Sales Journal Recognition Basis (`sales_journal_date_basis`):**
+   Sistem mendukung penentuan tanggal pencatatan jurnal penjualan yang dapat disesuaikan per unit bisnis (`global_sales_journal_date_basis` / `sales_journal_date_basis`):
+   - `processing_date` (Default): Tanggal jurnal penjualan dicatat mengikuti waktu pesanan diproses atau diverifikasi pembayarannya (jam kerja operasional / `date_paid`).
+   - `order_date`: Tanggal jurnal penjualan dicatat mengikuti waktu pertama kali pelanggan membuat pesanan di web.
+   Fungsi orkestrasi `syncOrderToLedger()` wajib membaca acuan ini secara dinamis dari `getIntegrationConfigs()` dan dilarang meng-hardcode salah satu acuan tanggal.
+
 ## POS & Payment Ledger Standards
 
 1. **Strict POS Session Gating:** Setiap transaksi kasir (checkout POS, pembayaran cicilan, dan void pembayaran) **WAJIB** memvalidasi keberadaan shift kasir aktif (`pos_shifts.status = 'open'`) milik pengguna. Jika shift belum dibuka, API wajib mengembalikan HTTP 403 Forbidden.

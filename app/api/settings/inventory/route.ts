@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
+import { invalidateIntegrationConfigCache } from '@/lib/orderLedger'
 
 // GET: Fetch business global inventory & stock reduction settings
 export async function GET() {
@@ -27,6 +28,7 @@ export async function GET() {
         global_stock_reduction_status: creds.global_stock_reduction_status || ['shipped', 'completed'],
         global_journal_hpp_status: creds.global_journal_hpp_status || ['shipped', 'completed'],
         global_default_hpp_percentage: typeof creds.global_default_hpp_percentage === 'number' ? creds.global_default_hpp_percentage : 0,
+        global_sales_journal_date_basis: creds.global_sales_journal_date_basis || 'processing_date',
         updated_at: creds.updated_at || null
       }
     })
@@ -44,7 +46,7 @@ export async function POST(req: Request) {
     const { user, businessId: activeBid, supabaseAdmin: admin } = ctx
 
     const body = await req.json()
-    const { global_stock_reduction_status, global_journal_hpp_status, global_default_hpp_percentage } = body
+    const { global_stock_reduction_status, global_journal_hpp_status, global_default_hpp_percentage, global_sales_journal_date_basis } = body
 
     // Check if record already exists
     const { data: existingRows } = await admin
@@ -67,6 +69,9 @@ export async function POST(req: Request) {
       global_default_hpp_percentage: typeof global_default_hpp_percentage === 'number' && !isNaN(global_default_hpp_percentage)
         ? Math.max(0, Math.min(100, global_default_hpp_percentage))
         : 0,
+      global_sales_journal_date_basis: global_sales_journal_date_basis === 'order_date'
+        ? 'order_date'
+        : 'processing_date',
       updated_at: new Date().toISOString()
     }
 
@@ -102,6 +107,9 @@ export async function POST(req: Request) {
       if (insertErr) throw insertErr
       resultData = inserted
     }
+
+    // Invalidate in-memory cache
+    invalidateIntegrationConfigCache(activeBid)
 
     return NextResponse.json({
       success: true,
