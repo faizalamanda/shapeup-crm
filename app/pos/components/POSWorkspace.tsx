@@ -9,6 +9,7 @@ import ShiftModal from './ShiftModal'
 import HoldModal from './HoldModal'
 import AddCustomerModal from '../../orders/pos/components/AddCustomerModal'
 import OrderHistoryModal from '../../orders/pos/components/OrderHistoryModal'
+import POSOrderDetailModal from './POSOrderDetailModal'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
 import { useUserContext } from '@/components/UserContext'
 import { formatDisplayDate } from '@/lib/timeUtils'
@@ -90,6 +91,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   const [isHoldModalOpen, setIsHoldModalOpen] = useState(false)
   const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false)
   const [isOrderHistoryOpen, setIsOrderHistoryOpen] = useState(false)
+  const [selectedOrderForDetail, setSelectedOrderForDetail] = useState<any | null>(null)
 
   // Receipt & Payment Data
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null)
@@ -1179,7 +1181,29 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           isOpen={isOrderHistoryOpen}
           onClose={() => setIsOrderHistoryOpen(false)}
           businessId={businessId}
+          timezone={activeBusiness?.timezone}
+          onSelectOrder={(order) => {
+            setIsOrderHistoryOpen(false)
+            setSelectedOrderForDetail(order)
+          }}
           onRefundCompleted={() => {
+            if (businessId) loadCatalogAndCustomers(businessId)
+          }}
+        />
+      )}
+
+      {selectedOrderForDetail && (
+        <POSOrderDetailModal
+          isOpen={Boolean(selectedOrderForDetail)}
+          onClose={() => setSelectedOrderForDetail(null)}
+          order={selectedOrderForDetail}
+          timezone={activeBusiness?.timezone}
+          businessName={activeBusiness?.name || 'ShapeUp Store'}
+          cashierName={activeShift?.cashier_name || userProfile?.full_name || 'Kasir'}
+          onRefundSuccess={() => {
+            if (businessId) loadCatalogAndCustomers(businessId)
+          }}
+          onOrderUpdated={() => {
             if (businessId) loadCatalogAndCustomers(businessId)
           }}
         />

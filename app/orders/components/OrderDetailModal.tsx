@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { supabase } from '@/lib/supabase'
 import { formatDisplayDate, DEFAULT_TIMEZONE } from '@/lib/timeUtils'
@@ -8,10 +8,12 @@ export function OrderDetailModal({
   order,
   onClose,
   timezone = DEFAULT_TIMEZONE,
+  onOrderUpdated,
 }: {
   order: any
   onClose: () => void
   timezone?: string
+  onOrderUpdated?: () => void
 }) {
   const [activeTab, setActiveTab] = useState<'items' | 'journal' | 'payments'>('items')
   const [loading, setLoading] = useState(false)
@@ -19,6 +21,82 @@ export function OrderDetailModal({
   const [transactions, setTransactions] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
   const [loadingPayments, setLoadingPayments] = useState(false)
+
+  const fetchJournal = useCallback(async (targetOrderId: string) => {
+    if (!targetOrderId) return
+    setLoading(true)
+    setError(null)
+    try {
+      const { data, error: fetchErr } = await supabase
+        .from('transactions')
+        .select(`
+          id,
+          date,
+          description,
+          journal_lines (
+            id,
+            debit,
+            credit,
+            accounts (
+              id,
+              code,
+              name,
+              type
+            )
+          )
+        `)
+        .eq('order_id', targetOrderId)
+        .order('date', { ascending: true })
+
+      if (fetchErr) throw fetchErr
+      setTransactions(data || [])
+    } catch (err: any) {
+      console.error('Error fetching journal lines:', err)
+      setError(err.message || 'Gagal memuat data jurnal')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const fetchPayments = useCallback(async (targetOrderId: string) => {
+    if (!targetOrderId) return
+    setLoadingPayments(true)
+    try {
+      const { data, error: payErr } = await supabase
+        .from('order_payments')
+        .select(`
+          id,
+          date,
+          payment_kind,
+          payment_method,
+          amount,
+          cash_received,
+          change_amount,
+          reference_number,
+          notes,
+          created_at,
+          transaction_id,
+          transactions (
+            id,
+            date
+          ),
+          pos_shifts (
+            id,
+            cashier_name
+          )
+        `)
+        .eq('order_id', targetOrderId)
+        .order('created_at', { ascending: true })
+
+      if (!payErr && data) {
+        setPayments(data)
+      }
+    } catch (err) {
+      console.warn('Error fetching order payments:', err)
+    } finally {
+      setLoadingPayments(false)
+    }
+  }, [])
 
   // Extract orderId synchronously before async closure (AGENTS.md rule)
   useEffect(() => {
@@ -29,84 +107,10 @@ export function OrderDetailModal({
       return
     }
 
-    async function fetchJournal() {
-      setLoading(true)
-      setError(null)
-      try {
-        const { data, error: fetchErr } = await supabase
-          .from('transactions')
-          .select(`
-            id,
-            date,
-            description,
-            journal_lines (
-              id,
-              debit,
-              credit,
-              accounts (
-                id,
-                code,
-                name,
-                type
-              )
-            )
-          `)
-          .eq('order_id', orderId)
-          .order('date', { ascending: true })
-
-        if (fetchErr) throw fetchErr
-        setTransactions(data || [])
-      } catch (err: any) {
-        console.error('Error fetching journal lines:', err)
-        setError(err.message || 'Gagal memuat data jurnal')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    async function fetchPayments() {
-      setLoadingPayments(true)
-      try {
-        const { data, error: payErr } = await supabase
-          .from('order_payments')
-          .select(`
-            id,
-            date,
-            payment_kind,
-            payment_method,
-            amount,
-            cash_received,
-            change_amount,
-            reference_number,
-            notes,
-            created_at,
-            transaction_id,
-            transactions (
-              id,
-              date
-            ),
-            pos_shifts (
-              id,
-              cashier_name
-            )
-          `)
-          .eq('order_id', orderId)
-          .order('created_at', { ascending: true })
-
-        if (!payErr && data) {
-          setPayments(data)
-        }
-      } catch (err) {
-        console.warn('Error fetching order payments:', err)
-      } finally {
-        setLoadingPayments(false)
-      }
-    }
-
     setActiveTab('items')
-    fetchJournal()
-    fetchPayments()
-  }, [order?.id])
+    fetchJournal(orderId)
+    fetchPayments(orderId)
+  }, [order?.id, fetchJournal, fetchPayments])
 
   if (!order) return null
 

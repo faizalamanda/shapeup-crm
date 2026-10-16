@@ -363,6 +363,11 @@ export default function OrderPage() {
         order={selectedOrder} 
         onClose={() => setSelectedOrder(null)} 
         timezone={activeBiz?.timezone}
+        onOrderUpdated={() => {
+          if (activeBizId) {
+            fetchMetricsAndOrders(activeBizId, searchQuery, rules, currentPage, pageSize, true)
+          }
+        }}
       />
     </div>
   )
