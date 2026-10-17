@@ -229,6 +229,16 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   // Enable native mobile back button navigation to onboarding hub and parent routes
   useMobileBackToHome()
 
+  // Forward recovery flow hash (#access_token=...&type=recovery) to /reset-password if landed on other routes (e.g. root /)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && pathname !== '/reset-password') {
+      const hash = window.location.hash
+      if (hash && (hash.includes('type=recovery') || (hash.includes('access_token=') && hash.includes('type=recovery')))) {
+        window.location.replace(`/reset-password${hash}`)
+      }
+    }
+  }, [pathname])
+
   // Prevent background scrolling when mobile menu is open
   useEffect(() => {
     if (isMobileMenuOpen) {

@@ -15,6 +15,13 @@ function ResetPasswordForm() {
   const [isAuthorized, setIsAuthorized] = useState(false)
   const [invalidReason, setInvalidReason] = useState('')
   
+  // OTP Verification Fallback States
+  const [otpEmail, setOtpEmail] = useState('')
+  const [otpCode, setOtpCode] = useState('')
+  const [otpLoading, setOtpLoading] = useState(false)
+  const [otpError, setOtpError] = useState('')
+  const [showOtpManual, setShowOtpManual] = useState(false)
+
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const [success, setSuccess] = useState(false)
@@ -25,24 +32,47 @@ function ResetPasswordForm() {
 
   useEffect(() => {
     let mounted = true
+    const emailParam = searchParams.get('email')
+    if (emailParam) {
+      setOtpEmail(emailParam)
+    }
 
     async function verifyAuth() {
       try {
-        // 1. Check query parameters for explicit errors (e.g. from redirect)
+        // 1. Check token_hash in query params (Anti-Bot Safe Standard Pattern)
+        const tokenHash = searchParams.get('token_hash')
+        const recoveryType = (searchParams.get('type') || 'recovery') as any
+        if (tokenHash) {
+          const { data, error } = await supabase.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: recoveryType === 'recovery' ? 'recovery' : 'email',
+          })
+          if (!error && data?.session && mounted) {
+            setIsAuthorized(true)
+            setCheckingSession(false)
+            return
+          }
+          if (error && mounted) {
+            console.warn('[ResetPassword] verifyOtp token_hash failed:', error.message)
+          }
+        }
+
+        // 2. Check query parameters for explicit errors (e.g. from redirect)
         const qError = searchParams.get('error')
         const qErrorCode = searchParams.get('error_code')
         const qErrorDesc = searchParams.get('error_description')
 
         if (qErrorCode === 'otp_expired' || qErrorDesc?.toLowerCase().includes('expired')) {
           if (mounted) {
-            setInvalidReason('Tautan ini telah kedaluwarsa atau sudah pernah digunakan sebelumnya (tautan reset password hanya berlaku 1 kali pakai). Silakan ajukan permintaan baru.')
+            setInvalidReason('Tautan ini telah kedaluwarsa atau sudah terverifikasi otomatis oleh sistem keamanan email. Jangan khawatir, Anda masih dapat memasukkan 6-digit kode OTP dari email di bawah ini.')
             setIsAuthorized(false)
+            setShowOtpManual(true)
             setCheckingSession(false)
           }
           return
         }
 
-        // 2. Check PKCE code in query params
+        // 3. Check PKCE code in query params
         const code = searchParams.get('code')
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code)
@@ -53,7 +83,7 @@ function ResetPasswordForm() {
           }
         }
 
-        // 3. Check hash fragment (implicit recovery flow: #access_token=... or #error=...)
+        // 4. Check hash fragment (implicit recovery flow: #access_token=... or #error=...)
         if (typeof window !== 'undefined' && window.location.hash) {
           const hashClean = window.location.hash.startsWith('#')
             ? window.location.hash.slice(1)
@@ -66,8 +96,9 @@ function ResetPasswordForm() {
 
           if (hErrorCode === 'otp_expired' || hErrorDesc?.toLowerCase().includes('expired')) {
             if (mounted) {
-              setInvalidReason('Tautan ini telah kedaluwarsa atau sudah pernah diklik sebelumnya (tautan reset password Supabase hanya berlaku 1 kali pakai). Silakan minta tautan baru.')
+              setInvalidReason('Tautan ini telah kedaluwarsa atau sudah terverifikasi otomatis oleh sistem keamanan email. Jangan khawatir, Anda masih dapat memasukkan 6-digit kode OTP dari email di bawah ini.')
               setIsAuthorized(false)
+              setShowOtpManual(true)
               setCheckingSession(false)
             }
             return
@@ -89,7 +120,7 @@ function ResetPasswordForm() {
           }
         }
 
-        // 4. Check if there is already an active session
+        // 5. Check if there is already an active session
         const { data: { session } } = await supabase.auth.getSession()
         if (session && mounted) {
           setIsAuthorized(true)
@@ -97,7 +128,7 @@ function ResetPasswordForm() {
           return
         }
 
-        // 5. Also check getCachedUser or getUser
+        // 6. Also check getCachedUser or getUser
         const { data: { user } } = await supabase.auth.getUser()
         if (user && mounted) {
           setIsAuthorized(true)
@@ -105,7 +136,7 @@ function ResetPasswordForm() {
           return
         }
 
-        // 6. Give GoTrue background listener a brief 400ms buffer to finalize in case of slow hydration
+        // 7. Give GoTrue background listener a brief 400ms buffer to finalize in case of slow hydration
         await new Promise(r => setTimeout(r, 400))
         if (!mounted) return
 
@@ -145,6 +176,51 @@ function ResetPasswordForm() {
       authListener?.subscription?.unsubscribe()
     }
   }, [searchParams])
+
+  // Handle manual 6-digit OTP verification fallback
+  const handleVerifyOtpManual = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!otpEmail.trim()) {
+      setOtpError('Silakan masukkan alamat email Anda.')
+      return
+    }
+    const cleanCode = otpCode.replace(/\D/g, '').trim()
+    if (cleanCode.length !== 6) {
+      setOtpError('Kode OTP harus terdiri dari 6 digit angka.')
+      return
+    }
+
+    setOtpLoading(true)
+    setOtpError('')
+
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: otpEmail.trim().toLowerCase(),
+        token: cleanCode,
+        type: 'recovery',
+      })
+
+      if (error) {
+        let msg = error.message
+        if (msg.toLowerCase().includes('expired')) {
+          msg = 'Kode OTP telah kedaluwarsa. Silakan ajukan permintaan reset baru.'
+        } else if (msg.toLowerCase().includes('invalid')) {
+          msg = 'Kode OTP yang Anda masukkan salah. Periksa kembali email Anda.'
+        }
+        setOtpError(msg)
+        return
+      }
+
+      if (data?.session) {
+        setIsAuthorized(true)
+        setInvalidReason('')
+      }
+    } catch (err: any) {
+      setOtpError(err?.message || 'Gagal memverifikasi kode OTP.')
+    } finally {
+      setOtpLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (!success) return
@@ -242,21 +318,89 @@ function ResetPasswordForm() {
               <line x1="12" y1="17" x2="12.01" y2="17"/>
             </svg>
           </div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Tautan Tidak Valid</h2>
-          <p className="text-slate-500 text-sm mt-2 leading-relaxed">
-            {invalidReason || 'Sesi reset password tidak ditemukan atau tautan ini telah kedaluwarsa. Silakan ajukan permintaan reset password baru.'}
+          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Tautan Kedaluwarsa</h2>
+          <p className="text-slate-500 text-xs mt-2 leading-relaxed">
+            {invalidReason || 'Tautan ini telah kedaluwarsa atau sudah terverifikasi otomatis oleh sistem keamanan email.'}
           </p>
 
-          <div className="mt-6 space-y-3">
+          {/* Form Verifikasi 6-Digit Kode OTP */}
+          <div className="mt-6 p-5 bg-slate-50/80 rounded-2xl border border-slate-200/80 text-left">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="w-2 h-2 rounded-full bg-blue-600" />
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Verifikasi via Kode OTP 6-Digit
+              </h3>
+            </div>
+            <p className="text-[11px] text-slate-500 mb-4 leading-relaxed">
+              Jika tautan di email terlanjur hangus, masukkan 6-digit kode OTP dari email Anda di bawah ini:
+            </p>
+
+            {otpError && (
+              <div className="mb-3 p-3 bg-red-50 text-red-600 text-xs font-semibold rounded-xl border border-red-100 flex items-center gap-2">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                <span>{otpError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleVerifyOtpManual} className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Email Akun</label>
+                <input
+                  type="email"
+                  value={otpEmail}
+                  onChange={(e) => setOtpEmail(e.target.value)}
+                  placeholder="nama@email.com"
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Kode OTP 6-Digit</label>
+                <input
+                  type="text"
+                  maxLength={6}
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="123456"
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-center text-lg font-black tracking-[0.3em] text-slate-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={otpLoading || otpCode.length !== 6 || !otpEmail.trim()}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-xs shadow-md shadow-blue-500/20 transition-all disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2 cursor-pointer mt-1"
+              >
+                {otpLoading ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin text-white" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span>Memverifikasi...</span>
+                  </>
+                ) : (
+                  'Verifikasi & Buka Form Password'
+                )}
+              </button>
+            </form>
+          </div>
+
+          <div className="mt-5 space-y-2">
             <Link
               href="/forgot-password"
-              className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-2xl hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-2 text-sm"
+              className="w-full bg-slate-100 text-slate-700 font-bold py-3 rounded-xl hover:bg-slate-200 transition-all flex items-center justify-center gap-2 text-xs"
             >
-              Minta Tautan Baru
+              Minta Tautan Baru ke Email
             </Link>
             <Link
               href="/login"
-              className="w-full bg-slate-100 text-slate-700 font-bold py-3.5 rounded-2xl hover:bg-slate-200 transition-all flex items-center justify-center gap-2 text-sm"
+              className="w-full text-slate-400 hover:text-slate-600 font-semibold py-2 transition-all flex items-center justify-center gap-1 text-xs"
             >
               Kembali ke Masuk
             </Link>
