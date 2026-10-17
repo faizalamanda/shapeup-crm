@@ -166,19 +166,19 @@ function ResetPasswordForm() {
     setResendSuccess('')
 
     try {
-      // 1. Try verify with type: 'email' (from direct OTP signInWithOtp)
+      // 1. Try verify with type: 'recovery' (from resetPasswordForEmail)
       let verifyRes = await supabase.auth.verifyOtp({
         email: otpEmail.trim().toLowerCase(),
         token: cleanCode,
-        type: 'email',
+        type: 'recovery',
       })
 
-      // 2. Fallback to type: 'recovery' if sent via recovery mailer
+      // 2. Fallback to type: 'email' if sent via magiclink
       if (verifyRes.error) {
         verifyRes = await supabase.auth.verifyOtp({
           email: otpEmail.trim().toLowerCase(),
           token: cleanCode,
-          type: 'recovery',
+          type: 'email',
         })
       }
 

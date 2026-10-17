@@ -82,12 +82,30 @@ export async function forgotPasswordAction(formData: FormData) {
     const email = rawEmail.trim().toLowerCase()
     const supabase = await createClient()
 
-    // Send direct 6-digit OTP code to user email (without relying on link redirects)
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        shouldCreateUser: false,
-      },
+    let origin = ''
+    try {
+      const { headers } = await import('next/headers')
+      const headersList = await headers()
+      const host = headersList.get('x-forwarded-host') || headersList.get('host')
+      const forwardedProto = headersList.get('x-forwarded-proto')
+      const isLocal = !forwardedProto && (host?.includes('localhost') || host?.includes('127.0.0.1') || process.env.NODE_ENV === 'development')
+      const proto = forwardedProto || (isLocal ? 'http' : 'https')
+      if (host) {
+        origin = `${proto}://${host}`
+      }
+    } catch (e) {
+      // fallback if headers() fails in environment
+    }
+
+    if (!origin) {
+      origin = process.env.NEXT_PUBLIC_SITE_URL || 'https://shapeup-crm.vercel.app'
+    }
+
+    const redirectTo = `${origin}/reset-password?email=${encodeURIComponent(email)}`
+
+    // Uses recovery mailer template (recovery.html) and redirects directly to /reset-password
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo,
     })
 
     if (error) {
@@ -104,14 +122,6 @@ export async function forgotPasswordAction(formData: FormData) {
           email,
           message: 'Kode OTP baru saja dikirim ke email Anda. Silakan cek kotak masuk atau folder spam Anda.',
         }
-      }
-
-      if (
-        errorCode === 'otp_disabled' ||
-        errorMsg.includes('signups not allowed') ||
-        errorMsg.includes('user not found')
-      ) {
-        return { error: 'Akun dengan alamat email ini tidak ditemukan.' }
       }
 
       const rawMsg = String(error.message || '').trim()
