@@ -47,9 +47,12 @@ export async function GET(request: Request) {
     }
   }
 
-  // return the user to an error page with instructions
+  // If next is /reset-password, redirect directly so browser carries over any client-side hash (#access_token=...)
   if (next && next.startsWith('/reset-password')) {
-    return NextResponse.redirect(`${origin}/forgot-password?error=${encodeURIComponent('Tautan reset password sudah tidak berlaku atau kedaluwarsa. Silakan minta tautan baru.')}`)
+    const forwardedHost = request.headers.get('x-forwarded-host')
+    const isLocalEnv = process.env.NODE_ENV === 'development'
+    const targetOrigin = (!isLocalEnv && forwardedHost) ? `https://${forwardedHost}` : origin
+    return NextResponse.redirect(`${targetOrigin}${next}`)
   }
 
   return NextResponse.redirect(`${origin}/login?error=Tidak dapat memverifikasi kredensial`)

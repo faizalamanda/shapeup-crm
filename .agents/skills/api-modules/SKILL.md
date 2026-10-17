@@ -75,22 +75,30 @@ import { loginAction, registerAction, forgotPasswordAction, resetPasswordAction,
 1. **`forgotPasswordAction(formData)`:**
    - Menerima `email`, men-trim dan me-lowercase.
    - Menyelesaikan *origin* secara dinamis dari request headers (`x-forwarded-host`, `x-forwarded-proto`) dengan *fallback* ke `NEXT_PUBLIC_SITE_URL` agar valid di semua environment (localhost, preview, domain kustom).
-   - Memanggil `supabase.auth.resetPasswordForEmail(email, { redirectTo: `${origin}/auth/callback?next=/reset-password` })`.
-   - Mengembalikan `{ success: true }` atau `{ error: string }`.
+   - Memanggil `supabase.auth.resetPasswordForEmail(email, { redirectTo: `${origin}/reset-password` })`. Tautan diarahkan **langsung** ke `/reset-password` karena alur recovery Supabase menyematkan token dalam bentuk *hash fragment* (`#access_token=...&type=recovery`) yang hanya bisa dibaca di sisi klien browser (tidak dikirim ke server HTTP).
+   - Mengembalikan `{ success: true }`, `{ success: true, alreadySent: true }` (jika terkena rate limit 60 detik Supabase), atau `{ error: string }`.
 
 2. **`resetPasswordAction(formData)`:**
    - Menerima `password` dan `confirmPassword`.
    - Validasi panjang minimal 6 karakter dan kecocokan password.
    - Memperbarui kata sandi pengguna via `supabase.auth.updateUser({ password })`.
 
-3. **Supabase PKCE Callback (`app/auth/callback/route.ts`):**
-   - Menukar token `code` dari email pengguna menjadi sesi auth aktif via `exchangeCodeForSession(code)`.
-   - Mengarahkan ke parameter `next` (yaitu `/reset-password`).
-   - Jika link telah kedaluwarsa atau tidak valid, otomatis me-redirect ke `/forgot-password?error=...` dengan pesan bahasa Indonesia yang informatif.
+3. **Supabase Callback & Token Resolution (`app/auth/callback/route.ts` & `app/reset-password/page.tsx`):**
+   - **Callback Route (`app/auth/callback/route.ts`):** Jika ada token `code` PKCE, tukar via `exchangeCodeForSession(code)`. Jika tidak ada `code` namun parameter `next` mengarah ke `/reset-password` (misal tautan email lama), teruskan pengalihan (*forward redirect*) langsung ke `${targetOrigin}${next}` agar browser tetap mempertahankan *hash fragment* token.
+   - **Instant Client Token Extraction (`app/reset-password/page.tsx`):** Komponen membaca `window.location.hash` secara langsung, mengekstrak `access_token` & `refresh_token`, dan segera memanggil `supabase.auth.setSession(...)` secara sinkron/instan tanpa bergantung pada jeda *listener*.
 
-4. **Middleware Isolation Rules (`middleware.ts`):**
+4. **Middleware & Client Isolation Rules (`middleware.ts` & `UserContext.tsx`):**
    - `/forgot-password` terdaftar di `isAuthRoute` (pengguna yang sudah login otomatis dialihkan ke dashboard/onboarding).
    - `/reset-password` **DILARANG KERAS** dimasukkan ke `isAuthRoute` (karena sesi pemulihan baru saja ditukar dari email; jika masuk `isAuthRoute`, user akan ditendang ke dashboard sebelum sempat mengisi password baru) dan **DILARANG** dimasukkan ke `isProtectedRoute` (agar token/kode dapat diverifikasi terlebih dahulu di sisi client/server).
+   - Di `UserContext.tsx`, `isPublicRoute` wajib menggunakan `.startsWith()` (`currentPath.startsWith('/forgot-password')`, `currentPath.startsWith('/reset-password')`, `currentPath.startsWith('/auth')`) agar query parameter atau sub-path tidak memicu *redirect* ke halaman login.
+
+5. **Email Operation Protocol & Anti-Rate Limit Standard (`lib/supabaseServer.ts` & `lib/supabase.ts`):**
+   - **Handshake SMTP Latency:** Pengiriman email di Supabase (`/recover`, `/signup`, `/otp`, `/invite`, `/resend`, `/magiclink`) berjalan *synchronous* dengan server relay SMTP (~4–5 detik).
+   - **Ekstraksi URL Robust:** Gunakan helper `getUrlString(url)` yang memeriksa `url.url` jika parameter berupa instance `Request` agar tidak terkonversi menjadi `"[object Request]"`.
+   - **Timeout Khusus 15 Detik:** Batas timeout dinaikkan ke **15.000 ms (15 detik)** khusus untuk mutasi email agar request tidak di-abort sebelum email selesai dikirim.
+   - **Zero-Retry (`maxRetries = 0`):** Operasi mutasi email **DILARANG KERAS** menggunakan *auto-retry*. Percobaan ulang otomatis saat request pertama sedang diproses akan langsung memicu error 429 (`over_email_send_rate_limit: For security purposes, you can only request this once every 60 seconds`).
+   - **Form Locking & Progressive UX:** Kolom `<input>` dan `<button>` langsung dikunci (`disabled={loading}`) seketika formulir dikirim, dilindungi oleh `isSubmittingRef.current = true`. Tampilkan umpan balik progresif (*"Mengirim Tautan..."* -> *"Menghubungkan ke email..."*) agar pengguna tidak merasa sistem *hang*.
+   - **Graceful Rate Limit Presentation:** Jika Supabase mengembalikan *rate limit* 60 detik, tangani secara anggun sebagai konfirmasi sukses bahwa tautan sudah dikirim (`alreadySent: true`) dengan timer mundur 60 detik sebelum tombol kirim ulang aktif, bukan menampilkan error merah yang membingungkan.
 
 ---
 

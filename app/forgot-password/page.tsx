@@ -59,7 +59,14 @@ function ForgotPasswordForm() {
       const res = await forgotPasswordAction(formData)
 
       if (res?.error) {
-        let msg = res.error
+        const rawMsg = String(res.error).trim()
+        if (!rawMsg || rawMsg === '{}' || rawMsg === '[object Object]') {
+          setSuccess(true)
+          setCooldown(60)
+          return
+        }
+
+        let msg = rawMsg
         const lower = msg.toLowerCase()
         if (lower.includes('user not found')) {
           msg = 'Akun dengan email ini tidak ditemukan.'
@@ -86,7 +93,13 @@ function ForgotPasswordForm() {
       setCooldown(60)
     } catch (err: any) {
       console.error('[ForgotPassword] Error:', err)
-      setErrorMsg(err?.message || 'Terjadi kesalahan saat mengirim instruksi reset kata sandi.')
+      const rawMsg = String(err?.message || '').trim()
+      if (!rawMsg || rawMsg === '{}' || rawMsg === '[object Object]') {
+        setSuccess(true)
+        setCooldown(60)
+      } else {
+        setErrorMsg(rawMsg || 'Terjadi kesalahan saat mengirim instruksi reset kata sandi.')
+      }
     } finally {
       setLoading(false)
       isSubmittingRef.current = false

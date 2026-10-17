@@ -73,57 +73,72 @@ export async function logoutAction() {
 }
 
 export async function forgotPasswordAction(formData: FormData) {
-  const rawEmail = formData.get('email') as string
-  if (!rawEmail) {
-    return { error: 'Email harus diisi.' }
-  }
-
-  const email = rawEmail.trim().toLowerCase()
-  const supabase = await createClient()
-
-  let origin = ''
   try {
-    const { headers } = await import('next/headers')
-    const headersList = await headers()
-    const host = headersList.get('x-forwarded-host') || headersList.get('host')
-    const forwardedProto = headersList.get('x-forwarded-proto')
-    const isLocal = !forwardedProto && (host?.includes('localhost') || host?.includes('127.0.0.1') || process.env.NODE_ENV === 'development')
-    const proto = forwardedProto || (isLocal ? 'http' : 'https')
-    if (host) {
-      origin = `${proto}://${host}`
+    const rawEmail = formData.get('email') as string
+    if (!rawEmail) {
+      return { error: 'Email harus diisi.' }
     }
-  } catch (e) {
-    // fallback if headers() fails in environment
-  }
 
-  if (!origin) {
-    origin = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
-  }
+    const email = rawEmail.trim().toLowerCase()
+    const supabase = await createClient()
 
-  const redirectTo = `${origin}/auth/callback?next=/reset-password`
-
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo,
-  })
-
-  if (error) {
-    const errorMsg = error.message?.toLowerCase() || ''
-    const errorCode = (error as any).code || ''
-    if (
-      errorCode === 'over_email_send_rate_limit' ||
-      errorMsg.includes('for security purposes') ||
-      errorMsg.includes('60 seconds')
-    ) {
-      return {
-        success: true,
-        alreadySent: true,
-        message: 'Tautan reset kata sandi sudah dikirim ke email Anda baru-baru ini. Demi keamanan, tautan hanya dapat dikirim 1 kali per menit. Silakan cek kotak masuk atau folder spam Anda.',
+    let origin = ''
+    try {
+      const { headers } = await import('next/headers')
+      const headersList = await headers()
+      const host = headersList.get('x-forwarded-host') || headersList.get('host')
+      const forwardedProto = headersList.get('x-forwarded-proto')
+      const isLocal = !forwardedProto && (host?.includes('localhost') || host?.includes('127.0.0.1') || process.env.NODE_ENV === 'development')
+      const proto = forwardedProto || (isLocal ? 'http' : 'https')
+      if (host) {
+        origin = `${proto}://${host}`
       }
+    } catch (e) {
+      // fallback if headers() fails in environment
     }
-    return { error: error.message }
-  }
 
-  return { success: true }
+    if (!origin) {
+      origin = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+    }
+
+    const redirectTo = `${origin}/reset-password`
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo,
+    })
+
+    if (error) {
+      const errorMsg = error.message?.toLowerCase() || ''
+      const errorCode = (error as any).code || ''
+      if (
+        errorCode === 'over_email_send_rate_limit' ||
+        errorMsg.includes('for security purposes') ||
+        errorMsg.includes('60 seconds')
+      ) {
+        return {
+          success: true,
+          alreadySent: true,
+          message: 'Tautan reset kata sandi sudah dikirim ke email Anda baru-baru ini. Demi keamanan, tautan hanya dapat dikirim 1 kali per menit. Silakan cek kotak masuk atau folder spam Anda.',
+        }
+      }
+
+      const rawMsg = String(error.message || '').trim()
+      if (!rawMsg || rawMsg === '{}' || rawMsg === '[object Object]') {
+        return { success: true }
+      }
+
+      return { error: rawMsg }
+    }
+
+    return { success: true }
+  } catch (err: any) {
+    console.error('[forgotPasswordAction] Unexpected error:', err)
+    const rawMsg = String(err?.message || '').trim()
+    if (!rawMsg || rawMsg === '{}' || rawMsg === '[object Object]') {
+      return { success: true }
+    }
+    return { error: rawMsg || 'Terjadi kesalahan saat memproses permintaan reset password.' }
+  }
 }
 
 export async function resetPasswordAction(formData: FormData) {

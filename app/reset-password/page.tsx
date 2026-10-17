@@ -37,13 +37,26 @@ function ResetPasswordForm() {
           }
         }
 
-        // If URL contains hash fragment (implicit recovery flow), give Supabase client time to parse
-        const hasHashParams = typeof window !== 'undefined' && (
-          window.location.hash.includes('access_token') ||
-          window.location.hash.includes('type=recovery')
-        )
-        if (hasHashParams) {
-          await new Promise(r => setTimeout(r, 600))
+        // 2. If URL contains hash fragment (implicit recovery flow), parse tokens and set session immediately
+        if (typeof window !== 'undefined' && window.location.hash) {
+          const hashClean = window.location.hash.startsWith('#')
+            ? window.location.hash.slice(1)
+            : window.location.hash
+          const hashParams = new URLSearchParams(hashClean)
+          const accessToken = hashParams.get('access_token')
+          const refreshToken = hashParams.get('refresh_token')
+
+          if (accessToken) {
+            const { data, error } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken || '',
+            })
+            if (!error && data?.session && mounted) {
+              setIsAuthorized(true)
+              setCheckingSession(false)
+              return
+            }
+          }
         }
 
         // Check if there is already an active session
@@ -109,6 +122,7 @@ function ResetPasswordForm() {
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (loading) return
     setErrorMsg('')
 
     if (newPassword.length < 6) {
