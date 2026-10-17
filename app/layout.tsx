@@ -6,6 +6,7 @@ import { logoutAction } from '@/app/auth/actions'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { canAccessPath } from '@/lib/permissions'
+import { isPlatformSuperadmin } from '@/lib/platformAuth'
 import "./globals.css"
 import BusinessOnboarding from '@/components/BusinessOnboarding'
 import { UserProvider, UserContextType } from '@/components/UserContext'
@@ -319,8 +320,9 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
       role: currentUserRole,
       permissions: currentUserPermissions,
       isWabaActive,
+      email: userProfile?.email,
     })
-  }, [pathname, currentUserRole, currentUserPermissions, noSidebar, bizLoading, isLoggingOut, isWabaActive])
+  }, [pathname, currentUserRole, currentUserPermissions, noSidebar, bizLoading, isLoggingOut, isWabaActive, userProfile?.email])
 
   const accessDeniedScreen = (
     <div className="min-h-[70vh] bg-[#f4f1ea] p-4 md:p-8 text-[#2e2e2e] flex items-center justify-center">
@@ -776,22 +778,40 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 
           {/* Bottom */}
           <div style={{ padding: '8px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-            {currentUserRole === 'admin' && (
+            {isPlatformSuperadmin(userProfile?.email) && (
               <Link
-                href="/settings/business"
+                href="/platform-admin"
                 onClick={() => setIsMobileMenuOpen(false)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '10px',
                   padding: '8px 12px', borderRadius: '7px',
-                  fontSize: '11px', fontWeight: 500, textDecoration: 'none',
-                  color: pathname.startsWith('/settings') ? '#FFFEF9' : 'rgba(255,254,249,0.4)',
-                  background: pathname.startsWith('/settings') ? 'var(--su-sidebar-active)' : 'transparent',
+                  fontSize: '11px', fontWeight: 600, textDecoration: 'none',
+                  color: pathname === '/platform-admin' ? '#F59E0B' : 'rgba(255,254,249,0.7)',
+                  background: pathname === '/platform-admin' ? 'rgba(245,158,11,0.12)' : 'transparent',
                   textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '2px',
+                  transition: 'all 0.15s',
                 }}
               >
-                <span style={{ opacity: 0.6 }}>{Icons.settings}</span>
-                Settings
+                <span style={{ fontSize: '13px' }}>👑</span>
+                Platform Analytics
               </Link>
+            )}
+            {currentUserRole === 'admin' && (
+              <Link
+                href="/settings/business"
+                onClick={() => setIsMobileMenuOpen(false)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    padding: '8px 12px', borderRadius: '7px',
+                    fontSize: '11px', fontWeight: 500, textDecoration: 'none',
+                    color: pathname.startsWith('/settings') ? '#FFFEF9' : 'rgba(255,254,249,0.4)',
+                    background: pathname.startsWith('/settings') ? 'var(--su-sidebar-active)' : 'transparent',
+                    textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '2px',
+                  }}
+                >
+                  <span style={{ opacity: 0.6 }}>{Icons.settings}</span>
+                  Settings
+                </Link>
             )}
             <button
               onClick={handleLogout}

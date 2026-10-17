@@ -5,10 +5,13 @@
  * and user permission validation across Sidebar, Onboarding, and Pages.
  */
 
+import { isPlatformSuperadmin } from './platformAuth'
+
 export interface AccessContext {
   role: string | null
   permissions: string[]
   isWabaActive?: boolean
+  email?: string | null
 }
 
 /**
@@ -16,7 +19,12 @@ export interface AccessContext {
  * and integration/plugin activation status.
  */
 export function canAccessPath(href: string, context: AccessContext): boolean {
-  const { role, permissions = [], isWabaActive = false } = context
+  const { role, permissions = [], isWabaActive = false, email } = context
+
+  // 0. Platform Superadmin Exclusive Guard (GMV, MAU, MRR for Platform Owner only)
+  if (href.startsWith('/platform-admin')) {
+    return isPlatformSuperadmin(email)
+  }
 
   // 1. Integration / Paid Plugin Guard
   if (href.startsWith('/inbox') && !isWabaActive) {
