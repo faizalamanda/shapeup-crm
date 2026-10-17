@@ -13,6 +13,7 @@ function ResetPasswordForm() {
   
   const [checkingSession, setCheckingSession] = useState(true)
   const [isAuthorized, setIsAuthorized] = useState(false)
+  const [invalidReason, setInvalidReason] = useState('')
   
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
@@ -27,6 +28,21 @@ function ResetPasswordForm() {
 
     async function verifyAuth() {
       try {
+        // 1. Check query parameters for explicit errors (e.g. from redirect)
+        const qError = searchParams.get('error')
+        const qErrorCode = searchParams.get('error_code')
+        const qErrorDesc = searchParams.get('error_description')
+
+        if (qErrorCode === 'otp_expired' || qErrorDesc?.toLowerCase().includes('expired')) {
+          if (mounted) {
+            setInvalidReason('Tautan ini telah kedaluwarsa atau sudah pernah digunakan sebelumnya (tautan reset password hanya berlaku 1 kali pakai). Silakan ajukan permintaan baru.')
+            setIsAuthorized(false)
+            setCheckingSession(false)
+          }
+          return
+        }
+
+        // 2. Check PKCE code in query params
         const code = searchParams.get('code')
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code)
@@ -37,12 +53,26 @@ function ResetPasswordForm() {
           }
         }
 
-        // 2. If URL contains hash fragment (implicit recovery flow), parse tokens and set session immediately
+        // 3. Check hash fragment (implicit recovery flow: #access_token=... or #error=...)
         if (typeof window !== 'undefined' && window.location.hash) {
           const hashClean = window.location.hash.startsWith('#')
             ? window.location.hash.slice(1)
             : window.location.hash
           const hashParams = new URLSearchParams(hashClean)
+
+          const hError = hashParams.get('error')
+          const hErrorCode = hashParams.get('error_code')
+          const hErrorDesc = hashParams.get('error_description')
+
+          if (hErrorCode === 'otp_expired' || hErrorDesc?.toLowerCase().includes('expired')) {
+            if (mounted) {
+              setInvalidReason('Tautan ini telah kedaluwarsa atau sudah pernah diklik sebelumnya (tautan reset password Supabase hanya berlaku 1 kali pakai). Silakan minta tautan baru.')
+              setIsAuthorized(false)
+              setCheckingSession(false)
+            }
+            return
+          }
+
           const accessToken = hashParams.get('access_token')
           const refreshToken = hashParams.get('refresh_token')
 
@@ -59,7 +89,7 @@ function ResetPasswordForm() {
           }
         }
 
-        // Check if there is already an active session
+        // 4. Check if there is already an active session
         const { data: { session } } = await supabase.auth.getSession()
         if (session && mounted) {
           setIsAuthorized(true)
@@ -67,9 +97,20 @@ function ResetPasswordForm() {
           return
         }
 
-        // Also check getCachedUser or getUser
+        // 5. Also check getCachedUser or getUser
         const { data: { user } } = await supabase.auth.getUser()
         if (user && mounted) {
+          setIsAuthorized(true)
+          setCheckingSession(false)
+          return
+        }
+
+        // 6. Give GoTrue background listener a brief 400ms buffer to finalize in case of slow hydration
+        await new Promise(r => setTimeout(r, 400))
+        if (!mounted) return
+
+        const { data: retrySession } = await supabase.auth.getSession()
+        if (retrySession?.session && mounted) {
           setIsAuthorized(true)
           setCheckingSession(false)
           return
@@ -203,7 +244,7 @@ function ResetPasswordForm() {
           </div>
           <h2 className="text-2xl font-black text-slate-900 tracking-tight">Tautan Tidak Valid</h2>
           <p className="text-slate-500 text-sm mt-2 leading-relaxed">
-            Sesi reset password tidak ditemukan atau tautan ini telah kedaluwarsa. Silakan ajukan permintaan reset password baru.
+            {invalidReason || 'Sesi reset password tidak ditemukan atau tautan ini telah kedaluwarsa. Silakan ajukan permintaan reset password baru.'}
           </p>
 
           <div className="mt-6 space-y-3">
