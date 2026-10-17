@@ -82,29 +82,12 @@ export async function forgotPasswordAction(formData: FormData) {
     const email = rawEmail.trim().toLowerCase()
     const supabase = await createClient()
 
-    let origin = ''
-    try {
-      const { headers } = await import('next/headers')
-      const headersList = await headers()
-      const host = headersList.get('x-forwarded-host') || headersList.get('host')
-      const forwardedProto = headersList.get('x-forwarded-proto')
-      const isLocal = !forwardedProto && (host?.includes('localhost') || host?.includes('127.0.0.1') || process.env.NODE_ENV === 'development')
-      const proto = forwardedProto || (isLocal ? 'http' : 'https')
-      if (host) {
-        origin = `${proto}://${host}`
-      }
-    } catch (e) {
-      // fallback if headers() fails in environment
-    }
-
-    if (!origin) {
-      origin = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
-    }
-
-    const redirectTo = `${origin}/reset-password?email=${encodeURIComponent(email)}`
-
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo,
+    // Send direct 6-digit OTP code to user email (without relying on link redirects)
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false,
+      },
     })
 
     if (error) {
@@ -118,26 +101,35 @@ export async function forgotPasswordAction(formData: FormData) {
         return {
           success: true,
           alreadySent: true,
-          message: 'Tautan reset kata sandi sudah dikirim ke email Anda baru-baru ini. Demi keamanan, tautan hanya dapat dikirim 1 kali per menit. Silakan cek kotak masuk atau folder spam Anda.',
+          email,
+          message: 'Kode OTP baru saja dikirim ke email Anda. Silakan cek kotak masuk atau folder spam Anda.',
         }
+      }
+
+      if (
+        errorCode === 'otp_disabled' ||
+        errorMsg.includes('signups not allowed') ||
+        errorMsg.includes('user not found')
+      ) {
+        return { error: 'Akun dengan alamat email ini tidak ditemukan.' }
       }
 
       const rawMsg = String(error.message || '').trim()
       if (!rawMsg || rawMsg === '{}' || rawMsg === '[object Object]') {
-        return { success: true }
+        return { success: true, email }
       }
 
       return { error: rawMsg }
     }
 
-    return { success: true }
+    return { success: true, email }
   } catch (err: any) {
     console.error('[forgotPasswordAction] Unexpected error:', err)
     const rawMsg = String(err?.message || '').trim()
     if (!rawMsg || rawMsg === '{}' || rawMsg === '[object Object]') {
       return { success: true }
     }
-    return { error: rawMsg || 'Terjadi kesalahan saat memproses permintaan reset password.' }
+    return { error: rawMsg || 'Terjadi kesalahan saat memproses permintaan OTP.' }
   }
 }
 
