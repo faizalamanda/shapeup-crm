@@ -246,3 +246,29 @@ Pada komponen modal pratinjau (`ReceiptPreviewModal.tsx`), ditambahkan perlindun
 - Tag `.no-print` disematkan pada backdrop, modal header, dan footer kontrol.
 - Blok `<style>` `@media print` menyembunyikan semua elemen selain `#thermal-receipt-container` (`body * { visibility: hidden !important; }`).
 - Hal ini menjamin jika kasir tidak sengaja menekan tombol shortcut cetak browser (`Ctrl+P` / `Cmd+P`), struk tetap tercetak bersih tanpa elemen modal di kertas.
+
+---
+
+## 10. Smartphone & Tablet Landscape Ergonomics (Countertop POS Stand Standard)
+
+Pada operasional ritel & toko fisik kasir sering menempatkan smartphone atau tablet di atas meja counter kasir menggunakan *stand* dudukan secara horizontal (lanskap) untuk mempercepat entri transaksi dan memindai barcode pakaian.
+
+### 10.1 Konfigurasi Manifest Bebas Rotasi (`orientation: any`)
+- Berkas `public/manifest.json` wajib menyetel `"orientation": "any"` agar WebAPK Android dan iOS WebClip tidak mengunci orientasi ke potret.
+- Transisi antara potret dan lanskap terjadi secara otomatis mengikuti sensor giroskop perangkat jika pengguna mengaktifkan fitur *Auto-Rotate* di pengaturan cepat sistem operasi ponsel.
+
+### 10.2 Safe Area Horizontal Insets (`Zero Notch Collision`)
+- Saat ponsel pintar dalam posisi lanskap, kamera depan (*punch-hole*), poni (*notch*), atau *Dynamic Island* berpindah ke sisi **kiri** atau **kanan** layar.
+- Dokumen HTML root menyertakan `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />` via `PWAHead` di `app/layout.tsx`.
+- Kontainer luar `POSWorkspace.tsx` dan `POSHub.tsx` menerapkan padding safe-area:
+  ```tsx
+  style={{
+    paddingLeft: 'env(safe-area-inset-left, 0px)',
+    paddingRight: 'env(safe-area-inset-right, 0px)',
+  }}
+  ```
+  Ini mencegah tombol navigasi kembali, nama kasir, status shift, dan tombol aksi terpotong oleh lubang kamera ponsel.
+
+### 10.3 Adaptasi Grid Katalog pada Orientasi Lanskap
+- Lebar layar ponsel lanskap ($\sim 844\text{px} - 932\text{px}$) berada di atas breakpoint `sm:` (640px) dan `md:` (768px), sehingga grid produk otomatis melebar menjadi 3 hingga 4 kolom (`sm:grid-cols-3 md:grid-cols-4`).
+- Area daftar produk dan keranjang belanja mempertahankan kontainer `overflow-y-auto` mandiri untuk mengakomodasi keterbatasan ruang vertikal ponsel lanskap ($\sim 350\text{px} - 400\text{px}$) dengan lancar.

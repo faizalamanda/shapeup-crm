@@ -47,6 +47,10 @@ Semua modal fitur yang berfungsi sebagai layar kerja/detail (misal: Detail Pesan
    - **Desktop (`hidden md:table`):** Gunakan tombol aksi bersegmentasi dengan hierarki visual yang jelas (Action Capsule), bukan tombol teks panjang yang monoton. Berikan pembeda warna tajam antara tagihan berpiutang (gradient amber dengan nominal sisa) dan layanan purna jual (dark/slate untuk tukar barang, soft rose untuk refund).
    - **Mobile (`block md:hidden`):** DILARANG memaksa tabel horizontal 8 kolom yang membuat kasir harus menggeser layar 500px ke kanan hanya untuk mencari tombol bayar. Tampilkan sebagai **Kartu Transaksi Interaktif (Mobile Cards)** dengan tombol aksi berukuran penuh ($\ge 42\text{px}$) di strip bawah kartu yang ramah jempol (*anti fat-finger*).
 
+8. **Landscape Auto-Rotate & Vertical Compression Graceful Adaptability:**
+   Ketika smartphone dimiringkan secara horizontal (Lanskap), lebar layar melewati breakpoint `sm:` (>640px) sementara tinggi layar berkurang tajam ($\sim 350\text{px} - 400\text{px}$).
+   `FullScreenModal` secara cerdas beradaptasi dari layar penuh menjadi modal card mengambang dengan batas tinggi dinamis `sm:max-h-[calc(100dvh-3rem)]`. Area konten tetap dapat digulir dengan mulus berkat `min-h-0 flex-1 overflow-y-auto overscroll-contain` tanpa pernah mendorong sticky footer atau header ke luar batas pandang layar.
+
 ---
 
 Untuk contoh implementasi lengkap, batasan, dan studi kasus, baca [knowledge mobile modal UX](../../knowledge/mobile-modal-ux.md).

@@ -1,0 +1,17 @@
+{
+  "summary": "PWA Dynamic Screen Auto-Rotate and Landscape Safe-Area Inset Architecture: W3C manifest orientation unconstrained ('any'), Android Chromium WebAPK screenOrientation interaction, viewport-fit=cover, horizontal safe-area insets (env(safe-area-inset-left), env(safe-area-inset-right)) against notch/Dynamic Island occlusion, and countertop POS stand ergonomics.",
+  "timestamps": {
+    "created": "2026-10-19T15:20:00Z",
+    "last_updated": "2026-10-19T15:20:00Z"
+  },
+  "references": [
+    "public/manifest.json",
+    "app/layout.tsx",
+    "app/pos/components/POSWorkspace.tsx",
+    "app/pos/components/POSHub.tsx",
+    "components/ui/FullScreenModal.tsx",
+    ".agents/skills/pos-session-ledger/SKILL.md",
+    ".agents/skills/mobile-modal-ux/SKILL.md",
+    ".agents/AGENTS.md"
+  ]
+}
