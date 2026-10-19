@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { ReceiptData, getPrinterAdapter, PaperSize } from '@/lib/pos/printerAdapter'
+import { getStoredReceiptSettings } from './ReceiptSettingsModal'
 
 type Props = {
   isOpen: boolean
@@ -19,6 +20,15 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
     setMounted(true)
   }, [])
 
+  useEffect(() => {
+    if (isOpen) {
+      const settings = getStoredReceiptSettings(receipt?.businessName)
+      if (settings.paperSize) {
+        setPaperSize(settings.paperSize)
+      }
+    }
+  }, [isOpen, receipt?.businessName])
+
   if (!isOpen || !receipt || !mounted) return null
 
   const handlePrint = async () => {
@@ -26,7 +36,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
     setPrintMessage(null)
     try {
       const adapter = getPrinterAdapter('system')
-      const res = await adapter.print(receipt)
+      const res = await adapter.print(receipt, paperSize)
       if (res.success) {
         setPrintMessage('Receipt berhasil dikirim ke printer.')
       } else {
@@ -41,9 +51,34 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
 
   return createPortal(
     <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 overflow-y-auto">
+      {/* Print Safety Net CSS: In case of native window.print, hide modal chrome */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        @media print {
+          body * {
+            visibility: hidden !important;
+          }
+          #thermal-receipt-container, #thermal-receipt-container * {
+            visibility: visible !important;
+          }
+          #thermal-receipt-container {
+            position: fixed !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: ${paperSize === '58mm' ? '48mm' : paperSize === '80mm' ? '72mm' : '100%'} !important;
+            margin: 0 !important;
+            padding: 2mm !important;
+            border: none !important;
+            box-shadow: none !important;
+          }
+          .no-print {
+            display: none !important;
+          }
+        }
+      ` }} />
+
       <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Modal Header */}
-        <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between bg-gray-50/80">
+        <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between bg-gray-50/80 no-print">
           <h3 className="font-bold text-gray-900 text-base">Pratinjau Receipt</h3>
           <div className="flex items-center gap-2">
             {/* Paper Size selector */}
@@ -70,7 +105,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
           <div 
             id="thermal-receipt-container"
             className={`bg-white text-black font-mono p-4 text-xs shadow-md border border-gray-200 ${
-              paperSize === '58mm' ? 'w-[280px]' : paperSize === '80mm' ? 'w-[360px]' : 'w-full max-w-xl font-sans'
+              paperSize === '58mm' ? 'w-[260px]' : paperSize === '80mm' ? 'w-[340px]' : 'w-full max-w-xl font-sans'
             }`}
           >
             {/* Header */}
@@ -113,6 +148,12 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
                     <span>{item.quantity} x Rp {item.price.toLocaleString('id-ID')}</span>
                     <span className="font-medium">Rp {item.subtotal.toLocaleString('id-ID')}</span>
                   </div>
+                  {item.discount && item.discount > 0 ? (
+                    <div className="flex justify-between text-[10px] text-gray-500 pl-2">
+                      <span>Diskon item:</span>
+                      <span>-Rp {item.discount.toLocaleString('id-ID')}</span>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -163,15 +204,21 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
 
             {/* Footer */}
             <div className="text-center pt-4 mt-2 border-t border-dashed border-gray-400 text-[10px] text-gray-600 space-y-1">
-              <p className="font-medium">Terima kasih atas kunjungan Anda!</p>
-              <p>Barang yang sudah dibeli tidak dapat ditukar/dikembalikan.</p>
+              {receipt.note ? (
+                <div className="whitespace-pre-line">{receipt.note}</div>
+              ) : (
+                <>
+                  <p className="font-medium">Terima kasih atas kunjungan Anda!</p>
+                  <p>Barang yang sudah dibeli tidak dapat ditukar/dikembalikan.</p>
+                </>
+              )}
               <p className="text-[9px] text-gray-400 pt-1">Powered by ShapeUp POS</p>
             </div>
           </div>
         </div>
 
         {/* Action Controls */}
-        <div className="p-4 border-t border-gray-100 bg-white space-y-2">
+        <div className="p-4 border-t border-gray-100 bg-white space-y-2 no-print">
           {printMessage && (
             <div className="text-xs p-2 rounded-lg bg-blue-50 text-blue-700 text-center">
               {printMessage}

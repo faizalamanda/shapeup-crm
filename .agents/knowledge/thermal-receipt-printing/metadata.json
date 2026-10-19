@@ -1,0 +1,14 @@
+{
+  "summary": "Isolated Thermal Receipt Printing Architecture: Clean receipt printing using dynamic hidden iframe isolation, effective thermal roll width compensation (48mm for 58mm roll, 72mm for 80mm roll), zero modal screen clutter, RawBT Android print spooler compatibility, and @media print defense-in-depth.",
+  "timestamps": {
+    "created": "2026-10-19T14:45:00Z",
+    "last_updated": "2026-10-19T14:45:00Z"
+  },
+  "references": [
+    "lib/pos/printerAdapter.ts",
+    "app/pos/components/ReceiptPreviewModal.tsx",
+    "app/pos/components/ReceiptSettingsModal.tsx",
+    ".agents/skills/pos-session-ledger/SKILL.md",
+    ".agents/AGENTS.md"
+  ]
+}
