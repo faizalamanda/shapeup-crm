@@ -7,6 +7,7 @@ import { OrderTable } from './components/OrderTable'
 import { OrderCharts } from './components/OrderCharts'
 import { FilterBar, OrderFilterRule } from './components/FilterBar'
 import { OrderDetailModal } from './components/OrderDetailModal'
+import { OrderExportModal } from './components/OrderExportModal'
 import { OrderStatsSkeleton, OrderChartsSkeleton, OrderTableSkeleton } from './components/Skeletons'
 import { Pagination } from '../components/Pagination'
 
@@ -67,6 +68,7 @@ export default function OrderPage() {
   const [showCharts, setShowCharts]             = useState(false)
   const [activeBiz, setActiveBiz]               = useState<any>(null)
   const [activeBizId, setActiveBizId]           = useState<string | null>(null)
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false)
 
   // Serialize rules to use in useEffect dependency
   const serializedRules = JSON.stringify(rules)
@@ -313,15 +315,55 @@ export default function OrderPage() {
 
       {/* ── Order Table ───────────────────────────────────────────────────── */}
       <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', padding: '0 2px' }}>
-          <p style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--su-text-faint)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', padding: '0 2px', flexWrap: 'wrap', gap: '8px' }}>
+          <p style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--su-text-faint)', margin: 0 }}>
             {isLoadingFirst ? 'Memuat data...' : `Halaman ${currentPage} dari ${Math.max(1, Math.ceil(totalCount / pageSize))} (${totalCount.toLocaleString('id-ID')} total pesanan)`}
           </p>
-          {isFetching && orders.length > 0 && (
-            <span style={{ fontSize: '10px', color: 'var(--su-accent)', fontWeight: 600 }}>
-              • Memperbarui...
-            </span>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {isFetching && orders.length > 0 && (
+              <span style={{ fontSize: '10px', color: 'var(--su-accent)', fontWeight: 600 }}>
+                • Memperbarui...
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setIsExportModalOpen(true)}
+              disabled={isLoadingFirst}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                fontSize: '11px',
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+                cursor: isLoadingFirst ? 'not-allowed' : 'pointer',
+                background: 'white',
+                color: '#16A34A',
+                border: '1px solid rgba(22, 163, 74, 0.3)',
+                transition: 'all 0.15s',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = '#F0FDF4'
+                e.currentTarget.style.borderColor = '#16A34A'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'white'
+                e.currentTarget.style.borderColor = 'rgba(22, 163, 74, 0.3)'
+              }}
+              title="Ekspor data pesanan ke Excel (.xlsx) atau CSV (.csv)"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              <span>Ekspor Data</span>
+            </button>
+          </div>
         </div>
         {isLoadingFirst ? <OrderTableSkeleton /> : (
           <>
@@ -368,6 +410,18 @@ export default function OrderPage() {
             fetchMetricsAndOrders(activeBizId, searchQuery, rules, currentPage, pageSize, true)
           }
         }}
+      />
+
+      {/* ── Order Export Modal ────────────────────────────────────────────── */}
+      <OrderExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        businessName={activeBiz?.name}
+        businessTimezone={activeBiz?.timezone}
+        searchQuery={searchQuery}
+        rules={rules}
+        currentPageOrders={orders}
+        totalFilteredCount={totalCount}
       />
     </div>
   )
