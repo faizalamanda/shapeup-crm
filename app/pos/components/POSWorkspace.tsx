@@ -754,7 +754,13 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   )
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-slate-100 text-slate-900 overflow-hidden font-sans fixed inset-0">
+    <div
+      className="h-screen w-screen flex flex-col bg-slate-100 text-slate-900 overflow-hidden font-sans fixed inset-0"
+      style={{
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)',
+      }}
+    >
       {/* Top Navbar Header */}
       <header className="h-14 bg-slate-900 text-white px-4 flex items-center justify-between shrink-0 shadow-md z-20">
         <div className="flex items-center gap-3">

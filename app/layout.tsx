@@ -200,6 +200,21 @@ const menuItems: MenuItem[] = [
 
 import { AppUserProvider, useUserContext } from '@/components/UserContext'
 
+function PWAHead() {
+  return (
+    <head>
+      <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+      <link rel="manifest" href="/manifest.json" />
+      <meta name="theme-color" content="#18181b" />
+      <meta name="mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+      <meta name="apple-mobile-web-app-title" content="ShapeUp CRM" />
+      <link rel="apple-touch-icon" href="/icon-192.png" />
+    </head>
+  )
+}
+
 function LayoutContent({ children }: { children: React.ReactNode }) {
   const {
     userProfile,
@@ -351,6 +366,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   if (noSidebar) {
     return (
       <html lang="en" suppressHydrationWarning>
+        <PWAHead />
         <body className={inter.className}>
           {children}
         </body>
@@ -362,15 +378,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   if (isLoggingOut) {
     return (
       <html lang="en" suppressHydrationWarning>
-        <head>
-          <link rel="manifest" href="/manifest.json" />
-          <meta name="theme-color" content="#18181b" />
-          <meta name="mobile-web-app-capable" content="yes" />
-          <meta name="apple-mobile-web-app-capable" content="yes" />
-          <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-          <meta name="apple-mobile-web-app-title" content="ShapeUp CRM" />
-          <link rel="apple-touch-icon" href="/icon-192.png" />
-        </head>
+        <PWAHead />
         <body className={inter.className} style={{ background: '#0F172A', color: '#FFFFFF' }}>
           <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center">
             <div className="w-14 h-14 bg-gradient-to-br from-red-500 to-amber-500 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-xl shadow-red-500/20 mb-6 animate-pulse">
@@ -396,15 +404,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   if (bizLoading && (!userProfile || !currentUserRole)) {
     return (
       <html lang="en" suppressHydrationWarning>
-        <head>
-          <link rel="manifest" href="/manifest.json" />
-          <meta name="theme-color" content="#18181b" />
-          <meta name="mobile-web-app-capable" content="yes" />
-          <meta name="apple-mobile-web-app-capable" content="yes" />
-          <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-          <meta name="apple-mobile-web-app-title" content="ShapeUp CRM" />
-          <link rel="apple-touch-icon" href="/icon-192.png" />
-        </head>
+        <PWAHead />
         <body className={inter.className} style={{ background: '#0F172A', color: '#FFFFFF' }}>
           <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center">
             <div className="w-14 h-14 bg-gradient-to-br from-blue-600 to-amber-500 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-xl shadow-blue-500/20 mb-6 animate-pulse">
@@ -430,15 +430,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   if (!bizLoading && businesses.length === 0) {
     return (
       <html lang="en" suppressHydrationWarning>
-        <head>
-          <link rel="manifest" href="/manifest.json" />
-          <meta name="theme-color" content="#18181b" />
-          <meta name="mobile-web-app-capable" content="yes" />
-          <meta name="apple-mobile-web-app-capable" content="yes" />
-          <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-          <meta name="apple-mobile-web-app-title" content="ShapeUp CRM" />
-          <link rel="apple-touch-icon" href="/icon-192.png" />
-        </head>
+        <PWAHead />
         <body className={inter.className}>
           <BusinessOnboarding onLogout={handleLogout} />
         </body>
@@ -448,15 +440,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
-        <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#18181b" />
-        <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="ShapeUp CRM" />
-        <link rel="apple-touch-icon" href="/icon-192.png" />
-      </head>
+      <PWAHead />
       <body className={inter.className} style={{ display: 'flex', minHeight: '100vh', background: 'var(--su-bg)', color: 'var(--su-text)' }}>
 
         {/* ── SIDEBAR ────────────────────────────────────────────────────── */}
@@ -839,7 +823,15 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
         </aside>
 
         {/* ── MAIN AREA ──────────────────────────────────────────────────── */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', minWidth: 0 }} className="ml-0 lg:ml-[240px]">
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: '100vh',
+          minWidth: 0,
+          paddingLeft: 'env(safe-area-inset-left, 0px)',
+          paddingRight: 'env(safe-area-inset-right, 0px)',
+        }} className="ml-0 lg:ml-[240px]">
 
           {/* Topbar */}
           <header style={{

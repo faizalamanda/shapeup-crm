@@ -248,7 +248,13 @@ export default function POSHub({ onOpenWorkspace }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 pb-20 font-sans selection:bg-indigo-500 selection:text-white">
+    <div
+      className="min-h-screen bg-slate-100 text-slate-900 pb-20 font-sans selection:bg-indigo-500 selection:text-white"
+      style={{
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)',
+      }}
+    >
       {/* ─── 1. TOP COMMAND STRIP (STICKY POS HEADER) ─────────────────────────── */}
       <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-30 shadow-lg backdrop-blur-md bg-slate-900/95">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
