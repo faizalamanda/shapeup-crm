@@ -275,7 +275,7 @@ export default function POSOrderDetailModal({
       businessAddress: settings.address || undefined,
       businessPhone: settings.phone || undefined,
       orderNumber: currentOrder.order_number,
-      date: formatDisplayDate(currentOrder.created_at, 'datetime', timezone),
+      date: formatDisplayDate(currentOrder.created_at, 'receipt', timezone),
       cashierName: cashierName,
       customerName: customerInfo.name,
       showItemNumbering: settings.showItemNumbering,

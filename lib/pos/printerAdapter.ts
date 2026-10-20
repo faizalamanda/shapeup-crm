@@ -90,14 +90,12 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
   const pageSizeCss = is58mm ? '58mm auto' : is80mm ? '80mm auto' : 'A4 portrait'
   const containerWidth = is58mm ? '48mm' : is80mm ? '72mm' : '180mm'
   const fontSize = is58mm ? '11px' : is80mm ? '13px' : '13px'
-  const containerPadding = is58mm ? '3mm 1mm' : is80mm ? '5mm 2mm' : '15mm 10mm'
-  const fontFamily = effectivePaperSize === 'A4'
-    ? '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif'
-    : 'Courier New, Courier, monospace'
+  const containerPadding = is58mm ? '2mm 1mm' : is80mm ? '4mm 2mm' : '15mm 10mm'
+  const fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
 
   const itemsHtml = (receipt.items || []).map((item, idx) => {
     const itemNumberPrefix = receipt.showItemNumbering ? `${idx + 1}. ` : ''
-    const detailPadding = receipt.showItemNumbering ? '16px' : '6px'
+    const detailPadding = receipt.showItemNumbering ? '12px' : '4px'
     const variantHtml = item.variant
       ? `<div style="padding-left: ${detailPadding}; font-size: 0.9em; color: #444; margin-top: 1px;">• ${escapeHtml(item.variant)}</div>`
       : ''
@@ -105,17 +103,17 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
       ? `<div style="padding-left: ${detailPadding}; font-size: 0.85em; font-style: italic; color: #555; margin-top: 1px;">• ${escapeHtml(item.note)}</div>`
       : ''
     const discountHtml = item.discount && item.discount > 0
-      ? `<div style="display: flex; justify-content: space-between; font-size: 0.9em; color: #555; padding-left: ${detailPadding}; margin-top: 1px;"><span>Diskon item:</span><span>-Rp ${item.discount.toLocaleString('id-ID')}</span></div>`
+      ? `<div style="display: flex; justify-content: space-between; font-size: 0.9em; color: #555; padding-left: ${detailPadding}; margin-top: 1px;"><span>Diskon:</span><span>-${item.discount.toLocaleString('id-ID')}</span></div>`
       : ''
 
     return `
-      <div style="margin-bottom: 7px;">
-        <div style="font-weight: bold; word-break: break-word;">${itemNumberPrefix}${escapeHtml(item.name)}</div>
+      <div style="margin-bottom: 6px;">
+        <div style="font-weight: 600; word-break: break-word;">${itemNumberPrefix}${escapeHtml(item.name)}</div>
         ${variantHtml}
         ${noteHtml}
         <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 1px; padding-left: ${detailPadding};">
-          <span>${item.quantity} x Rp ${item.price.toLocaleString('id-ID')}</span>
-          <span style="font-weight: bold;">Rp ${item.subtotal.toLocaleString('id-ID')}</span>
+          <span>${item.quantity} x ${item.price.toLocaleString('id-ID')}</span>
+          <span style="font-weight: 600;">${item.subtotal.toLocaleString('id-ID')}</span>
         </div>
         ${discountHtml}
       </div>
@@ -126,7 +124,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
     ? `
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Diskon:</span>
-        <span>-Rp ${receipt.discountTotal.toLocaleString('id-ID')}</span>
+        <span>-${receipt.discountTotal.toLocaleString('id-ID')}</span>
       </div>
     `
     : ''
@@ -135,7 +133,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
     ? `
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Pajak:</span>
-        <span>+Rp ${receipt.taxTotal.toLocaleString('id-ID')}</span>
+        <span>+${receipt.taxTotal.toLocaleString('id-ID')}</span>
       </div>
     `
     : ''
@@ -144,11 +142,11 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
     ? `
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Bayar Tunai:</span>
-        <span>Rp ${receipt.cashReceived.toLocaleString('id-ID')}</span>
+        <span>${receipt.cashReceived.toLocaleString('id-ID')}</span>
       </div>
-      <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 2px;">
+      <div style="display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 2px;">
         <span>Kembalian:</span>
-        <span>Rp ${(receipt.changeAmount || 0).toLocaleString('id-ID')}</span>
+        <span>${(receipt.changeAmount || 0).toLocaleString('id-ID')}</span>
       </div>
     `
     : ''
@@ -161,19 +159,19 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
       <div class="divider"></div>
       <!-- Informasi Poin Loyalty Pelanggan -->
       <div style="margin: 4px 0; font-size: 0.9em;">
-        <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 2px;">
+        <div style="display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 2px;">
           <span>LOYALTY REWARDS</span>
           <span>${escapeHtml(receipt.loyaltyInfo.tierBadge || '')} ${escapeHtml(receipt.loyaltyInfo.tierName || 'Member')}</span>
         </div>
         ${receipt.loyaltyInfo.pointsEarned !== undefined && receipt.loyaltyInfo.pointsEarned > 0 ? `
         <div style="display: flex; justify-content: space-between; margin-bottom: 1px;">
           <span>Poin Transaksi Ini:</span>
-          <span style="font-weight: bold;">+${receipt.loyaltyInfo.pointsEarned.toLocaleString('id-ID')} Poin</span>
+          <span style="font-weight: 600;">+${receipt.loyaltyInfo.pointsEarned.toLocaleString('id-ID')} Poin</span>
         </div>` : ''}
         ${receipt.loyaltyInfo.currentBalance !== undefined ? `
         <div style="display: flex; justify-content: space-between; margin-bottom: 1px;">
           <span>Total Saldo Poin:</span>
-          <span style="font-weight: bold;">${receipt.loyaltyInfo.currentBalance.toLocaleString('id-ID')} Poin</span>
+          <span style="font-weight: 600;">${receipt.loyaltyInfo.currentBalance.toLocaleString('id-ID')} Poin</span>
         </div>` : ''}
       </div>
     `
@@ -211,6 +209,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
       font-family: ${fontFamily};
       font-size: ${fontSize};
       line-height: 1.35;
+      letter-spacing: -0.15px;
     }
     .receipt-container {
       width: ${containerWidth};
@@ -230,7 +229,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
   <div class="receipt-container">
     <!-- Header Toko -->
     <div style="text-align: center; margin-bottom: 6px;">
-      <div style="font-size: 1.25em; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(receipt.businessName)}</div>
+      <div style="font-size: 1.25em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(receipt.businessName)}</div>
       ${receipt.businessAddress ? `<div style="font-size: 0.9em; margin-top: 2px; word-break: break-word;">${escapeHtml(receipt.businessAddress)}</div>` : ''}
       ${receipt.businessPhone ? `<div style="font-size: 0.9em; margin-top: 1px;">Telp: ${escapeHtml(receipt.businessPhone)}</div>` : ''}
     </div>
@@ -241,7 +240,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
     <div style="margin: 4px 0; font-size: 0.95em;">
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>No. Invoice:</span>
-        <span style="font-weight: bold;">${escapeHtml(receipt.orderNumber)}</span>
+        <span style="font-weight: 600;">${escapeHtml(receipt.orderNumber)}</span>
       </div>
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Tanggal:</span>
@@ -271,13 +270,13 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
     <div style="margin: 4px 0;">
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Subtotal:</span>
-        <span>Rp ${receipt.subtotal.toLocaleString('id-ID')}</span>
+        <span>${receipt.subtotal.toLocaleString('id-ID')}</span>
       </div>
       ${discountTotalHtml}
       ${taxTotalHtml}
-      <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 1.15em; border-top: 1px solid #000; padding-top: 4px; margin-top: 4px;">
-        <span>GRAND TOTAL:</span>
-        <span>Rp ${receipt.grandTotal.toLocaleString('id-ID')}</span>
+      <div style="display: flex; justify-content: space-between; font-weight: 700; font-size: 1.15em; border-top: 1px solid #000; padding-top: 4px; margin-top: 4px;">
+        <span>TOTAL:</span>
+        <span>${receipt.grandTotal.toLocaleString('id-ID')}</span>
       </div>
     </div>
 
@@ -287,7 +286,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
     <div style="margin: 4px 0;">
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Metode Bayar:</span>
-        <span style="font-weight: bold; text-transform: uppercase;">${escapeHtml(receipt.paymentMethod)}</span>
+        <span style="font-weight: 600; text-transform: uppercase;">${escapeHtml(receipt.paymentMethod)}</span>
       </div>
       ${cashDetailsHtml}
     </div>
@@ -361,14 +360,261 @@ export function printReceiptViaIframe(receipt: ReceiptData, paperSize: PaperSize
   })
 }
 
+// ==========================================
+// ESC/POS Command Encoder Helper
+// ==========================================
+export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize: PaperSize = '58mm'): Uint8Array {
+  const is80mm = paperSize === '80mm'
+  const width = is80mm ? 48 : 32
+  const divider = '-'.repeat(width)
+
+  const padColumns = (left: string, right: string, maxCols: number = width): string => {
+    const spaceNeeded = maxCols - left.length - right.length
+    if (spaceNeeded >= 1) {
+      return left + ' '.repeat(spaceNeeded) + right + '\n'
+    }
+    return left + '\n' + ' '.repeat(Math.max(0, maxCols - right.length)) + right + '\n'
+  }
+
+  const bytes: number[] = []
+  const textEncoder = new TextEncoder()
+
+  const writeRaw = (...b: number[]) => bytes.push(...b)
+  const writeText = (t: string) => {
+    const encoded = textEncoder.encode(t)
+    for (let i = 0; i < encoded.length; i++) bytes.push(encoded[i])
+  }
+
+  // 1. Initialize printer
+  writeRaw(0x1B, 0x40)
+
+  // 2. Header (Centered)
+  writeRaw(0x1B, 0x61, 0x01) // Center
+  writeRaw(0x1B, 0x45, 0x01) // Bold on
+  writeRaw(0x1D, 0x21, 0x01) // Double height
+  writeText((receipt.businessName || 'SHAPEUP STORE').toUpperCase() + '\n')
+  writeRaw(0x1D, 0x21, 0x00) // Normal text
+  writeRaw(0x1B, 0x45, 0x00) // Bold off
+
+  if (receipt.businessAddress) {
+    writeText(receipt.businessAddress + '\n')
+  }
+  if (receipt.businessPhone) {
+    writeText('Telp: ' + receipt.businessPhone + '\n')
+  }
+
+  // Divider
+  writeText(divider + '\n')
+
+  // 3. Metadata (Left align)
+  writeRaw(0x1B, 0x61, 0x00) // Left
+  writeText(padColumns('No. Invoice:', receipt.orderNumber))
+  writeText(padColumns('Tanggal:', receipt.date))
+  writeText(padColumns('Kasir:', receipt.cashierName))
+  if (receipt.customerName) {
+    writeText(padColumns('Pelanggan:', receipt.customerName))
+  }
+
+  // Divider
+  writeText(divider + '\n')
+
+  // 4. Items
+  for (let idx = 0; idx < (receipt.items || []).length; idx++) {
+    const item = receipt.items[idx]
+    const numPrefix = receipt.showItemNumbering ? `${idx + 1}. ` : ''
+    writeText(`${numPrefix}${item.name}\n`)
+    if (item.variant) {
+      writeText(`   • ${item.variant}\n`)
+    }
+    if (item.note) {
+      writeText(`   • ${item.note}\n`)
+    }
+    const qtyPrice = `   ${item.quantity} x ${item.price.toLocaleString('id-ID')}`
+    const subtotal = item.subtotal.toLocaleString('id-ID')
+    writeText(padColumns(qtyPrice, subtotal))
+    if (item.discount && item.discount > 0) {
+      writeText(padColumns('   Diskon:', `-${item.discount.toLocaleString('id-ID')}`))
+    }
+  }
+
+  // Divider
+  writeText(divider + '\n')
+
+  // 5. Totals
+  writeText(padColumns('Subtotal:', receipt.subtotal.toLocaleString('id-ID')))
+  if (receipt.discountTotal > 0) {
+    writeText(padColumns('Diskon:', `-${receipt.discountTotal.toLocaleString('id-ID')}`))
+  }
+  if (receipt.taxTotal > 0) {
+    writeText(padColumns('Pajak:', `+${receipt.taxTotal.toLocaleString('id-ID')}`))
+  }
+
+  // Grand Total Bold
+  writeRaw(0x1B, 0x45, 0x01) // Bold on
+  writeText(padColumns('TOTAL:', receipt.grandTotal.toLocaleString('id-ID')))
+  writeRaw(0x1B, 0x45, 0x00) // Bold off
+
+  // Divider
+  writeText(divider + '\n')
+
+  // 6. Payment details
+  writeText(padColumns('Metode Bayar:', (receipt.paymentMethod || 'TUNAI').toUpperCase()))
+  if (receipt.cashReceived !== undefined && receipt.cashReceived > 0) {
+    writeText(padColumns('Bayar Tunai:', receipt.cashReceived.toLocaleString('id-ID')))
+    writeText(padColumns('Kembalian:', (receipt.changeAmount || 0).toLocaleString('id-ID')))
+  }
+
+  // Loyalty
+  if (receipt.loyaltyInfo && (receipt.loyaltyInfo.pointsEarned !== undefined || receipt.loyaltyInfo.currentBalance !== undefined)) {
+    writeText(divider + '\n')
+    writeText(padColumns('LOYALTY REWARDS', receipt.loyaltyInfo.tierName || 'Member'))
+    if (receipt.loyaltyInfo.pointsEarned) {
+      writeText(padColumns('Poin Transaksi:', `+${receipt.loyaltyInfo.pointsEarned.toLocaleString('id-ID')}`))
+    }
+    if (receipt.loyaltyInfo.currentBalance !== undefined) {
+      writeText(padColumns('Total Saldo Poin:', `${receipt.loyaltyInfo.currentBalance.toLocaleString('id-ID')}`))
+    }
+  }
+
+  // Divider
+  writeText(divider + '\n')
+
+  // 7. Footer (Centered)
+  writeRaw(0x1B, 0x61, 0x01) // Center
+  const footerNote = receipt.note || 'Terima kasih atas kunjungan Anda!\nBarang yang sudah dibeli tidak dapat ditukar/dikembalikan.'
+  const lines = footerNote.split('\n')
+  for (const l of lines) {
+    if (l.trim()) writeText(l.trim() + '\n')
+  }
+  writeText('Powered by ShapeUp POS\n')
+
+  // 8. Feed 4 lines & Cut
+  writeRaw(0x1B, 0x64, 0x04) // Feed 4 lines
+  writeRaw(0x1D, 0x56, 0x41, 0x03) // GS V 65 3 (partial cut)
+
+  return new Uint8Array(bytes)
+}
+
+// ==========================================
+// Bluetooth Helper & Device Management
+// ==========================================
+let activeBluetoothDevice: any = null
+let activeWriteCharacteristic: any = null
+
+export function isWebBluetoothSupported(): boolean {
+  return typeof window !== 'undefined' && Boolean((navigator as any)?.bluetooth)
+}
+
+export function getActiveBluetoothDeviceName(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem('shapeup_pos_bt_name') || (activeBluetoothDevice?.name ?? null)
+}
+
+export async function requestAndConnectBluetoothPrinter(): Promise<{ success: boolean; deviceName?: string; error?: string }> {
+  if (!isWebBluetoothSupported()) {
+    return { success: false, error: 'Web Bluetooth tidak didukung pada peramban ini. Pastikan menggunakan Chrome pada Android atau Komputer.' }
+  }
+
+  try {
+    const device = await (navigator as any).bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [
+        '000018f0-0000-1000-8000-00805f9b34fb',
+        '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+        'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+        '0000af30-0000-1000-8000-00805f9b34fb',
+        '0000e781-0000-1000-8000-00805f9b34fb',
+        '0000ff00-0000-1000-8000-00805f9b34fb',
+        '0000ffff-0000-1000-8000-00805f9b34fb',
+        '000018f1-0000-1000-8000-00805f9b34fb',
+      ]
+    })
+
+    if (!device) {
+      return { success: false, error: 'Pencarian printer dibatalkan' }
+    }
+
+    const server = await device.gatt.connect()
+    const services = await server.getPrimaryServices()
+
+    let writeChar: any = null
+    for (const service of services) {
+      const chars = await service.getCharacteristics()
+      for (const char of chars) {
+        if (char.properties.write || char.properties.writeWithoutResponse) {
+          writeChar = char
+          break
+        }
+      }
+      if (writeChar) break
+    }
+
+    if (!writeChar) {
+      return { success: false, error: 'Karakteristik cetak printer tidak ditemukan pada perangkat Bluetooth ini.' }
+    }
+
+    activeBluetoothDevice = device
+    activeWriteCharacteristic = writeChar
+    const name = device.name || 'Bluetooth Thermal Printer'
+    localStorage.setItem('shapeup_pos_bt_name', name)
+
+    device.addEventListener('gattserverdisconnected', () => {
+      activeWriteCharacteristic = null
+    })
+
+    return { success: true, deviceName: name }
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Gagal menghubungkan printer bluetooth' }
+  }
+}
+
+export async function disconnectBluetoothPrinter(): Promise<void> {
+  if (activeBluetoothDevice && activeBluetoothDevice.gatt?.connected) {
+    activeBluetoothDevice.gatt.disconnect()
+  }
+  activeBluetoothDevice = null
+  activeWriteCharacteristic = null
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('shapeup_pos_bt_name')
+  }
+}
+
+export async function sendBluetoothTestPrint(): Promise<PrintResult> {
+  const testReceipt: ReceiptData = {
+    businessName: 'SHAPEUP POS',
+    businessAddress: 'Printer Test Configuration',
+    businessPhone: '0812-3456-7890',
+    orderNumber: 'TEST-0001',
+    date: '20-10-2026 12:00',
+    cashierName: 'Admin POS',
+    customerName: 'Uji Coba Printer',
+    items: [
+      {
+        name: 'Koneksi Bluetooth Berhasil',
+        quantity: 1,
+        price: 0,
+        subtotal: 0
+      }
+    ],
+    subtotal: 0,
+    discountTotal: 0,
+    taxTotal: 0,
+    grandTotal: 0,
+    paymentMethod: 'TEST PRINT',
+    note: 'Printer bluetooth siap digunakan untuk transaksi kasir.'
+  }
+  const adapter = new WebBluetoothPrinterAdapter()
+  return adapter.print(testReceipt, '58mm')
+}
+
 // 1. Browser System Print Adapter
 export class BrowserSystemPrinterAdapter implements PrinterAdapter {
   async discover(): Promise<PrinterDevice[]> {
     return [{
       id: 'system-default',
-      name: 'Printer Sistem (Browser/OS)',
+      name: 'Printer Sistem (Browser/OS / Kabel USB / RawBT)',
       connectionType: 'system',
-      paperSize: '80mm',
+      paperSize: '58mm',
       isDefault: true,
       status: 'connected'
     }]
@@ -422,64 +668,99 @@ export class PDFExportPrinterAdapter implements PrinterAdapter {
   }
 }
 
-// 3. Web Bluetooth Thermal Printer Adapter (58mm / 80mm ESC/POS)
+// 3. Web Bluetooth Thermal Printer Adapter (58mm / 80mm Direct ESC/POS)
 export class WebBluetoothPrinterAdapter implements PrinterAdapter {
-  private device: any = null
-  private gattServer: any = null
-
   async discover(): Promise<PrinterDevice[]> {
-    if (typeof window === 'undefined' || !(navigator as any).bluetooth) {
-      return []
+    const name = getActiveBluetoothDeviceName()
+    if (name) {
+      return [{
+        id: 'bt-paired',
+        name: name,
+        connectionType: 'bluetooth',
+        paperSize: '58mm',
+        status: activeWriteCharacteristic ? 'connected' : 'disconnected'
+      }]
     }
-    try {
-      const device = await (navigator as any).bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb', '00001101-0000-1000-8000-00805f9b34fb']
-      })
-      if (device) {
-        return [{
-          id: device.id,
-          name: device.name || 'Bluetooth Thermal Printer',
-          connectionType: 'bluetooth',
-          address: device.id,
-          paperSize: '58mm',
-          status: 'disconnected'
-        }]
-      }
-      return []
-    } catch (err) {
-      console.warn('Web Bluetooth discover cancelled or unsupported:', err)
-      return []
-    }
+    return []
   }
 
   async connect(deviceId: string): Promise<void> {
-    if (typeof window === 'undefined' || !(navigator as any).bluetooth) {
-      throw new Error('Web Bluetooth tidak didukung pada peramban ini.')
+    const res = await requestAndConnectBluetoothPrinter()
+    if (!res.success) {
+      throw new Error(res.error || 'Gagal menyambungkan Bluetooth printer')
     }
-    // Web Bluetooth requires user interaction for connecting
   }
 
   async disconnect(): Promise<void> {
-    if (this.gattServer && this.gattServer.connected) {
-      this.gattServer.disconnect()
-    }
+    await disconnectBluetoothPrinter()
   }
 
   async getStatus(): Promise<PrinterStatus> {
-    const isConnected = this.gattServer ? this.gattServer.connected : false
+    const isConnected = Boolean(activeBluetoothDevice?.gatt?.connected && activeWriteCharacteristic)
     return { online: isConnected }
   }
 
   async print(receipt: ReceiptData, paperSize?: PaperSize): Promise<PrintResult> {
-    // Fallback to iframe thermal print if bluetooth direct connection is not active
-    const size = paperSize || receipt.paperSize || '58mm'
-    return printReceiptViaIframe(receipt, size)
+    const effectiveSize = paperSize || receipt.paperSize || '58mm'
+
+    // If Web Bluetooth is not supported in the browser, fallback safely to iframe print
+    if (!isWebBluetoothSupported()) {
+      return printReceiptViaIframe(receipt, effectiveSize)
+    }
+
+    try {
+      // Connect if not already connected
+      if (!activeWriteCharacteristic || !activeBluetoothDevice?.gatt?.connected) {
+        if (activeBluetoothDevice && activeBluetoothDevice.gatt) {
+          const server = await activeBluetoothDevice.gatt.connect()
+          const services = await server.getPrimaryServices()
+          for (const service of services) {
+            const chars = await service.getCharacteristics()
+            for (const char of chars) {
+              if (char.properties.write || char.properties.writeWithoutResponse) {
+                activeWriteCharacteristic = char
+                break
+              }
+            }
+            if (activeWriteCharacteristic) break
+          }
+        }
+      }
+
+      // If still not connected, prompt pair dialog
+      if (!activeWriteCharacteristic) {
+        const pairRes = await requestAndConnectBluetoothPrinter()
+        if (!pairRes.success || !activeWriteCharacteristic) {
+          console.warn('Bluetooth connection not active, falling back to system print:', pairRes.error)
+          return printReceiptViaIframe(receipt, effectiveSize)
+        }
+      }
+
+      // Encode ESC/POS byte sequence
+      const payload = encodeReceiptToEscPos(receipt, effectiveSize)
+
+      // Send payload in chunks of 64 bytes
+      const CHUNK_SIZE = 64
+      for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
+        const chunk = payload.slice(i, i + CHUNK_SIZE)
+        if (activeWriteCharacteristic.properties.write) {
+          await activeWriteCharacteristic.writeValueWithResponse(chunk)
+        } else {
+          await activeWriteCharacteristic.writeValueWithoutResponse(chunk)
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+
+      return { success: true, message: 'Receipt berhasil dicetak via Bluetooth' }
+    } catch (err: any) {
+      console.warn('Web Bluetooth print error, gracefully falling back to system print:', err)
+      return printReceiptViaIframe(receipt, effectiveSize)
+    }
   }
 }
 
 // Helper factory to get active printer adapter
-export function getPrinterAdapter(type: ConnectionType): PrinterAdapter {
+export function getPrinterAdapter(type: ConnectionType = 'system'): PrinterAdapter {
   switch (type) {
     case 'bluetooth':
       return new WebBluetoothPrinterAdapter()

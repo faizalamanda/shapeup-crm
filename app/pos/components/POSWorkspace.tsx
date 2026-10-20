@@ -452,7 +452,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         businessAddress: rSettings.address || undefined,
         businessPhone: rSettings.phone || undefined,
         orderNumber: orderNumber,
-        date: formatDisplayDate(new Date(), 'datetime', activeBusiness?.timezone),
+        date: formatDisplayDate(new Date(), 'receipt', activeBusiness?.timezone),
         cashierName: userProfile?.full_name || 'Kasir',
         customerName: selectedCustomer?.name || 'Walk-in Customer',
         showItemNumbering: rSettings.showItemNumbering,

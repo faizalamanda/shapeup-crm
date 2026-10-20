@@ -63,10 +63,11 @@ export function sortTransactionsNewestFirst<T extends { date: string }>(items: T
  * - 'datetime': 20 Agt 2026, 10:28 WIB
  * - 'full': Kamis, 20 Agustus 2026 10:28 WIB
  * - 'time': 10:28 WIB
+ * - 'receipt': 20-10-2026 10:28
  */
 export function formatDisplayDate(
   dateInput?: string | Date | null,
-  mode: 'short' | 'medium' | 'datetime' | 'full' | 'time' = 'datetime',
+  mode: 'short' | 'medium' | 'datetime' | 'full' | 'time' | 'receipt' = 'datetime',
   timezone: string = DEFAULT_TIMEZONE
 ): string {
   if (!dateInput) return '-'
@@ -75,6 +76,23 @@ export function formatDisplayDate(
 
   try {
     switch (mode) {
+      case 'receipt': {
+        const parts = new Intl.DateTimeFormat('id-ID', {
+          timeZone: timezone,
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hourCycle: 'h23'
+        }).formatToParts(d)
+        const day = parts.find(p => p.type === 'day')?.value || '00'
+        const month = parts.find(p => p.type === 'month')?.value || '00'
+        const year = parts.find(p => p.type === 'year')?.value || '0000'
+        const hour = parts.find(p => p.type === 'hour')?.value || '00'
+        const minute = parts.find(p => p.type === 'minute')?.value || '00'
+        return `${day}-${month}-${year} ${hour}:${minute}`
+      }
       case 'short':
         return d.toLocaleDateString('id-ID', {
           timeZone: timezone,

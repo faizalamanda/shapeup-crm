@@ -2,7 +2,15 @@
 
 import { useState, useEffect } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
-import { PaperSize } from '@/lib/pos/printerAdapter'
+import { 
+  PaperSize, 
+  ConnectionType, 
+  isWebBluetoothSupported, 
+  getActiveBluetoothDeviceName, 
+  requestAndConnectBluetoothPrinter, 
+  disconnectBluetoothPrinter, 
+  sendBluetoothTestPrint 
+} from '@/lib/pos/printerAdapter'
 import { useUserContext } from '@/components/UserContext'
 import { supabase } from '@/lib/supabase'
 import { fetchLoyaltySettings } from '@/plugins/loyalty/helpers/loyaltyApi'
@@ -13,6 +21,7 @@ export interface ReceiptSettings {
   phone: string
   footerNote: string
   paperSize: PaperSize
+  connectionType: ConnectionType
   autoPrintAfterPayment: boolean
   showItemNumbering: boolean
   showLoyaltyPoints: boolean
@@ -28,6 +37,7 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
       phone: '',
       footerNote: 'Terima kasih atas kunjungan Anda!\nBarang yang sudah dibeli tidak dapat ditukar/dikembalikan.',
       paperSize: '58mm',
+      connectionType: 'system',
       autoPrintAfterPayment: false,
       showItemNumbering: true,
       showLoyaltyPoints: true
@@ -44,6 +54,7 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
         phone: parsed.phone || '',
         footerNote: parsed.footerNote || 'Terima kasih atas kunjungan Anda!',
         paperSize: parsed.paperSize || '58mm',
+        connectionType: parsed.connectionType || 'system',
         autoPrintAfterPayment: Boolean(parsed.autoPrintAfterPayment),
         showItemNumbering: parsed.showItemNumbering !== undefined ? Boolean(parsed.showItemNumbering) : true,
         showLoyaltyPoints: parsed.showLoyaltyPoints !== undefined ? Boolean(parsed.showLoyaltyPoints) : true
@@ -59,6 +70,7 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
     phone: '',
     footerNote: 'Terima kasih atas kunjungan Anda!\nBarang yang sudah dibeli tidak dapat ditukar/dikembalikan.',
     paperSize: '58mm',
+    connectionType: 'system',
     autoPrintAfterPayment: false,
     showItemNumbering: true,
     showLoyaltyPoints: true
@@ -82,6 +94,10 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
   const [phone, setPhone] = useState('')
   const [footerNote, setFooterNote] = useState('Terima kasih atas kunjungan Anda!')
   const [paperSize, setPaperSize] = useState<PaperSize>('58mm')
+  const [connectionType, setConnectionType] = useState<ConnectionType>('system')
+  const [btDeviceName, setBtDeviceName] = useState<string | null>(null)
+  const [isConnectingBt, setIsConnectingBt] = useState(false)
+  const [btStatusMsg, setBtStatusMsg] = useState<string | null>(null)
   const [autoPrintAfterPayment, setAutoPrintAfterPayment] = useState(false)
   const [showItemNumbering, setShowItemNumbering] = useState(true)
   const [showLoyaltyPoints, setShowLoyaltyPoints] = useState(true)
@@ -97,10 +113,13 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
       setPhone(s.phone)
       setFooterNote(s.footerNote)
       setPaperSize(s.paperSize)
+      setConnectionType(s.connectionType || 'system')
+      setBtDeviceName(getActiveBluetoothDeviceName())
       setAutoPrintAfterPayment(s.autoPrintAfterPayment)
       setShowItemNumbering(s.showItemNumbering)
       setShowLoyaltyPoints(s.showLoyaltyPoints)
       setSaveSuccess(false)
+      setBtStatusMsg(null)
 
       if (targetBizId) {
         setLoadingLoyalty(true)
@@ -121,6 +140,48 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
     }
   }, [isOpen, defaultBusinessName, targetBizId])
 
+  const handleConnectBluetooth = async () => {
+    setIsConnectingBt(true)
+    setBtStatusMsg(null)
+    try {
+      const res = await requestAndConnectBluetoothPrinter()
+      if (res.success && res.deviceName) {
+        setBtDeviceName(res.deviceName)
+        setConnectionType('bluetooth')
+        setBtStatusMsg(`Terhubung ke ${res.deviceName}`)
+      } else {
+        setBtStatusMsg(res.error || 'Gagal menyambungkan Bluetooth')
+      }
+    } catch (err: any) {
+      setBtStatusMsg(err.message || 'Terjadi kesalahan Bluetooth')
+    } finally {
+      setIsConnectingBt(false)
+    }
+  }
+
+  const handleDisconnectBluetooth = async () => {
+    await disconnectBluetoothPrinter()
+    setBtDeviceName(null)
+    setBtStatusMsg('Bluetooth printer diputuskan')
+  }
+
+  const handleTestPrintBluetooth = async () => {
+    setIsConnectingBt(true)
+    setBtStatusMsg('Mengirim data uji cetak...')
+    try {
+      const res = await sendBluetoothTestPrint()
+      if (res.success) {
+        setBtStatusMsg('Uji cetak berhasil!')
+      } else {
+        setBtStatusMsg(res.message || 'Gagal uji cetak')
+      }
+    } catch (err: any) {
+      setBtStatusMsg('Kesalahan: ' + err.message)
+    } finally {
+      setIsConnectingBt(false)
+    }
+  }
+
   const handleSave = () => {
     const settings: ReceiptSettings = {
       storeName: storeName.trim() || defaultBusinessName,
@@ -128,6 +189,7 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
       phone: phone.trim(),
       footerNote: footerNote.trim(),
       paperSize,
+      connectionType,
       autoPrintAfterPayment,
       showItemNumbering,
       showLoyaltyPoints
@@ -217,6 +279,81 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
             />
           </div>
+
+          <div>
+            <label className="block font-bold text-slate-700 uppercase tracking-wide mb-1">
+              Metode Cetak Printer
+            </label>
+            <select
+              value={connectionType}
+              onChange={(e) => setConnectionType(e.target.value as ConnectionType)}
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 font-medium bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+            >
+              <option value="system">Printer Sistem (Browser/OS / Komputer / Kabel USB / RawBT)</option>
+              <option value="bluetooth">Direct Bluetooth (BLE Instan tanpa keluar PWA)</option>
+            </select>
+            <p className="text-[11px] text-slate-500 mt-1">
+              {connectionType === 'bluetooth' 
+                ? '⚡ Mencetak langsung via Web Bluetooth (0.2 detik, tanpa keluar PWA, tanpa RawBT).'
+                : '🖥️ Menggunakan dialog cetak bawaan sistem OS atau printer kabel USB komputer.'}
+            </p>
+          </div>
+
+          {/* Bluetooth Device Management Card */}
+          {connectionType === 'bluetooth' && (
+            <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-indigo-950 uppercase tracking-wider">
+                  Status Printer Bluetooth
+                </span>
+                {btDeviceName ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full">
+                    🟢 {btDeviceName}
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-medium px-2 py-0.5 bg-slate-200 text-slate-600 rounded-full">
+                    ⚪ Belum Terhubung
+                  </span>
+                )}
+              </div>
+
+              {btStatusMsg && (
+                <div className="text-[11px] p-2 rounded-lg bg-white border border-indigo-100 text-indigo-700 font-medium">
+                  {btStatusMsg}
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleConnectBluetooth}
+                  disabled={isConnectingBt}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
+                >
+                  {isConnectingBt ? 'Menghubungkan...' : btDeviceName ? 'Ganti Printer Bluetooth' : 'Hubungkan Printer Bluetooth'}
+                </button>
+                {btDeviceName && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleTestPrintBluetooth}
+                      disabled={isConnectingBt}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-50 text-indigo-700 border border-indigo-300 rounded-lg text-xs font-semibold transition-all"
+                    >
+                      Uji Cetak (Test Print)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDisconnectBluetooth}
+                      className="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-xs font-semibold transition-all"
+                    >
+                      Putuskan
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block font-bold text-slate-700 uppercase tracking-wide mb-1">
@@ -333,40 +470,48 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
             👁️ Pratinjau Tampilan Struk
           </span>
           <div 
-            className={`bg-white text-black font-mono p-4 rounded-lg shadow-md border border-slate-200 text-[11px] leading-tight ${
+            className={`bg-white text-slate-900 font-sans p-4 rounded-lg shadow-md border border-slate-200 text-[11px] leading-tight ${
               paperSize === '58mm' ? 'w-[240px]' : paperSize === '80mm' ? 'w-[300px]' : 'w-full max-w-sm'
             }`}
           >
             <div className="text-center pb-2 border-b border-dashed border-slate-400 space-y-0.5">
-              <h4 className="font-bold text-xs uppercase">{storeName || 'NAMA TOKO'}</h4>
+              <h4 className="font-bold text-xs uppercase tracking-wide">{storeName || 'NAMA TOKO'}</h4>
               {address && <p className="text-[10px] text-slate-600">{address}</p>}
               {phone && <p className="text-[10px] text-slate-600">Telp: {phone}</p>}
             </div>
 
             <div className="py-2 border-b border-dashed border-slate-400 space-y-1 text-[10px] text-slate-600">
               <div className="flex justify-between">
-                <span>No: POS-20261012</span>
-                <span>12/10/26 15:30</span>
+                <span>No. Invoice:</span>
+                <span className="font-semibold text-slate-800">POS-20261012</span>
               </div>
               <div className="flex justify-between">
-                <span>Kasir: Budi Santoso</span>
-                <span>Pelanggan: Budi (Member)</span>
+                <span>Tanggal:</span>
+                <span>20-10-2026 12:26</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Kasir:</span>
+                <span>Budi Santoso</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Pelanggan:</span>
+                <span>Budi (Member)</span>
               </div>
             </div>
 
             <div className="py-2 border-b border-dashed border-slate-400 space-y-2">
               <div>
-                <p className="font-bold">{showItemNumbering ? '1. ' : ''}Contoh Item Produk A</p>
-                <div className={`flex justify-between text-slate-600 mt-0.5 ${showItemNumbering ? 'pl-4' : 'pl-1.5'}`}>
-                  <span>2 x Rp 25.000</span>
-                  <span>Rp 50.000</span>
+                <p className="font-semibold">{showItemNumbering ? '1. ' : ''}Contoh Item Produk A</p>
+                <div className={`flex justify-between text-slate-600 mt-0.5 ${showItemNumbering ? 'pl-3' : 'pl-1'}`}>
+                  <span>2 x 25.000</span>
+                  <span className="font-semibold text-slate-900">50.000</span>
                 </div>
               </div>
               <div>
-                <p className="font-bold">{showItemNumbering ? '2. ' : ''}Contoh Item Produk B</p>
-                <div className={`flex justify-between text-slate-600 mt-0.5 ${showItemNumbering ? 'pl-4' : 'pl-1.5'}`}>
-                  <span>1 x Rp 15.000</span>
-                  <span>Rp 15.000</span>
+                <p className="font-semibold">{showItemNumbering ? '2. ' : ''}Contoh Item Produk B</p>
+                <div className={`flex justify-between text-slate-600 mt-0.5 ${showItemNumbering ? 'pl-3' : 'pl-1'}`}>
+                  <span>1 x 15.000</span>
+                  <span className="font-semibold text-slate-900">15.000</span>
                 </div>
               </div>
             </div>
@@ -374,19 +519,19 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
             <div className="py-2 border-b border-dashed border-slate-400 space-y-1">
               <div className="flex justify-between">
                 <span>Subtotal:</span>
-                <span>Rp 65.000</span>
+                <span>65.000</span>
               </div>
               <div className="flex justify-between font-bold text-xs pt-1 border-t border-slate-200">
                 <span>TOTAL:</span>
-                <span>Rp 65.000</span>
+                <span>65.000</span>
               </div>
               <div className="flex justify-between text-[10px] text-slate-600 pt-0.5">
                 <span>Bayar Tunai:</span>
-                <span>Rp 100.000</span>
+                <span>100.000</span>
               </div>
               <div className="flex justify-between text-[10px] font-semibold text-slate-800">
                 <span>Kembalian:</span>
-                <span>Rp 35.000</span>
+                <span>35.000</span>
               </div>
             </div>
 
@@ -410,6 +555,9 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
 
             <div className="pt-2 text-center text-[9px] text-slate-500 whitespace-pre-line">
               {footerNote || 'Terima kasih atas kunjungan Anda!'}
+            </div>
+            <div className="text-[8px] text-slate-400 text-center mt-1">
+              Powered by ShapeUp POS
             </div>
           </div>
         </div>

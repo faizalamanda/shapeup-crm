@@ -153,7 +153,7 @@ export default function ShiftDetailModal({
     const zReceipt: ReceiptData = {
       businessName: businessName,
       orderNumber: `Z-REPORT-${shift.id.slice(0, 8).toUpperCase()}`,
-      date: formatDisplayDate(shift.closed_at || new Date(), 'datetime', timezone),
+      date: formatDisplayDate(shift.closed_at || new Date(), 'receipt', timezone),
       cashierName: shift.cashier_name || 'Kasir',
       customerName: 'LAPORAN REKONSILIASI KASIR',
       items: [

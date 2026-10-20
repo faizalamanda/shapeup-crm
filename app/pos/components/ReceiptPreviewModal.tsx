@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { ReceiptData, getPrinterAdapter, PaperSize } from '@/lib/pos/printerAdapter'
+import { ReceiptData, getPrinterAdapter, PaperSize, ConnectionType } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from './ReceiptSettingsModal'
 
 type Props = {
@@ -13,6 +13,7 @@ type Props = {
 export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props) {
   const [mounted, setMounted] = useState(false)
   const [paperSize, setPaperSize] = useState<PaperSize>('58mm')
+  const [connectionType, setConnectionType] = useState<ConnectionType>('system')
   const [isPrinting, setIsPrinting] = useState(false)
   const [printMessage, setPrintMessage] = useState<string | null>(null)
 
@@ -26,6 +27,9 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
       if (settings.paperSize) {
         setPaperSize(settings.paperSize)
       }
+      if (settings.connectionType) {
+        setConnectionType(settings.connectionType)
+      }
     }
   }, [isOpen, receipt?.businessName])
 
@@ -35,10 +39,10 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
     setIsPrinting(true)
     setPrintMessage(null)
     try {
-      const adapter = getPrinterAdapter('system')
+      const adapter = getPrinterAdapter(connectionType)
       const res = await adapter.print(receipt, paperSize)
       if (res.success) {
-        setPrintMessage('Receipt berhasil dikirim ke printer.')
+        setPrintMessage(res.message || 'Receipt berhasil dicetak.')
       } else {
         setPrintMessage(res.message || 'Gagal mencetak receipt')
       }
@@ -81,6 +85,16 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
         <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between bg-gray-50/80 no-print">
           <h3 className="font-bold text-gray-900 text-base">Pratinjau Receipt</h3>
           <div className="flex items-center gap-2">
+            {/* Connection Type selector */}
+            <select
+              value={connectionType}
+              onChange={(e) => setConnectionType(e.target.value as ConnectionType)}
+              className="text-xs bg-white border border-gray-200 rounded-lg px-2 py-1 font-medium text-gray-700 outline-none"
+              title="Metode Cetak"
+            >
+              <option value="system">Sistem (OS/USB)</option>
+              <option value="bluetooth">Bluetooth</option>
+            </select>
             {/* Paper Size selector */}
             <select
               value={paperSize}
@@ -104,8 +118,8 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
         <div className="p-4 bg-gray-100 overflow-y-auto flex-1 flex justify-center">
           <div 
             id="thermal-receipt-container"
-            className={`bg-white text-black font-mono p-4 text-xs shadow-md border border-gray-200 ${
-              paperSize === '58mm' ? 'w-[260px]' : paperSize === '80mm' ? 'w-[340px]' : 'w-full max-w-xl font-sans'
+            className={`bg-white text-slate-900 font-sans p-4 text-xs shadow-md border border-gray-200 leading-tight ${
+              paperSize === '58mm' ? 'w-[260px]' : paperSize === '80mm' ? 'w-[340px]' : 'w-full max-w-xl'
             }`}
           >
             {/* Header */}
@@ -119,7 +133,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
             <div className="py-2.5 border-b border-dashed border-gray-400 space-y-1 text-[11px]">
               <div className="flex justify-between">
                 <span>No. Invoice:</span>
-                <span className="font-bold">{receipt.orderNumber}</span>
+                <span className="font-semibold text-slate-800">{receipt.orderNumber}</span>
               </div>
               <div className="flex justify-between">
                 <span>Tanggal:</span>
@@ -140,22 +154,22 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
             {/* Items */}
             <div className="py-2.5 border-b border-dashed border-gray-400 space-y-2.5">
               {receipt.items.map((item, idx) => {
-                const detailIndent = receipt.showItemNumbering ? 'pl-4' : 'pl-2'
+                const detailIndent = receipt.showItemNumbering ? 'pl-3' : 'pl-1'
                 return (
                   <div key={idx} className="text-[11px]">
-                    <div className="font-semibold">
+                    <div className="font-semibold text-slate-900">
                       {receipt.showItemNumbering ? `${idx + 1}. ` : ''}{item.name}
                     </div>
                     {item.variant && <div className={`text-[10px] text-gray-500 mt-0.5 ${detailIndent}`}>• {item.variant}</div>}
                     {item.note && <div className={`text-[10px] text-gray-500 italic mt-0.5 ${detailIndent}`}>• {item.note}</div>}
                     <div className={`flex justify-between mt-0.5 ${detailIndent}`}>
-                      <span>{item.quantity} x Rp {item.price.toLocaleString('id-ID')}</span>
-                      <span className="font-medium">Rp {item.subtotal.toLocaleString('id-ID')}</span>
+                      <span>{item.quantity} x {item.price.toLocaleString('id-ID')}</span>
+                      <span className="font-semibold text-slate-900">{item.subtotal.toLocaleString('id-ID')}</span>
                     </div>
                     {item.discount && item.discount > 0 ? (
                       <div className={`flex justify-between text-[10px] text-gray-500 mt-0.5 ${detailIndent}`}>
-                        <span>Diskon item:</span>
-                        <span>-Rp {item.discount.toLocaleString('id-ID')}</span>
+                        <span>Diskon:</span>
+                        <span>-{item.discount.toLocaleString('id-ID')}</span>
                       </div>
                     ) : null}
                   </div>
@@ -167,23 +181,23 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
             <div className="py-2.5 border-b border-dashed border-gray-400 space-y-1 text-[11px]">
               <div className="flex justify-between">
                 <span>Subtotal:</span>
-                <span>Rp {receipt.subtotal.toLocaleString('id-ID')}</span>
+                <span>{receipt.subtotal.toLocaleString('id-ID')}</span>
               </div>
               {receipt.discountTotal > 0 && (
                 <div className="flex justify-between text-red-600">
                   <span>Diskon:</span>
-                  <span>-Rp {receipt.discountTotal.toLocaleString('id-ID')}</span>
+                  <span>-{receipt.discountTotal.toLocaleString('id-ID')}</span>
                 </div>
               )}
               {receipt.taxTotal > 0 && (
                 <div className="flex justify-between">
                   <span>Pajak:</span>
-                  <span>+Rp {receipt.taxTotal.toLocaleString('id-ID')}</span>
+                  <span>+{receipt.taxTotal.toLocaleString('id-ID')}</span>
                 </div>
               )}
               <div className="flex justify-between font-bold text-sm pt-1 border-t border-gray-200">
-                <span>GRAND TOTAL:</span>
-                <span>Rp {receipt.grandTotal.toLocaleString('id-ID')}</span>
+                <span>TOTAL:</span>
+                <span>{receipt.grandTotal.toLocaleString('id-ID')}</span>
               </div>
             </div>
 
@@ -197,11 +211,11 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
                 <>
                   <div className="flex justify-between">
                     <span>Bayar Tunai:</span>
-                    <span>Rp {receipt.cashReceived.toLocaleString('id-ID')}</span>
+                    <span>{receipt.cashReceived.toLocaleString('id-ID')}</span>
                   </div>
                   <div className="flex justify-between font-semibold">
                     <span>Kembalian:</span>
-                    <span>Rp {(receipt.changeAmount || 0).toLocaleString('id-ID')}</span>
+                    <span>{(receipt.changeAmount || 0).toLocaleString('id-ID')}</span>
                   </div>
                 </>
               )}

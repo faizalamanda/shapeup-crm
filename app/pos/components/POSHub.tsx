@@ -220,7 +220,7 @@ export default function POSHub({ onOpenWorkspace }: Props) {
     const receipt: ReceiptData = {
       businessName: activeBusiness?.name || 'ShapeUp Store',
       orderNumber: order.order_number,
-      date: formatDisplayDate(order.created_at, 'datetime', timezone),
+      date: formatDisplayDate(order.created_at, 'receipt', timezone),
       cashierName: cashierName,
       customerName: order.customer?.name || 'Pelanggan Walk-in',
       items: (order.items_json || []).map((it: any) => ({

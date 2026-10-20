@@ -160,11 +160,17 @@
 10. **Unified Post-Purchase Exchange & Partial Debt Settlement:**
    Penukaran barang (Exchange) menggunakan event sourcing independen (`sourceType: 'order_exchange'`, `sourceId: exchangeId`) untuk menghindari tabrakan PostgreSQL unique constraint. Jika pesanan bertipe cicilan/DP (`amount_paid < grand_total`) dan nilai tukar turun ($\Delta < 0$), kasir dilarang mengeluarkan uang tunai jika saldo terbayar $\le$ total baru; selisih harga wajib memotong sisa piutang secara otomatis.
 
-11. **Isolated Thermal Receipt Printing Standard (Zero Screen Clutter):**
+11. **Isolated & Dual-Mode Thermal Receipt Printing Standard (Zero Screen Clutter & Zero PWA Exit):**
    Pencetakan struk kasir thermal (POS) **DILARANG KERAS** memanggil `window.print()` langsung pada jendela browser utama yang sedang menampilkan modal atau elemen antarmuka layar.
-   - **WAJIB** menggunakan modul cetak terisolasi via *Hidden Iframe* (`printReceiptViaIframe()` dari `@/lib/pos/printerAdapter.ts`) yang merender dokumen HTML murni khusus struk dengan `@page { size: ...; margin: 0; }`.
+   - **Arsitektur Dual-Mode:** Sistem mendukung dua metode koneksi terpadu melalui `printerAdapter.ts`:
+     - **Direct Web Bluetooth (BLE Instan):** Menggunakan Web Bluetooth API (`navigator.bluetooth`) dan generator biner ESC/POS murni untuk mencetak seketika (0.2s) dari dalam PWA tanpa keluar aplikasi dan tanpa memerlukan aplikasi perantara pihak ketiga (seperti RawBT) sehingga 100% bebas watermark. Dilengkapi auto-fallback ke printer sistem jika koneksi gagal/terputus.
+     - **Printer Sistem (Desktop USB / Fallback Spooler):** Menggunakan modul cetak terisolasi via *Hidden Iframe* (`printReceiptViaIframe()` dari `@/lib/pos/printerAdapter.ts`) dengan `@page { size: ...; margin: 0; }`. Sangat optimal untuk PC kasir dengan kabel USB (mendukung Kiosk Silent Print `--kiosk-printing`).
+   - **Standar Tipografi & Anti-Wrap:**
+     - Menggunakan font Clean Modern Sans-Serif (`-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, ...`) menggantikan font monospace/Courier kaku agar hasil cetak tajam, rapat, dan modern.
+     - **Dilarang menyertakan awalan `Rp `** pada baris harga item, subtotal, diskon, grand total, bayar, dan kembalian di kertas 58mm/80mm agar nominal harga tidak pernah patah baris (*wrapping*).
+     - **Format Tanggal Ringkas:** Selalu gunakan mode `'receipt'` pada `formatDisplayDate(date, 'receipt', timezone)` yang menghasilkan format kompak `DD-MM-YYYY HH:mm` tanpa imbuhan zona waktu (WIB) agar pas 1 baris utuh.
    - Area cetak efektif fisik thermal: Roll 58mm $\rightarrow$ `48mm` (384 dots); Roll 80mm $\rightarrow$ `72mm` (576 dots).
-   - Seluruh komponen modal kasir wajib diproteksi ganda dengan kelas `.no-print` dan CSS `@media print` fallback agar tidak pernah merender backdrop, header modal, tombol dropdown ukuran kertas, tombol silang, alert status, atau tombol aksi cetak/tutup ke kertas thermal (termasuk saat diproses oleh aplikasi perantara spooler Android seperti RawBT).
+   - Seluruh komponen modal kasir wajib diproteksi ganda dengan kelas `.no-print` dan CSS `@media print` fallback agar tidak pernah merender backdrop, header modal, tombol dropdown ukuran kertas, tombol silang, alert status, atau tombol aksi cetak/tutup ke kertas thermal.
 
 12. **PWA Dynamic Auto-Rotate & Landscape Safe-Area Inset Standards (Zero Notch Occlusion):**
    - Web App Manifest (`public/manifest.json`) **WAJIB** menggunakan konfigurasi `"orientation": "any"` (dilarang mengunci dengan `"portrait-primary"`), sehingga aplikasi dapat berputar bebas ke mode lanskap mengikuti sensor akselerometer saat fitur *Auto-Rotate* diaktifkan oleh pengguna pada sistem operasi perangkat (Android / iOS).

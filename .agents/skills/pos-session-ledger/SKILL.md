@@ -209,39 +209,61 @@ Pada Z-Report penutupan kasir, saldo kas dipisahkan secara teraudit:
 
 ## 9. Thermal Receipt Printing & Device Spooling Architecture (World-Class POS Standard)
 
-Sistem pencetakan struk kasir thermal (POS) menggunakan arsitektur **Isolated DOM via Hidden Iframe** untuk menjamin hasil cetak struk 100% bersih tanpa artefak antarmuka layar (*zero screen clutter*).
+Sistem pencetakan struk kasir thermal (POS) menggunakan arsitektur **Dual-Mode Hybrid Printing Engine** yang menggabungkan transmisi langsung biner perangkat (**Direct Web Bluetooth**) dan isolasi dokumen (**Isolated DOM via Hidden Iframe**) untuk menjamin hasil cetak struk 100% bersih, cepat, tanpa artefak antarmuka layar (*zero screen clutter*), dan tanpa keluar dari PWA (*zero PWA exit*).
 
-### 9.1 Root Cause Masalah Cetak Langsung (window.print() Anti-Pattern)
-- Memanggil `window.print()` langsung pada jendela browser utama saat modal pratinjau struk terbuka menyebabkan:
-  1. Header modal (`Pratinjau Receipt`, dropdown selector ukuran kertas, tombol silang) ikut tercetak.
-  2. Alert status (`Receipt berhasil dikirim ke printer.`) dan tombol aksi footer (`Cetak Receipt`, `Tutup`) ikut tercetak.
-  3. Aplikasi perantara printer di Android/tablet kasir (seperti **RawBT**) merasterisasi seluruh modal dialog apa adanya sebagai gambar bitmap monokrom, menghasilkan struk yang kotor dan boros kertas thermal.
+### 9.1 Analisis Masalah Spooler Pihak Ketiga (The RawBT / OS Spooler Paradox)
+1. **Penyebab Watermark Pihak Ketiga:**
+   - Pada perangkat Android, printer thermal Bluetooth portable umumnya tidak memiliki driver resmi dari Google Mopria. Pengguna mengandalkan aplikasi perantara seperti **RawBT**.
+   - Aplikasi RawBT versi gratis (*free-tier*) secara otomatis menyuntikkan teks *disclaimer* komersial di akhir kertas struk. Teks ini murni disisipkan oleh RawBT, bukan dari kode aplikasi ShapeUp CRM.
+2. **Penyebab PWA Tertutup Saat Cetak:**
+   - Memanggil `iframe.print()` atau `window.print()` pada Android PWA memicu *intent* peluncuran **Android System Print Spooler**.
+   - Ini menyebabkan aplikasi PWA kehilangan fokus (*minimized/interrupted*), membuka antarmuka sistem Android atau jendela RawBT, dan kasir harus menekan tombol cetak ulang sebelum kembali ke kasir.
+3. **Penyebab Teks Patah & Font Kasar:**
+   - Penggunaan font monospace `Courier New` dengan kait tebal (*slab serif*) boros ruang horizontal.
+   - Penyematan awalan `Rp ` pada kertas 58mm (lebar efektif 48mm / 32 kolom) menyebabkan kolom harga satuan dan total melebihi batas baris sehingga teks harga patah canggung menjadi dua baris (`1 x Rp ... Rp ...`).
+   - Format tanggal yang menyertakan teks bulan dan zona waktu (`20 Okt 2026, 12.26 WIB`) terlalu panjang dan membuat kata `WIB` terdorong patah ke baris bawah.
 
-### 9.2 Arsitektur Mesin Cetak Terisolasi (Hidden Iframe Engine)
-Pencetakan diisolasi secara penuh dari DOM aplikasi utama melalui helper terpusat di `lib/pos/printerAdapter.ts`:
-1. **Dynamic Hidden Iframe (`pos-thermal-print-iframe`):**
-   - Elemen `<iframe>` dibuat/digunakan kembali secara dinamis dengan posisi `fixed`, `visibility: hidden`, dan ukuran 0x0 di luar area pandang pengguna.
-2. **Dedicated Pure Receipt HTML Generator (`generateReceiptHtml`):**
-   - Menghasilkan dokumen HTML murni yang hanya berisi:
-     - Header Toko (Nama, Alamat, Telepon).
-     - Metadata Transaksi (No Invoice, Tanggal/Waktu, Kasir, Pelanggan).
-     - Rincian Item (Kuantitas, Harga, Subtotal, Varian, Diskon Item, Catatan Item).
-     - Ringkasan Finansial (Subtotal, Total Diskon, Pajak, Grand Total tebal).
-     - Detail Pembayaran (Metode Bayar, Tunai Diterima, Kembalian).
-     - Catatan Kaki Toko & Powered by ShapeUp POS.
-   - Menggunakan garis pemisah putus-putus (`border-top: 1px dashed #000;`) tajam khas printer kasir.
-   - Semua input teks string diproteksi sanitasi escaping HTML (`escapeHtml`).
-3. **Kompensasi Lebar Efektif Kertas Thermal Fisik:**
-   | Ukuran Kertas | Lebar Fisik Roll | Area Cetak Efektif (*Printable Width*) | Karakteristik Head Thermal | CSS Aturan |
-   | :--- | :--- | :--- | :--- | :--- |
-   | **58mm** | 58 mm | **48 mm** | 384 dots (~32 karakter/baris) | `@page { size: 58mm auto; margin: 0; }` width: `48mm` |
-   | **80mm** | 80 mm | **72 mm** | 576 dots (~48 karakter/baris) | `@page { size: 80mm auto; margin: 0; }` width: `72mm` |
-   | **A4** | 210 mm | **180 mm** | Lembar standar printer desktop | `@page { size: A4 portrait; margin: 15mm; }` width: `180mm` |
-4. **Trigger Eksekusi (`iframe.contentWindow.print()`):**
-   - Menuliskan dokumen HTML ke `iframeDoc`, memberi jeda waktu 150–200ms agar font monospace dan CSS selesai di-parse oleh browser, kemudian memanggil `iframe.contentWindow.focus()` dan `iframe.contentWindow.print()`.
-   - RawBT / Android Print Spooler menerima dokumen struk murni tanpa melihat DOM modal luar.
+### 9.2 Arsitektur Dual-Mode Mesin Cetak ShapeUp POS (`printerAdapter.ts`)
+ShapeUp POS mengimplementasikan dua jalur transmisi yang saling melengkapi dengan mekanisme *auto-fallback*:
 
-### 9.3 Defense-in-Depth (@media print Fallback)
+1. **Jalur 1: Direct Web Bluetooth ESC/POS (Mode Instan untuk Tablet / HP):**
+   - Menggunakan **Web Bluetooth API** (`navigator.bluetooth`) yang didukung natively di Google Chrome (Android & Desktop).
+   - Menghubungkan langsung ke karakteristik GATT write printer Bluetooth (mencakup UUID standar `000018f0`, `49535343`, `e7810a71`, dll).
+   - Mengubah objek `ReceiptData` menjadi *raw byte sequence* ESC/POS biner (`encodeReceiptToEscPos`) dengan font hardware internal (Font A 12x24 dots).
+   - Mentransmisikan paket data secara *chunked* (64 bytes) untuk mencegah *buffer overflow* pada mikrokontroler printer thermal.
+   - **Keunggulan:** 
+     - Kecepatan cetak 0.2 detik (instan).
+     - **100% berada di dalam PWA** (tanpa keluar aplikasi).
+     - **Bebas dari aplikasi RawBT** dan 100% bebas watermark.
+   - **Safe Fallback:** Jika perangkat tidak mendukung Web Bluetooth (misal di iOS Safari) atau koneksi Bluetooth terputus, sistem secara otomatis beralih ke *Hidden Iframe System Print* tanpa memunculkan error fatal.
+
+2. **Jalur 2: Printer Sistem via Hidden Iframe (Mode Desktop PC / Kabel USB):**
+   - Untuk komputer/laptop kasir dengan printer kabel USB atau LAN, sistem merender struk ke dalam `pos-thermal-print-iframe`.
+   - Komputer Windows/macOS mengenali printer lewat driver OS tanpa membutuhkan RawBT sama sekali (bebas watermark).
+   - Mendukung **Chrome Kiosk Silent Printing** (`--kiosk-printing`), memungkinkan cetak 1-klik tanpa menampilkan popup konfirmasi print browser.
+
+### 9.3 Standar Tipografi & Anti-Wrap Layout Struk
+1. **Clean Modern Sans-Serif:**
+   - Template struk menggunakan font sistem modern:
+     ```css
+     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+     ```
+   - Karakter huruf proporsional dan bersih, meningkatkan daya tampung teks per baris dan menghasilkan struk yang rapi setara standar retail modern (seperti Pawoon POS / Starbucks).
+2. **Zero Currency Prefix ("Rp" Removal):**
+   - Seluruh nominal harga ditampilkan sebagai angka murni dengan pemisah ribuan titik (contoh: `265.000`), tanpa awalan `Rp `.
+   - Tata letak item produk: Nama produk di baris 1; Kuantitas x Harga Satuan di kolom kiri baris 2; Subtotal di kolom kanan baris 2 (*right-aligned*).
+3. **Kompak Single-Line Date (`mode: 'receipt'`):**
+   - Tanggal struk diformat via `formatDisplayDate(date, 'receipt', timezone)` menghasilkan string numerik ringkas: **`DD-MM-YYYY HH:mm`** (contoh: `20-10-2026 12:26`).
+   - Tanpa imbuhan zona waktu (`WIB`) agar pas 1 baris utuh dan tidak terdorong ke baris baru.
+
+### 9.4 Kompensasi Lebar Efektif Kertas Thermal Fisik
+| Ukuran Kertas | Lebar Fisik Roll | Area Cetak Efektif (*Printable Width*) | Karakteristik Head Thermal | CSS Aturan |
+| :--- | :--- | :--- | :--- | :--- |
+| **58mm** | 58 mm | **48 mm** | 384 dots (~32 karakter/baris) | `@page { size: 58mm auto; margin: 0; }` width: `48mm` |
+| **80mm** | 80 mm | **72 mm** | 576 dots (~48 karakter/baris) | `@page { size: 80mm auto; margin: 0; }` width: `72mm` |
+| **A4** | 210 mm | **180 mm** | Lembar standar printer desktop | `@page { size: A4 portrait; margin: 15mm; }` width: `180mm` |
+
+### 9.5 Defense-in-Depth (@media print Fallback)
 Pada komponen modal pratinjau (`ReceiptPreviewModal.tsx`), ditambahkan perlindungan lapis ganda:
 - Tag `.no-print` disematkan pada backdrop, modal header, dan footer kontrol.
 - Blok `<style>` `@media print` menyembunyikan semua elemen selain `#thermal-receipt-container` (`body * { visibility: hidden !important; }`).
