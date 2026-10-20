@@ -23,6 +23,13 @@ export interface ReceiptItem {
   note?: string
 }
 
+export interface ReceiptLoyaltyInfo {
+  tierName?: string
+  tierBadge?: string
+  pointsEarned?: number
+  currentBalance?: number
+}
+
 export interface ReceiptData {
   businessName: string
   businessAddress?: string
@@ -31,6 +38,8 @@ export interface ReceiptData {
   date: string
   cashierName: string
   customerName?: string
+  showItemNumbering?: boolean
+  loyaltyInfo?: ReceiptLoyaltyInfo
   items: ReceiptItem[]
   subtotal: number
   discountTotal: number
@@ -73,19 +82,21 @@ function escapeHtml(str: string = ''): string {
 }
 
 export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize = '58mm'): string {
-  const is58mm = paperSize === '58mm'
-  const is80mm = paperSize === '80mm'
+  const effectivePaperSize = receipt.paperSize || paperSize
+  const is58mm = effectivePaperSize === '58mm'
+  const is80mm = effectivePaperSize === '80mm'
 
   // Thermal sizing: 58mm roll printable width is 48mm; 80mm roll printable width is 72mm
   const pageSizeCss = is58mm ? '58mm auto' : is80mm ? '80mm auto' : 'A4 portrait'
   const containerWidth = is58mm ? '48mm' : is80mm ? '72mm' : '180mm'
   const fontSize = is58mm ? '11px' : is80mm ? '13px' : '13px'
   const containerPadding = is58mm ? '3mm 1mm' : is80mm ? '5mm 2mm' : '15mm 10mm'
-  const fontFamily = paperSize === 'A4'
+  const fontFamily = effectivePaperSize === 'A4'
     ? '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif'
     : 'Courier New, Courier, monospace'
 
-  const itemsHtml = (receipt.items || []).map((item) => {
+  const itemsHtml = (receipt.items || []).map((item, idx) => {
+    const itemNumberPrefix = receipt.showItemNumbering ? `${idx + 1}. ` : ''
     const variantHtml = item.variant
       ? `<div style="padding-left: 6px; font-size: 0.9em; color: #444;">• ${escapeHtml(item.variant)}</div>`
       : ''
@@ -98,7 +109,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
 
     return `
       <div style="margin-bottom: 5px;">
-        <div style="font-weight: bold; word-break: break-word;">${escapeHtml(item.name)}</div>
+        <div style="font-weight: bold; word-break: break-word;">${itemNumberPrefix}${escapeHtml(item.name)}</div>
         ${variantHtml}
         ${noteHtml}
         <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 1px;">
@@ -143,6 +154,29 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
 
   const defaultFooterNote = 'Terima kasih atas kunjungan Anda!\nBarang yang sudah dibeli tidak dapat ditukar/dikembalikan.'
   const footerNoteContent = escapeHtml(receipt.note || defaultFooterNote).replace(/\n/g, '<br>')
+
+  const loyaltyHtml = (receipt.loyaltyInfo && (receipt.loyaltyInfo.pointsEarned !== undefined || receipt.loyaltyInfo.currentBalance !== undefined || receipt.loyaltyInfo.tierName))
+    ? `
+      <div class="divider"></div>
+      <!-- Informasi Poin Loyalty Pelanggan -->
+      <div style="margin: 4px 0; font-size: 0.9em;">
+        <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 2px;">
+          <span>LOYALTY REWARDS</span>
+          <span>${escapeHtml(receipt.loyaltyInfo.tierBadge || '')} ${escapeHtml(receipt.loyaltyInfo.tierName || 'Member')}</span>
+        </div>
+        ${receipt.loyaltyInfo.pointsEarned !== undefined && receipt.loyaltyInfo.pointsEarned > 0 ? `
+        <div style="display: flex; justify-content: space-between; margin-bottom: 1px;">
+          <span>Poin Transaksi Ini:</span>
+          <span style="font-weight: bold;">+${receipt.loyaltyInfo.pointsEarned.toLocaleString('id-ID')} Poin</span>
+        </div>` : ''}
+        ${receipt.loyaltyInfo.currentBalance !== undefined ? `
+        <div style="display: flex; justify-content: space-between; margin-bottom: 1px;">
+          <span>Total Saldo Poin:</span>
+          <span style="font-weight: bold;">${receipt.loyaltyInfo.currentBalance.toLocaleString('id-ID')} Poin</span>
+        </div>` : ''}
+      </div>
+    `
+    : ''
 
   return `<!DOCTYPE html>
 <html>
@@ -256,6 +290,8 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
       </div>
       ${cashDetailsHtml}
     </div>
+
+    ${loyaltyHtml}
 
     <div class="divider"></div>
 

@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { formatDisplayDate } from '@/lib/timeUtils'
-import { ReceiptData } from '@/lib/pos/printerAdapter'
+import { ReceiptData, ReceiptLoyaltyInfo } from '@/lib/pos/printerAdapter'
 import ReceiptPreviewModal from './ReceiptPreviewModal'
 import { getStoredReceiptSettings } from './ReceiptSettingsModal'
 import CashPaymentModal, { type PaymentResult } from './CashPaymentModal'
@@ -50,6 +50,7 @@ export default function POSOrderDetailModal({
   const [payments, setPayments] = useState<PaymentRecord[]>([])
   const [loadingPayments, setLoadingPayments] = useState(false)
   const [paymentError, setPaymentError] = useState<string | null>(null)
+  const [orderLoyaltyInfo, setOrderLoyaltyInfo] = useState<ReceiptLoyaltyInfo | null>(null)
 
   const [isReceiptPreviewOpen, setIsReceiptPreviewOpen] = useState(false)
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null)
@@ -150,10 +151,42 @@ export default function POSOrderDetailModal({
   useEffect(() => {
     if (isOpen && orderId) {
       fetchPayments(orderId)
+      // Check loyalty points ledger for this historical order (non-blocking)
+      const targetCustomerId = currentOrder?.customer_id
+      const targetOrderId = orderId
+      if (targetCustomerId) {
+        async function fetchOrderLoyalty() {
+          try {
+            const { data } = await supabase
+              .from('loyalty_point_ledger')
+              .select('points, balance_after')
+              .eq('order_id', targetOrderId)
+              .eq('type', 'earned')
+              .maybeSingle()
+
+            if (data) {
+              setOrderLoyaltyInfo({
+                tierName: 'Member',
+                tierBadge: '🎖️',
+                pointsEarned: data.points,
+                currentBalance: data.balance_after
+              })
+            } else {
+              setOrderLoyaltyInfo(null)
+            }
+          } catch {
+            setOrderLoyaltyInfo(null)
+          }
+        }
+        fetchOrderLoyalty()
+      } else {
+        setOrderLoyaltyInfo(null)
+      }
     } else {
       setPayments([])
+      setOrderLoyaltyInfo(null)
     }
-  }, [isOpen, orderId, fetchPayments])
+  }, [isOpen, orderId, currentOrder?.customer_id, fetchPayments])
 
   // Set of voided payment IDs to identify cancelled lines
   const voidedPaymentIds = useMemo(() => {
@@ -245,6 +278,8 @@ export default function POSOrderDetailModal({
       date: formatDisplayDate(currentOrder.created_at, 'datetime', timezone),
       cashierName: cashierName,
       customerName: customerInfo.name,
+      showItemNumbering: settings.showItemNumbering,
+      loyaltyInfo: settings.showLoyaltyPoints && orderLoyaltyInfo ? orderLoyaltyInfo : undefined,
       items,
       subtotal: Number(currentOrder.subtotal || currentOrder.grand_total),
       discountTotal: Number(currentOrder.discount_amount || 0),
@@ -253,7 +288,8 @@ export default function POSOrderDetailModal({
       paymentMethod: currentOrder.payment_method || (payments.length > 1 ? 'Multi-Tender' : 'Tunai'),
       cashReceived: recCash > 0 ? recCash : undefined,
       changeAmount: recChange > 0 ? recChange : undefined,
-      note: settings.footerNote || undefined
+      note: settings.footerNote || undefined,
+      paperSize: settings.paperSize || '58mm'
     }
 
     setReceiptData(rData)

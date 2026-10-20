@@ -3,6 +3,9 @@
 import { useState, useEffect } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { PaperSize } from '@/lib/pos/printerAdapter'
+import { useUserContext } from '@/components/UserContext'
+import { supabase } from '@/lib/supabase'
+import { fetchLoyaltySettings } from '@/plugins/loyalty/helpers/loyaltyApi'
 
 export interface ReceiptSettings {
   storeName: string
@@ -11,6 +14,8 @@ export interface ReceiptSettings {
   footerNote: string
   paperSize: PaperSize
   autoPrintAfterPayment: boolean
+  showItemNumbering: boolean
+  showLoyaltyPoints: boolean
 }
 
 const STORAGE_KEY = 'shapeup_pos_receipt_settings'
@@ -23,7 +28,9 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
       phone: '',
       footerNote: 'Terima kasih atas kunjungan Anda!\nBarang yang sudah dibeli tidak dapat ditukar/dikembalikan.',
       paperSize: '58mm',
-      autoPrintAfterPayment: false
+      autoPrintAfterPayment: false,
+      showItemNumbering: true,
+      showLoyaltyPoints: true
     }
   }
 
@@ -37,7 +44,9 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
         phone: parsed.phone || '',
         footerNote: parsed.footerNote || 'Terima kasih atas kunjungan Anda!',
         paperSize: parsed.paperSize || '58mm',
-        autoPrintAfterPayment: Boolean(parsed.autoPrintAfterPayment)
+        autoPrintAfterPayment: Boolean(parsed.autoPrintAfterPayment),
+        showItemNumbering: parsed.showItemNumbering !== undefined ? Boolean(parsed.showItemNumbering) : true,
+        showLoyaltyPoints: parsed.showLoyaltyPoints !== undefined ? Boolean(parsed.showLoyaltyPoints) : true
       }
     }
   } catch (e) {
@@ -50,7 +59,9 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
     phone: '',
     footerNote: 'Terima kasih atas kunjungan Anda!\nBarang yang sudah dibeli tidak dapat ditukar/dikembalikan.',
     paperSize: '58mm',
-    autoPrintAfterPayment: false
+    autoPrintAfterPayment: false,
+    showItemNumbering: true,
+    showLoyaltyPoints: true
   }
 }
 
@@ -58,16 +69,24 @@ type Props = {
   isOpen: boolean
   onClose: () => void
   defaultBusinessName?: string
+  businessId?: string
   onSave?: (settings: ReceiptSettings) => void
 }
 
-export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessName = 'ShapeUp Store', onSave }: Props) {
+export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessName = 'ShapeUp Store', businessId, onSave }: Props) {
+  const { activeBusiness } = useUserContext()
+  const targetBizId = businessId || activeBusiness?.id
+
   const [storeName, setStoreName] = useState(defaultBusinessName)
   const [address, setAddress] = useState('')
   const [phone, setPhone] = useState('')
   const [footerNote, setFooterNote] = useState('Terima kasih atas kunjungan Anda!')
   const [paperSize, setPaperSize] = useState<PaperSize>('58mm')
   const [autoPrintAfterPayment, setAutoPrintAfterPayment] = useState(false)
+  const [showItemNumbering, setShowItemNumbering] = useState(true)
+  const [showLoyaltyPoints, setShowLoyaltyPoints] = useState(true)
+  const [isLoyaltyProgramEnabled, setIsLoyaltyProgramEnabled] = useState(false)
+  const [loadingLoyalty, setLoadingLoyalty] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
 
   useEffect(() => {
@@ -79,9 +98,28 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
       setFooterNote(s.footerNote)
       setPaperSize(s.paperSize)
       setAutoPrintAfterPayment(s.autoPrintAfterPayment)
+      setShowItemNumbering(s.showItemNumbering)
+      setShowLoyaltyPoints(s.showLoyaltyPoints)
       setSaveSuccess(false)
+
+      if (targetBizId) {
+        setLoadingLoyalty(true)
+        fetchLoyaltySettings(supabase, targetBizId)
+          .then((ls) => {
+            setIsLoyaltyProgramEnabled(Boolean(ls?.is_enabled))
+          })
+          .catch((err) => {
+            console.warn('[ReceiptSettings] Failed checking loyalty settings:', err)
+            setIsLoyaltyProgramEnabled(false)
+          })
+          .finally(() => {
+            setLoadingLoyalty(false)
+          })
+      } else {
+        setIsLoyaltyProgramEnabled(false)
+      }
     }
-  }, [isOpen, defaultBusinessName])
+  }, [isOpen, defaultBusinessName, targetBizId])
 
   const handleSave = () => {
     const settings: ReceiptSettings = {
@@ -90,7 +128,9 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
       phone: phone.trim(),
       footerNote: footerNote.trim(),
       paperSize,
-      autoPrintAfterPayment
+      autoPrintAfterPayment,
+      showItemNumbering,
+      showLoyaltyPoints
     }
 
     try {
@@ -110,7 +150,7 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
       isOpen={isOpen}
       onClose={onClose}
       title="⚙️ Pengaturan Struk & Printer Kasir"
-      description="Konfigurasi header struk, informasi toko, dan ukuran kertas cetak"
+      description="Konfigurasi header struk, informasi toko, nomor urut produk, dan poin loyalty"
       desktopSize="lg"
       footer={
         <div className="flex items-center justify-between w-full">
@@ -206,17 +246,84 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
             />
           </div>
 
-          <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="autoPrintCheckbox"
-              checked={autoPrintAfterPayment}
-              onChange={(e) => setAutoPrintAfterPayment(e.target.checked)}
-              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
-            />
-            <label htmlFor="autoPrintCheckbox" className="font-semibold text-slate-700 cursor-pointer">
-              Otomatis buka dialog cetak struk sesaat setelah pembayaran berhasil
-            </label>
+          {/* Opsi Tampilan & Cetak */}
+          <div className="space-y-3 pt-3 border-t border-slate-200">
+            <span className="block font-bold text-slate-800 uppercase tracking-wider text-[11px]">
+              Opsi Format Struk & Fitur
+            </span>
+
+            {/* Toggle 1: Nomor Urut Pencatatan Produk */}
+            <div className="flex items-start gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+              <input
+                type="checkbox"
+                id="itemNumberingCheckbox"
+                checked={showItemNumbering}
+                onChange={(e) => setShowItemNumbering(e.target.checked)}
+                className="mt-0.5 w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+              />
+              <div className="flex-1">
+                <label htmlFor="itemNumberingCheckbox" className="font-semibold text-slate-800 cursor-pointer text-xs block">
+                  Nomor Urut Pencatatan Produk
+                </label>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                  Tampilkan nomor urut (1, 2, 3...) di sebelah kiri nama setiap item produk untuk memudahkan verifikasi daftar belanjaan.
+                </p>
+              </div>
+            </div>
+
+            {/* Toggle 2: Poin Loyalty Pelanggan */}
+            <div className="flex items-start gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+              <input
+                type="checkbox"
+                id="loyaltyPointsCheckbox"
+                checked={isLoyaltyProgramEnabled && showLoyaltyPoints}
+                disabled={!isLoyaltyProgramEnabled || loadingLoyalty}
+                onChange={(e) => setShowLoyaltyPoints(e.target.checked)}
+                className="mt-0.5 w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer disabled:opacity-40"
+              />
+              <div className="flex-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <label htmlFor="loyaltyPointsCheckbox" className={`font-semibold text-xs ${isLoyaltyProgramEnabled ? 'text-slate-800 cursor-pointer' : 'text-slate-400'}`}>
+                    Tampilkan Poin Loyalty Member
+                  </label>
+                  {loadingLoyalty ? (
+                    <span className="text-[9px] font-medium text-slate-400">Memeriksa...</span>
+                  ) : isLoyaltyProgramEnabled ? (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded-md border border-emerald-200">
+                      🟢 Fitur Aktif di Bisnis
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded-md border border-amber-200">
+                      ⚠️ Fitur Belum Aktif
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                  {isLoyaltyProgramEnabled 
+                    ? 'Mencetak tier member, perolehan poin transaksi ini, dan total saldo poin akhir pada struk pelanggan member.'
+                    : 'Program loyalty member belum diaktifkan oleh bisnis. Anda dapat mengaktifkannya di menu Pelanggan → Program Loyalty.'}
+                </p>
+              </div>
+            </div>
+
+            {/* Toggle 3: Auto-Print */}
+            <div className="flex items-start gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+              <input
+                type="checkbox"
+                id="autoPrintCheckbox"
+                checked={autoPrintAfterPayment}
+                onChange={(e) => setAutoPrintAfterPayment(e.target.checked)}
+                className="mt-0.5 w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+              />
+              <div className="flex-1">
+                <label htmlFor="autoPrintCheckbox" className="font-semibold text-slate-800 cursor-pointer text-xs block">
+                  Cetak Otomatis Setelah Pembayaran
+                </label>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                  Otomatis membuka dialog cetak struk sesaat setelah transaksi kasir berhasil diselesaikan.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -243,20 +350,20 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
               </div>
               <div className="flex justify-between">
                 <span>Kasir: Budi Santoso</span>
-                <span>Pelanggan: Umum</span>
+                <span>Pelanggan: Budi (Member)</span>
               </div>
             </div>
 
             <div className="py-2 border-b border-dashed border-slate-400 space-y-1">
               <div>
-                <p className="font-bold">Contoh Item Produk A</p>
+                <p className="font-bold">{showItemNumbering ? '1. ' : ''}Contoh Item Produk A</p>
                 <div className="flex justify-between text-slate-600">
                   <span>2 x Rp 25.000</span>
                   <span>Rp 50.000</span>
                 </div>
               </div>
               <div>
-                <p className="font-bold">Contoh Item Produk B</p>
+                <p className="font-bold">{showItemNumbering ? '2. ' : ''}Contoh Item Produk B</p>
                 <div className="flex justify-between text-slate-600">
                   <span>1 x Rp 15.000</span>
                   <span>Rp 15.000</span>
@@ -282,6 +389,24 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
                 <span>Rp 35.000</span>
               </div>
             </div>
+
+            {/* Live Preview Blok Loyalty Rewards */}
+            {isLoyaltyProgramEnabled && showLoyaltyPoints && (
+              <div className="py-2 border-b border-dashed border-slate-400 text-[10px] space-y-0.5">
+                <div className="flex justify-between font-bold text-slate-800">
+                  <span>LOYALTY REWARDS</span>
+                  <span>🥇 Gold</span>
+                </div>
+                <div className="flex justify-between text-slate-600">
+                  <span>Poin Transaksi:</span>
+                  <span className="font-semibold text-slate-800">+6 Poin</span>
+                </div>
+                <div className="flex justify-between text-slate-600">
+                  <span>Total Saldo Poin:</span>
+                  <span className="font-semibold text-slate-800">246 Poin</span>
+                </div>
+              </div>
+            )}
 
             <div className="pt-2 text-center text-[9px] text-slate-500 whitespace-pre-line">
               {footerNote || 'Terima kasih atas kunjungan Anda!'}

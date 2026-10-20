@@ -141,7 +141,9 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
             <div className="py-2.5 border-b border-dashed border-gray-400 space-y-2">
               {receipt.items.map((item, idx) => (
                 <div key={idx} className="text-[11px]">
-                  <div className="font-semibold">{item.name}</div>
+                  <div className="font-semibold">
+                    {receipt.showItemNumbering ? `${idx + 1}. ` : ''}{item.name}
+                  </div>
                   {item.variant && <div className="text-[10px] text-gray-500 pl-2">• {item.variant}</div>}
                   {item.note && <div className="text-[10px] text-gray-500 italic pl-2">• {item.note}</div>}
                   <div className="flex justify-between mt-0.5">
@@ -201,6 +203,28 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
                 </>
               )}
             </div>
+
+            {/* Loyalty Rewards Info */}
+            {receipt.loyaltyInfo && (receipt.loyaltyInfo.pointsEarned !== undefined || receipt.loyaltyInfo.currentBalance !== undefined || receipt.loyaltyInfo.tierName) && (
+              <div className="pt-2.5 mt-2.5 border-t border-dashed border-gray-400 text-[11px] space-y-1">
+                <div className="flex justify-between font-bold">
+                  <span>LOYALTY REWARDS</span>
+                  <span>{receipt.loyaltyInfo.tierBadge || ''} {receipt.loyaltyInfo.tierName || 'Member'}</span>
+                </div>
+                {receipt.loyaltyInfo.pointsEarned !== undefined && receipt.loyaltyInfo.pointsEarned > 0 && (
+                  <div className="flex justify-between text-gray-700">
+                    <span>Poin Transaksi Ini:</span>
+                    <span className="font-semibold">+{receipt.loyaltyInfo.pointsEarned.toLocaleString('id-ID')} Poin</span>
+                  </div>
+                )}
+                {receipt.loyaltyInfo.currentBalance !== undefined && (
+                  <div className="flex justify-between text-gray-700">
+                    <span>Total Saldo Poin:</span>
+                    <span className="font-semibold">{receipt.loyaltyInfo.currentBalance.toLocaleString('id-ID')} Poin</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Footer */}
             <div className="text-center pt-4 mt-2 border-t border-dashed border-gray-400 text-[10px] text-gray-600 space-y-1">

@@ -11,8 +11,11 @@ import AddCustomerModal from '../../orders/pos/components/AddCustomerModal'
 import OrderHistoryModal from '../../orders/pos/components/OrderHistoryModal'
 import POSOrderDetailModal from './POSOrderDetailModal'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
+import { getStoredReceiptSettings } from './ReceiptSettingsModal'
 import { useUserContext } from '@/components/UserContext'
 import { formatDisplayDate } from '@/lib/timeUtils'
+import { fetchLoyaltySettings } from '@/plugins/loyalty/helpers/loyaltyApi'
+import { LoyaltySettings, LoyaltyTier, DEFAULT_LOYALTY_SETTINGS, resolveTier, calculateEarnedPoints } from '@/plugins/loyalty/types'
 
 // Pastel badge colors for product cards
 const getPastelBadge = (name: string) => {
@@ -97,6 +100,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   // Receipt & Payment Data
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null)
   const [checkingOut, setCheckingOut] = useState(false)
+  const [loyaltySettings, setLoyaltySettings] = useState<LoyaltySettings | null>(null)
 
   const { activeBusiness, userProfile: ctxProfile, bizLoading } = useUserContext()
 
@@ -128,21 +132,29 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       { data: custs },
       { data: accs },
       { data: regs },
-      { count: unpCount }
+      { count: unpCount },
+      lSettings
     ] = await Promise.all([
       supabase.from('products').select('*').eq('business_id', bId).order('name', { ascending: true }),
       supabase.from('categories').select('*').eq('business_id', bId).order('name', { ascending: true }),
-      supabase.from('customer_metrics').select('customer_id, name, phone').eq('business_id', bId).limit(100),
+      supabase.from('customer_metrics').select('customer_id, name, phone, loyalty_points, loyalty_tier').eq('business_id', bId).limit(100),
       supabase.from('accounts').select('id, code, name, type').eq('business_id', bId).in('type', ['ASSET', 'EQUITY']).order('code', { ascending: true }),
       supabase.from('pos_registers').select('id, name, account_id').eq('business_id', bId).eq('status', 'active').order('name', { ascending: true }),
-      supabase.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', bId).eq('source_platform', 'POS').in('payment_status', ['partial', 'unpaid']).neq('status', 'cancelled')
+      supabase.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', bId).eq('source_platform', 'POS').in('payment_status', ['partial', 'unpaid']).neq('status', 'cancelled'),
+      fetchLoyaltySettings(supabase, bId).catch(() => null)
     ])
 
     setProducts(prods || [])
     setCategories(cats || [])
     
     if (custs) {
-      setCustomers(custs.map(c => ({ id: c.customer_id, name: c.name, phone: c.phone })))
+      setCustomers(custs.map(c => ({
+        id: c.customer_id,
+        name: c.name,
+        phone: c.phone,
+        loyalty_points: Number(c.loyalty_points || 0),
+        loyalty_tier: c.loyalty_tier || 'Bronze'
+      })))
     } else {
       setCustomers([])
     }
@@ -150,6 +162,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
     setAccounts(accs || [])
     setPosRegisters(regs || [])
     setUnpaidOrdersCount(unpCount || 0)
+    setLoyaltySettings(lSettings || null)
   }
 
   const checkActiveShift = async () => {
@@ -407,13 +420,43 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
             ? 'Split Payment' 
             : (paymentInfo.method === 'cash' ? 'Tunai (Cash)' : paymentInfo.method === 'qris' ? 'QRIS' : 'Transfer/Kartu'))
 
-      // 1. Build Receipt immediately
+      // Read stored receipt settings synchronously (0ms)
+      const defaultStoreTitle = activeBusiness?.name || (userProfile?.full_name ? `${userProfile.full_name}'s Store` : 'ShapeUp POS')
+      const rSettings = getStoredReceiptSettings(defaultStoreTitle)
+
+      // Calculate loyalty points synchronously in memory (0ms)
+      let loyaltyInfo = undefined
+      if (
+        rSettings.showLoyaltyPoints &&
+        loyaltySettings?.is_enabled &&
+        selectedCustomer &&
+        selectedCustomer.id &&
+        selectedCustomer.id !== 'guest'
+      ) {
+        const tiers = (loyaltySettings.tiers as LoyaltyTier[]) || DEFAULT_LOYALTY_SETTINGS.tiers
+        const currentPoints = Number(selectedCustomer.loyalty_points || 0)
+        const currentTier = resolveTier(currentPoints, tiers)
+        const pointsEarned = calculateEarnedPoints(grandTotal, loyaltySettings, currentTier.multiplier || 1.0)
+        const newBalance = currentPoints + pointsEarned
+        loyaltyInfo = {
+          tierName: currentTier.name,
+          tierBadge: currentTier.badge_icon,
+          pointsEarned: pointsEarned > 0 ? pointsEarned : undefined,
+          currentBalance: newBalance
+        }
+      }
+
+      // 1. Build Receipt immediately (Reality First: 0ms Latency)
       const receipt: ReceiptData = {
-        businessName: userProfile?.full_name ? `${userProfile.full_name}'s Store` : 'ShapeUp POS',
+        businessName: rSettings.storeName || defaultStoreTitle,
+        businessAddress: rSettings.address || undefined,
+        businessPhone: rSettings.phone || undefined,
         orderNumber: orderNumber,
         date: formatDisplayDate(new Date(), 'datetime', activeBusiness?.timezone),
         cashierName: userProfile?.full_name || 'Kasir',
         customerName: selectedCustomer?.name || 'Walk-in Customer',
+        showItemNumbering: rSettings.showItemNumbering,
+        loyaltyInfo: loyaltyInfo,
         items: cart.map((i) => ({
           name: i.product.name,
           variant: i.selectedVariant?.name,
@@ -429,7 +472,9 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         grandTotal: grandTotal,
         paymentMethod: paymentTitle,
         cashReceived: paymentInfo.cashReceived,
-        changeAmount: paymentInfo.changeAmount
+        changeAmount: paymentInfo.changeAmount,
+        note: rSettings.footerNote || undefined,
+        paperSize: rSettings.paperSize || '58mm'
       }
 
       // 1. Instant Optimistic Action (0ms Latency for Customer & Cashier)
@@ -1203,8 +1248,15 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           onClose={() => setIsAddCustomerOpen(false)}
           businessId={businessId}
           onSave={(c: any) => {
-            setCustomers((prev) => [c, ...prev])
-            setSelectedCustomer(c)
+            const newCust = {
+              id: c.id || c.customer_id,
+              name: c.name,
+              phone: c.phone,
+              loyalty_points: Number(c.loyalty_points || 0),
+              loyalty_tier: c.loyalty_tier || 'Bronze'
+            }
+            setCustomers((prev) => [newCust, ...prev])
+            setSelectedCustomer(newCust)
           }}
         />
       )}

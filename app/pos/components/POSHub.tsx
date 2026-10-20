@@ -1026,6 +1026,7 @@ export default function POSHub({ onOpenWorkspace }: Props) {
         isOpen={isReceiptSettingsOpen}
         onClose={() => setIsReceiptSettingsOpen(false)}
         defaultBusinessName={activeBusiness?.name || 'ShapeUp Store'}
+        businessId={activeBusiness?.id}
       />
 
       {/* 5. Order Detail & Payment Ledger Modal */}
