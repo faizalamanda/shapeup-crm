@@ -97,22 +97,23 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
 
   const itemsHtml = (receipt.items || []).map((item, idx) => {
     const itemNumberPrefix = receipt.showItemNumbering ? `${idx + 1}. ` : ''
+    const detailPadding = receipt.showItemNumbering ? '16px' : '6px'
     const variantHtml = item.variant
-      ? `<div style="padding-left: 6px; font-size: 0.9em; color: #444;">• ${escapeHtml(item.variant)}</div>`
+      ? `<div style="padding-left: ${detailPadding}; font-size: 0.9em; color: #444; margin-top: 1px;">• ${escapeHtml(item.variant)}</div>`
       : ''
     const noteHtml = item.note
-      ? `<div style="padding-left: 6px; font-size: 0.85em; font-style: italic; color: #555;">• ${escapeHtml(item.note)}</div>`
+      ? `<div style="padding-left: ${detailPadding}; font-size: 0.85em; font-style: italic; color: #555; margin-top: 1px;">• ${escapeHtml(item.note)}</div>`
       : ''
     const discountHtml = item.discount && item.discount > 0
-      ? `<div style="display: flex; justify-content: space-between; font-size: 0.9em; color: #555; padding-left: 6px;"><span>Diskon item:</span><span>-Rp ${item.discount.toLocaleString('id-ID')}</span></div>`
+      ? `<div style="display: flex; justify-content: space-between; font-size: 0.9em; color: #555; padding-left: ${detailPadding}; margin-top: 1px;"><span>Diskon item:</span><span>-Rp ${item.discount.toLocaleString('id-ID')}</span></div>`
       : ''
 
     return `
-      <div style="margin-bottom: 5px;">
+      <div style="margin-bottom: 7px;">
         <div style="font-weight: bold; word-break: break-word;">${itemNumberPrefix}${escapeHtml(item.name)}</div>
         ${variantHtml}
         ${noteHtml}
-        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 1px;">
+        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 1px; padding-left: ${detailPadding};">
           <span>${item.quantity} x Rp ${item.price.toLocaleString('id-ID')}</span>
           <span style="font-weight: bold;">Rp ${item.subtotal.toLocaleString('id-ID')}</span>
         </div>

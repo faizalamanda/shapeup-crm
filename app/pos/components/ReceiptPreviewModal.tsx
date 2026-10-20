@@ -138,26 +138,29 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
             </div>
 
             {/* Items */}
-            <div className="py-2.5 border-b border-dashed border-gray-400 space-y-2">
-              {receipt.items.map((item, idx) => (
-                <div key={idx} className="text-[11px]">
-                  <div className="font-semibold">
-                    {receipt.showItemNumbering ? `${idx + 1}. ` : ''}{item.name}
-                  </div>
-                  {item.variant && <div className="text-[10px] text-gray-500 pl-2">• {item.variant}</div>}
-                  {item.note && <div className="text-[10px] text-gray-500 italic pl-2">• {item.note}</div>}
-                  <div className="flex justify-between mt-0.5">
-                    <span>{item.quantity} x Rp {item.price.toLocaleString('id-ID')}</span>
-                    <span className="font-medium">Rp {item.subtotal.toLocaleString('id-ID')}</span>
-                  </div>
-                  {item.discount && item.discount > 0 ? (
-                    <div className="flex justify-between text-[10px] text-gray-500 pl-2">
-                      <span>Diskon item:</span>
-                      <span>-Rp {item.discount.toLocaleString('id-ID')}</span>
+            <div className="py-2.5 border-b border-dashed border-gray-400 space-y-2.5">
+              {receipt.items.map((item, idx) => {
+                const detailIndent = receipt.showItemNumbering ? 'pl-4' : 'pl-2'
+                return (
+                  <div key={idx} className="text-[11px]">
+                    <div className="font-semibold">
+                      {receipt.showItemNumbering ? `${idx + 1}. ` : ''}{item.name}
                     </div>
-                  ) : null}
-                </div>
-              ))}
+                    {item.variant && <div className={`text-[10px] text-gray-500 mt-0.5 ${detailIndent}`}>• {item.variant}</div>}
+                    {item.note && <div className={`text-[10px] text-gray-500 italic mt-0.5 ${detailIndent}`}>• {item.note}</div>}
+                    <div className={`flex justify-between mt-0.5 ${detailIndent}`}>
+                      <span>{item.quantity} x Rp {item.price.toLocaleString('id-ID')}</span>
+                      <span className="font-medium">Rp {item.subtotal.toLocaleString('id-ID')}</span>
+                    </div>
+                    {item.discount && item.discount > 0 ? (
+                      <div className={`flex justify-between text-[10px] text-gray-500 mt-0.5 ${detailIndent}`}>
+                        <span>Diskon item:</span>
+                        <span>-Rp {item.discount.toLocaleString('id-ID')}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
             </div>
 
             {/* Total Calculations */}

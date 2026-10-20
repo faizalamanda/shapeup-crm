@@ -354,17 +354,17 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
               </div>
             </div>
 
-            <div className="py-2 border-b border-dashed border-slate-400 space-y-1">
+            <div className="py-2 border-b border-dashed border-slate-400 space-y-2">
               <div>
                 <p className="font-bold">{showItemNumbering ? '1. ' : ''}Contoh Item Produk A</p>
-                <div className="flex justify-between text-slate-600">
+                <div className={`flex justify-between text-slate-600 mt-0.5 ${showItemNumbering ? 'pl-4' : 'pl-1.5'}`}>
                   <span>2 x Rp 25.000</span>
                   <span>Rp 50.000</span>
                 </div>
               </div>
               <div>
                 <p className="font-bold">{showItemNumbering ? '2. ' : ''}Contoh Item Produk B</p>
-                <div className="flex justify-between text-slate-600">
+                <div className={`flex justify-between text-slate-600 mt-0.5 ${showItemNumbering ? 'pl-4' : 'pl-1.5'}`}>
                   <span>1 x Rp 15.000</span>
                   <span>Rp 15.000</span>
                 </div>
