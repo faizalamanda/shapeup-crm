@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import ProductModal from './components/ProductModal'
 import { useUserContext } from '@/components/UserContext'
+import Link from 'next/link'
 
 type Category = {
   id: string
@@ -246,12 +247,20 @@ export default function ProductsPage() {
             Tambah, edit, dan atur status ketersediaan serta pencatatan stok produk Anda.
           </p>
         </div>
-        <button
-          onClick={openAddModal}
-          className="w-full md:w-auto px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 active:scale-98"
-        >
-          ➕ Tambah Produk
-        </button>
+        <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+          <Link
+            href="/products/import"
+            className="w-full md:w-auto px-5 py-2.5 bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 active:scale-98 cursor-pointer"
+          >
+            📥 Import Produk
+          </Link>
+          <button
+            onClick={openAddModal}
+            className="w-full md:w-auto px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 active:scale-98 cursor-pointer"
+          >
+            ➕ Tambah Produk
+          </button>
+        </div>
       </div>
 
       {/* Filter Bar */}
