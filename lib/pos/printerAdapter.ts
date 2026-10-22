@@ -108,12 +108,12 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
 
     return `
       <div style="margin-bottom: 6px;">
-        <div style="font-weight: 600; word-break: break-word;">${itemNumberPrefix}${escapeHtml(item.name)}</div>
+        <div style="word-break: break-word;">${itemNumberPrefix}${escapeHtml(item.name)}</div>
         ${variantHtml}
         ${noteHtml}
         <div style="display: flex; justify-content: space-between; align-items: baseline; margin-top: 1px; padding-left: ${detailPadding};">
           <span>${item.quantity} x ${item.price.toLocaleString('id-ID')}</span>
-          <span style="font-weight: 600;">${item.subtotal.toLocaleString('id-ID')}</span>
+          <span>${item.subtotal.toLocaleString('id-ID')}</span>
         </div>
         ${discountHtml}
       </div>
@@ -144,7 +144,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
         <span>Bayar Tunai:</span>
         <span>${receipt.cashReceived.toLocaleString('id-ID')}</span>
       </div>
-      <div style="display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 2px;">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Kembalian:</span>
         <span>${(receipt.changeAmount || 0).toLocaleString('id-ID')}</span>
       </div>
@@ -159,19 +159,19 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
       <div class="divider"></div>
       <!-- Informasi Poin Loyalty Pelanggan -->
       <div style="margin: 4px 0; font-size: 0.9em;">
-        <div style="display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 2px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
           <span>LOYALTY REWARDS</span>
           <span>${escapeHtml(receipt.loyaltyInfo.tierBadge || '')} ${escapeHtml(receipt.loyaltyInfo.tierName || 'Member')}</span>
         </div>
         ${receipt.loyaltyInfo.pointsEarned !== undefined && receipt.loyaltyInfo.pointsEarned > 0 ? `
         <div style="display: flex; justify-content: space-between; margin-bottom: 1px;">
           <span>Poin Transaksi Ini:</span>
-          <span style="font-weight: 600;">+${receipt.loyaltyInfo.pointsEarned.toLocaleString('id-ID')} Poin</span>
+          <span>+${receipt.loyaltyInfo.pointsEarned.toLocaleString('id-ID')} Poin</span>
         </div>` : ''}
         ${receipt.loyaltyInfo.currentBalance !== undefined ? `
         <div style="display: flex; justify-content: space-between; margin-bottom: 1px;">
           <span>Total Saldo Poin:</span>
-          <span style="font-weight: 600;">${receipt.loyaltyInfo.currentBalance.toLocaleString('id-ID')} Poin</span>
+          <span>${receipt.loyaltyInfo.currentBalance.toLocaleString('id-ID')} Poin</span>
         </div>` : ''}
       </div>
     `
@@ -229,7 +229,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
   <div class="receipt-container">
     <!-- Header Toko -->
     <div style="text-align: center; margin-bottom: 6px;">
-      <div style="font-size: 1.25em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(receipt.businessName)}</div>
+      <div style="font-size: 1.25em; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(receipt.businessName)}</div>
       ${receipt.businessAddress ? `<div style="font-size: 0.9em; margin-top: 2px; word-break: break-word;">${escapeHtml(receipt.businessAddress)}</div>` : ''}
       ${receipt.businessPhone ? `<div style="font-size: 0.9em; margin-top: 1px;">Telp: ${escapeHtml(receipt.businessPhone)}</div>` : ''}
     </div>
@@ -240,7 +240,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
     <div style="margin: 4px 0; font-size: 0.95em;">
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>No. Invoice:</span>
-        <span style="font-weight: 600;">${escapeHtml(receipt.orderNumber)}</span>
+        <span>${escapeHtml(receipt.orderNumber)}</span>
       </div>
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Tanggal:</span>
@@ -274,7 +274,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
       </div>
       ${discountTotalHtml}
       ${taxTotalHtml}
-      <div style="display: flex; justify-content: space-between; font-weight: 700; font-size: 1.15em; border-top: 1px solid #000; padding-top: 4px; margin-top: 4px;">
+      <div style="display: flex; justify-content: space-between; font-size: 1.15em; border-top: 1px solid #000; padding-top: 4px; margin-top: 4px;">
         <span>TOTAL:</span>
         <span>${receipt.grandTotal.toLocaleString('id-ID')}</span>
       </div>
@@ -286,7 +286,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
     <div style="margin: 4px 0;">
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Metode Bayar:</span>
-        <span style="font-weight: 600; text-transform: uppercase;">${escapeHtml(receipt.paymentMethod)}</span>
+        <span style="text-transform: uppercase;">${escapeHtml(receipt.paymentMethod)}</span>
       </div>
       ${cashDetailsHtml}
     </div>
@@ -390,11 +390,9 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize: PaperSize
 
   // 2. Header (Centered)
   writeRaw(0x1B, 0x61, 0x01) // Center
-  writeRaw(0x1B, 0x45, 0x01) // Bold on
   writeRaw(0x1D, 0x21, 0x01) // Double height
   writeText((receipt.businessName || 'SHAPEUP STORE').toUpperCase() + '\n')
   writeRaw(0x1D, 0x21, 0x00) // Normal text
-  writeRaw(0x1B, 0x45, 0x00) // Bold off
 
   if (receipt.businessAddress) {
     writeText(receipt.businessAddress + '\n')
@@ -449,10 +447,8 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize: PaperSize
     writeText(padColumns('Pajak:', `+${receipt.taxTotal.toLocaleString('id-ID')}`))
   }
 
-  // Grand Total Bold
-  writeRaw(0x1B, 0x45, 0x01) // Bold on
+  // Grand Total (Normal text for sharp thermal clarity)
   writeText(padColumns('TOTAL:', receipt.grandTotal.toLocaleString('id-ID')))
-  writeRaw(0x1B, 0x45, 0x00) // Bold off
 
   // Divider
   writeText(divider + '\n')

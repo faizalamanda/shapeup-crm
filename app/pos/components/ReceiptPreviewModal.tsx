@@ -124,7 +124,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
           >
             {/* Header */}
             <div className="text-center pb-3 border-b border-dashed border-gray-400">
-              <h2 className="font-bold text-base uppercase tracking-wider">{receipt.businessName}</h2>
+              <h2 className="text-base uppercase tracking-wider">{receipt.businessName}</h2>
               {receipt.businessAddress && <p className="text-[11px] text-gray-600 mt-0.5">{receipt.businessAddress}</p>}
               {receipt.businessPhone && <p className="text-[11px] text-gray-600">Telp: {receipt.businessPhone}</p>}
             </div>
@@ -133,7 +133,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
             <div className="py-2.5 border-b border-dashed border-gray-400 space-y-1 text-[11px]">
               <div className="flex justify-between">
                 <span>No. Invoice:</span>
-                <span className="font-semibold text-slate-800">{receipt.orderNumber}</span>
+                <span>{receipt.orderNumber}</span>
               </div>
               <div className="flex justify-between">
                 <span>Tanggal:</span>
@@ -157,14 +157,14 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
                 const detailIndent = receipt.showItemNumbering ? 'pl-3' : 'pl-1'
                 return (
                   <div key={idx} className="text-[11px]">
-                    <div className="font-semibold text-slate-900">
+                    <div>
                       {receipt.showItemNumbering ? `${idx + 1}. ` : ''}{item.name}
                     </div>
                     {item.variant && <div className={`text-[10px] text-gray-500 mt-0.5 ${detailIndent}`}>• {item.variant}</div>}
                     {item.note && <div className={`text-[10px] text-gray-500 italic mt-0.5 ${detailIndent}`}>• {item.note}</div>}
                     <div className={`flex justify-between mt-0.5 ${detailIndent}`}>
                       <span>{item.quantity} x {item.price.toLocaleString('id-ID')}</span>
-                      <span className="font-semibold text-slate-900">{item.subtotal.toLocaleString('id-ID')}</span>
+                      <span>{item.subtotal.toLocaleString('id-ID')}</span>
                     </div>
                     {item.discount && item.discount > 0 ? (
                       <div className={`flex justify-between text-[10px] text-gray-500 mt-0.5 ${detailIndent}`}>
@@ -195,7 +195,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
                   <span>+{receipt.taxTotal.toLocaleString('id-ID')}</span>
                 </div>
               )}
-              <div className="flex justify-between font-bold text-sm pt-1 border-t border-gray-200">
+              <div className="flex justify-between text-sm pt-1 border-t border-gray-200">
                 <span>TOTAL:</span>
                 <span>{receipt.grandTotal.toLocaleString('id-ID')}</span>
               </div>
@@ -205,7 +205,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
             <div className="pt-2.5 text-[11px] space-y-1">
               <div className="flex justify-between">
                 <span>Metode Bayar:</span>
-                <span className="font-semibold uppercase">{receipt.paymentMethod}</span>
+                <span className="uppercase">{receipt.paymentMethod}</span>
               </div>
               {receipt.cashReceived !== undefined && receipt.cashReceived > 0 && (
                 <>
@@ -213,7 +213,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
                     <span>Bayar Tunai:</span>
                     <span>{receipt.cashReceived.toLocaleString('id-ID')}</span>
                   </div>
-                  <div className="flex justify-between font-semibold">
+                  <div className="flex justify-between">
                     <span>Kembalian:</span>
                     <span>{(receipt.changeAmount || 0).toLocaleString('id-ID')}</span>
                   </div>
@@ -224,20 +224,20 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
             {/* Loyalty Rewards Info */}
             {receipt.loyaltyInfo && (receipt.loyaltyInfo.pointsEarned !== undefined || receipt.loyaltyInfo.currentBalance !== undefined || receipt.loyaltyInfo.tierName) && (
               <div className="pt-2.5 mt-2.5 border-t border-dashed border-gray-400 text-[11px] space-y-1">
-                <div className="flex justify-between font-bold">
+                <div className="flex justify-between">
                   <span>LOYALTY REWARDS</span>
                   <span>{receipt.loyaltyInfo.tierBadge || ''} {receipt.loyaltyInfo.tierName || 'Member'}</span>
                 </div>
                 {receipt.loyaltyInfo.pointsEarned !== undefined && receipt.loyaltyInfo.pointsEarned > 0 && (
                   <div className="flex justify-between text-gray-700">
                     <span>Poin Transaksi Ini:</span>
-                    <span className="font-semibold">+{receipt.loyaltyInfo.pointsEarned.toLocaleString('id-ID')} Poin</span>
+                    <span>+{receipt.loyaltyInfo.pointsEarned.toLocaleString('id-ID')} Poin</span>
                   </div>
                 )}
                 {receipt.loyaltyInfo.currentBalance !== undefined && (
                   <div className="flex justify-between text-gray-700">
                     <span>Total Saldo Poin:</span>
-                    <span className="font-semibold">{receipt.loyaltyInfo.currentBalance.toLocaleString('id-ID')} Poin</span>
+                    <span>{receipt.loyaltyInfo.currentBalance.toLocaleString('id-ID')} Poin</span>
                   </div>
                 )}
               </div>
@@ -249,7 +249,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
                 <div className="whitespace-pre-line">{receipt.note}</div>
               ) : (
                 <>
-                  <p className="font-medium">Terima kasih atas kunjungan Anda!</p>
+                  <p>Terima kasih atas kunjungan Anda!</p>
                   <p>Barang yang sudah dibeli tidak dapat ditukar/dikembalikan.</p>
                 </>
               )}
