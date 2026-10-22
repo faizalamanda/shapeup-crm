@@ -441,7 +441,7 @@ export function OrderExportModal({
                   </span>
                 </div>
                 <p className="text-[11px] text-[#6B6B63] mt-0.5">
-                  <strong>Sheet 1:</strong> Ringkasan Pesanan (1 baris/pesanan) &bull; <strong>Sheet 2:</strong> Rincian Produk Itemized (SKU, variasi, harga).
+                  <strong>Sheet 1:</strong> Rekap Pesanan (1 baris/pesanan dengan SKU &amp; Produk multi-baris otomatis, tanggal &amp; jam terpisah) &bull; <strong>Sheet 2:</strong> Rincian Produk Itemized (1 baris/item untuk Pivot Table).
                 </p>
               </div>
             </label>
@@ -464,9 +464,9 @@ export function OrderExportModal({
                 disabled={isExporting}
               />
               <div className="flex-1 text-xs">
-                <span className="font-bold">Hanya Ringkasan Pesanan (1 Baris per Order)</span>
+                <span className="font-bold">Hanya Rekap Pesanan (1 Baris per Order)</span>
                 <p className="text-[11px] text-[#6B6B63] mt-0.5">
-                  Menampilkan total nominal, ongkir, diskon, dan status pembayaran. Ideal untuk rekonsiliasi kas dan perpajakan.
+                  Menyajikan tanggal terstandarisasi, kolom SKU dan Nama Produk multi-baris otomatis, serta total finansial tanpa duplikasi baris.
                 </p>
               </div>
             </label>
