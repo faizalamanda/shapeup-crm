@@ -107,7 +107,7 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
             title="Pratinjau Struk Kasir"
             srcDoc={receiptHtml}
             className={`bg-white rounded-xl shadow-md border border-gray-300 transition-all ${
-              paperSize === '58mm' ? 'w-[280px]' : paperSize === '80mm' ? 'w-[360px]' : 'w-full max-w-xl'
+              paperSize === '58mm' ? 'w-[236px]' : paperSize === '80mm' ? 'w-[320px]' : 'w-full max-w-xl'
             } h-[580px]`}
           />
         </div>

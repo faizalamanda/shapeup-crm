@@ -452,7 +452,7 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
             title="Pratinjau Struk Kasir"
             srcDoc={sampleReceiptHtml}
             className={`bg-white rounded-xl shadow-md border border-slate-300 transition-all ${
-              paperSize === '58mm' ? 'w-[260px]' : paperSize === '80mm' ? 'w-[340px]' : 'w-full max-w-sm'
+              paperSize === '58mm' ? 'w-[236px]' : paperSize === '80mm' ? 'w-[320px]' : 'w-full max-w-sm'
             } h-[580px]`}
           />
         </div>

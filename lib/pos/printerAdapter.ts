@@ -85,8 +85,8 @@ function escapeHtml(str: string = ''): string {
     .replace(/'/g, '&#39;')
 }
 
-export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize = '58mm'): string {
-  const effectivePaperSize = receipt.paperSize || paperSize
+export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize): string {
+  const effectivePaperSize = paperSize || receipt.paperSize || '58mm'
   const is58mm = effectivePaperSize === '58mm'
   const is80mm = effectivePaperSize === '80mm'
 
@@ -407,8 +407,9 @@ export function printReceiptViaIframe(receipt: ReceiptData, paperSize: PaperSize
 // ==========================================
 // ESC/POS Command Encoder Helper
 // ==========================================
-export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize: PaperSize = '58mm'): Uint8Array {
-  const is80mm = paperSize === '80mm'
+export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize?: PaperSize): Uint8Array {
+  const effectivePaperSize = paperSize || receipt.paperSize || '58mm'
+  const is80mm = effectivePaperSize === '80mm'
   const width = is80mm ? 48 : 32
   const divider = '-'.repeat(width)
 
