@@ -589,6 +589,21 @@ export default function POSOrderDetailModal({
               </div>
             </div>
 
+            {/* Catatan Pesanan Khusus (Jika Ada) */}
+            {Boolean(currentOrder?.raw_source_data?.notes || currentOrder?.raw_source_data?.customer_note || currentOrder?.notes) && (
+              <div className="p-3.5 bg-amber-50/80 border border-amber-200/90 rounded-2xl flex items-start gap-2.5">
+                <span className="text-base leading-none mt-0.5">📝</span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-[10px] font-extrabold text-amber-900 uppercase tracking-wider block">
+                    Catatan Pesanan
+                  </span>
+                  <p className="text-xs text-amber-950 font-medium mt-0.5 whitespace-pre-line leading-relaxed">
+                    {currentOrder?.raw_source_data?.notes || currentOrder?.raw_source_data?.customer_note || currentOrder?.notes}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Daftar Produk / Items Table */}
             <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-2xs">
               <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center">

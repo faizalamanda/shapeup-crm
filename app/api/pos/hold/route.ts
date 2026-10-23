@@ -1,30 +1,20 @@
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
+import { getApiContext } from '@/lib/apiContext'
 import { NextResponse } from 'next/server'
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v)
 
 // GET /api/pos/hold - Fetch list of held orders
 export async function GET(req: Request) {
-  const supabase = await createClient()
-
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { businessId, supabase } = ctx
 
     const { data: heldOrders, error: fetchErr } = await supabase
       .from('pos_held_orders')
       .select('*')
-      .eq('business_id', profile.active_business_id)
+      .eq('business_id', businessId)
       .order('created_at', { ascending: false })
 
     if (fetchErr && !fetchErr.message?.includes('does not exist')) {
@@ -40,25 +30,16 @@ export async function GET(req: Request) {
 
 // POST /api/pos/hold - Save a new held order or delete/resume an existing one
 export async function POST(req: Request) {
-  const supabase = await createClient()
-
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId, supabase } = ctx
+
+    const body = await req.json().catch(() => null)
+    if (!body) {
+      return NextResponse.json({ error: 'Body permintaan tidak valid' }, { status: 400 })
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const body = await req.json()
     const { action, hold_id, customer_id, customer_name, cart_json, total_items, grand_total, note } = body
 
     if (action === 'delete') {
@@ -68,23 +49,27 @@ export async function POST(req: Request) {
         .from('pos_held_orders')
         .delete()
         .eq('id', hold_id)
+        .eq('business_id', businessId)
 
       return NextResponse.json({ success: true, message: 'Held order deleted' })
     }
 
     // Save hold order
-    if (!cart_json || cart_json.length === 0) {
+    if (!cart_json || !Array.isArray(cart_json) || cart_json.length === 0) {
       return NextResponse.json({ error: 'Keranjang kosong' }, { status: 400 })
     }
+
+    const sanitizedCustomerId = isUuid(customer_id) ? customer_id : null
+    const effectiveNote = (note || '').trim()
 
     const { data: newHold, error: insertErr } = await supabase
       .from('pos_held_orders')
       .insert({
-        business_id: profile.active_business_id,
+        business_id: businessId,
         user_id: user.id,
-        customer_id: customer_id || null,
+        customer_id: sanitizedCustomerId,
         customer_name: customer_name || 'Walk-in',
-        note: note || '',
+        note: effectiveNote,
         cart_json: cart_json,
         total_items: total_items || cart_json.length,
         grand_total: Number(grand_total || 0)
@@ -93,15 +78,16 @@ export async function POST(req: Request) {
       .single()
 
     if (insertErr) {
-      // Return local confirmation if table not present
+      // Return local fallback confirmation if table not present in supabase
       return NextResponse.json({
         success: true,
         heldOrder: {
           id: 'hold-' + Date.now(),
           customer_name: customer_name || 'Walk-in',
+          note: effectiveNote,
           cart_json,
-          total_items,
-          grand_total,
+          total_items: total_items || cart_json.length,
+          grand_total: Number(grand_total || 0),
           created_at: new Date().toISOString()
         }
       })

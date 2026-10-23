@@ -88,3 +88,44 @@ Meskipun pencetakan utama melalui hidden iframe, komponen `ReceiptPreviewModal.t
    }
    ```
 Jika kasir tidak sengaja menekan pintasan keyboard browser (`Ctrl+P` / `Cmd+P`), modal chrome tetap tidak akan pernah tercetak ke atas kertas.
+
+---
+
+## 5. Universal Normal Weight Standard (Zero-Bold & Anti-Bleed)
+
+### 5.1 Fisika Print-Head Thermal & Fenomena Bleeding
+Pada printer thermal roll (58mm dan 80mm):
+1. **Mekanisme Pemanasan Print-Head:**
+   Elemen pemanas (*heating pins*) mengaktifkan lapisan kimia kertas thermal untuk memunculkan warna hitam.
+2. **Penyebab Teks Buram & Tinta Meleber (*Ink Bleeding*):**
+   - Ketika teks diformat tebal (**Bold** / `font-weight: 600/700` pada HTML atau `ESC E 1` pada ESC/POS), mikrokontroler printer memicu *double-strike pulse* (pemanasan ganda berturut-turut pada titik yang sama) atau memperpanjang durasi pulsa pemanasan.
+   - Pada kertas thermal ekonomis standar kasir, panas berlebih ini merambat ke serat kertas sekitar titik dot. Karakter huruf kecil, rincian produk, dan nominal angka menjadi dempet, tebal berlebihan, buram (*smudged*), dan sulit dibaca.
+   - Pemanasan tebal yang berulang juga mempercepat ausnya jarum print-head dan memicu garis hangus (*burn lines*).
+
+### 5.2 Standar Universal Normal Weight
+ShapeUp POS menegakkan aturan **Universal Normal Weight** (100% reguler/monoline) di seluruh saluran pencetakan dan antarmuka pratinjau:
+1. **Mode HTML/Iframe (`generateReceiptHtml`):**
+   - Menghapus seluruh deklarasi `font-weight: 600` dan `font-weight: 700` pada nama toko, no. invoice, daftar item produk, subtotal, total, metode bayar, dan poin loyalty.
+   - Hierarki visual tetap dipertahankan secara elegan melalui ukuran font (`font-size`), pemisah garis putus-putus (`.divider`), serta penataan kapital (*uppercase*).
+2. **Mode Direct Bluetooth ESC/POS (`encodeReceiptToEscPos`):**
+   - Menghapus byte perintah *emphasized mode* `0x1B, 0x45, 0x01` (Bold ON) dan `0x1B, 0x45, 0x00` (Bold OFF) pada Header Toko dan baris `TOTAL:`.
+   - Menggunakan mode font standar internal printer (Font A 12x24 dots normal) yang mencetak seketika dengan ketajaman dot piksel maksimal.
+3. **Sinkronisasi Tampilan Pratinjau WYSIWYG:**
+   - Komponen modal kasir (`ReceiptPreviewModal.tsx`) dan live preview di pengaturan struk (`ReceiptSettingsModal.tsx`) menanggalkan kelas `font-bold` dan `font-semibold` pada kontainer kertas struk.
+   - Tampilan digital yang dilihat pengguna di layar 100% identik (*What You See Is What You Get*) dengan fisik struk kertas yang keluar dari mesin printer.
+
+---
+
+## 6. Format Catatan Pesanan & Catatan Item Produk (Notes Layout)
+
+### 6.1 Catatan Item Produk (`item.note`)
+- **Penempatan:** Tepat di bawah nama item dan varian produk, di atas baris harga kuantitas.
+- **Indentasi & Gaya:** Indentasi 3 spasi dengan simbol bullet `•` (`padding-left: 4px; font-size: 0.85em; font-style: italic; color: #555;` pada HTML, dan `   • ${item.note}\n` pada ESC/POS).
+- **Anti-Bleed Standard:** Tetap menggunakan bobot teks normal (tanpa bold) agar instruksi seperti *"Less ice, no sugar"* tidak kabur atau belepotan pada kertas 58mm/80mm.
+
+### 6.2 Catatan Global Pesanan (`receipt.orderNote`)
+- **Penempatan:** Pada area metadata transaksi, tepat di bawah baris `Pelanggan:`.
+- **Formatting:** Dibungkus dalam kotak bergaris putus-putus (`border: 1px dashed #777; background: #f7f7f7;` pada HTML, atau `Catatan: ${receipt.orderNote}\n` pada ESC/POS).
+- **Tujuan Operasional:** Memungkinkan barista, staf dapur (kitchen display/printer), atau bagian packing melihat instruksi meja/layanan (misal: *"Meja 04 - Bawa pulang"*) seketika saat pertama kali melihat struk.
+
+

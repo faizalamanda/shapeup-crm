@@ -52,7 +52,9 @@ export async function POST(req: Request) {
       cash_received = 0,
       change_amount = 0,
       register_id = null,
-      reference_number = null
+      reference_number = null,
+      order_note = null,
+      note = null
     } = body
 
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -101,7 +103,7 @@ export async function POST(req: Request) {
 
     // 4. Resolve Guest Customer — uses cached guest ID per business
     let resolvedCustomerId = customer_id
-    if (!resolvedCustomerId || resolvedCustomerId === 'guest' || resolvedCustomerId === '0') {
+    if (!resolvedCustomerId || !isUuid(resolvedCustomerId) || resolvedCustomerId === 'guest' || resolvedCustomerId === '0') {
       resolvedCustomerId = await resolveGuestCustomerId(businessId, ctx.supabaseAdmin)
     }
 
@@ -190,7 +192,9 @@ export async function POST(req: Request) {
       payments: effectivePayments,
       amount_paid: totalPaid,
       payment_status: paymentStatus,
-      line_items: lineItems
+      line_items: lineItems,
+      customer_note: (order_note || note || '').trim() || undefined,
+      notes: (order_note || note || '').trim() || undefined
     }
 
     const assignedRegisterId = isUuid(register_id) ? register_id : (activeShift.register_id || null)

@@ -475,7 +475,7 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
             }`}
           >
             <div className="text-center pb-2 border-b border-dashed border-slate-400 space-y-0.5">
-              <h4 className="font-bold text-xs uppercase tracking-wide">{storeName || 'NAMA TOKO'}</h4>
+              <h4 className="text-xs uppercase tracking-wide">{storeName || 'NAMA TOKO'}</h4>
               {address && <p className="text-[10px] text-slate-600">{address}</p>}
               {phone && <p className="text-[10px] text-slate-600">Telp: {phone}</p>}
             </div>
@@ -483,7 +483,7 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
             <div className="py-2 border-b border-dashed border-slate-400 space-y-1 text-[10px] text-slate-600">
               <div className="flex justify-between">
                 <span>No. Invoice:</span>
-                <span className="font-semibold text-slate-800">POS-20261012</span>
+                <span className="text-slate-800">POS-20261012</span>
               </div>
               <div className="flex justify-between">
                 <span>Tanggal:</span>
@@ -501,17 +501,17 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
 
             <div className="py-2 border-b border-dashed border-slate-400 space-y-2">
               <div>
-                <p className="font-semibold">{showItemNumbering ? '1. ' : ''}Contoh Item Produk A</p>
+                <p>{showItemNumbering ? '1. ' : ''}Contoh Item Produk A</p>
                 <div className={`flex justify-between text-slate-600 mt-0.5 ${showItemNumbering ? 'pl-3' : 'pl-1'}`}>
                   <span>2 x 25.000</span>
-                  <span className="font-semibold text-slate-900">50.000</span>
+                  <span className="text-slate-900">50.000</span>
                 </div>
               </div>
               <div>
-                <p className="font-semibold">{showItemNumbering ? '2. ' : ''}Contoh Item Produk B</p>
+                <p>{showItemNumbering ? '2. ' : ''}Contoh Item Produk B</p>
                 <div className={`flex justify-between text-slate-600 mt-0.5 ${showItemNumbering ? 'pl-3' : 'pl-1'}`}>
                   <span>1 x 15.000</span>
-                  <span className="font-semibold text-slate-900">15.000</span>
+                  <span className="text-slate-900">15.000</span>
                 </div>
               </div>
             </div>
@@ -521,7 +521,7 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
                 <span>Subtotal:</span>
                 <span>65.000</span>
               </div>
-              <div className="flex justify-between font-bold text-xs pt-1 border-t border-slate-200">
+              <div className="flex justify-between text-xs pt-1 border-t border-slate-200">
                 <span>TOTAL:</span>
                 <span>65.000</span>
               </div>
@@ -529,7 +529,7 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
                 <span>Bayar Tunai:</span>
                 <span>100.000</span>
               </div>
-              <div className="flex justify-between text-[10px] font-semibold text-slate-800">
+              <div className="flex justify-between text-[10px] text-slate-800">
                 <span>Kembalian:</span>
                 <span>35.000</span>
               </div>
@@ -538,17 +538,17 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
             {/* Live Preview Blok Loyalty Rewards */}
             {isLoyaltyProgramEnabled && showLoyaltyPoints && (
               <div className="py-2 border-b border-dashed border-slate-400 text-[10px] space-y-0.5">
-                <div className="flex justify-between font-bold text-slate-800">
+                <div className="flex justify-between text-slate-800">
                   <span>LOYALTY REWARDS</span>
                   <span>🥇 Gold</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Poin Transaksi:</span>
-                  <span className="font-semibold text-slate-800">+6 Poin</span>
+                  <span className="text-slate-800">+6 Poin</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Total Saldo Poin:</span>
-                  <span className="font-semibold text-slate-800">246 Poin</span>
+                  <span className="text-slate-800">246 Poin</span>
                 </div>
               </div>
             )}

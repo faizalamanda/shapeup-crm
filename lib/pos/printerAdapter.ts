@@ -49,6 +49,7 @@ export interface ReceiptData {
   cashReceived?: number
   changeAmount?: number
   note?: string
+  orderNote?: string
   paperSize?: PaperSize
 }
 
@@ -255,6 +256,10 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
         <span>Pelanggan:</span>
         <span>${escapeHtml(receipt.customerName)}</span>
       </div>` : ''}
+      ${receipt.orderNote ? `
+      <div style="margin-top: 4px; padding: 4px 6px; background-color: #f7f7f7; border: 1px dashed #777; font-size: 0.9em; word-break: break-word;">
+        Catatan: ${escapeHtml(receipt.orderNote)}
+      </div>` : ''}
     </div>
 
     <div class="divider"></div>
@@ -411,6 +416,9 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize: PaperSize
   writeText(padColumns('Kasir:', receipt.cashierName))
   if (receipt.customerName) {
     writeText(padColumns('Pelanggan:', receipt.customerName))
+  }
+  if (receipt.orderNote) {
+    writeText(`Catatan: ${receipt.orderNote}\n`)
   }
 
   // Divider

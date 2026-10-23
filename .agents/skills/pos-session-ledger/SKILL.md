@@ -255,6 +255,10 @@ ShapeUp POS mengimplementasikan dua jalur transmisi yang saling melengkapi denga
 3. **Kompak Single-Line Date (`mode: 'receipt'`):**
    - Tanggal struk diformat via `formatDisplayDate(date, 'receipt', timezone)` menghasilkan string numerik ringkas: **`DD-MM-YYYY HH:mm`** (contoh: `20-10-2026 12:26`).
    - Tanpa imbuhan zona waktu (`WIB`) agar pas 1 baris utuh dan tidak terdorong ke baris baru.
+4. **Universal Normal Weight & Zero-Bold Standard (Anti-Bleed):**
+   - **Larangan Teks Bold:** Head printer thermal bekerja dengan memanaskan jarum pin. Penggunaan teks tebal (**Bold** / `font-weight: 600/700` pada HTML atau `ESC E 1` / `0x1B, 0x45, 0x01` pada ESC/POS) memicu *double-strike pulse* yang menyebabkan panas merambat ke serat kertas sekitar titik dot. Ini membuat huruf kecil, rincian produk, dan nominal harga meleber (*bleeding*), dempet, buram, serta mempercepat ausnya print-head.
+   - **Universal Monoline / Normal Weight:** Seluruh template struk wajib menggunakan font weight normal (`font-weight: 400` / regular) tanpa perintah emphasized mode ESC/POS. Penekanan hierarki visual dilakukan murni melalui *font-size*, garis putus-putus pembatas (`divider`), dan huruf kapital (*uppercase*).
+   - **Konsistensi WYSIWYG Live Previews:** Komponen pratinjau struk modal (`ReceiptPreviewModal.tsx`) dan live preview pengaturan struk (`ReceiptSettingsModal.tsx`) wajib meniadakan kelas `font-bold` dan `font-semibold` agar tampilan digital di layar 100% konsisten (*What You See Is What You Get*) dengan fisik kertas hasil cetak.
 
 ### 9.4 Kompensasi Lebar Efektif Kertas Thermal Fisik
 | Ukuran Kertas | Lebar Fisik Roll | Area Cetak Efektif (*Printable Width*) | Karakteristik Head Thermal | CSS Aturan |
@@ -294,3 +298,43 @@ Pada operasional ritel & toko fisik kasir sering menempatkan smartphone atau tab
 ### 10.3 Adaptasi Grid Katalog pada Orientasi Lanskap
 - Lebar layar ponsel lanskap ($\sim 844\text{px} - 932\text{px}$) berada di atas breakpoint `sm:` (640px) dan `md:` (768px), sehingga grid produk otomatis melebar menjadi 3 hingga 4 kolom (`sm:grid-cols-3 md:grid-cols-4`).
 - Area daftar produk dan keranjang belanja mempertahankan kontainer `overflow-y-auto` mandiri untuk mengakomodasi keterbatasan ruang vertikal ponsel lanskap ($\sim 350\text{px} - 400\text{px}$) dengan lancar.
+
+---
+
+## 11. Touch-First POS Order & Item Notes Architecture
+
+Pencatatan instruksi khusus pesanan pada kasir POS dirancang berdasarkan prinsip Human-Computer Interaction (HCI), ergonomi layar sentuh, dan teori persistensi data transaksional.
+
+### 11.1 Ergonomi Layar Sentuh & Quick Preset Chips (HCI / KLM Standard)
+1. **Pencegahan Latensi Motorik & Fat-Finger Problem (Fitts's Law):**
+   - Mengetik teks bebas pada keyboard kaca mobile/tablet memakan waktu $\sim 7-9$ detik dan rawan salah ketuk.
+   - Sistem menyediakan **Preset Chip Tags 1-Ketukan** (*Quick Tags*):
+     - **Catatan Item:** *"Tanpa Es"*, *"Less Ice"*, *"Tanpa Gula"*, *"Less Sugar"*, *"Pedas"*, *"Sedang"*, *"Tidak Pedas"*, *"Pisah Sambal"*, *"Bungkus Terpisah"*, *"Jangan Pakai Sendok"*, *"Hangat"*, *"Ekstra Saus"*.
+     - **Catatan Global:** *"Makan di Tempat (Dine-in)"*, *"Bawa Pulang (Takeaway)"*, *"Meja 1-5"*, *"Prioritas / Urgent"*, *"Titip Kasir"*, *"Tanpa Sedotan"*, *"Pisah Kantong"*.
+   - Mengetuk chip memotong waktu entri kasir menjadi **$< 0.6$ detik** (Hick-Hyman Law).
+2. **Pencegahan Virtual Keyboard Viewport Occlusion & Auto-Zoom:**
+   - Input textarea diformat dengan ukuran font $16\text{px}$ pada mobile (`text-base sm:text-xs`) untuk mencegah safari iOS melakukan *auto-zoom* viewport yang merusak tata letak.
+   - Komponen modal menggunakan outer shell `FullScreenModal` terpusat (`desktopSize="sm"`), menjamin tombol aksi dan preset tetap berlabuh di atas keyboard virtual.
+
+### 11.2 In-Memory Zero-Latency State & Safeguarded Persistence
+1. **Zero-Latency Reactive State:**
+   - Penambahan dan perubahan catatan dikelola $100\%$ di memori RAM browser (`useState` pada `POSWorkspace`).
+   - Tidak ada network roundtrip atau debounce lag saat kasir menyunting catatan di keranjang.
+2. **Hold & Resume Order Synchronization:**
+   - Catatan global disimpan ke kolom `pos_held_orders.note`, dan catatan item tersimpan dalam `pos_held_orders.cart_json`.
+   - Pembersihan cart (`setCart([])`, `setOrderNote('')`) hanya dieksekusi jika server mengonfirmasi keberhasilan simpan (`res.ok`), melindungi kasir dari kehilangan data draft jika koneksi jaringan terganggu.
+3. **Optimistic Checkout with Local Variable Capture:**
+   - Sebelum state lokal dibersihkan, nilai catatan diekstrak ke variabel lokal konstan (`const effectiveOrderNote = orderNote.trim() || undefined`).
+   - Catatan langsung dipaketkan ke dalam struk instan (0ms) untuk dicetak, sekaligus disinkronkan ke endpoint `/api/pos/order`.
+
+### 11.3 Database Theory & Event-Sourced Storage (Zero Migration)
+1. **Item-Level Notes:**
+   - Disimpan secara atomik di dalam objek baris produk pada kolom JSONB `orders.items_json[i].note` dan `line_items[i].meta_data[{ key: 'Note', value: '...' }]`.
+2. **Global Order Notes:**
+   - Disimpan pada kolom JSONB `orders.raw_source_data.notes` dan `orders.raw_source_data.customer_note`.
+   - Pola ini menjamin **Zero Schema Migration**, bebas downtime, dan kompatibel 100% dengan ekosistem omnichannel (seperti sinkronisasi WooCommerce dan Accurate ERP).
+
+### 11.4 Standar Cetak Thermal ESC/POS (Anti-Bleed Normal Weight)
+- **Catatan Item:** Dicetak di bawah baris nama produk dengan indentasi 3 spasi dan penanda titik (`   • Less ice, gula 50%`) menggunakan font reguler/normal (tanpa emphasized mode `0x1B, 0x45, 0x01`).
+- **Catatan Global:** Dicetak pada bagian metadata struk di bawah informasi pelanggan dalam blok bergaris putus-putus (`Catatan: Meja 04 - Bawa pulang`) agar staf dapur atau barista dapat membacanya seketika.
+

@@ -149,6 +149,12 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
                   <span>{receipt.customerName}</span>
                 </div>
               )}
+              {receipt.orderNote && (
+                <div className="mt-1 pt-1 border-t border-dashed border-gray-300 text-[11px] text-gray-700 bg-gray-50/70 p-1.5 rounded-sm">
+                  <span className="text-gray-500">Catatan: </span>
+                  <span>{receipt.orderNote}</span>
+                </div>
+              )}
             </div>
 
             {/* Items */}

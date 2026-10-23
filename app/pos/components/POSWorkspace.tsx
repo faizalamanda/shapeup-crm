@@ -10,6 +10,8 @@ import HoldModal from './HoldModal'
 import AddCustomerModal from '../../orders/pos/components/AddCustomerModal'
 import OrderHistoryModal from '../../orders/pos/components/OrderHistoryModal'
 import POSOrderDetailModal from './POSOrderDetailModal'
+import ItemNoteModal from './ItemNoteModal'
+import OrderNoteModal from './OrderNoteModal'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from './ReceiptSettingsModal'
 import { useUserContext } from '@/components/UserContext'
@@ -81,6 +83,11 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
 
   // Item edit state
   const [editingItemIndex, setEditingItemIndex] = useState<number | null>(null)
+
+  // Notes State
+  const [orderNote, setOrderNote] = useState<string>('')
+  const [itemNoteModalIndex, setItemNoteModalIndex] = useState<number | null>(null)
+  const [isOrderNoteModalOpen, setIsOrderNoteModalOpen] = useState<boolean>(false)
 
   // Mobile Bottom Sheet State
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
@@ -286,6 +293,19 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
     })
   }
 
+  const handleSaveItemNote = (index: number, newNote: string) => {
+    setCart((prev) => {
+      const copy = [...prev]
+      if (copy[index]) {
+        copy[index] = {
+          ...copy[index],
+          note: newNote
+        }
+      }
+      return copy
+    })
+  }
+
   // Keypad Handlers
   const handleKeypadPress = (val: string) => {
     if (val === 'C') {
@@ -326,27 +346,34 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   const handleSaveHoldOrder = async () => {
     if (cart.length === 0) return
     try {
+      const effectiveOrderNote = orderNote.trim() || undefined
       const res = await fetch('/api/pos/hold', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'save',
-          customer_id: selectedCustomer?.id,
+          customer_id: selectedCustomer?.id || null,
           customer_name: selectedCustomer?.name || 'Walk-in',
           cart_json: cart,
           total_items: cart.length,
-          grand_total: grandTotal
+          grand_total: grandTotal,
+          note: effectiveOrderNote
         })
       })
-      const data = await res.json()
-      if (data.heldOrder) {
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        throw new Error(data?.error || 'Gagal menahan transaksi.')
+      }
+      if (data?.heldOrder) {
         setHeldOrders((prev) => [data.heldOrder, ...prev])
       }
       setCart([])
       setSelectedCustomer(null)
+      setOrderNote('')
       setIsMobileCartOpen(false)
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to hold order:', e)
+      alert(e.message || 'Gagal menahan transaksi.')
     }
   }
 
@@ -356,6 +383,11 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
     }
     if (h.customer_id) {
       setSelectedCustomer({ id: h.customer_id, name: h.customer_name })
+    }
+    if (h.note) {
+      setOrderNote(h.note)
+    } else {
+      setOrderNote('')
     }
   }
 
@@ -447,6 +479,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       }
 
       // 1. Build Receipt immediately (Reality First: 0ms Latency)
+      const effectiveOrderNote = orderNote.trim() || undefined
       const receipt: ReceiptData = {
         businessName: rSettings.storeName || defaultStoreTitle,
         businessAddress: rSettings.address || undefined,
@@ -474,8 +507,11 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         cashReceived: paymentInfo.cashReceived,
         changeAmount: paymentInfo.changeAmount,
         note: rSettings.footerNote || undefined,
+        orderNote: effectiveOrderNote,
         paperSize: rSettings.paperSize || '58mm'
       }
+
+      const effectiveCustomerId = selectedCustomer?.id || 'guest'
 
       // 1. Instant Optimistic Action (0ms Latency for Customer & Cashier)
       setReceiptData(receipt)
@@ -486,6 +522,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       setCart([])
       setSelectedCustomer(null)
       setGlobalDiscountInput('')
+      setOrderNote('')
       setCheckingOut(false)
 
       // 2. Background Sync (Fire-and-Forget)
@@ -493,7 +530,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customer_id: selectedCustomer?.id || 'guest',
+          customer_id: effectiveCustomerId,
           items: itemsPayload,
           payment_method: paymentInfo.method,
           payments: paymentInfo.payments,
@@ -505,7 +542,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           cash_received: paymentInfo.cashReceived,
           change_amount: paymentInfo.changeAmount,
           shift_id: activeShift?.id || null,
-          register_id: activeShift?.register_id || null
+          register_id: activeShift?.register_id || null,
+          order_note: effectiveOrderNote
         })
       })
       .then(async (res) => {
@@ -632,15 +670,36 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                       • {item.selectedModifiers.map((m: any) => m.name).join(', ')}
                     </div>
                   )}
-                  {item.note && (
-                    <div className="text-[10px] text-slate-500 italic">• "{item.note}"</div>
-                  )}
+                  {/* Item Note Chip / Trigger */}
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    {item.note ? (
+                      <button
+                        type="button"
+                        onClick={() => setItemNoteModalIndex(idx)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200/90 text-amber-900 text-[11px] font-medium hover:bg-amber-100 transition text-left active:scale-95"
+                        title="Ubah Catatan Item"
+                      >
+                        <span className="text-xs">💬</span>
+                        <span className="truncate max-w-[170px] sm:max-w-[220px] italic">"{item.note}"</span>
+                        <span className="text-[10px] text-amber-600 font-bold ml-0.5">Edit</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setItemNoteModalIndex(idx)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-dashed border-slate-300 hover:border-indigo-300 transition active:scale-95"
+                        title="Tambah Catatan Item"
+                      >
+                        <span>+ Catatan</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setEditingItemIndex(editingItemIndex === idx ? null : idx)}
                     className={`p-1.5 rounded-lg transition ${editingItemIndex === idx ? 'bg-indigo-100 text-indigo-700' : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
-                    title="Ubah Harga / Diskon"
+                    title="Ubah Harga / Diskon / Catatan"
                   >
                     ✏️
                   </button>
@@ -675,6 +734,25 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                       className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       placeholder="0"
                     />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Catatan Item</label>
+                    <div className="flex gap-1.5">
+                      <input 
+                        type="text" 
+                        value={item.note || ''} 
+                        onChange={(e) => handleSaveItemNote(idx, e.target.value)}
+                        placeholder="Instruksi khusus produk..."
+                        className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setItemNoteModalIndex(idx)}
+                        className="px-2.5 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-[11px] font-bold transition shrink-0"
+                      >
+                        Preset
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -725,6 +803,47 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
               <span>-Rp {discountAmount.toLocaleString('id-ID')}</span>
             </div>
           )}
+
+          {/* Catatan Pesanan Global */}
+          <div className="pt-2 border-t border-slate-100">
+            {orderNote ? (
+              <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200/90 flex items-start justify-between gap-2">
+                <div 
+                  className="flex-1 cursor-pointer"
+                  onClick={() => setIsOrderNoteModalOpen(true)}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs">📝</span>
+                    <span className="text-[10px] font-extrabold text-amber-900 uppercase tracking-wider">Catatan Pesanan</span>
+                    <span className="text-[10px] text-amber-600 font-semibold underline">Ubah</span>
+                  </div>
+                  <p className="text-xs text-amber-950 font-medium mt-0.5 line-clamp-2 leading-snug">
+                    "{orderNote}"
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOrderNote('')}
+                  className="text-amber-700/60 hover:text-rose-600 p-1 font-bold text-xs"
+                  title="Hapus Catatan Pesanan"
+                >
+                  ✕
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsOrderNoteModalOpen(true)}
+                className="w-full py-2 px-3 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/40 text-slate-600 hover:text-indigo-700 text-xs font-semibold flex items-center justify-between transition group active:scale-[0.99]"
+              >
+                <span className="flex items-center gap-1.5">
+                  <span className="text-sm">📝</span>
+                  <span>+ Tambah Catatan Pesanan (Meja / Instruksi)</span>
+                </span>
+                <span className="text-[10px] text-slate-400 group-hover:text-indigo-600 font-bold">Pilih →</span>
+              </button>
+            )}
+          </div>
 
           {/* Global Discount */}
           <div className="pt-2 border-t border-slate-100 flex flex-col gap-1.5">
@@ -1240,6 +1359,34 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         onResumeCart={handleResumeHoldOrder}
         onDeleteHold={handleDeleteHoldOrder}
         timezone={activeBusiness?.timezone}
+      />
+
+      {/* Item Note Modal */}
+      <ItemNoteModal
+        isOpen={itemNoteModalIndex !== null}
+        onClose={() => setItemNoteModalIndex(null)}
+        item={
+          itemNoteModalIndex !== null && cart[itemNoteModalIndex]
+            ? {
+                name: cart[itemNoteModalIndex].product?.name || 'Produk',
+                variantName: cart[itemNoteModalIndex].selectedVariant?.name,
+                note: cart[itemNoteModalIndex].note
+              }
+            : null
+        }
+        onSave={(newNote) => {
+          if (itemNoteModalIndex !== null) {
+            handleSaveItemNote(itemNoteModalIndex, newNote)
+          }
+        }}
+      />
+
+      {/* Global Order Note Modal */}
+      <OrderNoteModal
+        isOpen={isOrderNoteModalOpen}
+        onClose={() => setIsOrderNoteModalOpen(false)}
+        currentNote={orderNote}
+        onSave={(newNote) => setOrderNote(newNote)}
       />
 
       {isAddCustomerOpen && (
