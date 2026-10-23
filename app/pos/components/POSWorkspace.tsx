@@ -749,8 +749,9 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                         type="button"
                         onClick={() => setItemNoteModalIndex(idx)}
                         className="px-2.5 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-[11px] font-bold transition shrink-0"
+                        title="Buka dialog catatan"
                       >
-                        Preset
+                        Buka
                       </button>
                     </div>
                   </div>

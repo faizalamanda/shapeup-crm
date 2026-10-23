@@ -14,21 +14,6 @@ interface Props {
   onSave: (note: string) => void
 }
 
-const ITEM_PRESETS = [
-  'Tanpa Es',
-  'Less Ice',
-  'Tanpa Gula',
-  'Less Sugar',
-  'Pedas',
-  'Sedang',
-  'Tidak Pedas',
-  'Pisah Sambal',
-  'Bungkus Terpisah',
-  'Jangan Pakai Sendok',
-  'Hangat',
-  'Ekstra Saus'
-]
-
 export default function ItemNoteModal({ isOpen, onClose, item, onSave }: Props) {
   const [note, setNote] = useState('')
 
@@ -39,31 +24,6 @@ export default function ItemNoteModal({ isOpen, onClose, item, onSave }: Props) 
   }, [isOpen, item?.note])
 
   if (!isOpen || !item) return null
-
-  const handleTogglePreset = (preset: string) => {
-    const current = note.trim()
-    if (!current) {
-      setNote(preset)
-      return
-    }
-
-    // Check if preset already included
-    const parts = current.split(',').map(p => p.trim()).filter(Boolean)
-    const existsIndex = parts.findIndex(p => p.toLowerCase() === preset.toLowerCase())
-
-    if (existsIndex > -1) {
-      parts.splice(existsIndex, 1)
-      setNote(parts.join(', '))
-    } else {
-      parts.push(preset)
-      setNote(parts.join(', '))
-    }
-  }
-
-  const isPresetActive = (preset: string) => {
-    if (!note) return false
-    return note.toLowerCase().includes(preset.toLowerCase())
-  }
 
   const handleSave = () => {
     onSave(note.trim())
@@ -123,38 +83,12 @@ export default function ItemNoteModal({ isOpen, onClose, item, onSave }: Props) 
         </div>
       }
     >
-      <div className="space-y-4">
-        {/* Preset Chips */}
-        <div>
-          <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">
-            Pilihan Cepat (1-Ketukan)
-          </label>
-          <div className="flex flex-wrap gap-1.5">
-            {ITEM_PRESETS.map((preset) => {
-              const active = isPresetActive(preset)
-              return (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => handleTogglePreset(preset)}
-                  className={`px-3 py-2 text-xs font-semibold rounded-xl border transition-all active:scale-95 ${
-                    active
-                      ? 'bg-indigo-600 border-indigo-600 text-white shadow-xs'
-                      : 'bg-white border-slate-200 text-slate-700 hover:border-indigo-300 hover:bg-indigo-50/50'
-                  }`}
-                >
-                  {active ? `✓ ${preset}` : `+ ${preset}`}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Custom Note Textarea */}
+      <div className="space-y-3">
+        {/* Note Textarea */}
         <div className="space-y-1.5">
           <div className="flex justify-between items-center">
             <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-              Teks Catatan Bebas
+              Tulis Catatan Item
             </label>
             {note && (
               <button
@@ -169,12 +103,13 @@ export default function ItemNoteModal({ isOpen, onClose, item, onSave }: Props) 
           <textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            rows={3}
-            placeholder="Ketik instruksi khusus (misal: Jangan pakai kacang, pisah bungkus, saus di pinggir)..."
-            className="w-full p-3 text-base sm:text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white shadow-2xs leading-relaxed"
+            rows={4}
+            autoFocus
+            placeholder="Ketik instruksi khusus produk (misal: Jangan pakai kacang, pisah bungkus, ukuran khusus)..."
+            className="w-full p-3.5 text-base sm:text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white shadow-2xs leading-relaxed"
           />
           <p className="text-[10px] text-slate-400">
-            Catatan ini akan tercetak pada struk belanja di bawah baris produk.
+            Catatan ini akan tercetak pada struk belanja tepat di bawah baris produk.
           </p>
         </div>
       </div>

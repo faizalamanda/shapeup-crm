@@ -305,16 +305,12 @@ Pada operasional ritel & toko fisik kasir sering menempatkan smartphone atau tab
 
 Pencatatan instruksi khusus pesanan pada kasir POS dirancang berdasarkan prinsip Human-Computer Interaction (HCI), ergonomi layar sentuh, dan teori persistensi data transaksional.
 
-### 11.1 Ergonomi Layar Sentuh & Quick Preset Chips (HCI / KLM Standard)
-1. **Pencegahan Latensi Motorik & Fat-Finger Problem (Fitts's Law):**
-   - Mengetik teks bebas pada keyboard kaca mobile/tablet memakan waktu $\sim 7-9$ detik dan rawan salah ketuk.
-   - Sistem menyediakan **Preset Chip Tags 1-Ketukan** (*Quick Tags*):
-     - **Catatan Item:** *"Tanpa Es"*, *"Less Ice"*, *"Tanpa Gula"*, *"Less Sugar"*, *"Pedas"*, *"Sedang"*, *"Tidak Pedas"*, *"Pisah Sambal"*, *"Bungkus Terpisah"*, *"Jangan Pakai Sendok"*, *"Hangat"*, *"Ekstra Saus"*.
-     - **Catatan Global:** *"Makan di Tempat (Dine-in)"*, *"Bawa Pulang (Takeaway)"*, *"Meja 1-5"*, *"Prioritas / Urgent"*, *"Titip Kasir"*, *"Tanpa Sedotan"*, *"Pisah Kantong"*.
-   - Mengetuk chip memotong waktu entri kasir menjadi **$< 0.6$ detik** (Hick-Hyman Law).
+### 11.1 Ergonomi Layar Sentuh & Direct Input (HCI Standard)
+1. **Pencegahan Distraksi & Entri Catatan Bebas:**
+   - Antarmuka difokuskan pada input textarea langsung yang bersih tanpa tombol chip preset yang memadati layar, memberikan keleluasaan penuh bagi kasir untuk mengetik instruksi pesanan yang relevan sesuai kebutuhan toko.
 2. **Pencegahan Virtual Keyboard Viewport Occlusion & Auto-Zoom:**
    - Input textarea diformat dengan ukuran font $16\text{px}$ pada mobile (`text-base sm:text-xs`) untuk mencegah safari iOS melakukan *auto-zoom* viewport yang merusak tata letak.
-   - Komponen modal menggunakan outer shell `FullScreenModal` terpusat (`desktopSize="sm"`), menjamin tombol aksi dan preset tetap berlabuh di atas keyboard virtual.
+   - Komponen modal menggunakan outer shell `FullScreenModal` terpusat (`desktopSize="sm"`), menjamin tombol aksi ("Batal", "Hapus", "Simpan Catatan") tetap berlabuh di atas keyboard virtual dengan target sentuh $\ge 44\text{px}$.
 
 ### 11.2 In-Memory Zero-Latency State & Safeguarded Persistence
 1. **Zero-Latency Reactive State:**
