@@ -47,7 +47,7 @@ const { data: profile } = await supabase.from('profiles').select('active_busines
 
 ### 1b. `lib/userBusinessHelper.ts` — Unified User & Business Fetching
 
-Gunakan modul tunggal ini baik di *client-side* (`UserContext.tsx`, `settings/business/page.tsx`) maupun *server-side* ketika ingin mendapatkan profil user + daftar bisnis (assigned + owned) + unit bisnis aktif + role & permissions dalam 1 *call* paralel.
+Gunakan modul tunggal ini baik di *client-side* (`UserContext.tsx`, `settings/business/page.tsx`) maupun *server-side* ketika ingin mendapatkan profil user + daftar bisnis (assigned + owned) + unit bisnis aktif + role & permissions serta status kepemilikan tenant (`isOwner`) dalam 1 *call* paralel.
 
 ```typescript
 import { fetchUserBusinessContext } from '@/lib/userBusinessHelper'
@@ -58,9 +58,25 @@ const {
   activeBusiness,
   activeBusinessId,
   currentUserRole,
-  currentUserPermissions
+  currentUserPermissions,
+  isOwner
 } = await fetchUserBusinessContext(userId, supabase)
 ```
+
+**Konsep Kunci: Tenant Ownership vs Functional RBAC:**
+1. **`isOwner: boolean` (Account/Tenant Owner):**
+   - Bernilai `true` HANYA JIKA user memiliki minimal 1 baris di tabel `businesses` (`businesses.owner_id = user.id`).
+   - Bernilai `false` jika user murni didaftarkan sebagai anggota tim / staf di `business_staff` milik orang lain.
+   - Pembeda tegas: Staf yang diberi `role = 'admin'` di unit bisnis tetap memiliki `isOwner: false`. Hak membuat cabang bisnis baru (`POST /api/business`) dan tombol UI `➕ Buat Bisnis Baru` wajib dikunci secara eksklusif dengan `isOwner`.
+2. **PostgREST Join RLS & Resilient Fallback:**
+   - Kueri `business_staff.select('..., businesses (*)')` mengevaluasi RLS pada tabel `businesses`. Jika RLS memblokir, PostgREST mengembalikan `businesses: null` secara diam-diam tanpa error.
+   - Database wajib memiliki policy RLS:
+     ```sql
+     CREATE POLICY "Staff can view assigned businesses" ON public.businesses
+       FOR SELECT TO authenticated
+       USING (EXISTS (SELECT 1 FROM public.business_staff WHERE business_staff.business_id = businesses.id AND business_staff.profile_id = auth.uid()));
+     ```
+   - Sebagai proteksi ganda (*resilient client fallback*), jika `fetchUserBusinessContext` mendeteksi adanya `business_id` namun relasi `businesses` bernilai null (misal sebelum schema reload), fungsi secara otomatis memanggil `/api/business` (server endpoint berbasis `supabaseAdmin`) untuk memastikan seluruh unit bisnis staf tetap tampil utuh di dropdown.
 
 ---
 

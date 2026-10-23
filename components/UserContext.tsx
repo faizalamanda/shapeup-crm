@@ -11,6 +11,7 @@ export interface UserContextType {
   businesses: any[]
   currentUserRole: string | null
   currentUserPermissions: string[]
+  isOwner: boolean
   isWabaActive: boolean
   bizLoading: boolean
   isLoggingOut: boolean
@@ -26,6 +27,7 @@ const UserContext = createContext<UserContextType>({
   businesses: [],
   currentUserRole: 'admin',
   currentUserPermissions: ['full_access'],
+  isOwner: false,
   isWabaActive: false,
   bizLoading: true,
   isLoggingOut: false,
@@ -84,6 +86,13 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {}
     }
     return ['full_access']
+  })
+
+  const [isOwner, setIsOwner] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return localStorage.getItem('su_cached_is_owner') === 'true'
+    }
+    return false
   })
 
   const [isWabaActive, setIsWabaActive] = useState(false)
@@ -157,6 +166,7 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
       setActiveBusiness(contextData.activeBusiness)
       setCurrentUserRole(contextData.currentUserRole)
       setCurrentUserPermissions(contextData.currentUserPermissions)
+      setIsOwner(Boolean(contextData.isOwner))
 
       const targetBizId = contextData.activeBusinessId
 
@@ -184,6 +194,7 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
           if (contextData.activeBusiness) localStorage.setItem('su_cached_active_biz', JSON.stringify(contextData.activeBusiness))
           localStorage.setItem('su_cached_role', contextData.currentUserRole)
           localStorage.setItem('su_cached_perms', JSON.stringify(contextData.currentUserPermissions))
+          localStorage.setItem('su_cached_is_owner', String(Boolean(contextData.isOwner)))
         }
       } catch (e) {
         console.error('[UserContext] Error setting cache:', e)
@@ -233,6 +244,7 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     setActiveBusiness(null)
     setCurrentUserRole('admin')
     setCurrentUserPermissions(['full_access'])
+    setIsOwner(false)
     setBizLoading(false)
 
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
@@ -427,6 +439,7 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     businesses,
     currentUserRole,
     currentUserPermissions,
+    isOwner,
     isWabaActive,
     bizLoading,
     isLoggingOut,
@@ -439,7 +452,7 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     },
     handleLogout,
     handleSwitchBusiness,
-  }), [userProfile, activeBusiness, businesses, currentUserRole, currentUserPermissions, isWabaActive, bizLoading, isLoggingOut, isOffline, loadProfileAndBusinesses, supabase])
+  }), [userProfile, activeBusiness, businesses, currentUserRole, currentUserPermissions, isOwner, isWabaActive, bizLoading, isLoggingOut, isOffline, loadProfileAndBusinesses, supabase])
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>
 }

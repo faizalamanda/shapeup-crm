@@ -2,13 +2,72 @@ import { NextResponse } from 'next/server'
 import { seedDefaultCOA } from '@/lib/coa'
 import { getApiContext, invalidateProfileCache } from '@/lib/apiContext'
 
+export async function GET(req: Request) {
+  try {
+    const ctx = await getApiContext({ requireBusiness: false })
+    if (ctx.error) return ctx.error
+    const { user, supabaseAdmin } = ctx
+
+    // 1. Ambil unit bisnis yang ditugaskan di business_staff
+    const { data: bsData, error: bsError } = await supabaseAdmin
+      .from('business_staff')
+      .select('role, permissions, businesses (*)')
+      .eq('profile_id', user.id)
+
+    if (bsError) throw bsError
+
+    // 2. Ambil unit bisnis yang dimiliki oleh user
+    const { data: ownedData, error: ownedError } = await supabaseAdmin
+      .from('businesses')
+      .select('*')
+      .eq('owner_id', user.id)
+
+    if (ownedError) throw ownedError
+
+    const bizMap = new Map<string, any>()
+    bsData?.forEach((item: any) => {
+      if (item.businesses) bizMap.set(item.businesses.id, item.businesses)
+    })
+    ownedData?.forEach((biz: any) => {
+      bizMap.set(biz.id, biz)
+    })
+
+    const isOwner = Boolean(ownedData && ownedData.length > 0)
+
+    return NextResponse.json({
+      businesses: Array.from(bizMap.values()),
+      isOwner
+    })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Terjadi kesalahan server internal"
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const ctx = await getApiContext({ requireBusiness: false })
     if (ctx.error) return ctx.error
     const { user, supabaseAdmin } = ctx
 
-    const body = await req.json()
+    // Guard: Periksa apakah user adalah staf dari bisnis orang lain (bukan Pengguna Utama)
+    const [ownedRes, staffRes] = await Promise.all([
+      supabaseAdmin.from('businesses').select('id').eq('owner_id', user.id).limit(1),
+      supabaseAdmin.from('business_staff').select('id').eq('profile_id', user.id).limit(1)
+    ])
+
+    const isOwner = Boolean(ownedRes.data && ownedRes.data.length > 0)
+    const isStaff = Boolean(staffRes.data && staffRes.data.length > 0)
+
+    // Staf dari unit bisnis milik orang lain dilarang membuat bisnis baru
+    if (!isOwner && isStaff) {
+      return NextResponse.json(
+        { error: "Hanya Pengguna Utama (Pemilik Bisnis) yang memiliki wewenang untuk membuat unit bisnis baru." },
+        { status: 403 }
+      )
+    }
+
+    const body = await req.json().catch(() => ({}))
     const { name, address, phone, timezone } = body
 
     if (!name || !name.trim()) {

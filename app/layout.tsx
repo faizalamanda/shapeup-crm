@@ -222,6 +222,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
     businesses,
     currentUserRole,
     currentUserPermissions,
+    isOwner,
     isWabaActive,
     bizLoading,
     isLoggingOut,
@@ -596,7 +597,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
                     )
                   })
                 )}
-                {userProfile?.role === 'admin' && (
+                {isOwner && (
                   <>
                     <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '6px 0' }} />
                     <Link
@@ -620,9 +621,9 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
                     </Link>
                   </>
                 )}
-                {currentUserRole === 'admin' && (
+                {(isOwner || currentUserRole === 'admin') && (
                   <>
-                    <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '6px 0' }} />
+                    {!isOwner && <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', margin: '6px 0' }} />}
                     <Link
                       href="/settings/business"
                       onClick={() => {

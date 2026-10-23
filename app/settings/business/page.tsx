@@ -102,7 +102,7 @@ function parseBusinessProfile(biz: any): Business {
 }
 
 function BusinessSettingsInner() {
-  const { refreshProfile } = useUserContext()
+  const { refreshProfile, isOwner } = useUserContext()
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -191,11 +191,11 @@ function BusinessSettingsInner() {
     fetchData()
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search)
-      if (params.get('create') === 'true') {
+      if (params.get('create') === 'true' && isOwner) {
         setIsCreating(true)
       }
     }
-  }, [fetchData])
+  }, [fetchData, isOwner])
 
   async function handleSwitch(bid: string) {
     const { data: { user } } = await supabase.auth.getUser()
@@ -298,6 +298,11 @@ function BusinessSettingsInner() {
   }
 
   async function handleCreate() {
+    if (!isOwner) {
+      alert("Hanya Pengguna Utama (Pemilik Bisnis) yang memiliki wewenang untuk membuat unit bisnis baru.")
+      setIsCreating(false)
+      return
+    }
     if (!formData.name) return alert("Nama bisnis wajib diisi!")
     setSubmitting(true)
     
@@ -772,13 +777,15 @@ function BusinessSettingsInner() {
               <h2 className="text-lg font-extrabold text-[#1C1C1A]">Daftar Unit Bisnis Anda</h2>
               <p className="text-xs text-[#6B6B63]">Pilih unit bisnis aktif atau tambahkan cabang / unit usaha baru.</p>
             </div>
-            <button
-              onClick={() => setIsCreating(true)}
-              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-2 self-start sm:self-auto"
-            >
-              <span>+</span>
-              <span>Tambah Unit Bisnis Baru</span>
-            </button>
+            {isOwner && (
+              <button
+                onClick={() => setIsCreating(true)}
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-2 self-start sm:self-auto cursor-pointer"
+              >
+                <span>+</span>
+                <span>Tambah Unit Bisnis Baru</span>
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

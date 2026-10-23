@@ -7,6 +7,7 @@ export interface UserBusinessContext {
   activeBusinessId: string
   currentUserRole: string
   currentUserPermissions: string[]
+  isOwner: boolean
 }
 
 /**
@@ -24,7 +25,7 @@ export async function fetchUserBusinessContext(
 ): Promise<UserBusinessContext> {
   const [profileRes, bsRes, ownedRes] = await Promise.all([
     supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
-    supabase.from('business_staff').select('role, permissions, businesses (*)').eq('profile_id', userId),
+    supabase.from('business_staff').select('business_id, role, permissions, businesses (*)').eq('profile_id', userId),
     supabase.from('businesses').select('*').eq('owner_id', userId)
   ])
 
@@ -64,6 +65,27 @@ export async function fetchUserBusinessContext(
     bizMap.set(biz.id, biz)
   })
 
+  let isOwner = Boolean(ownedRes.data && ownedRes.data.length > 0)
+
+  // Resilient fallback: If any assigned business is masked (e.g. null due to RLS prior to migration reload)
+  const hasMissingJoinedBiz = bsRes.data?.some((item: any) => !item.businesses && item.business_id)
+  if (hasMissingJoinedBiz && typeof window !== 'undefined') {
+    try {
+      const res = await fetch('/api/business')
+      if (res.ok) {
+        const json = await res.json()
+        if (json.businesses && Array.isArray(json.businesses)) {
+          json.businesses.forEach((b: any) => bizMap.set(b.id, b))
+        }
+        if (typeof json.isOwner === 'boolean') {
+          isOwner = json.isOwner
+        }
+      }
+    } catch (e) {
+      // Ignore fetch error
+    }
+  }
+
   const combined = Array.from(bizMap.values())
 
   let activeBizId = profile?.active_business_id || combined[0]?.id || ''
@@ -102,9 +124,9 @@ export async function fetchUserBusinessContext(
 
   // Resolve role and permissions for active business
   const targetBizId = activeBizId || selectedActiveBiz?.id
-  const activeBs = bsRes.data?.find((item: any) => item.businesses?.id === targetBizId)
+  const activeBs = bsRes.data?.find((item: any) => (item.businesses?.id === targetBizId || item.business_id === targetBizId))
   const isUserOwner = Boolean(ownedRes.data && ownedRes.data.some((b: any) => b.id === targetBizId))
-  const isGlobalAdmin = profile?.role === 'admin'
+  const isGlobalAdmin = profile?.role === 'admin' && isOwner
   const isBsAdmin = activeBs?.role === 'admin'
   const isUserAdmin = isGlobalAdmin || isBsAdmin || isUserOwner
 
@@ -128,6 +150,7 @@ export async function fetchUserBusinessContext(
     activeBusiness: selectedActiveBiz,
     activeBusinessId: targetBizId || '',
     currentUserRole: resolvedRole,
-    currentUserPermissions: resolvedPerms
+    currentUserPermissions: resolvedPerms,
+    isOwner
   }
 }

@@ -41,6 +41,16 @@
    - Setiap kolom input kata sandi di seluruh antarmuka aplikasi (Login, Register, Reset Password, Pengaturan Staf) **WAJIB** menyertakan tombol mata (*Show/Hide Password*) dengan state `showPassword` (`type={showPassword ? 'text' : 'password'}`), padding kanan yang proporsional (`pr-12`), dan atribut aksesibilitas (`tabIndex={-1}`, dinamis `aria-label`).
    - Formulir pembuatan/reset kata sandi baru wajib menyertakan validasi real-time (panjang minimal 6 karakter dan indikator kecocokan konfirmasi password).
 
+14. **Tenant Ownership vs Functional RBAC Standard (User Utama vs Staf):**
+   - **Pemisahan Hierarki Kepemilikan (*Separation of Concerns*):** Peran fungsional di unit bisnis (`role: 'admin' | 'staff'`) **TIDAK SAMA** dengan kepemilikan akun bisnis (*Tenant Ownership*).
+   - **User Utama (Account/Business Owner):** Pengguna yang memiliki minimal 1 bisnis (`businesses.owner_id = user.id`) atau pendaftar baru yang belum memiliki penugasan staf. Hanya User Utama yang memiliki wewenang untuk membuat unit/cabang bisnis baru (`POST /api/business`), mengelola unit, atau menghapus bisnis.
+   - **Staf (Delegated Team Member):** Pengguna yang terdaftar di tabel `business_staff` milik orang lain (`businesses.owner_id != user.id`). Meskipun staf tersebut diberikan wewenang `role = 'admin'` di unit bisnis terkait (misal: Admin Cabang/Keuangan), status hierarkisnya tetaplah staf.
+   - **Aturan Dropdown & Pembuatan Bisnis:**
+     - Seluruh unit bisnis tempat staf ditugaskan **WAJIB** tampil di dropdown bisnis (didukung RLS Policy `"Staff can view assigned businesses"` pada `public.businesses` dan resilient fallback di `userBusinessHelper.ts`).
+     - Akun staf **DILARANG KERAS** membuat bisnis baru. Tombol `➕ Buat Bisnis Baru` wajib diproteksi dengan kondisi `isOwner === true` (bukan `role === 'admin'`). Tombol `⚙️ Kelola Bisnis` hanya dapat diakses oleh `isOwner` atau staf berwewenang `currentUserRole === 'admin'` untuk mengelola profil cabang yang aktif tanpa hak membuat cabang baru.
+     - Endpoint `POST /api/business` wajib memvalidasi kepemilikan dan mengembalikan `403 Forbidden` jika dipanggil oleh akun staf (`!isOwner && isStaff`).
+   - **Hardening RPC `SECURITY DEFINER`:** Setiap fungsi database berstatus `SECURITY DEFINER` yang menerima parameter `p_business_id` (seperti fungsi analitik atau laporan) **WAJIB** menyertakan guard klausul di awal fungsi untuk memverifikasi bahwa pemanggil (`auth.uid()`) adalah pemilik (`owner_id`) atau staf resmi (`business_staff`) dari `p_business_id` tersebut.
+
 
 ## Performance Rules
 
