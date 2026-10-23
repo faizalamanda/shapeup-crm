@@ -179,3 +179,10 @@
    - Seluruh kontainer kerja layar penuh (Layout Utama, Register Kasir `POSWorkspace`, dan `POSHub`) **WAJIB** menyertakan padding safe area horizontal:
      `paddingLeft: 'env(safe-area-inset-left, 0px)'` dan `paddingRight: 'env(safe-area-inset-right, 0px)'`
      agar header, tombol aksi, dan elemen navigasi tidak pernah terpotong atau tertutup secara visual oleh poni (*notch*), kamera depan (*punch-hole*), atau *Dynamic Island* saat smartphone ditaruh di *stand* meja dalam orientasi horizontal.
+
+13. **Unified POS Receipt Engine & World-Class Layout Standards (Single Source of Truth):**
+   - **Unified Data Normalizer (`buildReceiptDataFromOrder`):** Seluruh pemicu cetak dan pratinjau struk kasir (Checkout POS, Layanan Nota & Piutang `POSOrderDetailModal`, Riwayat Pesanan, Quick Direct Print `POSHub`, dan Cetak Ulang Shift `ShiftDetailModal`) **WAJIB** menggunakan `buildReceiptDataFromOrder()` dari `@/lib/pos/receiptDataBuilder.ts`. Dilarang keras memetakan field `ReceiptData` secara manual atau parsial di komponen UI.
+   - **Dukungan Struk Piutang & Cicilan:** Struk pesanan tempo/cicilan wajib mencantumkan status penagihan (`STATUS: BELUM LUNAS`), total dibayar, dan sisa piutang (`SISA PIUTANG: ...`) jika memiliki saldo terutang (`outstandingAmount > 0`), atau `STATUS: LUNAS` jika sudah terbayar penuh.
+   - **World-Class Bottom Placement for Order Notes:** Catatan global pesanan (`orderNote`) **WAJIB** diposisikan di bagian bawah struk tepat setelah rincian pembayaran & status piutang (dan sebelum Loyalty Rewards & Footer Kebijakan Toko). Dilarang menempatkan catatan global di bagian header/metadata atas agar tidak mengaburkan daftar barang belanjaan pada kertas roll 58mm/80mm.
+   - **Zero-Drift WYSIWYG Previews:** Pratinjau modal (`ReceiptPreviewModal.tsx`) dan live preview pengaturan struk (`ReceiptSettingsModal.tsx`) **WAJIB** merender langsung HTML dari `generateReceiptHtml()` via sandboxed iframe terisolasi. Dilarang menduplikasi markup JSX tersendiri yang memicu deviasi visual antara layar dan hasil cetak fisik.
+

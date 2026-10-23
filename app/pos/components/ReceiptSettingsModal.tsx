@@ -1,10 +1,11 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { 
   PaperSize, 
   ConnectionType, 
+  generateReceiptHtml,
   isWebBluetoothSupported, 
   getActiveBluetoothDeviceName, 
   requestAndConnectBluetoothPrinter, 
@@ -14,68 +15,16 @@ import {
 import { useUserContext } from '@/components/UserContext'
 import { supabase } from '@/lib/supabase'
 import { fetchLoyaltySettings } from '@/plugins/loyalty/helpers/loyaltyApi'
+import { 
+  type ReceiptSettings, 
+  getStoredReceiptSettings, 
+  RECEIPT_SETTINGS_STORAGE_KEY 
+} from '@/lib/pos/receiptSettings'
+import { buildSampleReceiptData } from '@/lib/pos/receiptDataBuilder'
 
-export interface ReceiptSettings {
-  storeName: string
-  address: string
-  phone: string
-  footerNote: string
-  paperSize: PaperSize
-  connectionType: ConnectionType
-  autoPrintAfterPayment: boolean
-  showItemNumbering: boolean
-  showLoyaltyPoints: boolean
-}
+export { type ReceiptSettings, getStoredReceiptSettings }
 
-const STORAGE_KEY = 'shapeup_pos_receipt_settings'
 
-export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp Store'): ReceiptSettings {
-  if (typeof window === 'undefined') {
-    return {
-      storeName: defaultBusinessName,
-      address: '',
-      phone: '',
-      footerNote: 'Terima kasih atas kunjungan Anda!\nBarang yang sudah dibeli tidak dapat ditukar/dikembalikan.',
-      paperSize: '58mm',
-      connectionType: 'system',
-      autoPrintAfterPayment: false,
-      showItemNumbering: true,
-      showLoyaltyPoints: true
-    }
-  }
-
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      return {
-        storeName: parsed.storeName || defaultBusinessName,
-        address: parsed.address || '',
-        phone: parsed.phone || '',
-        footerNote: parsed.footerNote || 'Terima kasih atas kunjungan Anda!',
-        paperSize: parsed.paperSize || '58mm',
-        connectionType: parsed.connectionType || 'system',
-        autoPrintAfterPayment: Boolean(parsed.autoPrintAfterPayment),
-        showItemNumbering: parsed.showItemNumbering !== undefined ? Boolean(parsed.showItemNumbering) : true,
-        showLoyaltyPoints: parsed.showLoyaltyPoints !== undefined ? Boolean(parsed.showLoyaltyPoints) : true
-      }
-    }
-  } catch (e) {
-    console.warn('Failed reading receipt settings:', e)
-  }
-
-  return {
-    storeName: defaultBusinessName,
-    address: '',
-    phone: '',
-    footerNote: 'Terima kasih atas kunjungan Anda!\nBarang yang sudah dibeli tidak dapat ditukar/dikembalikan.',
-    paperSize: '58mm',
-    connectionType: 'system',
-    autoPrintAfterPayment: false,
-    showItemNumbering: true,
-    showLoyaltyPoints: true
-  }
-}
 
 type Props = {
   isOpen: boolean
@@ -196,7 +145,7 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
     }
 
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+      localStorage.setItem(RECEIPT_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
       if (onSave) onSave(settings)
       setSaveSuccess(true)
       setTimeout(() => {
@@ -206,6 +155,36 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
       console.error('Failed saving receipt settings:', e)
     }
   }
+
+  const sampleReceipt = useMemo(() => {
+    return buildSampleReceiptData({
+      storeName: storeName.trim() || defaultBusinessName,
+      address: address.trim(),
+      phone: phone.trim(),
+      footerNote: footerNote.trim(),
+      paperSize,
+      connectionType,
+      autoPrintAfterPayment,
+      showItemNumbering,
+      showLoyaltyPoints: isLoyaltyProgramEnabled && showLoyaltyPoints
+    })
+  }, [
+    storeName,
+    defaultBusinessName,
+    address,
+    phone,
+    footerNote,
+    paperSize,
+    connectionType,
+    autoPrintAfterPayment,
+    showItemNumbering,
+    isLoyaltyProgramEnabled,
+    showLoyaltyPoints
+  ])
+
+  const sampleReceiptHtml = useMemo(() => {
+    return generateReceiptHtml(sampleReceipt, paperSize)
+  }, [sampleReceipt, paperSize])
 
   return (
     <FullScreenModal
@@ -469,97 +448,13 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
           <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2.5">
             👁️ Pratinjau Tampilan Struk
           </span>
-          <div 
-            className={`bg-white text-slate-900 font-sans p-4 rounded-lg shadow-md border border-slate-200 text-[11px] leading-tight ${
-              paperSize === '58mm' ? 'w-[240px]' : paperSize === '80mm' ? 'w-[300px]' : 'w-full max-w-sm'
-            }`}
-          >
-            <div className="text-center pb-2 border-b border-dashed border-slate-400 space-y-0.5">
-              <h4 className="text-xs uppercase tracking-wide">{storeName || 'NAMA TOKO'}</h4>
-              {address && <p className="text-[10px] text-slate-600">{address}</p>}
-              {phone && <p className="text-[10px] text-slate-600">Telp: {phone}</p>}
-            </div>
-
-            <div className="py-2 border-b border-dashed border-slate-400 space-y-1 text-[10px] text-slate-600">
-              <div className="flex justify-between">
-                <span>No. Invoice:</span>
-                <span className="text-slate-800">POS-20261012</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Tanggal:</span>
-                <span>20-10-2026 12:26</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Kasir:</span>
-                <span>Budi Santoso</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Pelanggan:</span>
-                <span>Budi (Member)</span>
-              </div>
-            </div>
-
-            <div className="py-2 border-b border-dashed border-slate-400 space-y-2">
-              <div>
-                <p>{showItemNumbering ? '1. ' : ''}Contoh Item Produk A</p>
-                <div className={`flex justify-between text-slate-600 mt-0.5 ${showItemNumbering ? 'pl-3' : 'pl-1'}`}>
-                  <span>2 x 25.000</span>
-                  <span className="text-slate-900">50.000</span>
-                </div>
-              </div>
-              <div>
-                <p>{showItemNumbering ? '2. ' : ''}Contoh Item Produk B</p>
-                <div className={`flex justify-between text-slate-600 mt-0.5 ${showItemNumbering ? 'pl-3' : 'pl-1'}`}>
-                  <span>1 x 15.000</span>
-                  <span className="text-slate-900">15.000</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="py-2 border-b border-dashed border-slate-400 space-y-1">
-              <div className="flex justify-between">
-                <span>Subtotal:</span>
-                <span>65.000</span>
-              </div>
-              <div className="flex justify-between text-xs pt-1 border-t border-slate-200">
-                <span>TOTAL:</span>
-                <span>65.000</span>
-              </div>
-              <div className="flex justify-between text-[10px] text-slate-600 pt-0.5">
-                <span>Bayar Tunai:</span>
-                <span>100.000</span>
-              </div>
-              <div className="flex justify-between text-[10px] text-slate-800">
-                <span>Kembalian:</span>
-                <span>35.000</span>
-              </div>
-            </div>
-
-            {/* Live Preview Blok Loyalty Rewards */}
-            {isLoyaltyProgramEnabled && showLoyaltyPoints && (
-              <div className="py-2 border-b border-dashed border-slate-400 text-[10px] space-y-0.5">
-                <div className="flex justify-between text-slate-800">
-                  <span>LOYALTY REWARDS</span>
-                  <span>🥇 Gold</span>
-                </div>
-                <div className="flex justify-between text-slate-600">
-                  <span>Poin Transaksi:</span>
-                  <span className="text-slate-800">+6 Poin</span>
-                </div>
-                <div className="flex justify-between text-slate-600">
-                  <span>Total Saldo Poin:</span>
-                  <span className="text-slate-800">246 Poin</span>
-                </div>
-              </div>
-            )}
-
-            <div className="pt-2 text-center text-[9px] text-slate-500 whitespace-pre-line">
-              {footerNote || 'Terima kasih atas kunjungan Anda!'}
-            </div>
-            <div className="text-[8px] text-slate-400 text-center mt-1">
-              Powered by ShapeUp POS
-            </div>
-          </div>
+          <iframe 
+            title="Pratinjau Struk Kasir"
+            srcDoc={sampleReceiptHtml}
+            className={`bg-white rounded-xl shadow-md border border-slate-300 transition-all ${
+              paperSize === '58mm' ? 'w-[260px]' : paperSize === '80mm' ? 'w-[340px]' : 'w-full max-w-sm'
+            } h-[580px]`}
+          />
         </div>
       </div>
     </FullScreenModal>

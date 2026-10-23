@@ -330,7 +330,37 @@ Pencatatan instruksi khusus pesanan pada kasir POS dirancang berdasarkan prinsip
    - Disimpan pada kolom JSONB `orders.raw_source_data.notes` dan `orders.raw_source_data.customer_note`.
    - Pola ini menjamin **Zero Schema Migration**, bebas downtime, dan kompatibel 100% dengan ekosistem omnichannel (seperti sinkronisasi WooCommerce dan Accurate ERP).
 
-### 11.4 Standar Cetak Thermal ESC/POS (Anti-Bleed Normal Weight)
-- **Catatan Item:** Dicetak di bawah baris nama produk dengan indentasi 3 spasi dan penanda titik (`   • Less ice, gula 50%`) menggunakan font reguler/normal (tanpa emphasized mode `0x1B, 0x45, 0x01`).
-- **Catatan Global:** Dicetak pada bagian metadata struk di bawah informasi pelanggan dalam blok bergaris putus-putus (`Catatan: Meja 04 - Bawa pulang`) agar staf dapur atau barista dapat membacanya seketika.
+### 11.4 Standar Cetak Thermal ESC/POS (Anti-Bleed Normal Weight & World-Class Bottom Placement)
+- **Catatan Item (Line-Item Note):** Dicetak tepat di bawah baris nama produk dengan indentasi (`• Less ice, gula 50%`) menggunakan font reguler/normal (tanpa emphasized mode `0x1B, 0x45, 0x01`).
+- **Catatan Global Pesanan (Order-Level Note):** Dicetak pada **bagian bawah struk** setelah rincian pembayaran & status piutang (dan sebelum Loyalty Rewards / Catatan Kaki Toko) dalam blok bergaris putus-putus (`Catatan Pesanan: Meja 04 - Bawa pulang, titip kasir sampai jam 17:00`). Penempatan ini menjamin alur membaca cepat (*F-Pattern reading*) pelanggan tidak terganggu oleh instruksi panjang sebelum melihat daftar barang belanjaan.
+
+---
+
+## 12. Unified POS Receipt Engine Architecture (Single Source of Truth)
+
+Untuk mencegah fragmentasi antarmuka dan deviasi visual antara pratinjau di layar dengan fisik kertas printer thermal, sistem menerapkan arsitektur terpadu 3 lapis (*Unified Engine*):
+
+### 12.1 Normalisasi Data Terpusat (`lib/pos/receiptDataBuilder.ts`)
+Seluruh jalur transaksi (POS Checkout, Layanan Nota & Piutang `POSOrderDetailModal`, Riwayat Pesanan, POSHub Quick Print, dan Z-Report Reprint) **WAJIB** menggunakan `buildReceiptDataFromOrder(order, options)`.
+- Mengonsolidasikan pembacaan konfigurasi toko dari `receiptSettings.ts` (nama toko, alamat, telepon, nomor urut item, catatan kaki).
+- Memetakan varian, catatan item, kuantitas, harga, diskon, dan subtotal secara seragam.
+- **Dukungan Penuh Layanan Nota & Piutang:** Otomatis menghitung `amountPaid`, `outstandingAmount`, dan status penagihan (`STATUS: BELUM LUNAS` beserta `SISA PIUTANG` jika transaksi bertipe tempo/cicilan, atau `STATUS: LUNAS`).
+- Mengekstrak catatan global dari berbagai fallback (`order.order_note`, `order.notes`, `raw_source_data.customer_note`, `raw_source_data.notes`).
+
+### 12.2 Single Visual Representation & 100% WYSIWYG
+- Fungsi `generateReceiptHtml(receipt, paperSize)` dalam `lib/pos/printerAdapter.ts` bertindak sebagai satu-satunya *template engine* untuk representasi visual HTML.
+- **Zero JSX Duplication:** Komponen pratinjau modal (`ReceiptPreviewModal.tsx`) dan live preview pengaturan (`ReceiptSettingsModal.tsx`) merender langsung HTML hasil `generateReceiptHtml` ke dalam *sandboxed iframe*.
+- Mengubah format, padding, garis pembatas, atau penempatan blok di `generateReceiptHtml` otomatis memperbarui tampilan pratinjau di modal, live preview di pengaturan, dan cetakan printer sistem via iframe seketika (*zero-drift*).
+
+### 12.3 Dual-Mode Mirroring (ESC/POS Bluetooth & System Printer)
+- Generator biner ESC/POS `encodeReceiptToEscPos(receipt, paperSize)` di-mirror 1-to-1 dengan urutan HTML:
+  1. Header Toko (Nama, Alamat, Telp)
+  2. Metadata (Invoice, Tanggal, Kasir, Pelanggan)
+  3. Daftar Item (Nama, Varian, Catatan Item, Qty x Harga, Diskon, Subtotal)
+  4. Perhitungan Total (Subtotal, Diskon Promo, Pajak, TOTAL)
+  5. Rincian Pembayaran & Piutang (Metode, Tunai, Kembalian, Status Lunas/Belum Lunas, Sisa Piutang)
+  6. **Catatan Global Pesanan** (Di bawah pembayaran, sebelum loyalty)
+  7. Loyalty Rewards (Tier, Poin Transaksi, Total Saldo Poin)
+  8. Catatan Kaki Toko & Branding ("Powered by ShapeUp POS")
+
 

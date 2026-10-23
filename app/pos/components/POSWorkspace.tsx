@@ -14,6 +14,7 @@ import ItemNoteModal from './ItemNoteModal'
 import OrderNoteModal from './OrderNoteModal'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from './ReceiptSettingsModal'
+import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
 import { useUserContext } from '@/components/UserContext'
 import { formatDisplayDate } from '@/lib/timeUtils'
 import { fetchLoyaltySettings } from '@/plugins/loyalty/helpers/loyaltyApi'
@@ -478,18 +479,11 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         }
       }
 
-      // 1. Build Receipt immediately (Reality First: 0ms Latency)
+      // 1. Build Receipt immediately (Reality First: 0ms Latency via SSOT Builder)
       const effectiveOrderNote = orderNote.trim() || undefined
-      const receipt: ReceiptData = {
-        businessName: rSettings.storeName || defaultStoreTitle,
-        businessAddress: rSettings.address || undefined,
-        businessPhone: rSettings.phone || undefined,
-        orderNumber: orderNumber,
-        date: formatDisplayDate(new Date(), 'receipt', activeBusiness?.timezone),
-        cashierName: userProfile?.full_name || 'Kasir',
-        customerName: selectedCustomer?.name || 'Walk-in Customer',
-        showItemNumbering: rSettings.showItemNumbering,
-        loyaltyInfo: loyaltyInfo,
+      const receipt = buildReceiptDataFromOrder({
+        order_number: orderNumber,
+        created_at: new Date().toISOString(),
         items: cart.map((i) => ({
           name: i.product.name,
           variant: i.selectedVariant?.name,
@@ -499,17 +493,23 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           discount: i.discount,
           note: i.note
         })),
+        customer: selectedCustomer,
         subtotal: subtotal,
-        discountTotal: discountAmount,
-        taxTotal: 0,
-        grandTotal: grandTotal,
-        paymentMethod: paymentTitle,
+        discount_amount: discountAmount,
+        grand_total: grandTotal,
+        payment_method: paymentTitle,
+        amount_paid: paymentInfo.amountPaid,
+        payments: paymentInfo.payments,
+        order_note: effectiveOrderNote
+      }, {
+        businessName: defaultStoreTitle,
+        settings: rSettings,
+        cashierName: userProfile?.full_name || 'Kasir',
+        timezone: activeBusiness?.timezone,
+        loyaltyInfo: loyaltyInfo,
         cashReceived: paymentInfo.cashReceived,
-        changeAmount: paymentInfo.changeAmount,
-        note: rSettings.footerNote || undefined,
-        orderNote: effectiveOrderNote,
-        paperSize: rSettings.paperSize || '58mm'
-      }
+        changeAmount: paymentInfo.changeAmount
+      })
 
       const effectiveCustomerId = selectedCustomer?.id || 'guest'
 

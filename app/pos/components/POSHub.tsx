@@ -13,6 +13,7 @@ import ReceiptPreviewModal from './ReceiptPreviewModal'
 import POSOrderDetailModal from './POSOrderDetailModal'
 import OrderHistoryModal from '../../orders/pos/components/OrderHistoryModal'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
+import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
 
 type Props = {
   onOpenWorkspace: () => void
@@ -217,26 +218,11 @@ export default function POSHub({ onOpenWorkspace }: Props) {
 
   // Quick Direct Print Receipt
   const handleDirectPrintOrder = (order: any) => {
-    const receipt: ReceiptData = {
-      businessName: activeBusiness?.name || 'ShapeUp Store',
-      orderNumber: order.order_number,
-      date: formatDisplayDate(order.created_at, 'receipt', timezone),
-      cashierName: cashierName,
-      customerName: order.customer?.name || 'Pelanggan Walk-in',
-      items: (order.items_json || []).map((it: any) => ({
-        name: it.name || it.product_name || 'Item',
-        quantity: it.quantity || it.qty || 1,
-        price: it.price || 0,
-        subtotal: (it.price || 0) * (it.quantity || it.qty || 1)
-      })),
-      subtotal: Number(order.grand_total || 0),
-      discountTotal: 0,
-      taxTotal: 0,
-      grandTotal: Number(order.grand_total || 0),
-      paymentMethod: String(order.payment_method || 'Cash').toUpperCase(),
-      cashReceived: Number(order.amount_paid || order.grand_total || 0),
-      changeAmount: 0
-    }
+    const receipt = buildReceiptDataFromOrder(order, {
+      businessName: activeBusiness?.name,
+      cashierName,
+      timezone
+    })
     setQuickPrintReceipt(receipt)
     setIsReceiptPreviewOpen(true)
   }

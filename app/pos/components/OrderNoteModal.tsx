@@ -97,7 +97,7 @@ export default function OrderNoteModal({ isOpen, onClose, currentNote, onSave }:
             className="w-full p-3.5 text-base sm:text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white shadow-2xs leading-relaxed"
           />
           <p className="text-[10px] text-slate-400">
-            Catatan ini akan dicantumkan pada bagian atas struk kasir dan riwayat pesanan.
+            Catatan ini akan dicantumkan pada bagian bawah struk kasir (setelah rincian pembayaran) dan riwayat pesanan.
           </p>
         </div>
       </div>

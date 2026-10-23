@@ -6,6 +6,7 @@ import { formatDisplayDate } from '@/lib/timeUtils'
 import { ReceiptData, ReceiptLoyaltyInfo } from '@/lib/pos/printerAdapter'
 import ReceiptPreviewModal from './ReceiptPreviewModal'
 import { getStoredReceiptSettings } from './ReceiptSettingsModal'
+import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
 import CashPaymentModal, { type PaymentResult } from './CashPaymentModal'
 import ExchangeModal from './ExchangeModal'
 import { supabase } from '@/lib/supabase'
@@ -255,42 +256,13 @@ export default function POSOrderDetailModal({
   // ─── HANDLER: PRINT RECEIPT ─────────────────────────────────────────────────
   const handleOpenReceipt = () => {
     if (!currentOrder) return
-    const settings = getStoredReceiptSettings(businessName)
-    const items = parsedItems.map((item: any) => ({
-      name: item.name || 'Produk',
-      variant: item.variant_name || undefined,
-      quantity: Number(item.quantity || item.qty || 1),
-      price: Number(item.price || 0),
-      subtotal: Number(item.subtotal || item.total || 0),
-      discount: Number(item.discount || 0),
-      note: item.note || undefined
-    }))
-
-    const cashPay = payments.slice().reverse().find((p) => p.payment_kind === 'payment' && p.payment_method === 'cash')
-    const recCash = cashPay ? Number(cashPay.cash_received || cashPay.amount) : cashReceivedFallback
-    const recChange = cashPay ? Number(cashPay.change_amount || 0) : changeAmountFallback
-
-    const rData: ReceiptData = {
-      businessName: settings.storeName || businessName,
-      businessAddress: settings.address || undefined,
-      businessPhone: settings.phone || undefined,
-      orderNumber: currentOrder.order_number,
-      date: formatDisplayDate(currentOrder.created_at, 'receipt', timezone),
-      cashierName: cashierName,
-      customerName: customerInfo.name,
-      showItemNumbering: settings.showItemNumbering,
-      loyaltyInfo: settings.showLoyaltyPoints && orderLoyaltyInfo ? orderLoyaltyInfo : undefined,
-      items,
-      subtotal: Number(currentOrder.subtotal || currentOrder.grand_total),
-      discountTotal: Number(currentOrder.discount_amount || 0),
-      taxTotal: 0,
-      grandTotal: Number(currentOrder.grand_total),
-      paymentMethod: currentOrder.payment_method || (payments.length > 1 ? 'Multi-Tender' : 'Tunai'),
-      cashReceived: recCash > 0 ? recCash : undefined,
-      changeAmount: recChange > 0 ? recChange : undefined,
-      note: settings.footerNote || undefined,
-      paperSize: settings.paperSize || '58mm'
-    }
+    const rData = buildReceiptDataFromOrder(currentOrder, {
+      businessName,
+      cashierName,
+      timezone,
+      payments,
+      loyaltyInfo: orderLoyaltyInfo || undefined
+    })
 
     setReceiptData(rData)
     setIsReceiptPreviewOpen(true)

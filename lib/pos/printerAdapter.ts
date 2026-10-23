@@ -48,6 +48,9 @@ export interface ReceiptData {
   paymentMethod: string
   cashReceived?: number
   changeAmount?: number
+  amountPaid?: number
+  outstandingAmount?: number
+  paymentStatus?: 'paid' | 'partial' | 'unpaid'
   note?: string
   orderNote?: string
   paperSize?: PaperSize
@@ -152,8 +155,45 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
     `
     : ''
 
+  const outstandingHtml = (receipt.outstandingAmount !== undefined && receipt.outstandingAmount > 0.01)
+    ? `
+      <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+        <span>Total Dibayar:</span>
+        <span>${(receipt.amountPaid || 0).toLocaleString('id-ID')}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+        <span>STATUS:</span>
+        <span style="text-transform: uppercase;">BELUM LUNAS</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; margin-bottom: 2px; border-top: 1px dashed #000; padding-top: 2px; margin-top: 2px;">
+        <span>SISA PIUTANG:</span>
+        <span>${receipt.outstandingAmount.toLocaleString('id-ID')}</span>
+      </div>
+    `
+    : (receipt.paymentStatus === 'paid' || (receipt.amountPaid !== undefined && (receipt.outstandingAmount || 0) <= 0.01))
+    ? `
+      <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+        <span>STATUS:</span>
+        <span style="text-transform: uppercase;">LUNAS</span>
+      </div>
+    `
+    : ''
+
   const defaultFooterNote = 'Terima kasih atas kunjungan Anda!\nBarang yang sudah dibeli tidak dapat ditukar/dikembalikan.'
   const footerNoteContent = escapeHtml(receipt.note || defaultFooterNote).replace(/\n/g, '<br>')
+
+  const orderNoteHtml = receipt.orderNote
+    ? `
+      <div class="divider"></div>
+      <!-- Catatan Global Pesanan -->
+      <div style="margin: 4px 0; font-size: 0.9em;">
+        <div style="font-size: 0.85em; text-transform: uppercase; margin-bottom: 2px; letter-spacing: 0.3px; color: #444;">Catatan Pesanan:</div>
+        <div style="padding: 4px 6px; background-color: #f7f7f7; border: 1px dashed #777; word-break: break-word;">
+          ${escapeHtml(receipt.orderNote)}
+        </div>
+      </div>
+    `
+    : ''
 
   const loyaltyHtml = (receipt.loyaltyInfo && (receipt.loyaltyInfo.pointsEarned !== undefined || receipt.loyaltyInfo.currentBalance !== undefined || receipt.loyaltyInfo.tierName))
     ? `
@@ -256,10 +296,6 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
         <span>Pelanggan:</span>
         <span>${escapeHtml(receipt.customerName)}</span>
       </div>` : ''}
-      ${receipt.orderNote ? `
-      <div style="margin-top: 4px; padding: 4px 6px; background-color: #f7f7f7; border: 1px dashed #777; font-size: 0.9em; word-break: break-word;">
-        Catatan: ${escapeHtml(receipt.orderNote)}
-      </div>` : ''}
     </div>
 
     <div class="divider"></div>
@@ -287,14 +323,17 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize: PaperSize =
 
     <div class="divider"></div>
 
-    <!-- Detail Pembayaran -->
+    <!-- Detail Pembayaran & Piutang -->
     <div style="margin: 4px 0;">
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Metode Bayar:</span>
         <span style="text-transform: uppercase;">${escapeHtml(receipt.paymentMethod)}</span>
       </div>
       ${cashDetailsHtml}
+      ${outstandingHtml}
     </div>
+
+    ${orderNoteHtml}
 
     ${loyaltyHtml}
 
@@ -417,9 +456,6 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize: PaperSize
   if (receipt.customerName) {
     writeText(padColumns('Pelanggan:', receipt.customerName))
   }
-  if (receipt.orderNote) {
-    writeText(`Catatan: ${receipt.orderNote}\n`)
-  }
 
   // Divider
   writeText(divider + '\n')
@@ -466,6 +502,20 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize: PaperSize
   if (receipt.cashReceived !== undefined && receipt.cashReceived > 0) {
     writeText(padColumns('Bayar Tunai:', receipt.cashReceived.toLocaleString('id-ID')))
     writeText(padColumns('Kembalian:', (receipt.changeAmount || 0).toLocaleString('id-ID')))
+  }
+  if (receipt.outstandingAmount !== undefined && receipt.outstandingAmount > 0.01) {
+    writeText(padColumns('Total Dibayar:', (receipt.amountPaid || 0).toLocaleString('id-ID')))
+    writeText(padColumns('STATUS:', 'BELUM LUNAS'))
+    writeText(padColumns('SISA PIUTANG:', receipt.outstandingAmount.toLocaleString('id-ID')))
+  } else if (receipt.paymentStatus === 'paid' || (receipt.amountPaid !== undefined && (receipt.outstandingAmount || 0) <= 0.01)) {
+    writeText(padColumns('STATUS:', 'LUNAS'))
+  }
+
+  // 7. Catatan Global Pesanan (Moved to bottom below payment details)
+  if (receipt.orderNote) {
+    writeText(divider + '\n')
+    writeText('Catatan Pesanan:\n')
+    writeText(`${receipt.orderNote}\n`)
   }
 
   // Loyalty
