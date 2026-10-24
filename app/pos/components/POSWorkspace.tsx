@@ -210,19 +210,22 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
     return cart.reduce((acc, item) => acc + item.finalPrice * item.quantity, 0)
   }, [cart])
 
-  const discountAmount = useMemo(() => {
-    let itemDiscount = cart.reduce((acc, item) => acc + (item.discount || 0) * item.quantity, 0)
-    let globalDiscount = 0
+  const itemDiscountTotal = useMemo(() => {
+    return cart.reduce((acc, item) => acc + (item.discount || 0) * item.quantity, 0)
+  }, [cart])
+
+  const globalDiscountAmount = useMemo(() => {
     const globalInputNumber = Number(globalDiscountInput) || 0
-    if (globalInputNumber > 0) {
-      if (globalDiscountType === 'percent') {
-        globalDiscount = Math.round((subtotal * globalInputNumber) / 100)
-      } else {
-        globalDiscount = globalInputNumber
-      }
+    if (globalInputNumber <= 0) return 0
+    if (globalDiscountType === 'percent') {
+      return Math.round((subtotal * Math.min(100, Math.max(0, globalInputNumber))) / 100)
     }
-    return itemDiscount + globalDiscount
-  }, [subtotal, globalDiscountType, globalDiscountInput, cart])
+    return Math.min(subtotal, Math.max(0, globalInputNumber))
+  }, [subtotal, globalDiscountType, globalDiscountInput])
+
+  const discountAmount = useMemo(() => {
+    return itemDiscountTotal + globalDiscountAmount
+  }, [itemDiscountTotal, globalDiscountAmount])
 
   const grandTotal = useMemo(() => {
     return Math.max(0, subtotal - discountAmount)
@@ -742,24 +745,27 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       {/* Cart Summary & Checkout Footer (Moka-style Clean Receipt Bill) */}
       <div className="p-3 sm:p-3.5 border-t border-slate-200 bg-white space-y-2.5 shrink-0 shadow-lg min-w-0">
         {/* Bill Summary Rows */}
-        <div className="space-y-1.5 text-xs">
+        <div className="space-y-2 text-xs">
           {/* Order Note (Shopee / Meja / Dapur) */}
           <div className="flex justify-between items-center text-slate-600">
-            <span className="text-slate-500">Catatan Pesanan</span>
+            <span className="font-medium text-slate-600 flex items-center gap-1.5">
+              <span>📝</span>
+              <span>Catatan Pesanan</span>
+            </span>
             {orderNote ? (
               <div className="flex items-center gap-1.5 min-w-0">
                 <button
                   type="button"
                   onClick={() => setIsOrderNoteModalOpen(true)}
-                  className="font-semibold text-amber-900 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200 text-xs hover:bg-amber-100 transition truncate max-w-[150px] cursor-pointer"
-                  title="Klik untuk ubah catatan"
+                  className="font-semibold text-amber-900 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 text-xs hover:bg-amber-100 transition truncate max-w-[150px] cursor-pointer"
+                  title="Klik untuk ubah catatan pesanan"
                 >
-                  📝 "{orderNote}"
+                  "{orderNote}"
                 </button>
                 <button
                   type="button"
                   onClick={() => setOrderNote('')}
-                  className="text-amber-600 hover:text-rose-600 font-bold text-xs p-0.5 cursor-pointer"
+                  className="text-amber-600 hover:text-rose-600 font-bold text-xs p-1 cursor-pointer"
                   title="Hapus Catatan"
                 >
                   ✕
@@ -769,7 +775,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
               <button
                 type="button"
                 onClick={() => setIsOrderNoteModalOpen(true)}
-                className="text-indigo-600 hover:text-indigo-800 font-semibold text-xs hover:underline flex items-center gap-1 cursor-pointer"
+                className="px-2.5 py-1 bg-slate-100 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 font-semibold rounded-lg text-xs transition flex items-center gap-1 cursor-pointer"
               >
                 <span>+ Catatan</span>
               </button>
@@ -778,22 +784,25 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
 
           {/* Global Discount */}
           <div className="flex justify-between items-center text-slate-600">
-            <span className="text-slate-500">Diskon</span>
-            {discountAmount > 0 ? (
+            <span className="font-medium text-slate-600 flex items-center gap-1.5">
+              <span>🏷️</span>
+              <span>Diskon Global</span>
+            </span>
+            {globalDiscountAmount > 0 ? (
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => setIsDiscountModalOpen(true)}
-                  className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200 text-xs hover:bg-emerald-100 transition cursor-pointer"
-                  title="Klik untuk ubah diskon"
+                  className="font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-xs hover:bg-emerald-100 transition cursor-pointer"
+                  title="Klik untuk ubah diskon global"
                 >
-                  (Rp {discountAmount.toLocaleString('id-ID')})
+                  -Rp {globalDiscountAmount.toLocaleString('id-ID')} {globalDiscountType === 'percent' && `(${globalDiscountInput}%)`}
                 </button>
                 <button
                   type="button"
                   onClick={() => setGlobalDiscountInput('')}
-                  className="text-emerald-600 hover:text-rose-600 font-bold text-xs p-0.5 cursor-pointer"
-                  title="Hapus Diskon"
+                  className="text-emerald-600 hover:text-rose-600 font-bold text-xs p-1 cursor-pointer"
+                  title="Hapus Diskon Global"
                 >
                   ✕
                 </button>
@@ -802,24 +811,26 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
               <button
                 type="button"
                 onClick={() => setIsDiscountModalOpen(true)}
-                className="text-emerald-600 hover:text-emerald-800 font-semibold text-xs hover:underline flex items-center gap-1 cursor-pointer"
+                className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-bold rounded-lg text-xs transition flex items-center gap-1 cursor-pointer shadow-2xs"
               >
-                <span>+ Diskon</span>
+                <span>+ Diskon Global</span>
               </button>
             )}
           </div>
 
           {/* Subtotal */}
-          <div className="flex justify-between items-center text-slate-600 pt-1 border-t border-slate-100">
+          <div className="flex justify-between items-center text-slate-600 pt-1.5 border-t border-slate-100">
             <span>Sub-Total ({totalItemCount} item)</span>
             <span className="font-semibold text-slate-800">Rp {subtotal.toLocaleString('id-ID')}</span>
           </div>
 
-          {/* Total */}
-          <div className="flex justify-between items-center font-bold text-slate-900 pt-0.5">
-            <span>Total</span>
-            <span className="font-extrabold text-sm text-slate-900">Rp {grandTotal.toLocaleString('id-ID')}</span>
-          </div>
+          {/* Item Discounts (jika ada potongan per item) */}
+          {itemDiscountTotal > 0 && (
+            <div className="flex justify-between items-center text-rose-600 text-[11px] font-medium">
+              <span>Potongan Diskon Item</span>
+              <span>-Rp {itemDiscountTotal.toLocaleString('id-ID')}</span>
+            </div>
+          )}
         </div>
 
         {/* Action Buttons: Hold + Pay with Total */}
