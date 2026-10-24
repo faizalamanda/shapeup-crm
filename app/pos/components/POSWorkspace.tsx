@@ -579,16 +579,16 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   const renderCartContent = () => (
     <div className="flex flex-col h-full bg-white">
       {/* Customer Header */}
-      <div className="p-3.5 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between">
-        <div className="relative flex-1 mr-2">
+      <div className="p-3 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between gap-2 min-w-0">
+        <div className="relative flex-1 min-w-0">
           <button
             onClick={() => setIsCustomerDropdownOpen(!isCustomerDropdownOpen)}
-            className="w-full py-2 px-3 rounded-xl border border-slate-200 bg-white text-left text-xs flex items-center justify-between hover:border-indigo-300 transition shadow-2xs"
+            className="w-full py-2 px-2.5 rounded-xl border border-slate-200 bg-white text-left text-xs flex items-center justify-between hover:border-indigo-300 transition shadow-2xs min-w-0"
           >
             <span className="font-semibold text-slate-800 truncate">
               👤 {selectedCustomer ? selectedCustomer.name : 'Walk-in Customer'}
             </span>
-            <span className="text-[10px] text-slate-400 ml-1">▼</span>
+            <span className="text-[10px] text-slate-400 ml-1 shrink-0">▼</span>
           </button>
 
           {isCustomerDropdownOpen && (
@@ -642,15 +642,15 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         {cart.length > 0 && (
           <button
             onClick={() => setCart([])}
-            className="text-xs text-rose-600 hover:text-rose-800 font-semibold px-2 py-1 rounded-lg hover:bg-rose-50 transition"
+            className="text-xs text-rose-600 hover:text-rose-800 font-semibold px-2 py-1 rounded-lg hover:bg-rose-50 transition shrink-0 whitespace-nowrap"
           >
             Kosongkan
           </button>
         )}
       </div>
 
-      {/* Cart Item List (Ultra-Compact Row Layout) */}
-      <div className="flex-1 overflow-y-auto p-2 sm:p-2.5 divide-y divide-slate-100">
+      {/* Cart Item List (Moka-style Clean Receipt Rows) */}
+      <div className="flex-1 overflow-y-auto p-1 divide-y divide-slate-100">
         {cart.length === 0 ? (
           <div className="py-16 text-center text-slate-400 text-xs">
             <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-3xl mx-auto mb-3">
@@ -661,20 +661,25 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           </div>
         ) : (
           cart.map((item, idx) => {
+            const originalUnitPrice = Number(
+              item.selectedVariant?.price ?? item.product?.price ?? item.finalPrice
+            )
+            const originalTotal = originalUnitPrice * item.quantity
             const netItemPrice = Math.max(0, item.finalPrice - (item.discount || 0))
             const itemTotal = netItemPrice * item.quantity
+            const isPriceChanged = originalTotal > itemTotal
+
             return (
               <div 
                 key={idx} 
-                className="py-2.5 px-2 hover:bg-slate-50/80 rounded-xl transition flex items-center justify-between gap-2 group text-xs"
+                onClick={() => setEditingCartItemIndex(idx)}
+                className="py-2.5 px-2.5 hover:bg-slate-50 transition cursor-pointer flex items-center justify-between gap-2 group text-xs select-none"
+                title="Ketuk baris untuk ubah kuantitas, harga, diskon, atau catatan"
               >
-                {/* Left: Product Info (Click to edit) */}
-                <div 
-                  onClick={() => setEditingCartItemIndex(idx)}
-                  className="flex-1 min-w-0 cursor-pointer pr-1"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <h5 className="font-bold text-slate-900 truncate leading-tight group-hover:text-indigo-600 transition">
+                {/* Left: Product Name & Note/Variant */}
+                <div className="flex-1 min-w-0 pr-1">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <h5 className="font-semibold text-slate-800 truncate leading-tight group-hover:text-indigo-600 transition">
                       {item.product.name}
                     </h5>
                     {item.selectedVariant && (
@@ -684,59 +689,42 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                     )}
                   </div>
 
-                  {/* Sub-line: Unit Price / Discount / Note */}
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-500 mt-0.5">
-                    <span>@Rp {item.finalPrice.toLocaleString('id-ID')}</span>
+                  {/* Sub-line: Note / Unit Price / Modifier */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500 mt-0.5">
+                    {item.quantity > 1 && (
+                      <span>@Rp {netItemPrice.toLocaleString('id-ID')}</span>
+                    )}
                     {item.discount > 0 && (
-                      <span className="text-rose-600 font-bold">
+                      <span className="text-rose-600 font-medium">
                         Disc -Rp {item.discount.toLocaleString('id-ID')}
                       </span>
                     )}
                     {item.note && (
-                      <span className="text-amber-800 bg-amber-50 px-1.5 rounded font-medium italic truncate max-w-[140px]">
+                      <span className="text-amber-800 bg-amber-50 px-1 rounded font-medium italic truncate max-w-[140px]">
                         💬 "{item.note}"
                       </span>
                     )}
                   </div>
                 </div>
 
-                {/* Right: Stepper, Price & Edit button */}
+                {/* Right: Quantity (x N), Subtotal (dengan harga coret jika berubah) & Pencil Indicator */}
                 <div className="flex items-center gap-2 shrink-0">
-                  {/* Stepper */}
-                  <div className="flex items-center bg-white border border-slate-200 rounded-lg overflow-hidden shadow-2xs">
-                    <button
-                      type="button"
-                      onClick={() => handleUpdateQty(idx, -1)}
-                      className="w-6 h-6 text-slate-600 hover:bg-slate-100 flex items-center justify-center font-bold text-xs transition"
-                    >
-                      -
-                    </button>
-                    <span className="w-6 text-center font-bold text-[11px] text-slate-800">{item.quantity}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleUpdateQty(idx, 1)}
-                      className="w-6 h-6 text-slate-600 hover:bg-slate-100 flex items-center justify-center font-bold text-xs transition"
-                    >
-                      +
-                    </button>
-                  </div>
-
-                  {/* Item Subtotal */}
-                  <div className="text-right min-w-[70px]">
-                    <span className="font-extrabold text-xs text-indigo-950 block">
+                  <span className="text-xs font-semibold text-slate-500 min-w-[22px] text-right">
+                    x {item.quantity}
+                  </span>
+                  <div className="flex flex-col items-end min-w-[68px]">
+                    {isPriceChanged && (
+                      <span className="text-[10px] text-slate-400 line-through leading-tight">
+                        Rp {originalTotal.toLocaleString('id-ID')}
+                      </span>
+                    )}
+                    <span className={`font-bold text-xs ${isPriceChanged ? 'text-rose-600' : 'text-slate-900'} whitespace-nowrap leading-tight`}>
                       Rp {itemTotal.toLocaleString('id-ID')}
                     </span>
                   </div>
-
-                  {/* Edit Pencil Icon */}
-                  <button
-                    type="button"
-                    onClick={() => setEditingCartItemIndex(idx)}
-                    className="p-1 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
-                    title="Edit Item (Harga / Diskon / Catatan)"
-                  >
+                  <span className="text-slate-300 group-hover:text-indigo-600 transition text-xs shrink-0" title="Edit">
                     ✏️
-                  </button>
+                  </span>
                 </div>
               </div>
             )
@@ -744,95 +732,96 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         )}
       </div>
 
-      {/* Cart Summary & Checkout Footer (Ultra-Compact: Total inside button) */}
-      <div className="p-3 sm:p-3.5 border-t border-slate-200 bg-white space-y-2 shrink-0 shadow-lg">
-        {/* Quick Action Chips: Catatan Pesanan & Diskon Global */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-0.5 scrollbar-none">
-          {/* Order Note Chip */}
-          {orderNote ? (
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200/90 text-amber-900 text-xs font-semibold shrink-0 shadow-2xs">
-              <span className="text-xs">📝</span>
+      {/* Cart Summary & Checkout Footer (Moka-style Clean Receipt Bill) */}
+      <div className="p-3 sm:p-3.5 border-t border-slate-200 bg-white space-y-2.5 shrink-0 shadow-lg min-w-0">
+        {/* Bill Summary Rows */}
+        <div className="space-y-1.5 text-xs">
+          {/* Order Note (Shopee / Meja / Dapur) */}
+          <div className="flex justify-between items-center text-slate-600">
+            <span className="text-slate-500">Catatan Pesanan</span>
+            {orderNote ? (
+              <div className="flex items-center gap-1.5 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setIsOrderNoteModalOpen(true)}
+                  className="font-semibold text-amber-900 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200 text-xs hover:bg-amber-100 transition truncate max-w-[150px] cursor-pointer"
+                  title="Klik untuk ubah catatan"
+                >
+                  📝 "{orderNote}"
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrderNote('')}
+                  className="text-amber-600 hover:text-rose-600 font-bold text-xs p-0.5 cursor-pointer"
+                  title="Hapus Catatan"
+                >
+                  ✕
+                </button>
+              </div>
+            ) : (
               <button
                 type="button"
                 onClick={() => setIsOrderNoteModalOpen(true)}
-                className="truncate max-w-[130px] sm:max-w-[160px] text-left hover:underline cursor-pointer"
-                title={`Catatan: "${orderNote}" (Klik untuk ubah)`}
+                className="text-indigo-600 hover:text-indigo-800 font-semibold text-xs hover:underline flex items-center gap-1 cursor-pointer"
               >
-                "{orderNote}"
+                <span>+ Catatan</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setOrderNote('')}
-                className="text-amber-600 hover:text-rose-600 font-bold ml-0.5 text-xs p-0.5"
-                title="Hapus Catatan Pesanan"
-              >
-                ✕
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setIsOrderNoteModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/50 text-slate-600 hover:text-indigo-700 text-xs font-semibold transition shrink-0 active:scale-95 cursor-pointer"
-            >
-              <span>📝</span>
-              <span>+ Catatan</span>
-            </button>
-          )}
+            )}
+          </div>
 
-          {/* Global Discount Chip */}
-          {discountAmount > 0 ? (
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 border border-emerald-200/90 text-emerald-900 text-xs font-semibold shrink-0 shadow-2xs">
-              <span className="text-xs">🏷️</span>
+          {/* Global Discount */}
+          <div className="flex justify-between items-center text-slate-600">
+            <span className="text-slate-500">Diskon</span>
+            {discountAmount > 0 ? (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsDiscountModalOpen(true)}
+                  className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200 text-xs hover:bg-emerald-100 transition cursor-pointer"
+                  title="Klik untuk ubah diskon"
+                >
+                  (Rp {discountAmount.toLocaleString('id-ID')})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGlobalDiscountInput('')}
+                  className="text-emerald-600 hover:text-rose-600 font-bold text-xs p-0.5 cursor-pointer"
+                  title="Hapus Diskon"
+                >
+                  ✕
+                </button>
+              </div>
+            ) : (
               <button
                 type="button"
                 onClick={() => setIsDiscountModalOpen(true)}
-                className="hover:underline cursor-pointer"
-                title="Klik untuk ubah diskon global"
+                className="text-emerald-600 hover:text-emerald-800 font-semibold text-xs hover:underline flex items-center gap-1 cursor-pointer"
               >
-                Diskon {globalDiscountType === 'percent' ? `${globalDiscountInput}%` : `Rp ${Number(globalDiscountInput).toLocaleString('id-ID')}`}
+                <span>+ Diskon</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setGlobalDiscountInput('')}
-                className="text-emerald-600 hover:text-rose-600 font-bold ml-0.5 text-xs p-0.5"
-                title="Hapus Diskon Global"
-              >
-                ✕
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setIsDiscountModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-dashed border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/50 text-slate-600 hover:text-emerald-700 text-xs font-semibold transition shrink-0 active:scale-95 cursor-pointer"
-            >
-              <span>🏷️</span>
-              <span>+ Diskon</span>
-            </button>
-          )}
-        </div>
-
-        {/* Lean Subtotal & Discount Row (Baris TOTAL Dihapus) */}
-        <div className="flex justify-between items-center text-xs text-slate-500 pt-0.5">
-          <span>Subtotal ({totalItemCount} item)</span>
-          <div className="flex items-center gap-2">
-            {discountAmount > 0 && (
-              <span className="text-emerald-600 font-bold">
-                -Rp {discountAmount.toLocaleString('id-ID')}
-              </span>
             )}
-            <span className="font-bold text-slate-700">Rp {subtotal.toLocaleString('id-ID')}</span>
+          </div>
+
+          {/* Subtotal */}
+          <div className="flex justify-between items-center text-slate-600 pt-1 border-t border-slate-100">
+            <span>Sub-Total ({totalItemCount} item)</span>
+            <span className="font-semibold text-slate-800">Rp {subtotal.toLocaleString('id-ID')}</span>
+          </div>
+
+          {/* Total */}
+          <div className="flex justify-between items-center font-bold text-slate-900 pt-0.5">
+            <span>Total</span>
+            <span className="font-extrabold text-sm text-slate-900">Rp {grandTotal.toLocaleString('id-ID')}</span>
           </div>
         </div>
 
-        {/* Action Buttons: Hold Icon Button on Left + Main Charge Button with Total on Right */}
+        {/* Action Buttons: Hold + Pay with Total */}
         <div className="flex items-center gap-2 pt-0.5">
           <button
             type="button"
             onClick={handleSaveHoldOrder}
             disabled={cart.length === 0}
-            className="py-3 px-3.5 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold rounded-2xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0 flex items-center gap-1.5"
+            className="py-2.5 px-3 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold rounded-xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0 flex items-center gap-1 cursor-pointer"
             title="Simpan Pesanan Sementara (Hold)"
           >
             <span>⏸️</span>
@@ -848,14 +837,14 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
               }
             }}
             disabled={cart.length === 0}
-            className={`flex-1 py-3 px-4 font-extrabold rounded-2xl text-xs sm:text-sm transition shadow-md active:scale-[0.99] disabled:opacity-40 flex items-center justify-between text-white ${
+            className={`flex-1 min-w-0 py-2.5 px-3 font-extrabold rounded-xl text-xs sm:text-sm transition shadow-md active:scale-[0.99] disabled:opacity-40 flex items-center justify-between gap-1 text-white cursor-pointer ${
               !activeShift
                 ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/20'
                 : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 shadow-indigo-500/20'
             }`}
           >
-            <span>{!activeShift ? 'Buka Shift Dulu 🔑' : 'Bayar Sekarang'}</span>
-            <span className="font-black bg-white/20 px-2.5 py-0.5 rounded-lg text-xs sm:text-sm tracking-tight">
+            <span className="truncate">{!activeShift ? 'Buka Shift Dulu 🔑' : 'Bayar'}</span>
+            <span className="font-black bg-white/20 px-2 py-0.5 rounded-lg text-xs tracking-tight shrink-0 whitespace-nowrap">
               Rp {grandTotal.toLocaleString('id-ID')} →
             </span>
           </button>
@@ -866,7 +855,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
 
   return (
     <div
-      className="h-screen w-screen flex flex-col bg-slate-100 text-slate-900 overflow-hidden font-sans fixed inset-0"
+      className="h-screen w-full max-w-full flex flex-col bg-slate-100 text-slate-900 overflow-hidden font-sans fixed inset-0"
       style={{
         paddingLeft: 'env(safe-area-inset-left, 0px)',
         paddingRight: 'env(safe-area-inset-right, 0px)',
@@ -947,25 +936,25 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       </header>
 
       {/* Main Workspace Body */}
-      <div className="flex-1 flex overflow-hidden relative">
+      <div className="flex-1 flex overflow-hidden relative min-w-0 w-full">
         {/* CATALOG AREA (Full Width on Mobile, Left Panel on Tablet/Desktop md:flex-1) */}
-        <div className="w-full md:flex-1 flex flex-col bg-slate-50 overflow-hidden border-r border-slate-200">
+        <div className="w-full md:w-auto md:flex-1 min-w-0 flex flex-col bg-slate-50 overflow-hidden border-r border-slate-200">
           {/* Search & Mode Bar */}
-          <div className="p-3 sm:p-4 bg-white border-b border-slate-200 space-y-3 shadow-2xs">
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1">
+          <div className="p-2.5 sm:p-4 bg-white border-b border-slate-200 space-y-2.5 shadow-2xs">
+            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+              <div className="relative flex-1 min-w-[120px]">
                 <input
                   type="text"
-                  placeholder="Cari nama produk, SKU, barcode..."
+                  placeholder="Cari produk / SKU..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-8 py-2.5 rounded-2xl border border-slate-200 bg-slate-50 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition"
+                  className="w-full pl-8 pr-7 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition"
                 />
-                <span className="absolute left-3 top-3 text-slate-400 text-xs">🔍</span>
+                <span className="absolute left-2.5 top-2.5 text-slate-400 text-xs">🔍</span>
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 text-xs"
+                    className="absolute right-2 top-2 text-slate-400 hover:text-slate-600 text-xs"
                   >
                     ✕
                   </button>
@@ -973,32 +962,32 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
               </div>
 
               {/* View Mode Toggle */}
-              <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 shrink-0">
+              <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200 shrink-0">
                 <button
                   onClick={() => setViewMode('grid')}
-                  className={`px-2.5 py-1.5 rounded-xl text-xs transition font-semibold ${
+                  className={`px-2 py-1.5 rounded-lg text-xs transition font-semibold ${
                     viewMode === 'grid' ? 'bg-white text-indigo-600 shadow-2xs' : 'text-slate-500'
                   }`}
                   title="Tampilan Grid"
                 >
-                  ▦ Grid
+                  ▦<span className="hidden xl:inline ml-1">Grid</span>
                 </button>
                 <button
                   onClick={() => setViewMode('list')}
-                  className={`px-2.5 py-1.5 rounded-xl text-xs transition font-semibold ${
+                  className={`px-2 py-1.5 rounded-lg text-xs transition font-semibold ${
                     viewMode === 'list' ? 'bg-white text-indigo-600 shadow-2xs' : 'text-slate-500'
                   }`}
                   title="Tampilan List"
                 >
-                  ☰ List
+                  ☰<span className="hidden xl:inline ml-1">List</span>
                 </button>
               </div>
 
               {/* Tab Selector */}
-              <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 shrink-0">
+              <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200 shrink-0">
                 <button
                   onClick={() => setActiveTab('catalog')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition ${
                     activeTab === 'catalog' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600'
                   }`}
                 >
@@ -1006,7 +995,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                 </button>
                 <button
                   onClick={() => setActiveTab('keypad')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition ${
                     activeTab === 'keypad' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600'
                   }`}
                 >
@@ -1209,7 +1198,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         </div>
 
         {/* DESKTOP & TABLET CART PANEL (Right sidebar on screens >= 768px md:flex) */}
-        <div className="hidden md:flex md:w-[320px] lg:w-[380px] xl:w-[420px] shrink-0 border-l border-slate-200">
+        <div className="hidden md:flex md:w-[290px] lg:w-[340px] xl:w-[380px] shrink-0 border-l border-slate-200 min-w-0">
           {renderCartContent()}
         </div>
 
