@@ -478,6 +478,9 @@ export async function POST(req: Request) {
         if (customAcc) creditAccId = customAcc.id
       }
 
+      const initialCashNum = Math.max(0, Number(initial_cash) || 0)
+      const hasInitialCash = initialCashNum > 0
+
       const { data: newShift, error: insertErr } = await supabase
         .from('pos_shifts')
         .insert({
@@ -485,11 +488,13 @@ export async function POST(req: Request) {
           user_id: user.id,
           register_id: cleanRegisterId,
           cashier_name: cashierName,
-          initial_cash: Number(initial_cash),
-          expected_cash: Number(initial_cash),
-          source_account_id: isUuid(creditAccId) ? creditAccId : null,
+          initial_cash: initialCashNum,
+          expected_cash: initialCashNum,
+          source_account_id: hasInitialCash && isUuid(creditAccId) ? creditAccId : null,
           status: 'open',
-          note: note ? `Source: ${source_account_code} | ${note}` : `Source Account: ${source_account_code}`
+          note: note 
+            ? (hasInitialCash ? `Source: ${source_account_code} | ${note}` : note) 
+            : (hasInitialCash ? `Source Account: ${source_account_code}` : 'Modal awal Rp 0')
         })
         .select()
         .single()
@@ -502,12 +507,12 @@ export async function POST(req: Request) {
         id: 'local-shift-' + Date.now(),
         cashier_name: cashierName,
         opened_at: new Date().toISOString(),
-        initial_cash: Number(initial_cash),
+        initial_cash: initialCashNum,
         status: 'open'
       }
 
       // Record Accounting Entry for Initial Cash Float if initial_cash > 0
-      if (Number(initial_cash) > 0) {
+      if (hasInitialCash) {
         try {
           const { postJournalTransaction } = await import('@/lib/journalHelper')
           

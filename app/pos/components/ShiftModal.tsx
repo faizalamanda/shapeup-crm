@@ -16,7 +16,7 @@ type Props = {
 }
 
 export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, accounts = [], posRegisters = [], onOpenShift, onCloseShift, timezone }: Props) {
-  const [initialCash, setInitialCash] = useState<string>('100000')
+  const [initialCash, setInitialCash] = useState<string>('0')
   const [sourceAccountCode, setSourceAccountCode] = useState<string>('101100')
   const [targetAccountCode, setTargetAccountCode] = useState<string>('101100')
   const [actualCash, setActualCash] = useState<string>('')
@@ -24,6 +24,20 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [registerId, setRegisterId] = useState<string>('')
+
+  useEffect(() => {
+    if (isOpen) {
+      if (!activeShift) {
+        setInitialCash('0')
+        setNote('')
+        setErrorMsg(null)
+      } else {
+        setActualCash('')
+        setNote('')
+        setErrorMsg(null)
+      }
+    }
+  }, [isOpen, activeShift])
 
   // Filter only Cash & Bank accounts (exclude receivables, inventory, and equity)
   const kasBankAccounts = accounts.filter(a => 
@@ -294,11 +308,34 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
                 </label>
                 <input
                   type="text"
-                  placeholder="Nominal modal uang kembalian di laci..."
+                  placeholder="0"
                   value={initialCash}
+                  onFocus={(e) => e.target.select()}
                   onChange={(e) => setInitialCash(e.target.value.replace(/\D/g, ''))}
+                  onBlur={() => { if (!initialCash) setInitialCash('0') }}
                   className="w-full px-4 py-3 rounded-xl border border-gray-300 text-lg font-bold text-gray-900 focus:ring-2 focus:ring-indigo-500 outline-none"
                 />
+
+                {/* Quick nominal buttons */}
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {[0, 50000, 100000, 200000, 500000].map((amt) => {
+                    const isSelected = Number(initialCash) === amt && initialCash !== ''
+                    return (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => setInitialCash(String(amt))}
+                        className={`px-2.5 py-1 text-xs rounded-lg font-medium border transition-colors ${
+                          isSelected
+                            ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-bold ring-1 ring-indigo-500'
+                            : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        {amt === 0 ? 'Rp 0 (Tanpa Modal)' : `Rp ${amt.toLocaleString('id-ID')}`}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
 
               <div>
@@ -308,7 +345,10 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
                 <select
                   value={sourceAccountCode}
                   onChange={(e) => setSourceAccountCode(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                  disabled={Number(initialCash) === 0}
+                  className={`w-full px-3.5 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none bg-white ${
+                    Number(initialCash) === 0 ? 'opacity-60 cursor-not-allowed bg-gray-50' : ''
+                  }`}
                 >
                   {kasBankAccounts.length > 0 ? (
                     kasBankAccounts.map(acc => (
@@ -324,7 +364,11 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
                   )}
                 </select>
                 <p className="text-[10px] text-gray-500 mt-1">
-                  Jurnal Otomatis: <b>DEBIT {kasPosName}</b> | <b>KREDIT {sourceName}</b>
+                  {Number(initialCash) > 0 ? (
+                    <>Jurnal Otomatis: <b>DEBIT {kasPosName}</b> | <b>KREDIT {sourceName}</b></>
+                  ) : (
+                    <span className="text-gray-500">ℹ️ Modal awal Rp 0: Tidak ada mutasi kas atau jurnal penarikan yang dibuat.</span>
+                  )}
                 </p>
               </div>
 
