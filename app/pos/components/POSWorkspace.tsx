@@ -673,59 +673,66 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
               <div 
                 key={idx} 
                 onClick={() => setEditingCartItemIndex(idx)}
-                className="py-2.5 px-2.5 hover:bg-slate-50 transition cursor-pointer flex items-center justify-between gap-2 group text-xs select-none"
+                className="py-2.5 px-3 hover:bg-slate-50/80 transition cursor-pointer flex flex-col gap-1.5 group text-xs select-none"
                 title="Ketuk baris untuk ubah kuantitas, harga, diskon, atau catatan"
               >
-                {/* Left: Product Name & Note/Variant */}
-                <div className="flex-1 min-w-0 pr-1">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <h5 className="font-semibold text-slate-800 truncate leading-tight group-hover:text-indigo-600 transition">
-                      {item.product.name}
-                    </h5>
-                    {item.selectedVariant && (
-                      <span className="text-[10px] text-indigo-700 bg-indigo-50 font-bold px-1.5 py-0.2 rounded shrink-0">
-                        {item.selectedVariant.name}
-                      </span>
+                {/* Top Row: Product Info on Left, Qty + Price + Pencil on Right */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0 pr-1">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <h5 className="font-semibold text-slate-800 truncate leading-tight group-hover:text-indigo-600 transition">
+                        {item.product.name}
+                      </h5>
+                      {item.selectedVariant && (
+                        <span className="text-[10px] text-indigo-700 bg-indigo-50 font-bold px-1.5 py-0.2 rounded shrink-0">
+                          {item.selectedVariant.name}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Sub-line: Unit Price & Discount */}
+                    {(item.quantity > 1 || item.discount > 0) && (
+                      <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
+                        {item.quantity > 1 && (
+                          <span>@Rp {netItemPrice.toLocaleString('id-ID')}</span>
+                        )}
+                        {item.discount > 0 && (
+                          <span className="text-rose-600 font-medium">
+                            Disc -Rp {item.discount.toLocaleString('id-ID')}
+                          </span>
+                        )}
+                      </div>
                     )}
                   </div>
 
-                  {/* Sub-line: Note / Unit Price / Modifier */}
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500 mt-0.5">
-                    {item.quantity > 1 && (
-                      <span>@Rp {netItemPrice.toLocaleString('id-ID')}</span>
-                    )}
-                    {item.discount > 0 && (
-                      <span className="text-rose-600 font-medium">
-                        Disc -Rp {item.discount.toLocaleString('id-ID')}
+                  {/* Right: Quantity (x N), Subtotal (dengan harga coret jika berubah) & Pencil Indicator */}
+                  <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                    <span className="text-xs font-semibold text-slate-500 min-w-[22px] text-right">
+                      x {item.quantity}
+                    </span>
+                    <div className="flex flex-col items-end min-w-[68px]">
+                      {isPriceChanged && (
+                        <span className="text-[10px] text-slate-400 line-through leading-tight">
+                          Rp {originalTotal.toLocaleString('id-ID')}
+                        </span>
+                      )}
+                      <span className={`font-bold text-xs ${isPriceChanged ? 'text-rose-600' : 'text-slate-900'} whitespace-nowrap leading-tight`}>
+                        Rp {itemTotal.toLocaleString('id-ID')}
                       </span>
-                    )}
-                    {item.note && (
-                      <span className="text-amber-800 bg-amber-50 px-1 rounded font-medium italic truncate max-w-[140px]">
-                        💬 "{item.note}"
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Right: Quantity (x N), Subtotal (dengan harga coret jika berubah) & Pencil Indicator */}
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs font-semibold text-slate-500 min-w-[22px] text-right">
-                    x {item.quantity}
-                  </span>
-                  <div className="flex flex-col items-end min-w-[68px]">
-                    {isPriceChanged && (
-                      <span className="text-[10px] text-slate-400 line-through leading-tight">
-                        Rp {originalTotal.toLocaleString('id-ID')}
-                      </span>
-                    )}
-                    <span className={`font-bold text-xs ${isPriceChanged ? 'text-rose-600' : 'text-slate-900'} whitespace-nowrap leading-tight`}>
-                      Rp {itemTotal.toLocaleString('id-ID')}
+                    </div>
+                    <span className="text-slate-300 group-hover:text-indigo-600 transition text-xs shrink-0" title="Edit Item">
+                      ✏️
                     </span>
                   </div>
-                  <span className="text-slate-300 group-hover:text-indigo-600 transition text-xs shrink-0" title="Edit">
-                    ✏️
-                  </span>
                 </div>
+
+                {/* Bottom Row: Full-width Item Note (Never Truncated, Auto-Wrap) */}
+                {item.note && (
+                  <div className="w-full bg-amber-50/90 border border-amber-200/80 rounded-lg px-2.5 py-1.5 text-[11px] text-amber-900 leading-relaxed break-words whitespace-normal flex items-start gap-1.5 shadow-2xs">
+                    <span className="text-xs shrink-0 mt-0.5">💬</span>
+                    <span className="italic flex-1 break-words">{item.note}</span>
+                  </div>
+                )}
               </div>
             )
           })
@@ -1063,7 +1070,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                 </div>
               ) : viewMode === 'grid' ? (
                 /* GRID VIEW */
-                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3.5">
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-3.5">
                   {filteredProducts.map((p) => {
                     const isOutOfStock = p.stock_type === 'tracked' && p.stock_quantity <= 0
                     const badgeClass = getPastelBadge(p.name)
@@ -1197,8 +1204,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           </div>
         </div>
 
-        {/* DESKTOP & TABLET CART PANEL (Right sidebar on screens >= 768px md:flex) */}
-        <div className="hidden md:flex md:w-[290px] lg:w-[340px] xl:w-[380px] shrink-0 border-l border-slate-200 min-w-0">
+        {/* DESKTOP & TABLET CART PANEL (Responsive scaling: 290px on tablet up to 450px on 2xl screens) */}
+        <div className="hidden md:flex md:w-[290px] lg:w-[360px] xl:w-[410px] 2xl:w-[450px] shrink-0 border-l border-slate-200 min-w-0">
           {renderCartContent()}
         </div>
 
