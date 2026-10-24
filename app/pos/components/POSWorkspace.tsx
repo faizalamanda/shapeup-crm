@@ -12,6 +12,7 @@ import OrderHistoryModal from '../../orders/pos/components/OrderHistoryModal'
 import POSOrderDetailModal from './POSOrderDetailModal'
 import ItemNoteModal from './ItemNoteModal'
 import OrderNoteModal from './OrderNoteModal'
+import GlobalDiscountModal from './GlobalDiscountModal'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from './ReceiptSettingsModal'
 import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
@@ -85,12 +86,13 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   // Item edit state
   const [editingItemIndex, setEditingItemIndex] = useState<number | null>(null)
 
-  // Notes State
+  // Notes & Discount Modals State
   const [orderNote, setOrderNote] = useState<string>('')
   const [itemNoteModalIndex, setItemNoteModalIndex] = useState<number | null>(null)
   const [isOrderNoteModalOpen, setIsOrderNoteModalOpen] = useState<boolean>(false)
+  const [isDiscountModalOpen, setIsDiscountModalOpen] = useState<boolean>(false)
 
-  // Mobile Bottom Sheet State
+  // Mobile Drawer State
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
 
   // Modals
@@ -791,110 +793,104 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         )}
       </div>
 
-      {/* Cart Summary & Checkout Footer */}
-      <div className="p-4 border-t border-slate-200 bg-white space-y-3 shrink-0 shadow-lg">
-        <div className="space-y-1.5 text-xs">
-          <div className="flex justify-between text-slate-600">
-            <span>Subtotal</span>
+      {/* Cart Summary & Checkout Footer (Lean Pawoon-style action chips & compact summary) */}
+      <div className="p-3.5 sm:p-4 border-t border-slate-200 bg-white space-y-2.5 shrink-0 shadow-lg">
+        {/* Quick Action Chips: Catatan Pesanan & Diskon Global */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-0.5 scrollbar-none">
+          {/* Order Note Chip */}
+          {orderNote ? (
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200/90 text-amber-900 text-xs font-semibold shrink-0 shadow-2xs">
+              <span className="text-xs">📝</span>
+              <button
+                type="button"
+                onClick={() => setIsOrderNoteModalOpen(true)}
+                className="truncate max-w-[130px] sm:max-w-[160px] text-left hover:underline cursor-pointer"
+                title={`Catatan: "${orderNote}" (Klik untuk ubah)`}
+              >
+                "{orderNote}"
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrderNote('')}
+                className="text-amber-600 hover:text-rose-600 font-bold ml-0.5 text-xs p-0.5"
+                title="Hapus Catatan Pesanan"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsOrderNoteModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/50 text-slate-600 hover:text-indigo-700 text-xs font-semibold transition shrink-0 active:scale-95 cursor-pointer"
+            >
+              <span>📝</span>
+              <span>+ Catatan</span>
+            </button>
+          )}
+
+          {/* Global Discount Chip */}
+          {discountAmount > 0 ? (
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 border border-emerald-200/90 text-emerald-900 text-xs font-semibold shrink-0 shadow-2xs">
+              <span className="text-xs">🏷️</span>
+              <button
+                type="button"
+                onClick={() => setIsDiscountModalOpen(true)}
+                className="hover:underline cursor-pointer"
+                title="Klik untuk ubah diskon global"
+              >
+                Diskon {globalDiscountType === 'percent' ? `${globalDiscountInput}%` : `Rp ${Number(globalDiscountInput).toLocaleString('id-ID')}`}
+              </button>
+              <button
+                type="button"
+                onClick={() => setGlobalDiscountInput('')}
+                className="text-emerald-600 hover:text-rose-600 font-bold ml-0.5 text-xs p-0.5"
+                title="Hapus Diskon Global"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsDiscountModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-dashed border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/50 text-slate-600 hover:text-emerald-700 text-xs font-semibold transition shrink-0 active:scale-95 cursor-pointer"
+            >
+              <span>🏷️</span>
+              <span>+ Diskon</span>
+            </button>
+          )}
+        </div>
+
+        {/* Compact Subtotal, Discount & Total Row */}
+        <div className="space-y-1 pt-1.5 border-t border-slate-100 text-xs">
+          <div className="flex justify-between text-slate-600 font-medium">
+            <span>Subtotal ({totalItemCount} item)</span>
             <span>Rp {subtotal.toLocaleString('id-ID')}</span>
           </div>
           {discountAmount > 0 && (
-            <div className="flex justify-between text-rose-600 font-medium">
+            <div className="flex justify-between text-emerald-600 font-bold">
               <span>Total Diskon</span>
               <span>-Rp {discountAmount.toLocaleString('id-ID')}</span>
             </div>
           )}
-
-          {/* Catatan Pesanan Global */}
-          <div className="pt-2 border-t border-slate-100">
-            {orderNote ? (
-              <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-200/90 flex items-start justify-between gap-2">
-                <div 
-                  className="flex-1 cursor-pointer"
-                  onClick={() => setIsOrderNoteModalOpen(true)}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs">📝</span>
-                    <span className="text-[10px] font-extrabold text-amber-900 uppercase tracking-wider">Catatan Pesanan</span>
-                    <span className="text-[10px] text-amber-600 font-semibold underline">Ubah</span>
-                  </div>
-                  <p className="text-xs text-amber-950 font-medium mt-0.5 line-clamp-2 leading-snug">
-                    "{orderNote}"
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setOrderNote('')}
-                  className="text-amber-700/60 hover:text-rose-600 p-1 font-bold text-xs"
-                  title="Hapus Catatan Pesanan"
-                >
-                  ✕
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setIsOrderNoteModalOpen(true)}
-                className="w-full py-2 px-3 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/40 text-slate-600 hover:text-indigo-700 text-xs font-semibold flex items-center justify-between transition group active:scale-[0.99]"
-              >
-                <span className="flex items-center gap-1.5">
-                  <span className="text-sm">📝</span>
-                  <span>+ Tambah Catatan Pesanan (Meja / Instruksi)</span>
-                </span>
-                <span className="text-[10px] text-slate-400 group-hover:text-indigo-600 font-bold">Pilih →</span>
-              </button>
-            )}
-          </div>
-
-          {/* Global Discount */}
-          <div className="pt-2 border-t border-slate-100 flex flex-col gap-1.5">
-            <div className="flex justify-between items-center">
-              <span className="text-slate-600 font-semibold">Diskon Global</span>
-              <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-                <button
-                  onClick={() => setGlobalDiscountType('nominal')}
-                  className={`px-2 py-1 text-[10px] font-bold rounded-md transition ${globalDiscountType === 'nominal' ? 'bg-white shadow-xs text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                  Rp
-                </button>
-                <button
-                  onClick={() => setGlobalDiscountType('percent')}
-                  className={`px-2 py-1 text-[10px] font-bold rounded-md transition ${globalDiscountType === 'percent' ? 'bg-white shadow-xs text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                  %
-                </button>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                placeholder="0"
-                value={globalDiscountInput}
-                onChange={(e) => setGlobalDiscountInput(e.target.value)}
-                onWheel={(e) => e.currentTarget.blur()}
-                className="w-full p-2 text-xs text-right rounded-xl border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-slate-50"
-              />
-              {globalDiscountInput && (
-                 <button onClick={() => setGlobalDiscountInput('')} className="text-slate-400 hover:text-rose-500 p-1 font-bold text-sm">✕</button>
-              )}
-            </div>
-          </div>
-
-          <div className="flex justify-between items-center pt-2 border-t border-slate-200 text-sm font-black text-slate-900">
-            <span>GRAND TOTAL</span>
-            <span className="text-xl font-black text-indigo-600">
+          <div className="flex justify-between items-center pt-1 border-t border-slate-100 text-sm font-black text-slate-900">
+            <span>TOTAL</span>
+            <span className="text-lg font-black text-indigo-600">
               Rp {grandTotal.toLocaleString('id-ID')}
             </span>
           </div>
         </div>
 
-        <div className="flex gap-2 pt-1">
+        {/* Action Buttons: Hold & Bayar */}
+        <div className="flex gap-2 pt-0.5">
           <button
             onClick={handleSaveHoldOrder}
             disabled={cart.length === 0}
-            className="py-3 px-3.5 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold rounded-2xl text-xs transition disabled:opacity-40"
+            className="py-2.5 px-3.5 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold rounded-xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0"
+            title="Simpan Pesanan Sementara (Hold)"
           >
-            Hold
+            ⏸️ Hold
           </button>
           <button
             onClick={() => {
@@ -905,13 +901,13 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
               }
             }}
             disabled={cart.length === 0}
-            className={`flex-1 py-3.5 px-4 font-bold rounded-2xl text-sm transition shadow-md active:scale-[0.99] disabled:opacity-40 text-center text-white ${
+            className={`flex-1 py-2.5 px-3 font-bold rounded-xl text-xs transition shadow-md active:scale-[0.99] disabled:opacity-40 text-center text-white ${
               !activeShift
                 ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/20'
                 : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 shadow-indigo-500/20'
             }`}
           >
-            {!activeShift ? 'Buka Shift Dulu untuk Bayar 🔑' : 'Bayar Sekarang (Checkout) →'}
+            {!activeShift ? 'Buka Shift Dulu 🔑' : 'Bayar Sekarang (Checkout) →'}
           </button>
         </div>
       </div>
@@ -1002,8 +998,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
 
       {/* Main Workspace Body */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* CATALOG AREA (Full Width on Mobile, Left Panel on Desktop lg:flex-1) */}
-        <div className="w-full lg:flex-1 flex flex-col bg-slate-50 overflow-hidden border-r border-slate-200">
+        {/* CATALOG AREA (Full Width on Mobile, Left Panel on Tablet/Desktop md:flex-1) */}
+        <div className="w-full md:flex-1 flex flex-col bg-slate-50 overflow-hidden border-r border-slate-200">
           {/* Search & Mode Bar */}
           <div className="p-3 sm:p-4 bg-white border-b border-slate-200 space-y-3 shadow-2xs">
             <div className="flex items-center gap-2">
@@ -1116,7 +1112,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           </div>
 
           {/* Product Items Display Area */}
-          <div className="flex-1 overflow-y-auto p-3 sm:p-5 pb-24 lg:pb-5">
+          <div className="flex-1 overflow-y-auto p-3 sm:p-5 pb-24 md:pb-5">
             {activeTab === 'catalog' ? (
               filteredProducts.length === 0 ? (
                 <div className="py-24 text-center text-slate-400 text-xs">
@@ -1128,7 +1124,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                 </div>
               ) : viewMode === 'grid' ? (
                 /* GRID VIEW */
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3.5">
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3.5">
                   {filteredProducts.map((p) => {
                     const isOutOfStock = p.stock_type === 'tracked' && p.stock_quantity <= 0
                     const badgeClass = getPastelBadge(p.name)
@@ -1262,14 +1258,14 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           </div>
         </div>
 
-        {/* DESKTOP CART PANEL (Right sidebar on screens >= 1024px) */}
-        <div className="hidden lg:flex lg:w-[380px] xl:w-[420px] shrink-0 border-l border-slate-200">
+        {/* DESKTOP & TABLET CART PANEL (Right sidebar on screens >= 768px md:flex) */}
+        <div className="hidden md:flex md:w-[320px] lg:w-[380px] xl:w-[420px] shrink-0 border-l border-slate-200">
           {renderCartContent()}
         </div>
 
-        {/* MOBILE FLOATING CART BAR (Shown on mobile when items in cart) */}
+        {/* MOBILE FLOATING CART BAR (Shown on small mobile when items in cart) */}
         {cart.length > 0 && (
-          <div className="lg:hidden fixed bottom-3 left-3 right-3 z-30 bg-slate-900 text-white p-3.5 rounded-2xl shadow-2xl flex items-center justify-between border border-slate-800 animate-slide-up">
+          <div className="md:hidden fixed bottom-3 left-3 right-3 z-30 bg-slate-900 text-white p-3.5 rounded-2xl shadow-2xl flex items-center justify-between border border-slate-800 animate-slide-up">
             <div 
               onClick={() => setIsMobileCartOpen(true)}
               className="flex items-center gap-3 cursor-pointer flex-1"
@@ -1294,11 +1290,11 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           </div>
         )}
 
-        {/* MOBILE CART BOTTOM SHEET DRAWER (Slid up from bottom on mobile) */}
+        {/* MOBILE CART DRAWER (Slid up from bottom on Portrait, Right Side-Drawer on Landscape) */}
         {isMobileCartOpen && (
-          <div className="lg:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-xs flex flex-col justify-end">
-            <div className="bg-white rounded-t-3xl shadow-2xl overflow-hidden flex flex-col h-[85vh] w-full animate-slide-up">
-              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+          <div className="md:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-xs flex flex-col justify-end landscape:flex-row landscape:justify-end">
+            <div className="bg-white rounded-t-3xl landscape:rounded-t-none landscape:rounded-l-3xl shadow-2xl overflow-hidden flex flex-col h-[85vh] landscape:h-full w-full landscape:w-[400px] landscape:max-w-full animate-slide-up">
+              <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
                 <div className="flex items-center gap-2">
                   <span className="font-extrabold text-slate-900 text-base">Keranjang Pesanan</span>
                   <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-0.5 rounded-full">
@@ -1388,6 +1384,19 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         onClose={() => setIsOrderNoteModalOpen(false)}
         currentNote={orderNote}
         onSave={(newNote) => setOrderNote(newNote)}
+      />
+
+      {/* Global Discount Modal */}
+      <GlobalDiscountModal
+        isOpen={isDiscountModalOpen}
+        onClose={() => setIsDiscountModalOpen(false)}
+        currentDiscountType={globalDiscountType}
+        currentDiscountValue={globalDiscountInput}
+        subtotal={subtotal}
+        onApply={(type, val) => {
+          setGlobalDiscountType(type)
+          setGlobalDiscountInput(val)
+        }}
       />
 
       {isAddCustomerOpen && (
