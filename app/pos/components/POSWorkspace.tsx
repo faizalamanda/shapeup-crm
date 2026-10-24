@@ -13,6 +13,7 @@ import POSOrderDetailModal from './POSOrderDetailModal'
 import ItemNoteModal from './ItemNoteModal'
 import OrderNoteModal from './OrderNoteModal'
 import GlobalDiscountModal from './GlobalDiscountModal'
+import CartItemEditModal from './CartItemEditModal'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from './ReceiptSettingsModal'
 import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
@@ -83,8 +84,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false)
   const [customerSearch, setCustomerSearch] = useState('')
 
-  // Item edit state
-  const [editingItemIndex, setEditingItemIndex] = useState<number | null>(null)
+  // Item edit modal state
+  const [editingCartItemIndex, setEditingCartItemIndex] = useState<number | null>(null)
 
   // Notes & Discount Modals State
   const [orderNote, setOrderNote] = useState<string>('')
@@ -281,7 +282,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
 
   const handleRemoveItem = (index: number) => {
     setCart((prev) => prev.filter((_, i) => i !== index))
-    if (editingItemIndex === index) setEditingItemIndex(null)
+    if (editingCartItemIndex === index) setEditingCartItemIndex(null)
   }
 
   const handleUpdateItemPriceDiscount = (index: number, newPrice: number, newDiscount: number) => {
@@ -648,8 +649,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         )}
       </div>
 
-      {/* Cart Item List */}
-      <div className="flex-1 overflow-y-auto p-3.5 space-y-2.5">
+      {/* Cart Item List (Ultra-Compact Row Layout) */}
+      <div className="flex-1 overflow-y-auto p-2 sm:p-2.5 divide-y divide-slate-100">
         {cart.length === 0 ? (
           <div className="py-16 text-center text-slate-400 text-xs">
             <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-3xl mx-auto mb-3">
@@ -659,142 +660,92 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
             <p className="text-[11px] text-slate-400 mt-1">Klik item pada katalog untuk menambahkan ke pesanan.</p>
           </div>
         ) : (
-          cart.map((item, idx) => (
-            <div key={idx} className="p-3 bg-slate-50/90 rounded-2xl border border-slate-200/80 text-xs space-y-2 hover:border-slate-300 transition">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h5 className="font-bold text-slate-900 leading-snug">{item.product.name}</h5>
-                  {item.selectedVariant && (
-                    <div className="text-[10px] text-indigo-600 font-semibold mt-0.5">• Varian: {item.selectedVariant.name}</div>
-                  )}
-                  {item.selectedModifiers && item.selectedModifiers.length > 0 && (
-                    <div className="text-[10px] text-slate-500">
-                      • {item.selectedModifiers.map((m: any) => m.name).join(', ')}
-                    </div>
-                  )}
-                  {/* Item Note Chip / Trigger */}
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    {item.note ? (
-                      <button
-                        type="button"
-                        onClick={() => setItemNoteModalIndex(idx)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200/90 text-amber-900 text-[11px] font-medium hover:bg-amber-100 transition text-left active:scale-95"
-                        title="Ubah Catatan Item"
-                      >
-                        <span className="text-xs">💬</span>
-                        <span className="truncate max-w-[170px] sm:max-w-[220px] italic">"{item.note}"</span>
-                        <span className="text-[10px] text-amber-600 font-bold ml-0.5">Edit</span>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setItemNoteModalIndex(idx)}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 border border-dashed border-slate-300 hover:border-indigo-300 transition active:scale-95"
-                        title="Tambah Catatan Item"
-                      >
-                        <span>+ Catatan</span>
-                      </button>
+          cart.map((item, idx) => {
+            const netItemPrice = Math.max(0, item.finalPrice - (item.discount || 0))
+            const itemTotal = netItemPrice * item.quantity
+            return (
+              <div 
+                key={idx} 
+                className="py-2.5 px-2 hover:bg-slate-50/80 rounded-xl transition flex items-center justify-between gap-2 group text-xs"
+              >
+                {/* Left: Product Info (Click to edit) */}
+                <div 
+                  onClick={() => setEditingCartItemIndex(idx)}
+                  className="flex-1 min-w-0 cursor-pointer pr-1"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <h5 className="font-bold text-slate-900 truncate leading-tight group-hover:text-indigo-600 transition">
+                      {item.product.name}
+                    </h5>
+                    {item.selectedVariant && (
+                      <span className="text-[10px] text-indigo-700 bg-indigo-50 font-bold px-1.5 py-0.2 rounded shrink-0">
+                        {item.selectedVariant.name}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Sub-line: Unit Price / Discount / Note */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-500 mt-0.5">
+                    <span>@Rp {item.finalPrice.toLocaleString('id-ID')}</span>
+                    {item.discount > 0 && (
+                      <span className="text-rose-600 font-bold">
+                        Disc -Rp {item.discount.toLocaleString('id-ID')}
+                      </span>
+                    )}
+                    {item.note && (
+                      <span className="text-amber-800 bg-amber-50 px-1.5 rounded font-medium italic truncate max-w-[140px]">
+                        💬 "{item.note}"
+                      </span>
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-1">
+
+                {/* Right: Stepper, Price & Edit button */}
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Stepper */}
+                  <div className="flex items-center bg-white border border-slate-200 rounded-lg overflow-hidden shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateQty(idx, -1)}
+                      className="w-6 h-6 text-slate-600 hover:bg-slate-100 flex items-center justify-center font-bold text-xs transition"
+                    >
+                      -
+                    </button>
+                    <span className="w-6 text-center font-bold text-[11px] text-slate-800">{item.quantity}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateQty(idx, 1)}
+                      className="w-6 h-6 text-slate-600 hover:bg-slate-100 flex items-center justify-center font-bold text-xs transition"
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  {/* Item Subtotal */}
+                  <div className="text-right min-w-[70px]">
+                    <span className="font-extrabold text-xs text-indigo-950 block">
+                      Rp {itemTotal.toLocaleString('id-ID')}
+                    </span>
+                  </div>
+
+                  {/* Edit Pencil Icon */}
                   <button
-                    onClick={() => setEditingItemIndex(editingItemIndex === idx ? null : idx)}
-                    className={`p-1.5 rounded-lg transition ${editingItemIndex === idx ? 'bg-indigo-100 text-indigo-700' : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
-                    title="Ubah Harga / Diskon / Catatan"
+                    type="button"
+                    onClick={() => setEditingCartItemIndex(idx)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                    title="Edit Item (Harga / Diskon / Catatan)"
                   >
                     ✏️
                   </button>
-                  <button
-                    onClick={() => handleRemoveItem(idx)}
-                    className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition"
-                  >
-                    ✕
-                  </button>
                 </div>
               </div>
-
-              {editingItemIndex === idx && (
-                <div className="p-2.5 bg-white border border-indigo-100 rounded-xl space-y-2 shadow-sm my-2">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Harga Satuan (Rp)</label>
-                    <input 
-                      type="number" 
-                      value={item.finalPrice || ''} 
-                      onChange={(e) => handleUpdateItemPriceDiscount(idx, Number(e.target.value), item.discount)}
-                      onWheel={(e) => e.currentTarget.blur()}
-                      className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Diskon per Item (Rp)</label>
-                    <input 
-                      type="number" 
-                      value={item.discount || ''} 
-                      onChange={(e) => handleUpdateItemPriceDiscount(idx, item.finalPrice, Number(e.target.value))}
-                      onWheel={(e) => e.currentTarget.blur()}
-                      className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      placeholder="0"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Catatan Item</label>
-                    <div className="flex gap-1.5">
-                      <input 
-                        type="text" 
-                        value={item.note || ''} 
-                        onChange={(e) => handleSaveItemNote(idx, e.target.value)}
-                        placeholder="Instruksi khusus produk..."
-                        className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setItemNoteModalIndex(idx)}
-                        className="px-2.5 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-[11px] font-bold transition shrink-0"
-                        title="Buka dialog catatan"
-                      >
-                        Buka
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
-                <div className="flex flex-col">
-                  {item.discount > 0 && (
-                    <span className="text-[10px] text-slate-400 line-through">
-                      Rp {(item.finalPrice * item.quantity).toLocaleString('id-ID')}
-                    </span>
-                  )}
-                  <span className={`font-extrabold text-sm ${item.discount > 0 ? 'text-rose-600' : 'text-indigo-950'}`}>
-                    Rp {((item.finalPrice - (item.discount || 0)) * item.quantity).toLocaleString('id-ID')}
-                  </span>
-                </div>
-
-                <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
-                  <button
-                    onClick={() => handleUpdateQty(idx, -1)}
-                    className="w-8 h-7 text-slate-600 hover:bg-slate-100 flex items-center justify-center font-bold text-sm transition"
-                  >
-                    -
-                  </button>
-                  <span className="w-8 text-center font-bold text-xs">{item.quantity}</span>
-                  <button
-                    onClick={() => handleUpdateQty(idx, 1)}
-                    className="w-8 h-7 text-slate-600 hover:bg-slate-100 flex items-center justify-center font-bold text-sm transition"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))
+            )
+          })
         )}
       </div>
 
-      {/* Cart Summary & Checkout Footer (Lean Pawoon-style action chips & compact summary) */}
-      <div className="p-3.5 sm:p-4 border-t border-slate-200 bg-white space-y-2.5 shrink-0 shadow-lg">
+      {/* Cart Summary & Checkout Footer (Ultra-Compact: Total inside button) */}
+      <div className="p-3 sm:p-3.5 border-t border-slate-200 bg-white space-y-2 shrink-0 shadow-lg">
         {/* Quick Action Chips: Catatan Pesanan & Diskon Global */}
         <div className="flex items-center gap-2 overflow-x-auto pb-0.5 scrollbar-none">
           {/* Order Note Chip */}
@@ -862,37 +813,33 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           )}
         </div>
 
-        {/* Compact Subtotal, Discount & Total Row */}
-        <div className="space-y-1 pt-1.5 border-t border-slate-100 text-xs">
-          <div className="flex justify-between text-slate-600 font-medium">
-            <span>Subtotal ({totalItemCount} item)</span>
-            <span>Rp {subtotal.toLocaleString('id-ID')}</span>
-          </div>
-          {discountAmount > 0 && (
-            <div className="flex justify-between text-emerald-600 font-bold">
-              <span>Total Diskon</span>
-              <span>-Rp {discountAmount.toLocaleString('id-ID')}</span>
-            </div>
-          )}
-          <div className="flex justify-between items-center pt-1 border-t border-slate-100 text-sm font-black text-slate-900">
-            <span>TOTAL</span>
-            <span className="text-lg font-black text-indigo-600">
-              Rp {grandTotal.toLocaleString('id-ID')}
-            </span>
+        {/* Lean Subtotal & Discount Row (Baris TOTAL Dihapus) */}
+        <div className="flex justify-between items-center text-xs text-slate-500 pt-0.5">
+          <span>Subtotal ({totalItemCount} item)</span>
+          <div className="flex items-center gap-2">
+            {discountAmount > 0 && (
+              <span className="text-emerald-600 font-bold">
+                -Rp {discountAmount.toLocaleString('id-ID')}
+              </span>
+            )}
+            <span className="font-bold text-slate-700">Rp {subtotal.toLocaleString('id-ID')}</span>
           </div>
         </div>
 
-        {/* Action Buttons: Hold & Bayar */}
-        <div className="flex gap-2 pt-0.5">
+        {/* Action Buttons: Hold Icon Button on Left + Main Charge Button with Total on Right */}
+        <div className="flex items-center gap-2 pt-0.5">
           <button
+            type="button"
             onClick={handleSaveHoldOrder}
             disabled={cart.length === 0}
-            className="py-2.5 px-3.5 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold rounded-xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0"
+            className="py-3 px-3.5 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold rounded-2xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0 flex items-center gap-1.5"
             title="Simpan Pesanan Sementara (Hold)"
           >
-            ⏸️ Hold
+            <span>⏸️</span>
+            <span>Hold</span>
           </button>
           <button
+            type="button"
             onClick={() => {
               if (!activeShift) {
                 setIsShiftModalOpen(true)
@@ -901,13 +848,16 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
               }
             }}
             disabled={cart.length === 0}
-            className={`flex-1 py-2.5 px-3 font-bold rounded-xl text-xs transition shadow-md active:scale-[0.99] disabled:opacity-40 text-center text-white ${
+            className={`flex-1 py-3 px-4 font-extrabold rounded-2xl text-xs sm:text-sm transition shadow-md active:scale-[0.99] disabled:opacity-40 flex items-center justify-between text-white ${
               !activeShift
                 ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/20'
                 : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 shadow-indigo-500/20'
             }`}
           >
-            {!activeShift ? 'Buka Shift Dulu 🔑' : 'Bayar Sekarang (Checkout) →'}
+            <span>{!activeShift ? 'Buka Shift Dulu 🔑' : 'Bayar Sekarang'}</span>
+            <span className="font-black bg-white/20 px-2.5 py-0.5 rounded-lg text-xs sm:text-sm tracking-tight">
+              Rp {grandTotal.toLocaleString('id-ID')} →
+            </span>
           </button>
         </div>
       </div>
@@ -1396,6 +1346,32 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         onApply={(type, val) => {
           setGlobalDiscountType(type)
           setGlobalDiscountInput(val)
+        }}
+      />
+
+      {/* Cart Item Edit Modal */}
+      <CartItemEditModal
+        isOpen={editingCartItemIndex !== null}
+        onClose={() => setEditingCartItemIndex(null)}
+        item={editingCartItemIndex !== null ? cart[editingCartItemIndex] : null}
+        onSave={(updates) => {
+          if (editingCartItemIndex !== null) {
+            setCart((prev) => {
+              const copy = [...prev]
+              if (copy[editingCartItemIndex]) {
+                copy[editingCartItemIndex] = {
+                  ...copy[editingCartItemIndex],
+                  ...updates
+                }
+              }
+              return copy
+            })
+          }
+        }}
+        onRemove={() => {
+          if (editingCartItemIndex !== null) {
+            handleRemoveItem(editingCartItemIndex)
+          }
         }}
       />
 
