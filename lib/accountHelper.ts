@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js'
+import { getAdminSupabase } from '@/lib/supabaseServer'
 
 const accountCache: Record<string, Record<string, string>> = {}
 
@@ -26,16 +27,42 @@ export async function getOrCreateDefaultAccounts(
   ]
 
   // Fetch existing accounts for this business to respect multi-tenant unique constraint on (business_id, code)
-  const { data: existingAccounts } = await supabase
+  let { data: existingAccounts } = await supabase
     .from('accounts')
     .select('id, code')
     .eq('business_id', businessId)
+
+  // Resilient read fallback if user client cannot read accounts yet
+  if (!existingAccounts || existingAccounts.length === 0) {
+    try {
+      const admin = getAdminSupabase()
+      const adminRes = await admin
+        .from('accounts')
+        .select('id, code')
+        .eq('business_id', businessId)
+      if (adminRes.data) existingAccounts = adminRes.data
+    } catch {
+      // ignore
+    }
+  }
 
   const existingCodes = existingAccounts ? existingAccounts.map(a => a.code) : []
   const accountsToCreate = defaultAccounts.filter(a => !existingCodes.includes(a.code))
 
   if (accountsToCreate.length > 0) {
-    const { error: insAccErr } = await supabase.from('accounts').insert(accountsToCreate)
+    let { error: insAccErr } = await supabase.from('accounts').insert(accountsToCreate)
+    
+    // Resilient admin insert fallback if client hits RLS policy
+    if (insAccErr && !insAccErr.message.includes('duplicate key')) {
+      try {
+        const admin = getAdminSupabase()
+        const adminRes = await admin.from('accounts').insert(accountsToCreate)
+        insAccErr = adminRes.error
+      } catch (adminFallbackErr) {
+        console.warn('[AccountHelper] Admin insert fallback failed:', adminFallbackErr)
+      }
+    }
+
     if (insAccErr && !insAccErr.message.includes('duplicate key')) {
       throw new Error(`Failed to create default accounts: ${insAccErr.message}`)
     }
@@ -43,11 +70,29 @@ export async function getOrCreateDefaultAccounts(
 
   // Refetch all target accounts
   const targetCodes = defaultAccounts.map(a => a.code)
-  const { data: allAccounts, error: refetchAccErr } = await supabase
+  let { data: allAccounts, error: refetchAccErr } = await supabase
     .from('accounts')
     .select('id, code')
     .eq('business_id', businessId)
     .in('code', targetCodes)
+
+  // Resilient read fallback with admin client
+  if (refetchAccErr || !allAccounts || allAccounts.length < targetCodes.length) {
+    try {
+      const admin = getAdminSupabase()
+      const adminRes = await admin
+        .from('accounts')
+        .select('id, code')
+        .eq('business_id', businessId)
+        .in('code', targetCodes)
+      if (adminRes.data && adminRes.data.length > 0) {
+        allAccounts = adminRes.data
+        refetchAccErr = null
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   if (refetchAccErr || !allAccounts) {
     throw new Error(`Failed to refetch ledger accounts: ${refetchAccErr?.message || 'unknown'}`)

@@ -422,9 +422,11 @@ export async function POST(req: Request) {
   try {
     const ctx = await getApiContext()
     if (ctx.error) return ctx.error
-    const { user, businessId, supabase } = ctx
+    const { user, businessId, supabase, supabaseAdmin } = ctx
 
-    const { data: profile } = await supabase
+    const dbClient = supabaseAdmin || supabase
+
+    const { data: profile } = await dbClient
       .from('profiles')
       .select('full_name')
       .eq('id', user.id)
@@ -465,11 +467,11 @@ export async function POST(req: Request) {
 
       // Resolve source credit account ID
       const { getOrCreateDefaultAccounts } = await import('@/lib/accountHelper')
-      const accountMap = await getOrCreateDefaultAccounts(businessId, supabase)
+      const accountMap = await getOrCreateDefaultAccounts(businessId, dbClient)
 
       let creditAccId = accountMap[source_account_code] || accountMap['101100']
       if (!creditAccId) {
-        const { data: customAcc } = await supabase
+        const { data: customAcc } = await dbClient
           .from('accounts')
           .select('id')
           .eq('business_id', businessId)
@@ -481,7 +483,7 @@ export async function POST(req: Request) {
       const initialCashNum = Math.max(0, Number(initial_cash) || 0)
       const hasInitialCash = initialCashNum > 0
 
-      const { data: newShift, error: insertErr } = await supabase
+      const { data: newShift, error: insertErr } = await dbClient
         .from('pos_shifts')
         .insert({
           business_id: businessId,
@@ -585,11 +587,11 @@ export async function POST(req: Request) {
       const difference = Number(actual_cash) - Number(expectedCash)
 
       const { getOrCreateDefaultAccounts } = await import('@/lib/accountHelper')
-      const accountMap = await getOrCreateDefaultAccounts(businessId, supabase)
+      const accountMap = await getOrCreateDefaultAccounts(businessId, dbClient)
 
       let debitAccId = accountMap[target_account_code] || accountMap['101100']
       if (!debitAccId) {
-        const { data: customAcc } = await supabase
+        const { data: customAcc } = await dbClient
           .from('accounts')
           .select('id')
           .eq('business_id', businessId)
@@ -598,7 +600,7 @@ export async function POST(req: Request) {
         if (customAcc) debitAccId = customAcc.id
       }
 
-      const { data: closedShift, error: closeErr } = await supabase
+      const { data: closedShift, error: closeErr } = await dbClient
         .from('pos_shifts')
         .update({
           status: 'closed',

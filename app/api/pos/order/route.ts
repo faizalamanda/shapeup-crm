@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     // 1. Auth + Business ID — uses JWT fast-path + cached profile
     const ctx = await getApiContext()
     if (ctx.error) return ctx.error
-    const { user, businessId, supabase } = ctx
+    const { user, businessId, supabase, supabaseAdmin } = ctx
 
     // 2. POS Session Gating: Enforce Active Shift
     const { data: activeShift, error: shiftErr } = await supabase
@@ -288,7 +288,7 @@ export async function POST(req: Request) {
     // 7. Insert Order Payments (Single Source of Truth)
     try {
       const { getOrCreateDefaultAccounts } = await import('@/lib/accountHelper')
-      const accountMap = await getOrCreateDefaultAccounts(businessId, supabase)
+      const accountMap = await getOrCreateDefaultAccounts(businessId, supabaseAdmin || supabase)
 
       let shiftCashAccId = accountMap['101000']
       if (assignedRegisterId) {

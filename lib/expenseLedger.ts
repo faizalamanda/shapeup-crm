@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js'
+import { getAdminSupabase } from '@/lib/supabaseServer'
 
 const expenseAccountCache: Record<string, Record<string, string>> = {}
 
@@ -55,17 +56,45 @@ export async function ensureExpenseAccounts(
   ]
 
   if (accountsToCreate.length > 0) {
-    const { error: insAccErr } = await supabase.from('accounts').insert(accountsToCreate)
+    let { error: insAccErr } = await supabase.from('accounts').insert(accountsToCreate)
+
+    if (insAccErr && !insAccErr.message.includes('duplicate key')) {
+      try {
+        const admin = getAdminSupabase()
+        const adminRes = await admin.from('accounts').insert(accountsToCreate)
+        insAccErr = adminRes.error
+      } catch (adminErr) {
+        console.warn('[ExpenseLedger] Admin fallback failed:', adminErr)
+      }
+    }
+
     if (insAccErr && !insAccErr.message.includes('duplicate key')) {
       throw new Error(`Failed to create default accounts: ${insAccErr.message}`)
     }
 
     // Refetch accounts to build the mapping only when we inserted new ones
-    const { data: allAccounts, error: refetchAccErr } = await supabase
+    let { data: allAccounts, error: refetchAccErr } = await supabase
       .from('accounts')
       .select('id, code')
       .eq('business_id', businessId)
       .in('code', targetCodes)
+
+    if (refetchAccErr || !allAccounts || allAccounts.length < targetCodes.length) {
+      try {
+        const admin = getAdminSupabase()
+        const adminRes = await admin
+          .from('accounts')
+          .select('id, code')
+          .eq('business_id', businessId)
+          .in('code', targetCodes)
+        if (adminRes.data && adminRes.data.length > 0) {
+          allAccounts = adminRes.data
+          refetchAccErr = null
+        }
+      } catch {
+        // ignore
+      }
+    }
 
     if (refetchAccErr || !allAccounts) {
       throw new Error(`Failed to refetch ledger accounts: ${refetchAccErr?.message || 'unknown'}`)
