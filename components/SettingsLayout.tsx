@@ -54,6 +54,14 @@ function SettingsContent({ children, title, subtitle }: SettingsLayoutProps) {
       group: 'Integrasi & Ekosistem',
       items: [
         {
+          id: 'pos',
+          name: 'Kasir POS & Proteksi HPP',
+          href: '/settings/pos',
+          icon: '🛡️',
+          description: 'Proteksi HPP, diskon & PIN approver',
+          isActive: pathname.startsWith('/settings/pos'),
+        },
+        {
           id: 'inventory',
           name: 'Stok & Jurnal Global',
           href: '/settings/inventory',

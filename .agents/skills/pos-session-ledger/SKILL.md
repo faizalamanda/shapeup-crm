@@ -394,5 +394,62 @@ Modul register transaksi kasir (`POSWorkspace.tsx`) dirancang untuk operasional 
 - Nama produk yang panjang menggunakan `line-clamp-2 break-words` agar varian dan harga kanan tidak pernah terdorong keluar layar.
 - Catatan khusus item (`item.note`) dipajang sebagai balok terpisah full-width di bawah harga dengan `break-words whitespace-normal` agar instruksi dapur/gudang panjang tidak terpotong elipsis (`...`).
 
+---
+
+## 14. POS Price Floor Guard & Manager Override Architecture (World-Class Retail Benchmark)
+
+Modul proteksi batas harga (*Price Floor Guard*) dirancang mengacu pada standar POS kelas dunia (Odoo POS, Microsoft Dynamics 365 Commerce, Oracle Micros Simphony, SAP Point of Sale) untuk melindungi margin bisnis dan mencegah penjualan di bawah modal (HPP) tanpa persetujuan berwenang.
+
+### 14.1 Zero-Knowledge Cashier Principle (Kerahasiaan Angka HPP)
+- **Aturan Kerahasiaan:** Kasir **DILARANG KERAS** melihat nominal angka HPP (*cost price*) atau angka harga minimum di antarmuka kasir.
+- **Implementasi UX:**
+  - Evaluasi $P_{\text{net}} < \text{HPP}$ dihitung secara boolean di memori komponen kasir.
+  - Saat pelanggaran terjadi, antarmuka hanya menampilkan indikator minimal:
+    `⚠️ Harga di bawah batas minimum`
+  - Tombol simpan dinonaktifkan atau digantikan tombol `🔐 Minta Otorisasi`.
+  - Nominal HPP tetap tersembunyi dari pandangan kasir maupun pelanggan di meja kasir.
+
+### 14.2 Dual-Tier Hierarchy: Global Enforcement vs Per-Product
+- **Global Toggle (`global_enabled`):**
+  - Jika aktif: seluruh katalog produk otomatis terkunci batas HPP-nya tanpa pengecualian.
+  - Pada modal edit produk, saklar `prevent_below_hpp` terkunci aktif (*disabled with notice*).
+- **Per-Product Toggle (`products.prevent_below_hpp`):**
+  - Jika pengaturan global nonaktif: proteksi hanya berlaku untuk produk-produk yang saklarnya diaktifkan secara manual.
+- **Dual-Write Resilience:**
+  - Konfigurasi disimpan ke tabel `price_guard_settings` dan di-mirror ke tabel `integrations` (`platform_name = 'pos_price_guard'`) dengan *in-memory cache* (TTL 60 detik) untuk menjamin operasional kasir tetap berjalan instan (0ms).
+
+### 14.3 Flexible Authorization Checklist Matrix
+Bentuk otorisasi ditentukan oleh checklist mandiri di Pengaturan POS (`/settings/pos`):
+
+| `require_approver_pin` | `require_reason` | Perilaku Antarmuka Kasir | Status Sistem |
+| :---: | :---: | :--- | :--- |
+| **OFF** | **OFF** | **Hard Block:** Tombol Simpan disabled. Kasir mutlak dilarang menjual di bawah HPP. | Blokir Total |
+| **ON** | **OFF** | **PIN Only:** Kasir memilih nama Approver dan memasukkan 6 digit PIN. | Otorisasi Cepat |
+| **OFF** | **ON** | **Reason Only:** Kasir memasukkan alasan teks bebas (tersimpan ke audit trail). | Self-Attestation |
+| **ON** | **ON** | **Dual Factor:** Kasir wajib memilih Approver, memasukkan PIN, dan mengisi alasan. | Proteksi Maksimal |
+
+### 14.4 Personal 6-Digit Approver PIN & Rate-Limited Lockout
+- **Model PIN Personal:** PIN bersifat pribadi per approver (Owner selalu berstatus approver; staf dapat ditunjuk sebagai approver melalui Pengaturan POS atau izin `can_approve_pos`).
+- **Kriptografi:** PIN 6 digit di-hash menggunakan algoritma `scrypt` berkekuatan tinggi dengan garam kriptografis (*salt*) unik per baris di tabel `pos_approver_pins`.
+- **Proteksi Brute-Force (Lockout):** Jika PIN salah 5 kali berturut-turut, akun approver terkunci selama 5 menit (`locked_until`).
+- **Self-Service PIN:** Approver mengatur/memperbarui PIN-nya sendiri melalui menu **PIN Otorisasi POS Saya** di Pengaturan Staf (`/settings/staff`) dengan verifikasi kata sandi akun untuk mencegah pembajakan sesi. Owner/Admin memiliki wewenang untuk me-reset PIN staf jika lupa.
+
+### 14.5 Omnichannel Global Discount Gating
+- Diskon global keranjang belanja memiliki saklar independen (`require_global_discount_auth`, default OFF).
+- Jika diaktifkan, penerapan diskon global keranjang (persen maupun nominal) wajib melewati alur otorisasi manajer sebelum diterapkan dan sebelum pesanan dapat dibayar.
+
+### 14.6 Pure Append-Only Audit Trail (`price_override_logs`)
+Setiap kali otorisasi disetujui (baik item harga satuan maupun diskon global):
+- Dicatat permanen ke tabel `public.price_override_logs` mencakup:
+  - `business_id`, `shift_id`, `requested_by` (kasir), `approved_by` (approver)
+  - `trigger` (`'line_price'` / `'global_discount'`), `product_id`, `qty`, `requested_net_price`, `cost_snapshot`
+  - `reason` (alasan teks bebas) dan `created_at`
+- **Keamanan RLS:** Tabel ini dilindungi RLS ketat; hanya Owner dan Admin yang dapat melihat riwayat log untuk audit internal, sedangkan kasir hanya dapat meng-insert rekaman log saat otorisasi berhasil.
+
+### 14.7 Server-Side Enforcement (HTTP 422 Unprocessable Entity)
+- Validasi tidak hanya mengandalkan JavaScript di browser klien kasir.
+- Endpoint `POST /api/pos/order` memvalidasi ulang seluruh baris pesanan terhadap HPP dan status otorisasi di database. Jika terdapat item di bawah HPP yang belum diotorisasi atau token otorisasi tidak valid, transaksi ditolak dengan HTTP 422.
+
+
 
 

@@ -9,6 +9,9 @@ interface Props {
   currentDiscountType: 'nominal' | 'percent'
   currentDiscountValue: string
   subtotal: number
+  requireAuth?: boolean
+  existingAuthorization?: any
+  onRequestAuthorization?: (calculatedDiscount: number) => void
   onApply: (type: 'nominal' | 'percent', value: string) => void
 }
 
@@ -18,7 +21,10 @@ export default function GlobalDiscountModal({
   currentDiscountType,
   currentDiscountValue,
   subtotal,
-  onApply
+  requireAuth = false,
+  existingAuthorization,
+  onRequestAuthorization,
+  onApply,
 }: Props) {
   const [discountType, setDiscountType] = useState<'nominal' | 'percent'>('nominal')
   const [discountValue, setDiscountValue] = useState('')
@@ -39,12 +45,24 @@ export default function GlobalDiscountModal({
       ? Math.round((subtotal * Math.min(100, Math.max(0, numVal))) / 100)
       : Math.min(subtotal, Math.max(0, numVal))
 
+  const isApproved = Boolean(existingAuthorization)
+  const needsAuth = requireAuth && numVal > 0 && !isApproved
+
   const handleSave = () => {
     if (numVal <= 0) {
       onApply('nominal', '')
-    } else {
-      onApply(discountType, discountValue)
+      onClose()
+      return
     }
+
+    if (needsAuth) {
+      if (onRequestAuthorization) {
+        onRequestAuthorization(calculatedDiscount)
+      }
+      return
+    }
+
+    onApply(discountType, discountValue)
     onClose()
   }
 
@@ -83,13 +101,28 @@ export default function GlobalDiscountModal({
           >
             Batal
           </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="flex-1 py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold rounded-xl text-xs transition shadow-md shadow-emerald-500/20 active:scale-95 text-center"
-          >
-            Terapkan Diskon
-          </button>
+          {needsAuth ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (onRequestAuthorization) {
+                  onRequestAuthorization(calculatedDiscount)
+                }
+              }}
+              className="flex-1 py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold rounded-xl text-xs transition shadow-md shadow-blue-500/20 active:scale-95 text-center flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <span>🔐</span>
+              <span>Minta Otorisasi Diskon</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSave}
+              className="flex-1 py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold rounded-xl text-xs transition shadow-md shadow-emerald-500/20 active:scale-95 text-center cursor-pointer"
+            >
+              Terapkan Diskon
+            </button>
+          )}
         </div>
       }
     >
@@ -106,7 +139,7 @@ export default function GlobalDiscountModal({
                 setDiscountType('nominal')
                 setDiscountValue('')
               }}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition ${
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
                 discountType === 'nominal'
                   ? 'bg-white shadow-xs text-emerald-700'
                   : 'text-slate-500 hover:text-slate-700'
@@ -120,7 +153,7 @@ export default function GlobalDiscountModal({
                 setDiscountType('percent')
                 setDiscountValue('')
               }}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition ${
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
                 discountType === 'percent'
                   ? 'bg-white shadow-xs text-emerald-700'
                   : 'text-slate-500 hover:text-slate-700'
@@ -150,36 +183,52 @@ export default function GlobalDiscountModal({
                 }
                 setDiscountValue(val)
               }}
-              onWheel={(e) => e.currentTarget.blur()}
               placeholder="0"
-              autoFocus
-              className="w-full pl-10 pr-4 py-3 text-base sm:text-sm font-bold text-slate-900 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white shadow-2xs"
+              className="w-full pl-10 pr-4 py-2.5 text-base font-extrabold text-slate-900 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
             />
-            {discountValue && (
-              <button
-                type="button"
-                onClick={() => setDiscountValue('')}
-                className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 font-bold text-xs"
-              >
-                ✕
-              </button>
-            )}
           </div>
         </div>
 
-        {/* Preview Calculation Box */}
-        <div className="p-3 bg-emerald-50/70 border border-emerald-200/80 rounded-xl space-y-1 text-xs">
-          <div className="flex justify-between text-slate-600">
+        {/* Auth Notice */}
+        {needsAuth && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5">
+            <span className="text-base shrink-0">🔐</span>
+            <div className="text-xs text-amber-900">
+              <p className="font-bold">Otorisasi Diperlukan</p>
+              <p className="text-[11px] text-amber-800 mt-0.5">
+                Kebijakan toko mewajibkan persetujuan otorisasi untuk setiap penerapan diskon global keranjang.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {isApproved && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-xs">
+            <span className="font-bold text-emerald-900 flex items-center gap-1.5">
+              <span>✅</span>
+              <span>Diskon Global Disetujui</span>
+            </span>
+            <span className="text-[11px] font-semibold text-emerald-700">
+              {existingAuthorization?.approved_by_name || 'Approver'}
+            </span>
+          </div>
+        )}
+
+        {/* Subtotal Preview */}
+        <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+          <div className="flex justify-between text-slate-500">
             <span>Subtotal Pesanan:</span>
-            <span>Rp {subtotal.toLocaleString('id-ID')}</span>
+            <span className="font-bold text-slate-700">Rp {subtotal.toLocaleString('id-ID')}</span>
           </div>
-          <div className="flex justify-between text-emerald-700 font-extrabold">
-            <span>Potongan Diterapkan:</span>
-            <span>-Rp {calculatedDiscount.toLocaleString('id-ID')}</span>
+          <div className="flex justify-between text-emerald-700 font-bold">
+            <span>Potongan Diskon:</span>
+            <span>- Rp {calculatedDiscount.toLocaleString('id-ID')}</span>
           </div>
-          <div className="flex justify-between text-slate-900 font-black pt-1 border-t border-emerald-200/60">
-            <span>Estimasi Total Akhir:</span>
-            <span>Rp {Math.max(0, subtotal - calculatedDiscount).toLocaleString('id-ID')}</span>
+          <div className="pt-2 border-t border-slate-200 flex justify-between font-extrabold text-slate-900 text-sm">
+            <span>Total Akhir:</span>
+            <span className="text-indigo-900">
+              Rp {Math.max(0, subtotal - calculatedDiscount).toLocaleString('id-ID')}
+            </span>
           </div>
         </div>
       </div>

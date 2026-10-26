@@ -22,6 +22,7 @@ type Product = {
   stock_quantity: number
   unit?: string
   hpp_type?: 'fixed' | 'variable'
+  prevent_below_hpp?: boolean
 }
 
 type RecipeRow = {
@@ -195,6 +196,8 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
   const [unit, setUnit] = useState<string>('pcs')
   const [customUnit, setCustomUnit] = useState<string>('')
   const [hppType, setHppType] = useState<'fixed' | 'variable'>('fixed')
+  const [preventBelowHpp, setPreventBelowHpp] = useState(false)
+  const [globalPriceGuardEnabled, setGlobalPriceGuardEnabled] = useState(false)
 
   // Recipe Builder State
   const [recipeRows, setRecipeRows] = useState<RecipeRow[]>([])
@@ -222,11 +225,40 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
     }
   }, [isOpen])
 
-  // Load categories and all products for ingredients picker
+  // Load categories, products and check global price guard
   useEffect(() => {
     if (isOpen && businessId) {
       fetchCategories()
       fetchAvailableProducts()
+
+      // Check global price guard setting
+      const checkGuard = async () => {
+        try {
+          const { data, error } = await supabase
+            .from('price_guard_settings')
+            .select('global_enabled')
+            .eq('business_id', businessId)
+            .maybeSingle()
+          if (!error && data) {
+            setGlobalPriceGuardEnabled(Boolean(data.global_enabled))
+            return
+          }
+          // Resilient fallback from integrations table
+          const { data: intRows } = await supabase
+            .from('integrations')
+            .select('api_credentials')
+            .eq('platform_name', 'pos_price_guard')
+            .filter('api_credentials->>business_id', 'eq', businessId)
+            .limit(1)
+          const creds = intRows?.[0]?.api_credentials
+          if (creds) {
+            setGlobalPriceGuardEnabled(Boolean(creds.global_enabled))
+          }
+        } catch {
+          // Ignore error silently
+        }
+      }
+      checkGuard()
     }
   }, [isOpen, businessId])
 
@@ -254,6 +286,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         }
 
         setHppType(product.hpp_type || 'fixed')
+        setPreventBelowHpp(Boolean((product as any)?.prevent_below_hpp))
         setShowNewCategoryInput(false)
         setNewCategoryName('')
         setCategoryError('')
@@ -277,6 +310,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         setUnit('pcs')
         setCustomUnit('')
         setHppType('fixed')
+        setPreventBelowHpp(false)
         setRecipeRows([])
         setShowNewCategoryInput(false)
         setNewCategoryName('')
@@ -496,6 +530,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         stock_quantity: stockType === 'tracked' ? Number(stockQuantity) : 0,
         unit: effectiveUnit,
         hpp_type: hppType,
+        prevent_below_hpp: globalPriceGuardEnabled ? true : preventBelowHpp,
         updated_at: new Date().toISOString()
       }
 
@@ -522,12 +557,13 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
 
       let res = await executeSave(productPayload)
 
-      // Fallback if DB schema cache doesn't have hpp_type or unit columns yet
-      if (res.error && res.error.message && res.error.message.includes('schema cache')) {
+      // Fallback if DB schema cache doesn't have hpp_type, unit, or prevent_below_hpp columns yet
+      if (res.error && res.error.message && (res.error.message.includes('schema cache') || res.error.message.includes('prevent_below_hpp'))) {
         console.warn('PostgREST schema cache fallback triggered:', res.error.message)
         const fallbackPayload = { ...productPayload }
         delete fallbackPayload.hpp_type
         delete fallbackPayload.unit
+        delete fallbackPayload.prevent_below_hpp
         res = await executeSave(fallbackPayload)
       }
 
@@ -1065,6 +1101,55 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
 
                   </div>
                 )}
+
+                {/* 🛡️ Proteksi Harga Jual Minimum HPP */}
+                <div className={`p-4 rounded-2xl border transition-all ${
+                  globalPriceGuardEnabled || preventBelowHpp
+                    ? 'bg-blue-50/70 border-blue-200'
+                    : 'bg-slate-50 border-slate-200'
+                }`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-base">🛡️</span>
+                        <span className="text-xs font-bold text-slate-900">
+                          Proteksi Harga Jual Minimum HPP di POS
+                        </span>
+                        {globalPriceGuardEnabled && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-600 text-white uppercase tracking-wider">
+                            Global Aktif
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                        {globalPriceGuardEnabled
+                          ? 'Pengaturan global aktif. Semua produk otomatis terkunci sehingga kasir tidak dapat menjual atau mendiskon produk ini di bawah modal HPP tanpa otorisasi.'
+                          : 'Cegah kasir mengubah harga atau memberikan diskon item hingga jatuh di bawah modal HPP saat transaksi POS.'}
+                      </p>
+                      {(hppType === 'variable' ? calculatedDynamicHpp : Number(costPrice || 0)) <= 0 && (
+                        <p className="text-[10px] text-amber-700 font-semibold mt-1.5 flex items-center gap-1">
+                          <span>💡</span>
+                          <span>Nilai modal HPP saat ini Rp 0. Proteksi ini akan mulai aktif setelah nilai HPP terisi.</span>
+                        </p>
+                      )}
+                    </div>
+
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                      <input
+                        type="checkbox"
+                        disabled={globalPriceGuardEnabled}
+                        checked={globalPriceGuardEnabled || preventBelowHpp}
+                        onChange={(e) => setPreventBelowHpp(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className={`w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all ${
+                        globalPriceGuardEnabled
+                          ? 'peer-checked:bg-blue-500 opacity-80 cursor-not-allowed'
+                          : 'peer-checked:bg-blue-600'
+                      }`}></div>
+                    </label>
+                  </div>
+                </div>
               </div>
 
             </div>

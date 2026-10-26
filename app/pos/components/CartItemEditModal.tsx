@@ -4,18 +4,28 @@ import { useState, useEffect } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 
 interface CartItemData {
-  product: { id?: string; name: string; price?: number }
-  selectedVariant?: { id?: string; name: string; price?: number }
+  product: { id?: string; name: string; price?: number; cost_price?: number; prevent_below_hpp?: boolean }
+  selectedVariant?: { id?: string; name: string; price?: number; cost_price?: number }
   finalPrice: number
   discount?: number
   quantity: number
   note?: string
+  authorization?: any
 }
 
 interface Props {
   isOpen: boolean
   onClose: () => void
   item: CartItemData | null
+  isGuarded?: boolean
+  costPrice?: number
+  allowOverride?: boolean
+  existingAuthorization?: any
+  onRequestAuthorization?: (data: {
+    proposedPrice: number
+    currentPrice: number
+    discountApplied: number
+  }) => void
   onSave: (updates: {
     finalPrice: number
     discount: number
@@ -29,8 +39,13 @@ export default function CartItemEditModal({
   isOpen,
   onClose,
   item,
+  isGuarded = false,
+  costPrice = 0,
+  allowOverride = false,
+  existingAuthorization,
+  onRequestAuthorization,
   onSave,
-  onRemove
+  onRemove,
 }: Props) {
   const [quantity, setQuantity] = useState<number>(1)
   const [finalPrice, setFinalPrice] = useState<number>(0)
@@ -57,12 +72,38 @@ export default function CartItemEditModal({
     setQuantity((prev) => Math.max(1, prev + delta))
   }
 
+  const netUnitPrice = Math.max(0, finalPrice - discount)
+  const itemTotal = netUnitPrice * quantity
+
+  // Evaluasi batas harga (internal boolean only, numeric costPrice is NEVER shown)
+  const isBelowCost = Boolean(
+    isGuarded &&
+    costPrice > 0 &&
+    netUnitPrice < costPrice
+  )
+
+  const isApproved = Boolean(existingAuthorization || item.authorization)
+  const isBlocked = isBelowCost && !isApproved && !allowOverride
+  const needsAuth = isBelowCost && !isApproved && allowOverride
+
   const handleSave = () => {
+    if (isBlocked) return
+    if (needsAuth) {
+      if (onRequestAuthorization) {
+        onRequestAuthorization({
+          proposedPrice: netUnitPrice,
+          currentPrice: originalBasePrice,
+          discountApplied: discount,
+        })
+      }
+      return
+    }
+
     onSave({
       finalPrice: Math.max(0, Number(finalPrice) || 0),
       discount: Math.max(0, Number(discount) || 0),
       quantity: Math.max(1, Number(quantity) || 1),
-      note: note.trim()
+      note: note.trim(),
     })
     onClose()
   }
@@ -71,9 +112,6 @@ export default function CartItemEditModal({
     onRemove()
     onClose()
   }
-
-  const netUnitPrice = Math.max(0, finalPrice - discount)
-  const itemTotal = netUnitPrice * quantity
 
   const subtitle = item.selectedVariant
     ? `${item.product.name} — ${item.selectedVariant.name}`
@@ -113,13 +151,37 @@ export default function CartItemEditModal({
           >
             Batal
           </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="flex-1 py-2.5 px-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white font-extrabold rounded-xl text-xs transition shadow-md shadow-indigo-500/20 active:scale-95 text-center"
-          >
-            Simpan
-          </button>
+          {needsAuth ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (onRequestAuthorization) {
+                  onRequestAuthorization({
+                    proposedPrice: netUnitPrice,
+                    currentPrice: originalBasePrice,
+                    discountApplied: discount,
+                  })
+                }
+              }}
+              className="flex-1 py-2.5 px-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold rounded-xl text-xs transition shadow-md shadow-blue-500/20 active:scale-95 text-center flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <span>🔐</span>
+              <span>Minta Otorisasi</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isBlocked}
+              className={`flex-1 py-2.5 px-3 font-extrabold rounded-xl text-xs transition shadow-md active:scale-95 text-center cursor-pointer ${
+                isBlocked
+                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+                  : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-indigo-500/20'
+              }`}
+            >
+              Simpan
+            </button>
+          )}
         </div>
       }
     >
@@ -181,7 +243,9 @@ export default function CartItemEditModal({
               onChange={(e) => setFinalPrice(Number(e.target.value))}
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0"
-              className="w-full pl-9 pr-3 py-2 text-sm font-bold text-slate-900 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              className={`w-full pl-9 pr-3 py-2 text-sm font-bold text-slate-900 rounded-xl border focus:outline-none focus:ring-2 bg-white ${
+                isBelowCost ? 'border-amber-400 focus:ring-amber-500' : 'border-slate-200 focus:ring-indigo-500'
+              }`}
             />
           </div>
         </div>
@@ -200,7 +264,9 @@ export default function CartItemEditModal({
               onChange={(e) => setDiscount(Number(e.target.value))}
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0"
-              className="w-full pl-9 pr-3 py-2 text-sm font-bold text-slate-900 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              className={`w-full pl-9 pr-3 py-2 text-sm font-bold text-slate-900 rounded-xl border focus:outline-none focus:ring-2 bg-white ${
+                isBelowCost ? 'border-amber-400 focus:ring-amber-500' : 'border-slate-200 focus:ring-indigo-500'
+              }`}
             />
             {discount > 0 && (
               <button
@@ -213,6 +279,35 @@ export default function CartItemEditModal({
             )}
           </div>
         </div>
+
+        {/* Price Floor Violation Notice (Minimal Notification, NO numeric HPP) */}
+        {isBelowCost && (
+          <div className="p-3 rounded-xl border transition-all space-y-1.5 bg-amber-50 border-amber-300">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                <span>⚠️</span>
+                <span>Harga di bawah batas minimum</span>
+              </span>
+              {isApproved && (
+                <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300">
+                  ✅ Disetujui
+                </span>
+              )}
+            </div>
+            {!isApproved && (
+              <p className="text-[11px] text-amber-800">
+                {allowOverride
+                  ? 'Memerlukan otorisasi sebelum dapat disimpan dan diproses.'
+                  : 'Penetapan harga di bawah batas minimum diblokir oleh kebijakan toko.'}
+              </p>
+            )}
+            {isApproved && (
+              <p className="text-[11px] text-emerald-800">
+                Disetujui oleh {existingAuthorization?.approved_by_name || item.authorization?.approved_by_name || 'Approver'}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Item Note */}
         <div className="space-y-1">

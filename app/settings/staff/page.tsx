@@ -101,6 +101,16 @@ export default function StaffSettings() {
   const [myPasswordLoading, setMyPasswordLoading] = useState(false)
   const [myPasswordMessage, setMyPasswordMessage] = useState({ text: '', type: '' })
 
+  // Approver PIN State
+  const [canApprovePos, setCanApprovePos] = useState(false)
+  const [hasPosPin, setHasPosPin] = useState(false)
+  const [posPin, setPosPin] = useState('')
+  const [posPasswordConfirm, setPosPasswordConfirm] = useState('')
+  const [showPosPin, setShowPosPin] = useState(false)
+  const [showPosPassword, setShowPosPassword] = useState(false)
+  const [posPinLoading, setPosPinLoading] = useState(false)
+  const [posPinMessage, setPosPinMessage] = useState({ text: '', type: '' })
+
   const fetchStaff = useCallback(async () => {
     if (!activeBusiness?.id) {
       setLoading(false)
@@ -123,11 +133,26 @@ export default function StaffSettings() {
     }
   }, [activeBusiness?.id, userProfile])
 
+  const fetchPinStatus = useCallback(async () => {
+    if (!activeBusiness?.id) return
+    try {
+      const res = await fetch('/api/pos/approver-pin')
+      if (res.ok) {
+        const data = await res.json()
+        setCanApprovePos(Boolean(data.canApprove))
+        setHasPosPin(Boolean(data.hasPin))
+      }
+    } catch (e) {
+      console.warn('Failed to fetch PIN status:', e)
+    }
+  }, [activeBusiness?.id])
+
   useEffect(() => {
     if (activeBusiness?.id) {
       fetchStaff()
+      fetchPinStatus()
     }
-  }, [activeBusiness?.id, fetchStaff])
+  }, [activeBusiness?.id, fetchStaff, fetchPinStatus])
 
   // Debounce email check
   useEffect(() => {
@@ -301,6 +326,48 @@ export default function StaffSettings() {
       setMyPasswordMessage({ text: err.message || 'Gagal memperbarui password', type: 'error' })
     } finally {
       setMyPasswordLoading(false)
+    }
+  }
+
+  async function handleSavePosPin(e: React.FormEvent) {
+    e.preventDefault()
+    if (!/^\d{6}$/.test(posPin)) {
+      setPosPinMessage({ text: 'PIN harus berupa 6 digit angka!', type: 'error' })
+      return
+    }
+    if (!posPasswordConfirm) {
+      setPosPinMessage({ text: 'Masukkan password akun Anda untuk konfirmasi keamanan!', type: 'error' })
+      return
+    }
+
+    setPosPinLoading(true)
+    setPosPinMessage({ text: '', type: '' })
+
+    try {
+      const res = await fetch('/api/pos/approver-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'set_self',
+          pin: posPin,
+          password: posPasswordConfirm,
+          accountPassword: posPasswordConfirm,
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || 'Gagal menyimpan PIN')
+      }
+
+      setPosPinMessage({ text: data.message || 'PIN Otorisasi POS berhasil disimpan!', type: 'success' })
+      setHasPosPin(true)
+      setPosPin('')
+      setPosPasswordConfirm('')
+    } catch (err: any) {
+      setPosPinMessage({ text: err.message || 'Gagal menyimpan PIN', type: 'error' })
+    } finally {
+      setPosPinLoading(false)
     }
   }
 
@@ -657,6 +724,120 @@ export default function StaffSettings() {
           </button>
         </form>
       </div>
+
+      {/* Card PIN Otorisasi POS (Khusus Approver / Owner) */}
+      {canApprovePos && (
+        <div className="bg-white border border-[#E2E2DC] rounded-xl p-6 shadow-xs max-w-xl space-y-4">
+          <div className="flex items-center justify-between border-b border-[#E2E2DC] pb-3">
+            <div>
+              <h2 className="text-base font-bold text-[#1C1C1A]">PIN Otorisasi POS Saya</h2>
+              <p className="text-xs text-[#6B6B63] mt-0.5">Digunakan saat kasir membutuhkan persetujuan harga khusus di bawah HPP.</p>
+            </div>
+            <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border ${
+              hasPosPin 
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                : 'bg-amber-50 text-amber-700 border-amber-200'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${hasPosPin ? 'bg-emerald-600' : 'bg-amber-600'}`}></span>
+              {hasPosPin ? 'PIN Aktif' : 'Belum Diatur'}
+            </span>
+          </div>
+
+          {posPinMessage.text && (
+            <div className={`p-3 rounded-lg text-xs font-semibold ${
+              posPinMessage.type === 'success' 
+                ? 'bg-green-50 border border-green-200 text-green-700' 
+                : 'bg-red-50 border border-red-200 text-red-700'
+            }`}>
+              {posPinMessage.text}
+            </div>
+          )}
+
+          <form onSubmit={handleSavePosPin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
+                PIN Baru (6 Digit Angka)
+              </label>
+              <div className="relative">
+                <input 
+                  type={showPosPin ? 'text' : 'password'}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  placeholder="Contoh: 182736"
+                  required
+                  className="w-full px-3.5 py-2.5 pr-12 border border-[#E2E2DC] rounded-lg text-sm tracking-widest font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  value={posPin}
+                  onChange={e => setPosPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPosPin(!showPosPin)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                  tabIndex={-1}
+                  aria-label={showPosPin ? 'Sembunyikan PIN' : 'Lihat PIN'}
+                >
+                  {showPosPin ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                      <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+              <p className="text-[11px] text-[#8C8C82] mt-1">Gunakan kombinasi angka unik yang tidak mudah ditebak (hindari 123456 atau 111111).</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
+                Konfirmasi Password Akun Anda
+              </label>
+              <div className="relative">
+                <input 
+                  type={showPosPassword ? 'text' : 'password'}
+                  placeholder="Masukkan password akun Anda saat ini"
+                  required
+                  className="w-full px-3.5 py-2.5 pr-12 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  value={posPasswordConfirm}
+                  onChange={e => setPosPasswordConfirm(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPosPassword(!showPosPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                  tabIndex={-1}
+                  aria-label={showPosPassword ? 'Sembunyikan password' : 'Lihat password'}
+                >
+                  {showPosPassword ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                      <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <button 
+              type="submit" 
+              disabled={posPinLoading || posPin.length !== 6}
+              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+            >
+              {posPinLoading ? 'Menyimpan...' : (hasPosPin ? 'Perbarui PIN Otorisasi' : 'Atur PIN Otorisasi')}
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* MODAL CREATE STAFF */}
       {isModalOpen && mounted && createPortal(

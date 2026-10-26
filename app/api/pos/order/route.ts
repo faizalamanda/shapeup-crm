@@ -1,6 +1,8 @@
 import { getApiContext } from '@/lib/apiContext'
 import { resolveGuestCustomerId } from '@/lib/guestCustomer'
 import { syncOrderToLedger } from '@/lib/orderLedger'
+import { getPriceGuardSettings } from '@/lib/priceGuard/settings'
+import { evaluatePriceFloor } from '@/lib/priceGuard/resolvePriceFloor'
 import { NextResponse } from 'next/server'
 import { after } from 'next/server'
 
@@ -54,7 +56,8 @@ export async function POST(req: Request) {
       register_id = null,
       reference_number = null,
       order_note = null,
-      note = null
+      note = null,
+      authorizations = [] // Price Guard Authorization tokens/IDs
     } = body
 
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -63,20 +66,69 @@ export async function POST(req: Request) {
 
     const numGrandTotal = Number(grand_total) || 0
 
-    // 3. Validate products & check stock
+    // 3. Validate products, stock & HPP Floor Guard
     const productIds = items.filter((i: any) => !String(i.id).startsWith('custom-')).map((i: any) => i.id)
 
     const productMap = new Map<string, any>()
     if (productIds.length > 0) {
-      const { data: dbProducts, error: prodErr } = await supabase
+      let prodQuery = supabase
         .from('products')
-        .select('id, name, type, price, cost_price, stock_type, stock_quantity')
+        .select('id, name, type, price, cost_price, stock_type, stock_quantity, prevent_below_hpp, hpp_type')
         .in('id', productIds)
+
+      let { data: dbProducts, error: prodErr } = await prodQuery
+
+      // Fallback if prevent_below_hpp column is not yet present
+      if (prodErr && prodErr.message?.includes('prevent_below_hpp')) {
+        const fallback = await supabase
+          .from('products')
+          .select('id, name, type, price, cost_price, stock_type, stock_quantity')
+          .in('id', productIds)
+        dbProducts = fallback.data as any
+        prodErr = fallback.error
+      }
 
       if (prodErr || !dbProducts) {
         return NextResponse.json({ error: 'Gagal mengambil data produk' }, { status: 500 })
       }
       dbProducts.forEach(p => productMap.set(p.id, p))
+    }
+
+    // 3a. Enforce Price Guard Server-Side
+    const priceGuardSettings = await getPriceGuardSettings(businessId, ctx.supabaseAdmin)
+    const lineItemsForGuard = items.map((item: any) => {
+      const dbProd = productMap.get(item.id)
+      return {
+        id: item.id,
+        name: dbProd?.name || item.name,
+        price: Number(item.price || 0),
+        discount: Number(item.discount || 0),
+        quantity: Number(item.quantity || 1),
+        isCustom: String(item.id).startsWith('custom-'),
+        costPrice: Number(dbProd?.cost_price || 0),
+        preventBelowHpp: Boolean(dbProd?.prevent_below_hpp)
+      }
+    })
+
+    const guardResult = evaluatePriceFloor(
+      priceGuardSettings,
+      lineItemsForGuard,
+      Number(discount_amount || 0)
+    )
+
+    if (guardResult.isHardBlocked) {
+      return NextResponse.json({
+        error: 'Terdapat harga item atau diskon di bawah batas HPP minimum. Pengaturan sistem memblokir penjualan di bawah HPP.'
+      }, { status: 422 })
+    }
+
+    if (guardResult.hasViolations || guardResult.requiresGlobalDiscountAuth) {
+      const validAuthList = Array.isArray(authorizations) ? authorizations : []
+      if (validAuthList.length === 0) {
+        return NextResponse.json({
+          error: 'Terdapat harga item atau diskon global yang memerlukan otorisasi Approver terlebih dahulu.'
+        }, { status: 422 })
+      }
     }
 
     for (const item of items) {
@@ -194,7 +246,8 @@ export async function POST(req: Request) {
       payment_status: paymentStatus,
       line_items: lineItems,
       customer_note: (order_note || note || '').trim() || undefined,
-      notes: (order_note || note || '').trim() || undefined
+      notes: (order_note || note || '').trim() || undefined,
+      price_authorizations: Array.isArray(authorizations) ? authorizations : []
     }
 
     const assignedRegisterId = isUuid(register_id) ? register_id : (activeShift.register_id || null)

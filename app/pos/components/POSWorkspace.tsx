@@ -14,6 +14,8 @@ import ItemNoteModal from './ItemNoteModal'
 import OrderNoteModal from './OrderNoteModal'
 import GlobalDiscountModal from './GlobalDiscountModal'
 import CartItemEditModal from './CartItemEditModal'
+import PriceAuthorizationModal, { AuthorizationRecord } from './PriceAuthorizationModal'
+import { PriceGuardSettings, DEFAULT_PRICE_GUARD_SETTINGS } from '@/lib/priceGuard/types'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from './ReceiptSettingsModal'
 import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
@@ -93,6 +95,26 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   const [isOrderNoteModalOpen, setIsOrderNoteModalOpen] = useState<boolean>(false)
   const [isDiscountModalOpen, setIsDiscountModalOpen] = useState<boolean>(false)
 
+  // Price Guard & Authorization State
+  const [priceGuardSettings, setPriceGuardSettings] = useState<PriceGuardSettings>(DEFAULT_PRICE_GUARD_SETTINGS)
+  const [authorizations, setAuthorizations] = useState<Map<string, AuthorizationRecord>>(new Map())
+  const [authModalState, setAuthModalState] = useState<{
+    isOpen: boolean
+    type: 'line_item_price' | 'global_discount'
+    title?: string
+    targetDescription: string
+    productId?: string | null
+    proposedPrice?: number
+    currentPrice?: number
+    discountApplied?: number
+    itemIndex?: number | null
+    onSuccessCallback?: (record: AuthorizationRecord) => void
+  }>({
+    isOpen: false,
+    type: 'line_item_price',
+    targetDescription: '',
+  })
+
   // Mobile Drawer State
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
 
@@ -144,7 +166,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       { data: accs },
       { data: regs },
       { count: unpCount },
-      lSettings
+      lSettings,
+      posSettingsRes
     ] = await Promise.all([
       supabase.from('products').select('*').eq('business_id', bId).order('name', { ascending: true }),
       supabase.from('categories').select('*').eq('business_id', bId).order('name', { ascending: true }),
@@ -152,11 +175,15 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       supabase.from('accounts').select('id, code, name, type').eq('business_id', bId).in('type', ['ASSET', 'EQUITY']).order('code', { ascending: true }),
       supabase.from('pos_registers').select('id, name, account_id').eq('business_id', bId).eq('status', 'active').order('name', { ascending: true }),
       supabase.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', bId).eq('source_platform', 'POS').in('payment_status', ['partial', 'unpaid']).neq('status', 'cancelled'),
-      fetchLoyaltySettings(supabase, bId).catch(() => null)
+      fetchLoyaltySettings(supabase, bId).catch(() => null),
+      fetch('/api/settings/pos').then((r) => (r.ok ? r.json() : null)).catch(() => null)
     ])
 
     setProducts(prods || [])
     setCategories(cats || [])
+    if (posSettingsRes?.settings) {
+      setPriceGuardSettings(posSettingsRes.settings)
+    }
     
     if (custs) {
       setCustomers(custs.map(c => ({
@@ -230,6 +257,54 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   const grandTotal = useMemo(() => {
     return Math.max(0, subtotal - discountAmount)
   }, [subtotal, discountAmount])
+
+  // Price Guard evaluation helpers
+  const isItemGuarded = (item: any) => {
+    if (!item?.product) return false
+    if (priceGuardSettings.global_enabled) return true
+    return Boolean(item.product.prevent_below_hpp)
+  }
+
+  const getItemCostPrice = (item: any) => {
+    return Number(item?.selectedVariant?.cost_price ?? item?.product?.cost_price ?? 0)
+  }
+
+  const isItemPriceViolation = (item: any) => {
+    if (!isItemGuarded(item)) return false
+    const cost = getItemCostPrice(item)
+    if (cost <= 0) return false
+    const netPrice = Math.max(0, Number(item.finalPrice || 0) - Number(item.discount || 0))
+    return netPrice < cost
+  }
+
+  const validateCartGuards = (): { ok: boolean; reason?: string } => {
+    // 1. Cek setiap item yang melanggar HPP
+    for (let i = 0; i < cart.length; i++) {
+      const item = cart[i]
+      if (isItemPriceViolation(item)) {
+        const hasAuth = authorizations.has(`item_${i}`) || Boolean(item.authorization)
+        if (!hasAuth) {
+          return {
+            ok: false,
+            reason: `Item "${item.product.name}" memiliki harga di bawah batas minimum dan memerlukan otorisasi.`,
+          }
+        }
+      }
+    }
+
+    // 2. Cek diskon global jika diwajibkan otorisasi
+    if (priceGuardSettings.require_global_discount_auth && globalDiscountAmount > 0) {
+      const hasAuth = authorizations.has('global_discount')
+      if (!hasAuth) {
+        return {
+          ok: false,
+          reason: 'Penerapan diskon global keranjang memerlukan otorisasi persetujuan.',
+        }
+      }
+    }
+
+    return { ok: true }
+  }
 
   // Product Tap Action
   const handleProductTap = (p: any) => {
@@ -529,6 +604,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       setSelectedCustomer(null)
       setGlobalDiscountInput('')
       setOrderNote('')
+      setAuthorizations(new Map())
       setCheckingOut(false)
 
       // 2. Background Sync (Fire-and-Forget)
@@ -549,7 +625,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           change_amount: paymentInfo.changeAmount,
           shift_id: activeShift?.id || null,
           register_id: activeShift?.register_id || null,
-          order_note: effectiveOrderNote
+          order_note: effectiveOrderNote,
+          authorizations: Array.from(authorizations.values())
         })
       })
       .then(async (res) => {
@@ -691,6 +768,15 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                           {item.selectedVariant.name}
                         </span>
                       )}
+                      {isItemPriceViolation(item) && (
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                          authorizations.has(`item_${idx}`) || item.authorization
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-300'
+                            : 'bg-amber-50 text-amber-800 border border-amber-300 animate-pulse'
+                        }`}>
+                          {authorizations.has(`item_${idx}`) || item.authorization ? '✅ Diotorisasi' : '⚠️ Batas Harga'}
+                        </span>
+                      )}
                     </div>
 
                     {/* Sub-line: Unit Price & Discount */}
@@ -800,7 +886,14 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                 </button>
                 <button
                   type="button"
-                  onClick={() => setGlobalDiscountInput('')}
+                  onClick={() => {
+                    setGlobalDiscountInput('')
+                    setAuthorizations((prev) => {
+                      const copy = new Map(prev)
+                      copy.delete('global_discount')
+                      return copy
+                    })
+                  }}
                   className="text-emerald-600 hover:text-rose-600 font-bold text-xs p-1 cursor-pointer"
                   title="Hapus Diskon Global"
                 >
@@ -829,7 +922,14 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         <div className="flex items-center gap-2 pt-0.5">
           <button
             type="button"
-            onClick={handleSaveHoldOrder}
+            onClick={() => {
+              const check = validateCartGuards()
+              if (!check.ok) {
+                alert(`⚠️ ${check.reason}`)
+                return
+              }
+              handleSaveHoldOrder()
+            }}
             disabled={cart.length === 0}
             className="py-2.5 px-3 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold rounded-xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0 flex items-center gap-1 cursor-pointer"
             title="Simpan Pesanan Sementara (Hold)"
@@ -842,9 +942,14 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
             onClick={() => {
               if (!activeShift) {
                 setIsShiftModalOpen(true)
-              } else {
-                setIsPaymentModalOpen(true)
+                return
               }
+              const check = validateCartGuards()
+              if (!check.ok) {
+                alert(`⚠️ ${check.reason}`)
+                return
+              }
+              setIsPaymentModalOpen(true)
             }}
             disabled={cart.length === 0}
             className={`flex-1 min-w-0 py-3 px-3.5 font-extrabold rounded-xl text-xs sm:text-sm transition shadow-md active:scale-[0.99] disabled:opacity-40 disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none flex items-center justify-between gap-1 text-white cursor-pointer ${
@@ -1342,6 +1447,25 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         currentDiscountType={globalDiscountType}
         currentDiscountValue={globalDiscountInput}
         subtotal={subtotal}
+        requireAuth={Boolean(priceGuardSettings.require_global_discount_auth)}
+        existingAuthorization={authorizations.get('global_discount')}
+        onRequestAuthorization={(calculatedDiscount) => {
+          setAuthModalState({
+            isOpen: true,
+            type: 'global_discount',
+            title: 'Otorisasi Diskon Global',
+            targetDescription: `Diskon Global Keranjang (Rp ${calculatedDiscount.toLocaleString('id-ID')})`,
+            discountApplied: calculatedDiscount,
+            onSuccessCallback: (authRecord) => {
+              setAuthorizations((prev) => {
+                const next = new Map(prev)
+                next.set('global_discount', authRecord)
+                return next
+              })
+              setIsDiscountModalOpen(false)
+            },
+          })
+        }}
         onApply={(type, val) => {
           setGlobalDiscountType(type)
           setGlobalDiscountInput(val)
@@ -1353,6 +1477,49 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         isOpen={editingCartItemIndex !== null}
         onClose={() => setEditingCartItemIndex(null)}
         item={editingCartItemIndex !== null ? cart[editingCartItemIndex] : null}
+        isGuarded={editingCartItemIndex !== null ? isItemGuarded(cart[editingCartItemIndex]) : false}
+        costPrice={editingCartItemIndex !== null ? getItemCostPrice(cart[editingCartItemIndex]) : 0}
+        allowOverride={Boolean(priceGuardSettings.require_approver_pin || priceGuardSettings.require_reason)}
+        existingAuthorization={
+          editingCartItemIndex !== null
+            ? (authorizations.get(`item_${editingCartItemIndex}`) || cart[editingCartItemIndex]?.authorization)
+            : undefined
+        }
+        onRequestAuthorization={(data) => {
+          if (editingCartItemIndex === null) return
+          const currentItem = cart[editingCartItemIndex]
+          setAuthModalState({
+            isOpen: true,
+            type: 'line_item_price',
+            title: 'Otorisasi Batas Harga',
+            targetDescription: `${currentItem.product.name} (Harga Diminta: Rp ${data.proposedPrice.toLocaleString('id-ID')})`,
+            productId: currentItem.product.id || null,
+            proposedPrice: data.proposedPrice,
+            currentPrice: data.currentPrice,
+            discountApplied: data.discountApplied,
+            itemIndex: editingCartItemIndex,
+            onSuccessCallback: (authRecord) => {
+              setAuthorizations((prev) => {
+                const next = new Map(prev)
+                next.set(`item_${editingCartItemIndex}`, authRecord)
+                return next
+              })
+              setCart((prev) => {
+                const copy = [...prev]
+                if (copy[editingCartItemIndex]) {
+                  copy[editingCartItemIndex] = {
+                    ...copy[editingCartItemIndex],
+                    finalPrice: data.proposedPrice + (data.discountApplied || 0),
+                    discount: data.discountApplied || 0,
+                    authorization: authRecord,
+                  }
+                }
+                return copy
+              })
+              setEditingCartItemIndex(null)
+            },
+          })
+        }}
         onSave={(updates) => {
           if (editingCartItemIndex !== null) {
             setCart((prev) => {
@@ -1369,9 +1536,35 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         }}
         onRemove={() => {
           if (editingCartItemIndex !== null) {
-            handleRemoveItem(editingCartItemIndex)
+            const removedIdx = editingCartItemIndex
+            setAuthorizations((prev) => {
+              const copy = new Map(prev)
+              copy.delete(`item_${removedIdx}`)
+              return copy
+            })
+            handleRemoveItem(removedIdx)
           }
         }}
+      />
+
+      {/* Price Guard Authorization Modal */}
+      <PriceAuthorizationModal
+        isOpen={authModalState.isOpen}
+        onClose={() => setAuthModalState((prev) => ({ ...prev, isOpen: false }))}
+        onSuccess={(authRecord) => {
+          if (authModalState.onSuccessCallback) {
+            authModalState.onSuccessCallback(authRecord)
+          }
+        }}
+        authorizationType={authModalState.type}
+        title={authModalState.title}
+        targetDescription={authModalState.targetDescription}
+        productId={authModalState.productId}
+        proposedPrice={authModalState.proposedPrice}
+        currentPrice={authModalState.currentPrice}
+        discountApplied={authModalState.discountApplied}
+        requirePin={Boolean(priceGuardSettings.require_approver_pin)}
+        requireReason={Boolean(priceGuardSettings.require_reason)}
       />
 
       {isAddCustomerOpen && (
