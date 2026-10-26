@@ -100,6 +100,14 @@
 
 6. **Semantic Location for Order Returns:** Mutasi pengembalian barang pesanan batal/retur (`source_type === 'order'`) **DILARANG KERAS** dilabeli sebagai penerimaan dari Pemasok/Vendor. Secara semantik, asal barang adalah `Transit Pelanggan (Retur)` menuju `Karantina Retur` sampai barang resmi diterima fisik di gudang aktif.
 
+7. **Bulk Product Deletion & Multi-Tenant Ledger Isolation:** Operasi penghapusan produk massal (baik via seleksi maupun *purge all*) **WAJIB** menerapkan isolasi *multi-tenant* yang ketat (`business_id = p_business_id`).
+   - **Hirarki Hak Akses (RBAC):**
+     - **Hapus Terpilih / Satuan:** Hanya dapat diakses oleh **Owner**, **Admin**, atau staf dengan izin `manage_products` / `full_access`.
+     - **Hapus SEMUA Produk (Total Purge):** Wajib dikunci ketat khusus **Owner** dan **Admin**. Staf biasa dilarang keras mereset seluruh katalog produk.
+   - **Perlindungan Riwayat Stok:** Produk yang telah memiliki catatan di `stock_moves` dilindungi oleh *foreign key constraint*. Secara default, sistem **WAJIB MENOLAK** penghapusan produk yang memiliki riwayat mutasi stok untuk menjaga keutuhan buku besar gudang.
+   - Jika pengguna secara sadar mengaktifkan *forceStockCleanup*, sistem harus menghapus `inventory_stock_summary` dan `stock_moves` milik produk tersebut sebelum menghapus baris di `products`, dalam ruang lingkup unit bisnis aktif saja.
+   - Dilarang keras menyentuh tabel `businesses` atau entitas milik bisnis/user lain selama proses pembersihan produk.
+
 
 ## Research & Planning
 

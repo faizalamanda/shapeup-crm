@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
+import { isUuid } from '@/lib/utils'
 
 interface ProductImportRow {
   name: string
@@ -298,3 +299,217 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: err.message || 'Terjadi kesalahan pada server.' }, { status: 500 })
   }
 }
+
+// ─── BULK DELETE HANDLER ───────────────────────────────────────────────────
+
+interface BulkDeleteRequestBody {
+  mode: 'selected' | 'all'
+  productIds?: string[]
+  forceStockCleanup?: boolean
+}
+
+export async function DELETE(req: Request) {
+  // 1. Auth & Business Context
+  const ctx = await getApiContext()
+  if (ctx.error) return ctx.error
+
+  const { businessId, supabaseAdmin, user } = ctx
+
+  try {
+    // 2. Authorization check: Owner, Admin, or Staff with manage_products
+    const [bizOwnerRes, staffRes] = await Promise.all([
+      supabaseAdmin
+        .from('businesses')
+        .select('id')
+        .eq('id', businessId)
+        .eq('owner_id', user.id)
+        .maybeSingle(),
+      supabaseAdmin
+        .from('business_staff')
+        .select('role, permissions')
+        .eq('business_id', businessId)
+        .eq('profile_id', user.id)
+        .maybeSingle()
+    ])
+
+    const isOwner = !!bizOwnerRes.data
+    const staffRole = staffRes.data?.role
+    const staffPerms: string[] = Array.isArray(staffRes.data?.permissions) ? staffRes.data.permissions : []
+
+    const isAdmin = isOwner || staffRole === 'admin' || staffPerms.includes('full_access')
+    const hasProductPerm = isAdmin || staffPerms.includes('manage_products')
+
+    // 3. Parse request body safely
+    const body: BulkDeleteRequestBody = await req.json().catch(() => null)
+    if (!body || !body.mode) {
+      return NextResponse.json({ error: 'Payload tidak valid. Parameter "mode" wajib disertakan.' }, { status: 400 })
+    }
+
+    const { mode, productIds = [], forceStockCleanup = false } = body
+
+    // Guard 1: Purge All Products is strictly restricted to Owner / Admin
+    if (mode === 'all' && !isAdmin) {
+      return NextResponse.json(
+        { error: 'Akses ditolak: Hanya pemilik bisnis atau admin yang berhak mereset seluruh produk katalog.' },
+        { status: 403 }
+      )
+    }
+
+    // Guard 2: Selective Deletion requires at least manage_products permission
+    if (!hasProductPerm) {
+      return NextResponse.json(
+        { error: 'Akses ditolak: Anda tidak memiliki izin kelola produk (manage_products).' },
+        { status: 403 }
+      )
+    }
+
+    const sanitizedProductIds = Array.isArray(productIds) ? productIds.filter(isUuid) : []
+
+    // 4. Try RPC first if available
+    try {
+      const { data: rpcResult, error: rpcErr } = await supabaseAdmin.rpc('bulk_delete_products', {
+        p_business_id: businessId,
+        p_product_ids: mode === 'all' ? null : sanitizedProductIds,
+        p_purge_all: mode === 'all',
+        p_force_stock_cleanup: !!forceStockCleanup
+      })
+
+      if (!rpcErr && rpcResult && typeof rpcResult === 'object') {
+        const isSuccess = rpcResult.success !== false
+        return NextResponse.json(rpcResult, { status: isSuccess ? 200 : 400 })
+      }
+    } catch (rpcEx) {
+      console.warn('[ProductsBulk] RPC bulk_delete_products call exception, falling back to direct query:', rpcEx)
+    }
+
+    // Fallback: Direct database queries using supabaseAdmin
+    let targetProducts: { id: string; name: string; sku: string | null }[] = []
+
+    if (mode === 'all') {
+      const { data: prods, error: fetchErr } = await supabaseAdmin
+        .from('products')
+        .select('id, name, sku')
+        .eq('business_id', businessId)
+
+      if (fetchErr) throw fetchErr
+      targetProducts = prods || []
+    } else {
+      if (sanitizedProductIds.length === 0) {
+        return NextResponse.json({ error: 'Tidak ada ID produk valid yang dipilih.' }, { status: 400 })
+      }
+
+      const { data: prods, error: fetchErr } = await supabaseAdmin
+        .from('products')
+        .select('id, name, sku')
+        .eq('business_id', businessId)
+        .in('id', sanitizedProductIds)
+
+      if (fetchErr) throw fetchErr
+      targetProducts = prods || []
+    }
+
+    if (targetProducts.length === 0) {
+      return NextResponse.json({
+        success: true,
+        deleted_count: 0,
+        blocked_count: 0,
+        message: 'Tidak ada produk yang ditemukan untuk dihapus.'
+      })
+    }
+
+    const targetIds = targetProducts.map(p => p.id)
+    let blockedIds: string[] = []
+    let blockedProducts: { id: string; name: string; sku: string | null }[] = []
+
+    // 5. Check stock_moves constraint if forceStockCleanup is FALSE
+    if (!forceStockCleanup) {
+      const chunkSize = 150
+      const movesProductIdsSet = new Set<string>()
+
+      for (let i = 0; i < targetIds.length; i += chunkSize) {
+        const chunk = targetIds.slice(i, i + chunkSize)
+        const { data: moves, error: movesErr } = await supabaseAdmin
+          .from('stock_moves')
+          .select('product_id')
+          .eq('business_id', businessId)
+          .in('product_id', chunk)
+
+        if (!movesErr && moves) {
+          moves.forEach(m => movesProductIdsSet.add(m.product_id))
+        }
+      }
+
+      blockedIds = Array.from(movesProductIdsSet)
+      blockedProducts = targetProducts.filter(p => blockedIds.includes(p.id))
+    }
+
+    const deletableProducts = targetProducts.filter(p => !blockedIds.includes(p.id))
+    const deletableIds = deletableProducts.map(p => p.id)
+
+    if (deletableIds.length === 0) {
+      return NextResponse.json({
+        success: false,
+        deleted_count: 0,
+        blocked_count: blockedIds.length,
+        blocked_products: blockedProducts,
+        message: `${blockedIds.length} produk tidak dapat dihapus karena memiliki riwayat mutasi stok. Aktifkan opsi "Paksa hapus riwayat stok" jika Anda ingin menghapusnya secara permanen.`
+      }, { status: 400 })
+    }
+
+    // 6. Delete in chunks of 150
+    const chunkSize = 150
+
+    if (forceStockCleanup) {
+      for (let i = 0; i < targetIds.length; i += chunkSize) {
+        const chunk = targetIds.slice(i, i + chunkSize)
+        await supabaseAdmin
+          .from('stock_moves')
+          .delete()
+          .eq('business_id', businessId)
+          .in('product_id', chunk)
+      }
+    }
+
+    // Clean up inventory_stock_summary
+    for (let i = 0; i < deletableIds.length; i += chunkSize) {
+      const chunk = deletableIds.slice(i, i + chunkSize)
+      await supabaseAdmin
+        .from('inventory_stock_summary')
+        .delete()
+        .eq('business_id', businessId)
+        .in('product_id', chunk)
+    }
+
+    // Delete products
+    let totalDeleted = 0
+    for (let i = 0; i < deletableIds.length; i += chunkSize) {
+      const chunk = deletableIds.slice(i, i + chunkSize)
+      const { error: delErr } = await supabaseAdmin
+        .from('products')
+        .delete()
+        .eq('business_id', businessId)
+        .in('id', chunk)
+
+      if (delErr) {
+        console.error('[ProductsBulk] Error deleting products chunk:', delErr)
+        throw delErr
+      }
+      totalDeleted += chunk.length
+    }
+
+    return NextResponse.json({
+      success: true,
+      deleted_count: totalDeleted,
+      blocked_count: blockedIds.length,
+      blocked_products: blockedProducts,
+      message: blockedIds.length > 0
+        ? `${totalDeleted} produk berhasil dihapus. ${blockedIds.length} produk dilewati karena memiliki riwayat mutasi stok.`
+        : `${totalDeleted} produk berhasil dihapus secara permanen.`
+    })
+
+  } catch (err: any) {
+    console.error('[ProductsBulk] Fatal delete error:', err)
+    return NextResponse.json({ error: err.message || 'Terjadi kesalahan pada server saat menghapus produk.' }, { status: 500 })
+  }
+}
+

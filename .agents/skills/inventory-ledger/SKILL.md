@@ -261,4 +261,24 @@ In world-class ERPs (Odoo, SAP, Oracle NetSuite):
 - This hides technical internal quarantine release rows (`Order #xxxx (Keluar Karantina)`) and presents exactly **1 clean arrival row** (`Order #xxxx (Terima Gudang)` +1 pcs -> Saldo On-Hand).
 - A Wadah selector (`🏢 Gudang Utama` / `📦 Karantina` / `Semua`) allows staff to inspect quarantine movements on demand without cluttering the primary warehouse inventory ledger.
 
+---
+
+## 5. Bulk Product Deletion & Multi-Tenant Ledger Isolation
+
+When deleting products in bulk (either by selection or a total business catalog purge):
+
+1. **Foreign Key Protection (`stock_moves_product_id_fkey`):**
+   - Products with historical moves in `public.stock_moves` are protected from accidental deletion.
+   - By default, deletion attempts on products with active stock movements **MUST BE BLOCKED** (`forceStockCleanup = false`).
+2. **Force Cleanup Protocol (`forceStockCleanup = true`):**
+   - When an authorized administrator or owner explicitly opts in to purge stock ledger data:
+     - Dependent entries in `public.inventory_stock_summary` and `public.stock_moves` are deleted FIRST for the target product IDs within the active `business_id`.
+     - The product deletion then executes cleanly.
+3. **Multi-Tenant Containment (Zero-Tolerance Cross-Tenant Leaks):**
+   - Every deletion query in SQL and RPC MUST be strictly bounded by `business_id = p_business_id`.
+   - The system NEVER touches the `public.businesses` table or other tenants' inventory records.
+4. **Local Experience & Optimistic UI Execution:**
+   - Products are removed from client-side state and `sessionStorage` optimistically (0ms perceived latency).
+   - If blocked products are reported by the backend or a network failure occurs, a compensating rollback automatically restores the affected products to the local view with informative feedback.
+
 
