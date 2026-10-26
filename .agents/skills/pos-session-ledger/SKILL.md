@@ -363,4 +363,36 @@ Seluruh jalur transaksi (POS Checkout, Layanan Nota & Piutang `POSOrderDetailMod
   7. Loyalty Rewards (Tier, Poin Transaksi, Total Saldo Poin)
   8. Catatan Kaki Toko & Branding ("Powered by ShapeUp POS")
 
+---
+
+## 13. POS Workspace Responsive Architecture & Cashier UX Standards (Indonesian Retail Benchmark)
+
+Modul register transaksi kasir (`POSWorkspace.tsx`) dirancang untuk operasional toko retail & F&B intensitas tinggi dengan standar benchmarking POS Indonesia (Moka POS, Pawoon, Majoo, Square).
+
+### 13.1 Split-Screen Layout & Anti-Clipping Minimum Widths
+- **Breakpoint Split-Screen:** Diaktifkan mulai layar medium/tablet (`md:` $\ge 768\text{px}$). Katalog produk di sisi kiri (`flex-1 min-w-0`), keranjang struk di sisi kanan.
+- **Lebar Panel Keranjang:** Ditetapkan minimal `w-[320px] - w-[340px]` pada breakpoint `md:` (skala `md:w-[330px] lg:w-[360px] xl:w-[390px] 2xl:w-[420px]`) dipadukan dengan `overflow-hidden` dan `min-w-0`.
+- **Rasional Anti-Clipping:** Mata uang Rupiah umumnya berjumlah 6–7 digit (`Rp 993.000` / `Rp 1.500.000`). Lebar di bawah 320px berisiko terpotong (*clipped*) ketika kasir memiliki item dengan kuantitas multi-digit, tombol `Hold`, dan tombol checkout berbobot penuh.
+
+### 13.2 Adaptive Multi-Column Catalog Density (Zero Wasted Screen Space)
+- Grid kartu produk wajib adaptif mengikuti lebar viewport:
+  `grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6 gap-3 sm:gap-3.5`
+- **Mencegah Masalah "Layar Penuh Sisa Ruang":** Pada monitor widescreen desktop/PC kasir (1080p/1440p), grid 5–6 kolom memastikan kartu produk berukuran rapat, proporsional, dan tidak melar berlebihan, sehingga kasir dapat memindai 15–24 produk sekaligus tanpa scroll berlebih.
+
+### 13.3 Lean Bill Summary & Separation of Concerns (Diskon Item vs Diskon Global)
+- **Baris TOTAL Duplikat Dihapus:** Menghilangkan baris teks `TOTAL` statis. Grand total diintegrasikan langsung ke dalam tombol checkout: `[ Bayar • Rp 993.000 → ]`.
+- **Pemisahan Mutlak Diskon Global:**
+  - `🏷️ Diskon Global` murni membaca `globalDiscountAmount > 0` (input dari modal diskon pesanan), bukan total akumulasi item discount. Jika belum ada diskon global, tombol hijau `[+ Diskon Global]` tetap tersedia.
+  - Potongan diskon per-item tidak dimunculkan sebagai baris tersendiri di ringkasan footer agar tidak memenuhi ruang vertikal; cukup ditampilkan pada baris item dengan tanda harga coret (*strikethrough*).
+
+### 13.4 Primary Action UX Psychology (High-Contrast Royal Blue)
+- **Tombol Bayar Utama:** Menggunakan **Solid Royal Blue (`bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white`)** dengan kontras chip nominal `bg-blue-800/50`.
+- **Psikologi UX Kasir:** Warna biru tegas adalah standar industri (Moka POS `#2B6CB0` & Square POS) yang melambangkan transaksi finansial resmi, dapat dibaca jelas dari sudut pandang kasir miring (*glanceable*), dan tidak membuat mata lelah dibandingkan warna pink/magenta/pastel informal.
+- **Indikator Shift Belum Buka:** Jika shift belum dibuka, tombol otomatis berubah menjadi kuning/amber peringatan (`bg-amber-600`) dengan teks `Buka Shift Dulu 🔑`.
+
+### 13.5 Item Auto-Wrap & Full-Width Multiline Notes
+- Nama produk yang panjang menggunakan `line-clamp-2 break-words` agar varian dan harga kanan tidak pernah terdorong keluar layar.
+- Catatan khusus item (`item.note`) dipajang sebagai balok terpisah full-width di bawah harga dengan `break-words whitespace-normal` agar instruksi dapur/gudang panjang tidak terpotong elipsis (`...`).
+
+
 

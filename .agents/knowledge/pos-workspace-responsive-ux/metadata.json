@@ -1,0 +1,14 @@
+{
+  "summary": "POS Workspace Responsive Architecture & World-Class Cashier UX: Split-screen tablet ergonomics, anti-clipping cart panel widths (330px+), adaptive multi-column catalog density (2 to 6 columns) for widescreen monitors, lean receipt bill summary (integrated total in checkout button, pure global discount isolation), and high-contrast Royal Blue cashier action psychology based on Indonesian POS benchmarks (Moka POS, Pawoon, Square).",
+  "timestamps": {
+    "created": "2026-10-26T08:50:00Z",
+    "last_updated": "2026-10-26T08:50:00Z"
+  },
+  "references": [
+    "app/pos/components/POSWorkspace.tsx",
+    "app/pos/components/GlobalDiscountModal.tsx",
+    "app/pos/components/CartItemEditModal.tsx",
+    ".agents/skills/pos-session-ledger/SKILL.md",
+    ".agents/AGENTS.md"
+  ]
+}

@@ -680,14 +680,14 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                 title="Ketuk baris untuk ubah kuantitas, harga, diskon, atau catatan"
               >
                 {/* Top Row: Product Info on Left, Qty + Price + Pencil on Right */}
-                <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start justify-between gap-1.5 min-w-0">
                   <div className="flex-1 min-w-0 pr-1">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <h5 className="font-semibold text-slate-800 truncate leading-tight group-hover:text-indigo-600 transition">
+                    <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                      <h5 className="font-semibold text-slate-800 text-xs line-clamp-2 leading-tight group-hover:text-blue-600 transition break-words">
                         {item.product.name}
                       </h5>
                       {item.selectedVariant && (
-                        <span className="text-[10px] text-indigo-700 bg-indigo-50 font-bold px-1.5 py-0.2 rounded shrink-0">
+                        <span className="text-[10px] text-blue-700 bg-blue-50 font-bold px-1.5 py-0.2 rounded shrink-0">
                           {item.selectedVariant.name}
                         </span>
                       )}
@@ -697,10 +697,10 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                     {(item.quantity > 1 || item.discount > 0) && (
                       <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
                         {item.quantity > 1 && (
-                          <span>@Rp {netItemPrice.toLocaleString('id-ID')}</span>
+                          <span className="font-medium text-slate-600">@Rp {netItemPrice.toLocaleString('id-ID')}</span>
                         )}
                         {item.discount > 0 && (
-                          <span className="text-rose-600 font-medium">
+                          <span className="text-rose-600 font-semibold">
                             Disc -Rp {item.discount.toLocaleString('id-ID')}
                           </span>
                         )}
@@ -709,11 +709,11 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                   </div>
 
                   {/* Right: Quantity (x N), Subtotal (dengan harga coret jika berubah) & Pencil Indicator */}
-                  <div className="flex items-center gap-2 shrink-0 pt-0.5">
-                    <span className="text-xs font-semibold text-slate-500 min-w-[22px] text-right">
-                      x {item.quantity}
+                  <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
+                    <span className="text-xs font-semibold text-slate-500 min-w-[20px] text-right">
+                      x{item.quantity}
                     </span>
-                    <div className="flex flex-col items-end min-w-[68px]">
+                    <div className="flex flex-col items-end min-w-[62px]">
                       {isPriceChanged && (
                         <span className="text-[10px] text-slate-400 line-through leading-tight">
                           Rp {originalTotal.toLocaleString('id-ID')}
@@ -723,7 +723,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                         Rp {itemTotal.toLocaleString('id-ID')}
                       </span>
                     </div>
-                    <span className="text-slate-300 group-hover:text-indigo-600 transition text-xs shrink-0" title="Edit Item">
+                    <span className="text-slate-300 group-hover:text-blue-600 transition text-xs shrink-0" title="Edit Item">
                       ✏️
                     </span>
                   </div>
@@ -823,14 +823,6 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
             <span>Sub-Total ({totalItemCount} item)</span>
             <span className="font-semibold text-slate-800">Rp {subtotal.toLocaleString('id-ID')}</span>
           </div>
-
-          {/* Item Discounts (jika ada potongan per item) */}
-          {itemDiscountTotal > 0 && (
-            <div className="flex justify-between items-center text-rose-600 text-[11px] font-medium">
-              <span>Potongan Diskon Item</span>
-              <span>-Rp {itemDiscountTotal.toLocaleString('id-ID')}</span>
-            </div>
-          )}
         </div>
 
         {/* Action Buttons: Hold + Pay with Total */}
@@ -855,14 +847,14 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
               }
             }}
             disabled={cart.length === 0}
-            className={`flex-1 min-w-0 py-2.5 px-3 font-extrabold rounded-xl text-xs sm:text-sm transition shadow-md active:scale-[0.99] disabled:opacity-40 flex items-center justify-between gap-1 text-white cursor-pointer ${
+            className={`flex-1 min-w-0 py-3 px-3.5 font-extrabold rounded-xl text-xs sm:text-sm transition shadow-md active:scale-[0.99] disabled:opacity-40 disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none flex items-center justify-between gap-1 text-white cursor-pointer ${
               !activeShift
                 ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/20'
-                : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 shadow-indigo-500/20'
+                : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 shadow-blue-500/25'
             }`}
           >
             <span className="truncate">{!activeShift ? 'Buka Shift Dulu 🔑' : 'Bayar'}</span>
-            <span className="font-black bg-white/20 px-2 py-0.5 rounded-lg text-xs tracking-tight shrink-0 whitespace-nowrap">
+            <span className="font-black bg-blue-800/50 text-white px-2.5 py-1 rounded-lg text-xs sm:text-sm tracking-tight shrink-0 whitespace-nowrap">
               Rp {grandTotal.toLocaleString('id-ID')} →
             </span>
           </button>
@@ -1081,7 +1073,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                 </div>
               ) : viewMode === 'grid' ? (
                 /* GRID VIEW */
-                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-3.5">
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6 gap-3 sm:gap-3.5">
                   {filteredProducts.map((p) => {
                     const isOutOfStock = p.stock_type === 'tracked' && p.stock_quantity <= 0
                     const badgeClass = getPastelBadge(p.name)
@@ -1215,8 +1207,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           </div>
         </div>
 
-        {/* DESKTOP & TABLET CART PANEL (Responsive scaling: 290px on tablet up to 450px on 2xl screens) */}
-        <div className="hidden md:flex md:w-[290px] lg:w-[360px] xl:w-[410px] 2xl:w-[450px] shrink-0 border-l border-slate-200 min-w-0">
+        {/* DESKTOP & TABLET CART PANEL (Responsive scaling: 330px on tablet up to 420px on 2xl screens) */}
+        <div className="hidden md:flex md:w-[330px] lg:w-[360px] xl:w-[390px] 2xl:w-[420px] shrink-0 border-l border-slate-200 min-w-0 overflow-hidden">
           {renderCartContent()}
         </div>
 
