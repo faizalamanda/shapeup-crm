@@ -11,7 +11,11 @@ interface Props {
   subtotal: number
   requireAuth?: boolean
   existingAuthorization?: any
-  onRequestAuthorization?: (calculatedDiscount: number) => void
+  onRequestAuthorization?: (data: {
+    discountType: 'nominal' | 'percent'
+    discountValue: string
+    calculatedDiscount: number
+  }) => void
   onApply: (type: 'nominal' | 'percent', value: string) => void
 }
 
@@ -45,7 +49,12 @@ export default function GlobalDiscountModal({
       ? Math.round((subtotal * Math.min(100, Math.max(0, numVal))) / 100)
       : Math.min(subtotal, Math.max(0, numVal))
 
-  const isApproved = Boolean(existingAuthorization)
+  // Periksa apakah nilai atau tipe diskon diubah dari nilai yang sudah tersimpan sebelumnya
+  const isValueChanged =
+    discountType !== (currentDiscountType || 'nominal') ||
+    discountValue !== (currentDiscountValue || '')
+
+  const isApproved = Boolean(existingAuthorization) && !isValueChanged
   const needsAuth = requireAuth && numVal > 0 && !isApproved
 
   const handleSave = () => {
@@ -57,7 +66,11 @@ export default function GlobalDiscountModal({
 
     if (needsAuth) {
       if (onRequestAuthorization) {
-        onRequestAuthorization(calculatedDiscount)
+        onRequestAuthorization({
+          discountType,
+          discountValue,
+          calculatedDiscount,
+        })
       }
       return
     }
@@ -89,7 +102,7 @@ export default function GlobalDiscountModal({
             <button
               type="button"
               onClick={handleClear}
-              className="py-3 px-3.5 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs transition active:scale-95"
+              className="py-3 px-3.5 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs transition active:scale-95 cursor-pointer"
             >
               Hapus
             </button>
@@ -97,18 +110,14 @@ export default function GlobalDiscountModal({
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 py-3 px-3 border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition active:scale-95"
+            className="flex-1 py-3 px-3 border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition active:scale-95 cursor-pointer"
           >
             Batal
           </button>
           {needsAuth ? (
             <button
               type="button"
-              onClick={() => {
-                if (onRequestAuthorization) {
-                  onRequestAuthorization(calculatedDiscount)
-                }
-              }}
+              onClick={handleSave}
               className="flex-1 py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold rounded-xl text-xs transition shadow-md shadow-blue-500/20 active:scale-95 text-center flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <span>🔐</span>
@@ -196,7 +205,9 @@ export default function GlobalDiscountModal({
             <div className="text-xs text-amber-900">
               <p className="font-bold">Otorisasi Diperlukan</p>
               <p className="text-[11px] text-amber-800 mt-0.5">
-                Kebijakan toko mewajibkan persetujuan otorisasi untuk setiap penerapan diskon global keranjang.
+                {existingAuthorization && isValueChanged
+                  ? 'Nilai diskon diubah dari persetujuan sebelumnya dan memerlukan otorisasi ulang.'
+                  : 'Kebijakan toko mewajibkan persetujuan otorisasi untuk setiap penerapan diskon global keranjang.'}
               </p>
             </div>
           </div>

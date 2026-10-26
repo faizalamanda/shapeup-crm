@@ -21,7 +21,7 @@ export async function GET() {
 
     const isOwner = bizRes.data?.owner_id === user.id
     const perms: string[] = Array.isArray(staffRes.data?.permissions) ? staffRes.data.permissions : []
-    const canApprove = isOwner || Boolean(staffRes.data?.can_approve_pos || perms.includes('can_approve_pos'))
+    const canApprove = isOwner || staffRes.data?.role === 'admin' || Boolean(staffRes.data?.can_approve_pos || perms.includes('can_approve_pos'))
 
     // Check if PIN already set
     let hasPin = false
@@ -108,7 +108,7 @@ export async function POST(req: Request) {
 
       const isOwner = bizRes.data?.owner_id === user.id
       const perms: string[] = Array.isArray(staffRes.data?.permissions) ? staffRes.data.permissions : []
-      const canApprove = isOwner || Boolean(staffRes.data?.can_approve_pos || perms.includes('can_approve_pos'))
+      const canApprove = isOwner || staffRes.data?.role === 'admin' || Boolean(staffRes.data?.can_approve_pos || perms.includes('can_approve_pos'))
 
       if (!canApprove) {
         return NextResponse.json({

@@ -51,7 +51,11 @@ export function canAccessPath(href: string, context: AccessContext): boolean {
     return true
   }
 
-  // 5. System Settings (Owner / Admin only)
+  // 5. System Settings (Staff can access /settings/staff for password & POS PIN; other settings require admin)
+  if (href.startsWith('/settings/staff')) {
+    return true
+  }
+
   if (href.startsWith('/settings')) {
     return false
   }

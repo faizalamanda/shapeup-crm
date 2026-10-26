@@ -450,6 +450,13 @@ Setiap kali otorisasi disetujui (baik item harga satuan maupun diskon global):
 - Validasi tidak hanya mengandalkan JavaScript di browser klien kasir.
 - Endpoint `POST /api/pos/order` memvalidasi ulang seluruh baris pesanan terhadap HPP dan status otorisasi di database. Jika terdapat item di bawah HPP yang belum diotorisasi atau token otorisasi tidak valid, transaksi ditolak dengan HTTP 422.
 
-
-
-
+### 14.8 Atomic Auto-Apply & Auto-Dismiss UX Standard (Zero Drop State)
+- **Komitmen Atomik Instan (Atomic Auto-Commit):**
+  Saat otorisasi manajer/approver berhasil divalidasi (PIN valid):
+  1. Payload otorisasi (`authRecord`) didaftarkan ke state otorisasi (`authorizations.set(...)`).
+  2. Nilai diskon baru (`discountType` & `discountValue` atau harga bersih item) **wajib langsung di-commit secara atomik ke state keranjang belanja** di dalam `onSuccessCallback`.
+  3. Modal otorisasi DAN modal pengeditan langsung tertutup bersamaan (*auto-dismiss*), mengembalikan kasir langsung ke layar kasir utama dengan nilai diskon yang sudah terpasang rapi di keranjang (0 redundant click). Dilarang keras menutup modal tanpa meng-commit state nilai diskon.
+- **Wajib Otorisasi Ulang Saat Nilai Diubah (Re-Authorization on Modification):**
+  - **Diskon Global:** Jika kasir membuka kembali modal diskon global dan mengubah nilai atau tipe potongan (`isValueChanged === true`), status otorisasi lama otomatis menjadi tidak valid (`isApproved = false`). Tombol berubah menjadi `🔐 Minta Otorisasi Diskon` dan manajer wajib mengotorisasi ulang nilai diskon yang baru.
+  - **Item Keranjang:** Jika kasir membuka kembali modal edit item dan menurunkan harga bersih lebih rendah daripada harga yang diotorisasi sebelumnya (`netUnitPrice < previousApprovedPrice`), status otorisasi otomatis batal dan wajib meminta otorisasi baru.
+  - **Penghapusan Diskon:** Jika kasir menghapus diskon (nilai = 0 atau tombol Hapus), diskon dibatalkan dan rekaman otorisasi terkait dihapus dari memori keranjang tanpa memerlukan PIN.

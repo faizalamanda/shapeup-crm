@@ -781,23 +781,21 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
                 Platform Analytics
               </Link>
             )}
-            {currentUserRole === 'admin' && (
-              <Link
-                href="/settings/business"
-                onClick={() => setIsMobileMenuOpen(false)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '8px 12px', borderRadius: '7px',
-                    fontSize: '11px', fontWeight: 500, textDecoration: 'none',
-                    color: pathname.startsWith('/settings') ? '#FFFEF9' : 'rgba(255,254,249,0.4)',
-                    background: pathname.startsWith('/settings') ? 'var(--su-sidebar-active)' : 'transparent',
-                    textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '2px',
-                  }}
-                >
-                  <span style={{ opacity: 0.6 }}>{Icons.settings}</span>
-                  Settings
-                </Link>
-            )}
+            <Link
+              href={(isOwner || currentUserRole === 'admin') ? "/settings/business" : "/settings/staff"}
+              onClick={() => setIsMobileMenuOpen(false)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '8px 12px', borderRadius: '7px',
+                fontSize: '11px', fontWeight: 500, textDecoration: 'none',
+                color: pathname.startsWith('/settings') ? '#FFFEF9' : 'rgba(255,254,249,0.4)',
+                background: pathname.startsWith('/settings') ? 'var(--su-sidebar-active)' : 'transparent',
+                textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '2px',
+              }}
+            >
+              <span style={{ opacity: 0.6 }}>{Icons.settings}</span>
+              Settings
+            </Link>
             <button
               onClick={handleLogout}
               style={{

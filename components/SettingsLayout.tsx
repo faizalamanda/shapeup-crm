@@ -3,6 +3,7 @@
 import React, { Suspense } from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
+import { useUserContext } from '@/components/UserContext'
 
 type SettingsLayoutProps = {
   children: React.ReactNode
@@ -14,72 +15,90 @@ function SettingsContent({ children, title, subtitle }: SettingsLayoutProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const currentTab = searchParams.get('tab') || 'profile'
+  const { currentUserRole, isOwner } = useUserContext()
+  const isAdmin = isOwner || currentUserRole === 'admin'
 
-  const navGroups = [
-    {
-      group: 'Profil & Unit Bisnis',
-      items: [
+  const navGroups = isAdmin
+    ? [
         {
-          id: 'profile',
-          name: 'Profil Bisnis',
-          href: '/settings/business?tab=profile',
-          icon: '🏢',
-          description: 'Profil umum, alamat, & legalitas',
-          isActive: pathname === '/settings/business' && currentTab === 'profile',
+          group: 'Profil & Unit Bisnis',
+          items: [
+            {
+              id: 'profile',
+              name: 'Profil Bisnis',
+              href: '/settings/business?tab=profile',
+              icon: '🏢',
+              description: 'Profil umum, alamat, & legalitas',
+              isActive: pathname === '/settings/business' && currentTab === 'profile',
+            },
+            {
+              id: 'units',
+              name: 'Daftar Unit Bisnis',
+              href: '/settings/business?tab=units',
+              icon: '🏬',
+              description: 'Kelola & ganti unit bisnis',
+              isActive: pathname === '/settings/business' && currentTab === 'units',
+            },
+          ],
         },
         {
-          id: 'units',
-          name: 'Daftar Unit Bisnis',
-          href: '/settings/business?tab=units',
-          icon: '🏬',
-          description: 'Kelola & ganti unit bisnis',
-          isActive: pathname === '/settings/business' && currentTab === 'units',
-        },
-      ],
-    },
-    {
-      group: 'Pengguna & Tim',
-      items: [
-        {
-          id: 'staff',
-          name: 'Staf & Hak Akses',
-          href: '/settings/staff',
-          icon: '👥',
-          description: 'Kelola anggota tim & perizinan',
-          isActive: pathname.startsWith('/settings/staff'),
-        },
-      ],
-    },
-    {
-      group: 'Integrasi & Ekosistem',
-      items: [
-        {
-          id: 'pos',
-          name: 'Kasir POS & Proteksi HPP',
-          href: '/settings/pos',
-          icon: '🛡️',
-          description: 'Proteksi HPP, diskon & PIN approver',
-          isActive: pathname.startsWith('/settings/pos'),
+          group: 'Pengguna & Tim',
+          items: [
+            {
+              id: 'staff',
+              name: 'Staf & Hak Akses',
+              href: '/settings/staff',
+              icon: '👥',
+              description: 'Kelola anggota tim & perizinan',
+              isActive: pathname.startsWith('/settings/staff'),
+            },
+          ],
         },
         {
-          id: 'inventory',
-          name: 'Stok & Jurnal Global',
-          href: '/settings/inventory',
-          icon: '📦',
-          description: 'Default trigger stok & HPP terpusat',
-          isActive: pathname.startsWith('/settings/inventory'),
+          group: 'Integrasi & Ekosistem',
+          items: [
+            {
+              id: 'pos',
+              name: 'Kasir POS & Proteksi HPP',
+              href: '/settings/pos',
+              icon: '🛡️',
+              description: 'Proteksi HPP, diskon & PIN approver',
+              isActive: pathname.startsWith('/settings/pos'),
+            },
+            {
+              id: 'inventory',
+              name: 'Stok & Jurnal Global',
+              href: '/settings/inventory',
+              icon: '📦',
+              description: 'Default trigger stok & HPP terpusat',
+              isActive: pathname.startsWith('/settings/inventory'),
+            },
+            {
+              id: 'integrations',
+              name: 'Integrasi & Plugin',
+              href: '/settings/integrations',
+              icon: '🔌',
+              description: 'WooCommerce, Shopify, & Webhook',
+              isActive: pathname.startsWith('/settings/integrations'),
+            },
+          ],
         },
+      ]
+    : [
         {
-          id: 'integrations',
-          name: 'Integrasi & Plugin',
-          href: '/settings/integrations',
-          icon: '🔌',
-          description: 'WooCommerce, Shopify, & Webhook',
-          isActive: pathname.startsWith('/settings/integrations'),
+          group: 'Akun & Keamanan',
+          items: [
+            {
+              id: 'staff',
+              name: 'Profil & Keamanan',
+              href: '/settings/staff',
+              icon: '👤',
+              description: 'Ubah password & PIN otorisasi POS',
+              isActive: pathname.startsWith('/settings/staff'),
+            },
+          ],
         },
-      ],
-    },
-  ]
+      ]
 
   return (
     <div className="flex flex-col lg:flex-row min-h-[calc(100vh-52px)] bg-[#F9F9F8]">

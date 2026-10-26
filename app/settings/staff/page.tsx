@@ -7,7 +7,7 @@ import SettingsLayout from '@/components/SettingsLayout'
 import { useUserContext } from '@/components/UserContext'
 
 export default function StaffSettings() {
-  const { activeBusiness, userProfile, currentUserRole, bizLoading } = useUserContext()
+  const { activeBusiness, userProfile, currentUserRole, isOwner, bizLoading } = useUserContext()
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -442,16 +442,250 @@ export default function StaffSettings() {
     )
   }
 
-  const isAdmin = currentUserRole === 'admin' || userProfile?.role === 'admin' || currentUserProfile?.role === 'admin'
+  const isAdmin = isOwner || currentUserRole === 'admin' || userProfile?.role === 'admin' || currentUserProfile?.role === 'admin'
+
+  const selfSecuritySection = (
+    <div className="space-y-4 pt-2">
+      <div className="border-b border-[#E2E2DC] pb-2">
+        <h3 className="text-base font-bold text-[#1C1C1A]">
+          {isAdmin ? 'Pengaturan Keamanan Akun Saya' : 'Kredensial & PIN Saya'}
+        </h3>
+        <p className="text-xs text-[#6B6B63]">
+          Perbarui kata sandi login dan kelola PIN otorisasi kasir POS akun Anda.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        {/* Card Ubah Password Saya */}
+        <div className="bg-white border border-[#E2E2DC] rounded-xl p-6 shadow-xs space-y-4">
+          <h2 className="text-base font-bold text-[#1C1C1A] border-b border-[#E2E2DC] pb-3">Ubah Password Saya</h2>
+          
+          {myPasswordMessage.text && (
+            <div className={`p-3 rounded-lg text-xs font-semibold ${
+              myPasswordMessage.type === 'success' 
+                ? 'bg-green-50 border border-green-200 text-green-700' 
+                : 'bg-red-50 border border-red-200 text-red-700'
+            }`}>
+              {myPasswordMessage.text}
+            </div>
+          )}
+
+          <form onSubmit={handleSelfPasswordUpdate} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Password Baru</label>
+              <div className="relative">
+                <input 
+                  type={showMyPassword ? 'text' : 'password'} placeholder="Minimal 6 karakter" required
+                  className="w-full px-3.5 py-2.5 pr-10 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  value={myPassword} onChange={e => setMyPassword(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowMyPassword(!showMyPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                  tabIndex={-1}
+                  aria-label={showMyPassword ? 'Sembunyikan password' : 'Lihat password'}
+                >
+                  {showMyPassword ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                      <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Konfirmasi Password Baru</label>
+              <div className="relative">
+                <input 
+                  type={showConfirmPassword ? 'text' : 'password'} placeholder="Ulangi password baru" required
+                  className="w-full px-3.5 py-2.5 pr-10 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                  tabIndex={-1}
+                  aria-label={showConfirmPassword ? 'Sembunyikan password' : 'Lihat password'}
+                >
+                  {showConfirmPassword ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                      <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
+            <button 
+              type="submit" 
+              disabled={myPasswordLoading}
+              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+            >
+              {myPasswordLoading ? 'Memperbarui...' : 'Simpan Password Baru'}
+            </button>
+          </form>
+        </div>
+
+        {/* Card PIN Otorisasi POS (Khusus Approver / Owner) */}
+        {canApprovePos ? (
+          <div className="bg-white border border-[#E2E2DC] rounded-xl p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-[#E2E2DC] pb-3">
+              <div>
+                <h2 className="text-base font-bold text-[#1C1C1A]">PIN Otorisasi POS Saya</h2>
+                <p className="text-xs text-[#6B6B63] mt-0.5">Digunakan saat kasir membutuhkan persetujuan harga khusus di bawah HPP.</p>
+              </div>
+              <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border ${
+                hasPosPin 
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                  : 'bg-amber-50 text-amber-700 border-amber-200'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${hasPosPin ? 'bg-emerald-600' : 'bg-amber-600'}`}></span>
+                {hasPosPin ? 'PIN Aktif' : 'Belum Diatur'}
+              </span>
+            </div>
+
+            {posPinMessage.text && (
+              <div className={`p-3 rounded-lg text-xs font-semibold ${
+                posPinMessage.type === 'success' 
+                  ? 'bg-green-50 border border-green-200 text-green-700' 
+                  : 'bg-red-50 border border-red-200 text-red-700'
+              }`}>
+                {posPinMessage.text}
+              </div>
+            )}
+
+            <form onSubmit={handleSavePosPin} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
+                  PIN Baru (6 Digit Angka)
+                </label>
+                <div className="relative">
+                  <input 
+                    type={showPosPin ? 'text' : 'password'}
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    placeholder="Contoh: 182736"
+                    required
+                    className="w-full px-3.5 py-2.5 pr-12 border border-[#E2E2DC] rounded-lg text-sm tracking-widest font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    value={posPin}
+                    onChange={e => setPosPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPosPin(!showPosPin)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                    tabIndex={-1}
+                    aria-label={showPosPin ? 'Sembunyikan PIN' : 'Lihat PIN'}
+                  >
+                    {showPosPin ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                      </svg>
+                    ) : (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                      </svg>
+                    )}
+                  </button>
+                </div>
+                <p className="text-[11px] text-[#8C8C82] mt-1">Gunakan kombinasi angka unik yang tidak mudah ditebak (hindari 123456 atau 111111).</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
+                  Konfirmasi Password Akun Anda
+                </label>
+                <div className="relative">
+                  <input 
+                    type={showPosPassword ? 'text' : 'password'}
+                    placeholder="Masukkan password akun Anda saat ini"
+                    required
+                    className="w-full px-3.5 py-2.5 pr-12 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    value={posPasswordConfirm}
+                    onChange={e => setPosPasswordConfirm(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPosPassword(!showPosPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                    tabIndex={-1}
+                    aria-label={showPosPassword ? 'Sembunyikan password' : 'Lihat password'}
+                  >
+                    {showPosPassword ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                      </svg>
+                    ) : (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <button 
+                type="submit" 
+                disabled={posPinLoading || posPin.length !== 6}
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+              >
+                {posPinLoading ? 'Menyimpan...' : (hasPosPin ? 'Perbarui PIN Otorisasi' : 'Atur PIN Otorisasi')}
+              </button>
+            </form>
+          </div>
+        ) : (
+          <div className="bg-[#FAF9F5] border border-[#E2E2DC] rounded-xl p-6 shadow-xs space-y-2">
+            <div className="flex items-center gap-2 border-b border-[#E2E2DC] pb-3">
+              <span className="text-lg">🛡️</span>
+              <div>
+                <h3 className="text-base font-bold text-[#1C1C1A]">PIN Otorisasi POS</h3>
+                <span className="text-[10px] font-semibold text-slate-500">Status: Bukan Approver</span>
+              </div>
+            </div>
+            <p className="text-xs text-[#6B6B63] leading-relaxed pt-1">
+              Akun Anda saat ini belum ditunjuk sebagai Manajer / Approver Kasir POS. Fitur otorisasi PIN hanya dapat digunakan oleh Pemilik toko atau Staf yang diberikan wewenang persetujuan di Pengaturan POS.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
 
   return (
-    <SettingsLayout title="Staf & Hak Akses" subtitle="Kelola anggota tim, tambahkan akun staf, dan atur hak akses modul.">
+    <SettingsLayout
+      title={isAdmin ? "Staf & Hak Akses" : "Pengaturan Akun & Keamanan"}
+      subtitle={isAdmin ? "Kelola anggota tim, tambahkan akun staf, dan atur hak akses modul." : "Kelola kata sandi akun Anda dan PIN otorisasi kasir POS."}
+    >
       
       {/* Header Action Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-bold text-[#1C1C1A]">Manajemen Tim &amp; Peran</h2>
-          <p className="text-xs text-[#6B6B63]">Kelola anggota tim, tambahkan akun staf, dan atur hak akses modul.</p>
+          <h2 className="text-lg font-bold text-[#1C1C1A]">
+            {isAdmin ? 'Manajemen Tim & Peran' : 'Akun & Keamanan Saya'}
+          </h2>
+          <p className="text-xs text-[#6B6B63]">
+            {isAdmin
+              ? 'Kelola anggota tim, tambahkan akun staf, dan atur hak akses modul.'
+              : 'Perbarui kata sandi akun Anda dan PIN otorisasi kasir POS.'}
+          </p>
         </div>
         {isAdmin && (
           <button 
@@ -475,369 +709,188 @@ export default function StaffSettings() {
         )}
       </div>
 
-      {/* Filter & Search Bar */}
-      <div className="bg-white border border-[#E2E2DC] rounded-xl p-4 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-md">
-          <input
-            type="text"
-            placeholder="Cari nama atau email staf..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 border border-[#E2E2DC] rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 bg-[#FAF9F5]"
-          />
-          <svg className="w-4 h-4 text-[#A8A89E] absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#A8A89E] hover:text-[#1C1C1A]"
-            >
-              ✕
-            </button>
-          )}
-        </div>
+      {/* Jika staff biasa, tampilkan card kredensial & PIN langsung di atas */}
+      {!isAdmin && selfSecuritySection}
 
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-[#6B6B63] whitespace-nowrap">Filter Role:</span>
-          <div className="flex items-center bg-[#FAF9F5] p-1 border border-[#E2E2DC] rounded-lg">
-            <button
-              onClick={() => setRoleFilter('all')}
-              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                roleFilter === 'all'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'text-[#6B6B63] hover:text-[#1C1C1A]'
-              }`}
-            >
-              Semua ({staffList.length})
-            </button>
-            <button
-              onClick={() => setRoleFilter('admin')}
-              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                roleFilter === 'admin'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'text-[#6B6B63] hover:text-[#1C1C1A]'
-              }`}
-            >
-              Admin ({staffList.filter(s => s.role === 'admin').length})
-            </button>
-            <button
-              onClick={() => setRoleFilter('staff')}
-              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                roleFilter === 'staff'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'text-[#6B6B63] hover:text-[#1C1C1A]'
-              }`}
-            >
-              Staff ({staffList.filter(s => s.role !== 'admin').length})
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabel Staff */}
-      <div className="bg-white border border-[#E2E2DC] rounded-xl shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-[#F7F7F5] border-b border-[#E2E2DC]">
-                <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63]">Nama Lengkap</th>
-                <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63]">Email</th>
-                <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63]">Role &amp; Hak Akses</th>
-                <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63] text-center">Status</th>
-                {isAdmin && (
-                  <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63] text-right">Aksi</th>
-                )}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#E2E2DC]">
-              {loading ? (
-                <tr>
-                  <td colSpan={isAdmin ? 5 : 4} className="px-6 py-12 text-center text-[#A8A89E] text-xs font-bold uppercase tracking-wider">
-                    Memuat Data Tim...
-                  </td>
-                </tr>
-              ) : filteredStaffList.length > 0 ? (
-                filteredStaffList.map((s) => (
-                  <tr key={s.id} className="hover:bg-[#F7F7F5] transition-colors">
-                    <td className="px-6 py-4 font-semibold text-sm text-[#1C1C1A]">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-blue-50 border border-blue-200 text-blue-600 font-extrabold flex items-center justify-center text-xs">
-                          {s.full_name?.charAt(0).toUpperCase() || 'S'}
-                        </div>
-                        <span className="truncate">{s.full_name || 'Staff Tanpa Nama'}</span>
-                        {s.id === currentUserProfile?.id && (
-                          <span className="text-[9px] font-bold uppercase bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full border border-blue-200">Anda</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-xs font-medium text-[#6B6B63] break-all">{s.email}</td>
-                    <td className="px-6 py-4">
-                      <div className="space-y-1.5">
-                        <div>
-                          {s.role === 'admin' ? (
-                            <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                              Admin
-                            </span>
-                          ) : (
-                            <span className="bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                              {s.role || 'Staff'}
-                            </span>
-                          )}
-                        </div>
-                        {s.role !== 'admin' && s.permissions && s.permissions.length > 0 && (
-                          <div className="flex flex-wrap gap-1 max-w-sm">
-                            {s.permissions.map((pKey: string) => {
-                              const pObj = PERMISSIONS_LIST.find(p => p.key === pKey)
-                              return (
-                                <span key={pKey} className="bg-amber-50 text-amber-800 border border-amber-200 text-[9px] font-semibold px-2 py-0.5 rounded-md">
-                                  {pObj ? pObj.label : pKey}
-                                </span>
-                              )
-                            })}
-                          </div>
-                        )}
-                        {s.role !== 'admin' && (!s.permissions || s.permissions.length === 0) && (
-                          <span className="text-[10px] italic text-[#A8A89E]">Tidak ada akses khusus</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <span className="inline-flex items-center gap-1.5 bg-green-50 text-green-700 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-green-200">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-600 animate-pulse"></span>
-                        Aktif
-                      </span>
-                    </td>
-                    {isAdmin && (
-                      <td className="px-6 py-4 text-right space-x-3 text-xs font-bold">
-                        <button
-                          onClick={() => openEditModal(s)}
-                          className="text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
-                        >
-                          Edit
-                        </button>
-                        {s.id !== currentUserProfile?.id && (
-                          <button
-                            onClick={() => handleRemoveStaff(s)}
-                            className="text-red-600 hover:text-red-700 hover:underline cursor-pointer"
-                          >
-                            Hapus
-                          </button>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={isAdmin ? 5 : 4} className="px-6 py-12 text-center text-[#A8A89E] text-xs font-semibold">
-                    {searchQuery || roleFilter !== 'all'
-                      ? 'Tidak ada anggota tim yang sesuai dengan kata kunci / filter role Anda.'
-                      : 'Belum ada staff yang terdaftar pada unit bisnis ini.'}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Card Ubah Password Saya */}
-      <div className="bg-white border border-[#E2E2DC] rounded-xl p-6 shadow-xs max-w-xl space-y-4">
-        <h2 className="text-base font-bold text-[#1C1C1A] border-b border-[#E2E2DC] pb-3">Ubah Password Saya</h2>
-        
-        {myPasswordMessage.text && (
-          <div className={`p-3 rounded-lg text-xs font-semibold ${
-            myPasswordMessage.type === 'success' 
-              ? 'bg-green-50 border border-green-200 text-green-700' 
-              : 'bg-red-50 border border-red-200 text-red-700'
-          }`}>
-            {myPasswordMessage.text}
+      {/* Tabel & Filter Tim */}
+      <div className="space-y-4">
+        {!isAdmin && (
+          <div className="pt-4 border-t border-[#E2E2DC]">
+            <h3 className="text-base font-bold text-[#1C1C1A]">Daftar Rekan Tim</h3>
+            <p className="text-xs text-[#6B6B63]">Informasi profil rekan kerja pada unit bisnis aktif.</p>
           </div>
         )}
 
-        <form onSubmit={handleSelfPasswordUpdate} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Password Baru</label>
-            <div className="relative">
-              <input 
-                type={showMyPassword ? 'text' : 'password'} placeholder="Minimal 6 karakter" required
-                className="w-full px-3.5 py-2.5 pr-10 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                value={myPassword} onChange={e => setMyPassword(e.target.value)}
-              />
+        {/* Filter & Search Bar */}
+        <div className="bg-white border border-[#E2E2DC] rounded-xl p-4 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+          <div className="relative flex-1 max-w-md">
+            <input
+              type="text"
+              placeholder="Cari nama atau email staf..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 border border-[#E2E2DC] rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 bg-[#FAF9F5]"
+            />
+            <svg className="w-4 h-4 text-[#A8A89E] absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            {searchQuery && (
               <button
-                type="button"
-                onClick={() => setShowMyPassword(!showMyPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
-                tabIndex={-1}
-                aria-label={showMyPassword ? 'Sembunyikan password' : 'Lihat password'}
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#A8A89E] hover:text-[#1C1C1A]"
               >
-                {showMyPassword ? (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
-                    <line x1="1" y1="1" x2="23" y2="23"/>
-                  </svg>
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
-                )}
+                ✕
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-[#6B6B63] whitespace-nowrap">Filter Role:</span>
+            <div className="flex items-center bg-[#FAF9F5] p-1 border border-[#E2E2DC] rounded-lg">
+              <button
+                onClick={() => setRoleFilter('all')}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                  roleFilter === 'all'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-[#6B6B63] hover:text-[#1C1C1A]'
+                }`}
+              >
+                Semua ({staffList.length})
+              </button>
+              <button
+                onClick={() => setRoleFilter('admin')}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                  roleFilter === 'admin'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-[#6B6B63] hover:text-[#1C1C1A]'
+                }`}
+              >
+                Admin ({staffList.filter(s => s.role === 'admin').length})
+              </button>
+              <button
+                onClick={() => setRoleFilter('staff')}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                  roleFilter === 'staff'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-[#6B6B63] hover:text-[#1C1C1A]'
+                }`}
+              >
+                Staff ({staffList.filter(s => s.role !== 'admin').length})
               </button>
             </div>
           </div>
-          <div>
-            <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">Konfirmasi Password Baru</label>
-            <div className="relative">
-              <input 
-                type={showConfirmPassword ? 'text' : 'password'} placeholder="Ulangi password baru" required
-                className="w-full px-3.5 py-2.5 pr-10 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
-              />
-              <button
-                type="button"
-                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
-                tabIndex={-1}
-                aria-label={showConfirmPassword ? 'Sembunyikan password' : 'Lihat password'}
-              >
-                {showConfirmPassword ? (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
-                    <line x1="1" y1="1" x2="23" y2="23"/>
-                  </svg>
+        </div>
+
+        {/* Tabel Staff */}
+        <div className="bg-white border border-[#E2E2DC] rounded-xl shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-[#F7F7F5] border-b border-[#E2E2DC]">
+                  <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63]">Nama Lengkap</th>
+                  <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63]">Email</th>
+                  <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63]">Role &amp; Hak Akses</th>
+                  <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63] text-center">Status</th>
+                  {isAdmin && (
+                    <th className="px-6 py-3.5 text-[10px] font-extrabold uppercase tracking-wider text-[#6B6B63] text-right">Aksi</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#E2E2DC]">
+                {loading ? (
+                  <tr>
+                    <td colSpan={isAdmin ? 5 : 4} className="px-6 py-12 text-center text-[#A8A89E] text-xs font-bold uppercase tracking-wider">
+                      Memuat Data Tim...
+                    </td>
+                  </tr>
+                ) : filteredStaffList.length > 0 ? (
+                  filteredStaffList.map((s) => (
+                    <tr key={s.id} className="hover:bg-[#F7F7F5] transition-colors">
+                      <td className="px-6 py-4 font-semibold text-sm text-[#1C1C1A]">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-blue-50 border border-blue-200 text-blue-600 font-extrabold flex items-center justify-center text-xs">
+                            {s.full_name?.charAt(0).toUpperCase() || 'S'}
+                          </div>
+                          <span className="truncate">{s.full_name || 'Staff Tanpa Nama'}</span>
+                          {s.id === currentUserProfile?.id && (
+                            <span className="text-[9px] font-bold uppercase bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full border border-blue-200">Anda</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-xs font-medium text-[#6B6B63] break-all">{s.email}</td>
+                      <td className="px-6 py-4">
+                        <div className="space-y-1.5">
+                          <div>
+                            {s.role === 'admin' ? (
+                              <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                                Admin
+                              </span>
+                            ) : (
+                              <span className="bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                                {s.role || 'Staff'}
+                              </span>
+                            )}
+                          </div>
+                          {s.role !== 'admin' && s.permissions && s.permissions.length > 0 && (
+                            <div className="flex flex-wrap gap-1 max-w-sm">
+                              {s.permissions.map((pKey: string) => {
+                                const pObj = PERMISSIONS_LIST.find(p => p.key === pKey)
+                                return (
+                                  <span key={pKey} className="bg-amber-50 text-amber-800 border border-amber-200 text-[9px] font-semibold px-2 py-0.5 rounded-md">
+                                    {pObj ? pObj.label : pKey}
+                                  </span>
+                                )
+                              })}
+                            </div>
+                          )}
+                          {s.role !== 'admin' && (!s.permissions || s.permissions.length === 0) && (
+                            <span className="text-[10px] italic text-[#A8A89E]">Tidak ada akses khusus</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <span className="inline-flex items-center gap-1.5 bg-green-50 text-green-700 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-green-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-600 animate-pulse"></span>
+                          Aktif
+                        </span>
+                      </td>
+                      {isAdmin && (
+                        <td className="px-6 py-4 text-right space-x-3 text-xs font-bold">
+                          <button
+                            onClick={() => openEditModal(s)}
+                            className="text-blue-600 hover:text-blue-700 hover:underline cursor-pointer"
+                          >
+                            Edit
+                          </button>
+                          {s.id !== currentUserProfile?.id && (
+                            <button
+                              onClick={() => handleRemoveStaff(s)}
+                              className="text-red-600 hover:text-red-700 hover:underline cursor-pointer"
+                            >
+                              Hapus
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  ))
                 ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
+                  <tr>
+                    <td colSpan={isAdmin ? 5 : 4} className="px-6 py-12 text-center text-[#A8A89E] text-xs font-semibold">
+                      {searchQuery || roleFilter !== 'all'
+                        ? 'Tidak ada anggota tim yang sesuai dengan kata kunci / filter role Anda.'
+                        : 'Belum ada staff yang terdaftar pada unit bisnis ini.'}
+                    </td>
+                  </tr>
                 )}
-              </button>
-            </div>
+              </tbody>
+            </table>
           </div>
-          <button 
-            type="submit" 
-            disabled={myPasswordLoading}
-            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
-          >
-            {myPasswordLoading ? 'Memperbarui...' : 'Simpan Password Baru'}
-          </button>
-        </form>
+        </div>
       </div>
 
-      {/* Card PIN Otorisasi POS (Khusus Approver / Owner) */}
-      {canApprovePos && (
-        <div className="bg-white border border-[#E2E2DC] rounded-xl p-6 shadow-xs max-w-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-[#E2E2DC] pb-3">
-            <div>
-              <h2 className="text-base font-bold text-[#1C1C1A]">PIN Otorisasi POS Saya</h2>
-              <p className="text-xs text-[#6B6B63] mt-0.5">Digunakan saat kasir membutuhkan persetujuan harga khusus di bawah HPP.</p>
-            </div>
-            <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border ${
-              hasPosPin 
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                : 'bg-amber-50 text-amber-700 border-amber-200'
-            }`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${hasPosPin ? 'bg-emerald-600' : 'bg-amber-600'}`}></span>
-              {hasPosPin ? 'PIN Aktif' : 'Belum Diatur'}
-            </span>
-          </div>
-
-          {posPinMessage.text && (
-            <div className={`p-3 rounded-lg text-xs font-semibold ${
-              posPinMessage.type === 'success' 
-                ? 'bg-green-50 border border-green-200 text-green-700' 
-                : 'bg-red-50 border border-red-200 text-red-700'
-            }`}>
-              {posPinMessage.text}
-            </div>
-          )}
-
-          <form onSubmit={handleSavePosPin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
-                PIN Baru (6 Digit Angka)
-              </label>
-              <div className="relative">
-                <input 
-                  type={showPosPin ? 'text' : 'password'}
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  placeholder="Contoh: 182736"
-                  required
-                  className="w-full px-3.5 py-2.5 pr-12 border border-[#E2E2DC] rounded-lg text-sm tracking-widest font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                  value={posPin}
-                  onChange={e => setPosPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPosPin(!showPosPin)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
-                  tabIndex={-1}
-                  aria-label={showPosPin ? 'Sembunyikan PIN' : 'Lihat PIN'}
-                >
-                  {showPosPin ? (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
-                      <line x1="1" y1="1" x2="23" y2="23"/>
-                    </svg>
-                  ) : (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                      <circle cx="12" cy="12" r="3"/>
-                    </svg>
-                  )}
-                </button>
-              </div>
-              <p className="text-[11px] text-[#8C8C82] mt-1">Gunakan kombinasi angka unik yang tidak mudah ditebak (hindari 123456 atau 111111).</p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-1.5">
-                Konfirmasi Password Akun Anda
-              </label>
-              <div className="relative">
-                <input 
-                  type={showPosPassword ? 'text' : 'password'}
-                  placeholder="Masukkan password akun Anda saat ini"
-                  required
-                  className="w-full px-3.5 py-2.5 pr-12 border border-[#E2E2DC] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                  value={posPasswordConfirm}
-                  onChange={e => setPosPasswordConfirm(e.target.value)}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPosPassword(!showPosPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
-                  tabIndex={-1}
-                  aria-label={showPosPassword ? 'Sembunyikan password' : 'Lihat password'}
-                >
-                  {showPosPassword ? (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
-                      <line x1="1" y1="1" x2="23" y2="23"/>
-                    </svg>
-                  ) : (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                      <circle cx="12" cy="12" r="3"/>
-                    </svg>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <button 
-              type="submit" 
-              disabled={posPinLoading || posPin.length !== 6}
-              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
-            >
-              {posPinLoading ? 'Menyimpan...' : (hasPosPin ? 'Perbarui PIN Otorisasi' : 'Atur PIN Otorisasi')}
-            </button>
-          </form>
-        </div>
-      )}
+      {/* Jika admin, tampilkan Keamanan Akun Saya di bawah */}
+      {isAdmin && selfSecuritySection}
 
       {/* MODAL CREATE STAFF */}
       {isModalOpen && mounted && createPortal(

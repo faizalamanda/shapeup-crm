@@ -82,7 +82,15 @@ export default function CartItemEditModal({
     netUnitPrice < costPrice
   )
 
-  const isApproved = Boolean(existingAuthorization || item.authorization)
+  // Evaluasi otorisasi: jika harga bersih diturunkan lebih rendah dari harga yang telah disetujui sebelumnya,
+  // maka otorisasi lama batal dan wajib minta otorisasi ulang.
+  const activeAuth = existingAuthorization || item.authorization
+  const previousApprovedPrice =
+    activeAuth?.proposed_price !== undefined
+      ? Number(activeAuth.proposed_price)
+      : Math.max(0, Number(item.finalPrice || 0) - Number(item.discount || 0))
+
+  const isApproved = Boolean(activeAuth) && netUnitPrice >= previousApprovedPrice
   const isBlocked = isBelowCost && !isApproved && !allowOverride
   const needsAuth = isBelowCost && !isApproved && allowOverride
 
@@ -154,15 +162,7 @@ export default function CartItemEditModal({
           {needsAuth ? (
             <button
               type="button"
-              onClick={() => {
-                if (onRequestAuthorization) {
-                  onRequestAuthorization({
-                    proposedPrice: netUnitPrice,
-                    currentPrice: originalBasePrice,
-                    discountApplied: discount,
-                  })
-                }
-              }}
+              onClick={handleSave}
               className="flex-1 py-2.5 px-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold rounded-xl text-xs transition shadow-md shadow-blue-500/20 active:scale-95 text-center flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <span>🔐</span>
@@ -303,7 +303,7 @@ export default function CartItemEditModal({
             )}
             {isApproved && (
               <p className="text-[11px] text-emerald-800">
-                Disetujui oleh {existingAuthorization?.approved_by_name || item.authorization?.approved_by_name || 'Approver'}
+                Disetujui oleh {activeAuth?.approved_by_name || 'Approver'}
               </p>
             )}
           </div>

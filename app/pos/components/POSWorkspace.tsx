@@ -1449,19 +1449,21 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         subtotal={subtotal}
         requireAuth={Boolean(priceGuardSettings.require_global_discount_auth)}
         existingAuthorization={authorizations.get('global_discount')}
-        onRequestAuthorization={(calculatedDiscount) => {
+        onRequestAuthorization={(data) => {
           setAuthModalState({
             isOpen: true,
             type: 'global_discount',
             title: 'Otorisasi Diskon Global',
-            targetDescription: `Diskon Global Keranjang (Rp ${calculatedDiscount.toLocaleString('id-ID')})`,
-            discountApplied: calculatedDiscount,
+            targetDescription: `Diskon Global Keranjang (Rp ${data.calculatedDiscount.toLocaleString('id-ID')})`,
+            discountApplied: data.calculatedDiscount,
             onSuccessCallback: (authRecord) => {
               setAuthorizations((prev) => {
                 const next = new Map(prev)
                 next.set('global_discount', authRecord)
                 return next
               })
+              setGlobalDiscountType(data.discountType)
+              setGlobalDiscountInput(data.discountValue)
               setIsDiscountModalOpen(false)
             },
           })
@@ -1469,6 +1471,13 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         onApply={(type, val) => {
           setGlobalDiscountType(type)
           setGlobalDiscountInput(val)
+          if (!val || Number(val) <= 0) {
+            setAuthorizations((prev) => {
+              const next = new Map(prev)
+              next.delete('global_discount')
+              return next
+            })
+          }
         }}
       />
 
