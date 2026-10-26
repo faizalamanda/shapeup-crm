@@ -35,6 +35,9 @@ type ProductCachePayload = {
   businessId: string
 }
 
+type SortField = 'sku' | 'name' | 'category' | 'type' | 'stock_type' | 'stock_quantity' | 'cost_price' | 'price'
+type SortOrder = 'asc' | 'desc' | null
+
 interface ToastState {
   id: number
   message: string
@@ -64,6 +67,10 @@ export default function ProductsPage() {
   const [selectedCategory, setSelectedCategory] = useState('')
   const [selectedType, setSelectedType] = useState('')
   const [selectedStockType, setSelectedStockType] = useState('')
+
+  // Sorting State
+  const [sortField, setSortField] = useState<SortField | null>(null)
+  const [sortOrder, setSortOrder] = useState<SortOrder>(null)
 
   // Selection State for Bulk Actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -197,6 +204,21 @@ export default function ProductsPage() {
     }
   }, [activeBusiness, bizLoading, fetchProductsAndCategories])
 
+  // Formatting price helper
+  const formatPrice = useCallback((val: number) => {
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      minimumFractionDigits: 0
+    }).format(val)
+  }, [])
+
+  const getCategoryName = useCallback((product: Product) => {
+    if (!product.categories) return '-'
+    const cat = Array.isArray(product.categories) ? product.categories[0] : product.categories
+    return cat?.name || '-'
+  }, [])
+
   // Trigger refresh (e.g. after add/edit)
   const refreshData = () => {
     if (activeBizId) {
@@ -204,9 +226,54 @@ export default function ProductsPage() {
     }
   }
 
-  // Filtered Products list
+  // Header Column Sort Handler (Tri-state: asc -> desc -> reset)
+  const handleSort = (field: SortField) => {
+    if (sortField !== field) {
+      setSortField(field)
+      setSortOrder('asc')
+    } else if (sortOrder === 'asc') {
+      setSortOrder('desc')
+    } else if (sortOrder === 'desc') {
+      setSortField(null)
+      setSortOrder(null)
+    } else {
+      setSortOrder('asc')
+    }
+  }
+
+  // Render Sortable Header Th
+  const renderSortHeader = (label: string, field: SortField, className = '') => {
+    const isActive = sortField === field
+    return (
+      <th
+        key={field}
+        onClick={() => handleSort(field)}
+        className={`p-4 cursor-pointer select-none group transition-colors hover:bg-gray-100/90 ${className}`}
+        title={`Klik untuk mengurutkan berdasarkan ${label}`}
+      >
+        <div className="flex items-center gap-1.5">
+          <span className={isActive ? 'text-blue-600 font-extrabold' : 'text-gray-500 font-bold'}>
+            {label}
+          </span>
+          <span className="text-[10px] leading-none inline-flex items-center">
+            {isActive ? (
+              sortOrder === 'asc' ? (
+                <span className="text-blue-600 font-bold">▲</span>
+              ) : (
+                <span className="text-blue-600 font-bold">▼</span>
+              )
+            ) : (
+              <span className="text-gray-300 group-hover:text-gray-500 font-normal">↕</span>
+            )}
+          </span>
+        </div>
+      </th>
+    )
+  }
+
+  // Filtered & Sorted Products list
   const filteredProducts = useMemo(() => {
-    return products.filter(p => {
+    const filtered = products.filter(p => {
       const matchesSearch =
         p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (p.sku || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -218,7 +285,67 @@ export default function ProductsPage() {
 
       return matchesSearch && matchesCategory && matchesType && matchesStockType
     })
-  }, [products, searchQuery, selectedCategory, selectedType, selectedStockType])
+
+    if (!sortField || !sortOrder) {
+      return filtered
+    }
+
+    return [...filtered].sort((a, b) => {
+      let comparison = 0
+
+      switch (sortField) {
+        case 'sku': {
+          const skuA = (a.sku || '').trim().toLowerCase()
+          const skuB = (b.sku || '').trim().toLowerCase()
+          if (!skuA && !skuB) comparison = 0
+          else if (!skuA) comparison = 1
+          else if (!skuB) comparison = -1
+          else comparison = skuA.localeCompare(skuB, 'id', { numeric: true, sensitivity: 'base' })
+          break
+        }
+        case 'name': {
+          comparison = a.name.localeCompare(b.name, 'id', { sensitivity: 'base' })
+          break
+        }
+        case 'category': {
+          const catA = getCategoryName(a).toLowerCase()
+          const catB = getCategoryName(b).toLowerCase()
+          comparison = catA.localeCompare(catB, 'id', { sensitivity: 'base' })
+          break
+        }
+        case 'type': {
+          comparison = a.type.localeCompare(b.type)
+          break
+        }
+        case 'stock_type': {
+          // Sort order preference: tracked -> available -> unavailable
+          const stockTypePriority: Record<string, number> = { tracked: 1, available: 2, unavailable: 3 }
+          const prioA = stockTypePriority[a.stock_type] || 99
+          const prioB = stockTypePriority[b.stock_type] || 99
+          comparison = prioA - prioB
+          break
+        }
+        case 'stock_quantity': {
+          const qtyA = a.stock_type === 'tracked' ? a.stock_quantity : -Infinity
+          const qtyB = b.stock_type === 'tracked' ? b.stock_quantity : -Infinity
+          comparison = qtyA - qtyB
+          break
+        }
+        case 'cost_price': {
+          comparison = a.cost_price - b.cost_price
+          break
+        }
+        case 'price': {
+          comparison = a.price - b.price
+          break
+        }
+        default:
+          comparison = 0
+      }
+
+      return sortOrder === 'asc' ? comparison : -comparison
+    })
+  }, [products, searchQuery, selectedCategory, selectedType, selectedStockType, sortField, sortOrder, getCategoryName])
 
   // ─── Selection Helpers ─────────────────────────────────────────────────────
 
@@ -406,20 +533,6 @@ export default function ProductsPage() {
     setIsModalOpen(true)
   }
 
-  // Formatting price helper
-  const formatPrice = (val: number) => {
-    return new Intl.NumberFormat('id-ID', {
-      style: 'currency',
-      currency: 'IDR',
-      minimumFractionDigits: 0
-    }).format(val)
-  }
-
-  const getCategoryName = (product: Product) => {
-    if (!product.categories) return '-'
-    const cat = Array.isArray(product.categories) ? product.categories[0] : product.categories
-    return cat?.name || '-'
-  }
 
   // Preview of selected products for confirmation dialog
   const selectedProductsPreview = useMemo(() => {
@@ -541,22 +654,33 @@ export default function ProductsPage() {
 
         </div>
 
-        {/* Active Filters Clear Indicator */}
-        {(searchQuery || selectedCategory || selectedType || selectedStockType) && (
-          <div className="flex justify-between items-center pt-2 border-t border-gray-100">
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-              Ditemukan {filteredProducts.length} produk hasil filter
-            </span>
+        {/* Active Filters & Sort Clear Indicator */}
+        {(searchQuery || selectedCategory || selectedType || selectedStockType || sortField) && (
+          <div className="flex justify-between items-center pt-2 border-t border-gray-100 flex-wrap gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                Ditemukan {filteredProducts.length} produk hasil filter
+              </span>
+              {sortField && (
+                <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 flex items-center gap-1">
+                  <span>Urutan:</span>
+                  <span className="capitalize">{sortField.replace('_', ' ')}</span>
+                  <span>{sortOrder === 'asc' ? '▲ (Naik)' : '▼ (Turun)'}</span>
+                </span>
+              )}
+            </div>
             <button
               onClick={() => {
                 setSearchQuery('')
                 setSelectedCategory('')
                 setSelectedType('')
                 setSelectedStockType('')
+                setSortField(null)
+                setSortOrder(null)
               }}
               className="text-[10px] font-black text-red-500 hover:text-red-700 uppercase tracking-widest transition-all cursor-pointer"
             >
-              ✖ Bersihkan Filter
+              ✖ Bersihkan Filter & Urutan
             </button>
           </div>
         )}
@@ -587,57 +711,67 @@ export default function ProductsPage() {
       {/* SKELETON LOADER FOR DESKTOP VIEW */}
       {loading && products.length === 0 && (
         <div className="hidden md:block bg-white border border-gray-200 rounded-xl shadow-xs overflow-hidden">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200 uppercase text-[10px] text-gray-400 font-bold tracking-widest">
-                {canDeleteProducts && (
-                  <th className="p-4 w-12 text-center">
-                    <div className="h-4 w-4 bg-slate-200 rounded mx-auto" />
-                  </th>
-                )}
-                <th className="p-4">SKU / Nama</th>
-                <th className="p-4">Kategori</th>
-                <th className="p-4">Jenis</th>
-                <th className="p-4">Stok</th>
-                <th className="p-4">Harga Modal (HPP)</th>
-                <th className="p-4">Harga Jual</th>
-                <th className="p-4 text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {Array.from({ length: 5 }).map((_, index) => (
-                <tr key={`skeleton-row-${index}`} className="animate-pulse">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[980px]">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 uppercase text-[10px] text-gray-400 font-bold tracking-widest">
                   {canDeleteProducts && (
-                    <td className="p-4 w-12 text-center">
+                    <th className="p-4 w-12 text-center">
                       <div className="h-4 w-4 bg-slate-200 rounded mx-auto" />
-                    </td>
+                    </th>
                   )}
-                  <td className="p-4">
-                    <div className="h-4 w-32 bg-slate-200 rounded" />
-                    <div className="h-3 w-16 bg-slate-100 rounded mt-1.5" />
-                  </td>
-                  <td className="p-4">
-                    <div className="h-4 w-20 bg-slate-200 rounded" />
-                  </td>
-                  <td className="p-4">
-                    <div className="h-5 w-14 bg-slate-100 rounded" />
-                  </td>
-                  <td className="p-4">
-                    <div className="h-4 w-16 bg-slate-200 rounded" />
-                  </td>
-                  <td className="p-4">
-                    <div className="h-4 w-24 bg-slate-200 rounded" />
-                  </td>
-                  <td className="p-4">
-                    <div className="h-4 w-24 bg-slate-200 rounded" />
-                  </td>
-                  <td className="p-4 text-right">
-                    <div className="h-8 w-16 bg-slate-200 rounded ml-auto" />
-                  </td>
+                  <th className="p-4">SKU</th>
+                  <th className="p-4">Nama Produk</th>
+                  <th className="p-4">Kategori</th>
+                  <th className="p-4">Jenis</th>
+                  <th className="p-4">Pelacakan</th>
+                  <th className="p-4">Jumlah Stok</th>
+                  <th className="p-4">Harga Modal (HPP)</th>
+                  <th className="p-4">Harga Jual</th>
+                  <th className="p-4 text-right">Aksi</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <tr key={`skeleton-row-${index}`} className="animate-pulse">
+                    {canDeleteProducts && (
+                      <td className="p-4 w-12 text-center">
+                        <div className="h-4 w-4 bg-slate-200 rounded mx-auto" />
+                      </td>
+                    )}
+                    <td className="p-4">
+                      <div className="h-4 w-16 bg-slate-200 rounded" />
+                    </td>
+                    <td className="p-4">
+                      <div className="h-4 w-36 bg-slate-200 rounded" />
+                      <div className="h-3 w-20 bg-slate-100 rounded mt-1.5" />
+                    </td>
+                    <td className="p-4">
+                      <div className="h-4 w-20 bg-slate-200 rounded" />
+                    </td>
+                    <td className="p-4">
+                      <div className="h-5 w-14 bg-slate-100 rounded" />
+                    </td>
+                    <td className="p-4">
+                      <div className="h-5 w-16 bg-slate-100 rounded" />
+                    </td>
+                    <td className="p-4">
+                      <div className="h-4 w-14 bg-slate-200 rounded" />
+                    </td>
+                    <td className="p-4">
+                      <div className="h-4 w-20 bg-slate-200 rounded" />
+                    </td>
+                    <td className="p-4">
+                      <div className="h-4 w-20 bg-slate-200 rounded" />
+                    </td>
+                    <td className="p-4 text-right">
+                      <div className="h-8 w-16 bg-slate-200 rounded ml-auto" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -743,130 +877,156 @@ export default function ProductsPage() {
 
               {/* DESKTOP VIEW (Table Grid) — hidden on mobile */}
               <div className="hidden md:block bg-white border border-gray-200 rounded-xl shadow-xs overflow-hidden">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-200 uppercase text-[10px] text-gray-400 font-bold tracking-widest">
-                      {canDeleteProducts && (
-                        <th className="p-4 w-12 text-center">
-                          <input
-                            ref={selectAllCheckboxRef}
-                            type="checkbox"
-                            checked={allFilteredSelected}
-                            onChange={toggleSelectAllFiltered}
-                            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300 cursor-pointer"
-                            title={allFilteredSelected ? 'Batal pilih semua' : 'Pilih semua di halaman/filter ini'}
-                          />
-                        </th>
-                      )}
-                      <th className="p-4">SKU / Nama</th>
-                      <th className="p-4">Kategori</th>
-                      <th className="p-4">Jenis</th>
-                      <th className="p-4">Stok</th>
-                      <th className="p-4">Harga Modal (HPP)</th>
-                      <th className="p-4">Harga Jual</th>
-                      <th className="p-4 text-right">Aksi</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filteredProducts.map(p => {
-                      const isChecked = selectedIds.has(p.id)
-                      return (
-                        <tr
-                          key={p.id}
-                          className={`transition-colors group ${
-                            isChecked ? 'bg-blue-50/40 hover:bg-blue-50/70' : 'hover:bg-slate-50'
-                          }`}
-                        >
-                          {canDeleteProducts && (
-                            <td className="p-4 w-12 text-center" onClick={e => e.stopPropagation()}>
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => toggleSelectProduct(p.id)}
-                                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300 cursor-pointer"
-                              />
-                            </td>
-                          )}
-                          <td className="p-4">
-                            <div className="font-bold text-gray-800 uppercase text-xs">{p.name}</div>
-                            {p.sku ? (
-                              <div className="text-[10px] font-mono text-gray-400 mt-0.5">SKU: {p.sku}</div>
-                            ) : (
-                              <div className="text-[10px] font-mono text-gray-350 mt-0.5">-</div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse min-w-[980px]">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200 uppercase text-[10px] text-gray-400 font-bold tracking-widest">
+                        {canDeleteProducts && (
+                          <th className="p-4 w-12 text-center">
+                            <input
+                              ref={selectAllCheckboxRef}
+                              type="checkbox"
+                              checked={allFilteredSelected}
+                              onChange={toggleSelectAllFiltered}
+                              className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300 cursor-pointer"
+                              title={allFilteredSelected ? 'Batal pilih semua' : 'Pilih semua di halaman/filter ini'}
+                            />
+                          </th>
+                        )}
+                        {renderSortHeader('SKU', 'sku', 'w-32')}
+                        {renderSortHeader('Nama Produk', 'name', 'min-w-[180px]')}
+                        {renderSortHeader('Kategori', 'category')}
+                        {renderSortHeader('Jenis', 'type')}
+                        {renderSortHeader('Pelacakan', 'stock_type')}
+                        {renderSortHeader('Jumlah Stok', 'stock_quantity')}
+                        {renderSortHeader('Harga Modal (HPP)', 'cost_price')}
+                        {renderSortHeader('Harga Jual', 'price')}
+                        <th className="p-4 text-right">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filteredProducts.map(p => {
+                        const isChecked = selectedIds.has(p.id)
+                        return (
+                          <tr
+                            key={p.id}
+                            className={`transition-colors group ${
+                              isChecked ? 'bg-blue-50/40 hover:bg-blue-50/70' : 'hover:bg-slate-50'
+                            }`}
+                          >
+                            {canDeleteProducts && (
+                              <td className="p-4 w-12 text-center" onClick={e => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => toggleSelectProduct(p.id)}
+                                  className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300 cursor-pointer"
+                                />
+                              </td>
                             )}
-                          </td>
-                          <td className="p-4">
-                            <span className="text-xs font-bold text-gray-500">{getCategoryName(p)}</span>
-                          </td>
-                          <td className="p-4">
-                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase ${
-                              p.type === 'physical'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-100'
-                                : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
-                            }`}>
-                              {p.type === 'physical' ? 'Fisik' : 'Layanan'}
-                            </span>
-                          </td>
-                          <td className="p-4">
-                            {p.stock_type === 'available' && (
-                              <span className="text-[9px] font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded border border-green-100 uppercase">Tersedia</span>
-                            )}
-                            {p.stock_type === 'unavailable' && (
-                              <span className="text-[9px] font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded border border-red-100 uppercase">Tidak Tersedia</span>
-                            )}
-                            {p.stock_type === 'tracked' && (
-                              <div className="flex flex-col">
-                                <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 uppercase w-fit">
-                                  Ditrack
-                                </span>
-                                <span className="text-[11px] font-bold text-gray-700 mt-1">
-                                  {p.stock_quantity} <span className="text-[10px] text-gray-500 font-semibold">{p.unit || 'pcs'}</span>
-                                </span>
-                              </div>
-                            )}
-                          </td>
-                          <td className="p-4">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-bold text-gray-800">{formatPrice(p.cost_price)}</span>
-                              {p.hpp_type === 'variable' ? (
-                                <span className="text-[9px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded w-fit mt-0.5">
-                                  🧪 Resep / BOM
+                            <td className="p-4 whitespace-nowrap">
+                              {p.sku ? (
+                                <span className="font-mono text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-200/80 px-2 py-0.5 rounded">
+                                  {p.sku}
                                 </span>
                               ) : (
-                                <span className="text-[9px] font-medium text-gray-400 mt-0.5">
-                                  Flat
+                                <span className="text-gray-300 font-mono text-xs">-</span>
+                              )}
+                            </td>
+                            <td className="p-4">
+                              <div className="font-extrabold text-gray-900 uppercase text-xs tracking-tight">{p.name}</div>
+                              {p.description && (
+                                <p className="text-[11px] text-gray-400 font-normal line-clamp-1 mt-0.5">{p.description}</p>
+                              )}
+                            </td>
+                            <td className="p-4 whitespace-nowrap">
+                              <span className="text-xs font-bold text-gray-600">{getCategoryName(p)}</span>
+                            </td>
+                            <td className="p-4 whitespace-nowrap">
+                              <span className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase ${
+                                p.type === 'physical'
+                                  ? 'bg-blue-50 text-blue-700 border border-blue-100'
+                                  : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+                              }`}>
+                                {p.type === 'physical' ? 'Fisik' : 'Layanan'}
+                              </span>
+                            </td>
+                            <td className="p-4 whitespace-nowrap">
+                              {p.stock_type === 'tracked' && (
+                                <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 uppercase">
+                                  🔵 Ditrack
                                 </span>
                               )}
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <span className="text-xs font-extrabold text-gray-900">{formatPrice(p.price)}</span>
-                          </td>
-                          <td className="p-4 text-right">
-                            <div className="flex gap-2 justify-end opacity-80 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={() => openEditModal(p)}
-                                className="p-2 text-gray-450 hover:text-blue-600 rounded-md hover:bg-gray-100 transition-colors cursor-pointer"
-                                title="Edit Produk"
-                              >
-                                ✏️
-                              </button>
-                              {canDeleteProducts && (
-                                <button
-                                  onClick={() => openDeleteSingleModal(p)}
-                                  className="p-2 text-gray-450 hover:text-red-600 rounded-md hover:bg-gray-100 transition-colors cursor-pointer"
-                                  title="Hapus Produk"
-                                >
-                                  🗑️
-                                </button>
+                              {p.stock_type === 'available' && (
+                                <span className="text-[9px] font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded border border-green-100 uppercase">
+                                  🟢 Tersedia
+                                </span>
                               )}
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                              {p.stock_type === 'unavailable' && (
+                                <span className="text-[9px] font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded border border-red-100 uppercase">
+                                  🔴 Tidak Tersedia
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-4 whitespace-nowrap">
+                              {p.stock_type === 'tracked' ? (
+                                <div className="flex items-baseline gap-1">
+                                  <span className={`text-xs font-black ${p.stock_quantity <= 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                                    {p.stock_quantity}
+                                  </span>
+                                  <span className="text-[10px] text-gray-400 font-bold uppercase">{p.unit || 'pcs'}</span>
+                                </div>
+                              ) : p.stock_type === 'available' ? (
+                                <span className="text-xs font-bold text-gray-400" title="Tidak dibatasi jumlah stok fisik">
+                                  ∞ Bebas
+                                </span>
+                              ) : (
+                                <span className="text-xs font-bold text-gray-300">-</span>
+                              )}
+                            </td>
+                            <td className="p-4 whitespace-nowrap">
+                              <div className="flex flex-col">
+                                <span className="text-xs font-bold text-gray-800">{formatPrice(p.cost_price)}</span>
+                                {p.hpp_type === 'variable' ? (
+                                  <span className="text-[9px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded w-fit mt-0.5">
+                                    🧪 Resep / BOM
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-medium text-gray-400 mt-0.5">
+                                    Flat
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="p-4 whitespace-nowrap">
+                              <span className="text-xs font-extrabold text-gray-900">{formatPrice(p.price)}</span>
+                            </td>
+                            <td className="p-4 text-right whitespace-nowrap">
+                              <div className="flex gap-2 justify-end opacity-80 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  onClick={() => openEditModal(p)}
+                                  className="p-2 text-gray-450 hover:text-blue-600 rounded-md hover:bg-gray-100 transition-colors cursor-pointer"
+                                  title="Edit Produk"
+                                >
+                                  ✏️
+                                </button>
+                                {canDeleteProducts && (
+                                  <button
+                                    onClick={() => openDeleteSingleModal(p)}
+                                    className="p-2 text-gray-450 hover:text-red-600 rounded-md hover:bg-gray-100 transition-colors cursor-pointer"
+                                    title="Hapus Produk"
+                                  >
+                                    🗑️
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </>
           )}
