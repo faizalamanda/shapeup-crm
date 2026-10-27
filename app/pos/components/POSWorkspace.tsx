@@ -55,6 +55,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   const [accounts, setAccounts] = useState<any[]>([])
   const [posRegisters, setPosRegisters] = useState<any[]>([])
   const [heldOrders, setHeldOrders] = useState<any[]>([])
+  const [activeHoldId, setActiveHoldId] = useState<string | null>(null)
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('')
@@ -167,7 +168,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       { data: regs },
       { count: unpCount },
       lSettings,
-      posSettingsRes
+      posSettingsRes,
+      holdRes
     ] = await Promise.all([
       supabase.from('products').select('*').eq('business_id', bId).order('name', { ascending: true }),
       supabase.from('categories').select('*').eq('business_id', bId).order('name', { ascending: true }),
@@ -176,11 +178,15 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       supabase.from('pos_registers').select('id, name, account_id').eq('business_id', bId).eq('status', 'active').order('name', { ascending: true }),
       supabase.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', bId).eq('source_platform', 'POS').in('payment_status', ['partial', 'unpaid']).neq('status', 'cancelled'),
       fetchLoyaltySettings(supabase, bId).catch(() => null),
-      fetch('/api/settings/pos').then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      fetch('/api/settings/pos').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      fetch('/api/pos/hold').then((r) => (r.ok ? r.json() : null)).catch(() => null)
     ])
 
     setProducts(prods || [])
     setCategories(cats || [])
+    if (holdRes?.heldOrders) {
+      setHeldOrders(holdRes.heldOrders)
+    }
     if (posSettingsRes?.settings) {
       setPriceGuardSettings(posSettingsRes.settings)
     }
@@ -427,6 +433,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   // Hold & Resume
   const handleSaveHoldOrder = async () => {
     if (cart.length === 0) return
+    const currentTargetHoldId = activeHoldId
     try {
       const effectiveOrderNote = orderNote.trim() || undefined
       const res = await fetch('/api/pos/hold', {
@@ -434,6 +441,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'save',
+          hold_id: currentTargetHoldId || null,
           customer_id: selectedCustomer?.id || null,
           customer_name: selectedCustomer?.name || 'Walk-in',
           cart_json: cart,
@@ -447,8 +455,14 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         throw new Error(data?.error || 'Gagal menahan transaksi.')
       }
       if (data?.heldOrder) {
-        setHeldOrders((prev) => [data.heldOrder, ...prev])
+        setHeldOrders((prev) => {
+          if (currentTargetHoldId && prev.some((h) => h.id === currentTargetHoldId)) {
+            return prev.map((h) => (h.id === currentTargetHoldId ? data.heldOrder : h))
+          }
+          return [data.heldOrder, ...prev]
+        })
       }
+      setActiveHoldId(null)
       setCart([])
       setSelectedCustomer(null)
       setOrderNote('')
@@ -465,22 +479,28 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
     }
     if (h.customer_id) {
       setSelectedCustomer({ id: h.customer_id, name: h.customer_name })
+    } else {
+      setSelectedCustomer(null)
     }
     if (h.note) {
       setOrderNote(h.note)
     } else {
       setOrderNote('')
     }
+    setActiveHoldId(h.id)
   }
 
   const handleDeleteHoldOrder = async (holdId: string) => {
     try {
+      setHeldOrders((prev) => prev.filter((h) => h.id !== holdId))
+      if (activeHoldId === holdId) {
+        setActiveHoldId(null)
+      }
       await fetch('/api/pos/hold', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', hold_id: holdId })
       })
-      setHeldOrders((prev) => prev.filter((h) => h.id !== holdId))
     } catch (e) {
       console.error('Failed to delete held order:', e)
     }
@@ -607,6 +627,18 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       setAuthorizations(new Map())
       setCheckingOut(false)
 
+      // Auto-cleanup held draft if order completed from a resumed hold
+      if (activeHoldId) {
+        const completedHoldId = activeHoldId
+        setActiveHoldId(null)
+        setHeldOrders((prev) => prev.filter((h) => h.id !== completedHoldId))
+        fetch('/api/pos/hold', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete', hold_id: completedHoldId })
+        }).catch((err) => console.error('[POS] Failed to cleanup completed hold:', err))
+      }
+
       // 2. Background Sync (Fire-and-Forget)
       fetch('/api/pos/order', {
         method: 'POST',
@@ -721,13 +753,35 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
 
         {cart.length > 0 && (
           <button
-            onClick={() => setCart([])}
+            onClick={() => {
+              setCart([])
+              setActiveHoldId(null)
+              setSelectedCustomer(null)
+              setOrderNote('')
+            }}
             className="text-xs text-rose-600 hover:text-rose-800 font-semibold px-2 py-1 rounded-lg hover:bg-rose-50 transition shrink-0 whitespace-nowrap"
           >
             Kosongkan
           </button>
         )}
       </div>
+
+      {activeHoldId && (
+        <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200/70 flex items-center justify-between text-xs text-amber-900 shrink-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm">📥</span>
+            <span className="font-semibold text-[11px]">Mengedit Draft Hold</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveHoldId(null)}
+            className="text-[10px] text-amber-700 hover:text-amber-950 font-bold underline cursor-pointer"
+            title="Lepas tautan draft agar disimpan sebagai transaksi hold baru"
+          >
+            Lepas Tautan
+          </button>
+        </div>
+      )}
 
       {/* Cart Item List (Moka-style Clean Receipt Rows) */}
       <div className="flex-1 overflow-y-auto p-1 divide-y divide-slate-100">
@@ -931,11 +985,15 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
               handleSaveHoldOrder()
             }}
             disabled={cart.length === 0}
-            className="py-2.5 px-3 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold rounded-xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0 flex items-center gap-1 cursor-pointer"
-            title="Simpan Pesanan Sementara (Hold)"
+            className={`py-2.5 px-3 border font-bold rounded-xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0 flex items-center gap-1 cursor-pointer ${
+              activeHoldId
+                ? 'border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 shadow-2xs'
+                : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700'
+            }`}
+            title={activeHoldId ? 'Perbarui Transaksi Ditahan (Update Hold)' : 'Simpan Pesanan Sementara (Hold)'}
           >
             <span>⏸️</span>
-            <span>Hold</span>
+            <span>{activeHoldId ? 'Update Hold' : 'Hold'}</span>
           </button>
           <button
             type="button"

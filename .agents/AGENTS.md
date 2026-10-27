@@ -50,6 +50,17 @@
      - Akun staf **DILARANG KERAS** membuat bisnis baru. Tombol `➕ Buat Bisnis Baru` wajib diproteksi dengan kondisi `isOwner === true` (bukan `role === 'admin'`). Tombol `⚙️ Kelola Bisnis` hanya dapat diakses oleh `isOwner` atau staf berwewenang `currentUserRole === 'admin'` untuk mengelola profil cabang yang aktif tanpa hak membuat cabang baru.
      - Endpoint `POST /api/business` wajib memvalidasi kepemilikan dan mengembalikan `403 Forbidden` jika dipanggil oleh akun staf (`!isOwner && isStaff`).
    - **Hardening RPC `SECURITY DEFINER`:** Setiap fungsi database berstatus `SECURITY DEFINER` yang menerima parameter `p_business_id` (seperti fungsi analitik atau laporan) **WAJIB** menyertakan guard klausul di awal fungsi untuk memverifikasi bahwa pemanggil (`auth.uid()`) adalah pemilik (`owner_id`) atau staf resmi (`business_staff`) dari `p_business_id` tersebut.
+   - **Staff Self-Service Settings vs Admin Business Hierarchy:**
+     - Staf wajib memiliki akses mandiri ke rute `/settings/staff` untuk mengubah kata sandi akunnya sendiri dan mengatur PIN Otorisasi POS (jika ditunjuk sebagai Approver).
+     - Rute `/settings/staff` wajib diizinkan di `canAccessPath()`, namun seluruh rute setting unit/bisnis (`/settings/business`, `/settings/pos`, `/settings/inventory`, `/settings/integrations`) wajib diblokir ketat khusus Owner & Admin (`role === 'admin' || permissions.includes('full_access')`).
+     - Layout sidebar utama (`app/layout.tsx`) secara dinamis mengarahkan tombol Settings ke `/settings/business` untuk Owner/Admin dan ke `/settings/staff` untuk Staf.
+     - Submenu internal `SettingsLayout.tsx` secara dinamis hanya menampilkan kelompok "Akun & Keamanan" bagi Staf, dan menyembunyikan seluruh submenu bisnis.
+
+15. **Robust Multi-Tenant RLS Policy for Shifts & Accounting Operations:**
+   - Kebijakan RLS tabel multi-tenant (`accounts`, `pos_shifts`, `pos_shift_movements`, `order_payments`, `transactions`) **DILARANG KERAS** hanya mengandalkan kolom tunggal `profiles.active_business_id = business_id`.
+   - **WAJIB** menyertakan klausul union:
+     `business_id IN (SELECT id FROM businesses WHERE owner_id = auth.uid() UNION SELECT business_id FROM business_staff WHERE profile_id = auth.uid()) OR business_id = (SELECT active_business_id FROM profiles WHERE id = auth.uid())`
+     Hal ini menjamin staf yang ditugaskan di unit bisnis tidak pernah mengalami kegagalan RLS (*403 / zero rows returned*) saat membuka shift kasir atau menjurnal akun operasional meskipun ada latensi sinkronisasi pada profil pengguna.
 
 
 ## Performance Rules
@@ -211,4 +222,17 @@
    - **Cashier Primary Action Color Psychology:** Tombol checkout utama "Bayar" **WAJIB** menggunakan warna solid berbobot tinggi: **Royal Blue (`bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white`)** dengan kontras chip nominal `bg-blue-800/50`. DILARANG KERAS menggunakan warna pink, magenta, atau gradien pastel yang mengurangi keterbacaan kasir.
    - **Item Auto-Wrap & Full-Width Notes:** Nama produk panjang pada struk keranjang wajib menggunakan `line-clamp-2 break-words` agar tidak memotong kolom harga di sebelah kanan. Catatan item wajib berbentuk balok penuh (*full-width block*) di bawah baris harga dengan `break-words whitespace-normal` tanpa terpotong ellipsis (`...`).
 
+15. **Manager Price Guard, Omnichannel Discount Gating & Atomic Commit Standards:**
+   - **Zero-Knowledge HPP:** Kasir **DILARANG KERAS** melihat nominal numerik HPP (*cost price*) atau angka harga minimum di antarmuka kasir. Evaluasi batas margin dihitung di memori komponen dan hanya menampilkan notifikasi minimal `⚠️ Harga di bawah batas minimum`.
+   - **Otorisasi Personal & Rate-Limited PIN:** Approver PIN (6 digit) disimpan dengan salt kriptografis scrypt di `pos_approver_pins` dan proteksi lockout (5x salah berturut-turut $\rightarrow$ akun terkunci 5 menit).
+   - **Atomic Auto-Commit & Auto-Dismiss:** Saat otorisasi berhasil divalidasi, payload otorisasi dan nilai diskon global / harga bersih baru **WAJIB langsung di-commit secara atomik ke state keranjang belanja** di dalam `onSuccessCallback`, dan kedua modal langsung tertutup bersamaan (*auto-dismiss*) tanpa klik ekstra (0 redundant click). Dilarang keras menutup modal tanpa meng-commit nilai diskon.
+   - **Re-Authorization on Modification:** Mengubah nilai atau tipe diskon global (`isValueChanged === true`), atau menurunkan harga bersih item lebih rendah daripada harga yang telah disetujui sebelumnya (`netUnitPrice < previousApprovedPrice`), otomatis membatalkan otorisasi lama dan mewajibkan otorisasi ulang dari manajer/approver.
+   - **Server-Side Enforcement:** Endpoint `POST /api/pos/order` memvalidasi ulang seluruh baris pesanan terhadap HPP dan status otorisasi di database. Transaksi dengan harga di bawah HPP yang belum diotorisasi ditolak dengan HTTP 422.
+
+16. **POS Held Orders Lifecycle, In-Place Upsert & Auto-Cleanup Standards:**
+   - **State Tracking (`activeHoldId`):** Setiap transaksi hold yang di-resume oleh kasir **WAJIB** dilacak dengan state `activeHoldId`. Komponen keranjang kasir wajib menampilkan indikator visual aktif ("Mengedit Draft Hold") serta mengubah label tombol Hold menjadi "Update Hold" dengan aksen amber.
+   - **In-Place Upsert (Zero Duplication):** Menyimpan kembali transaksi yang sedang aktif wajib menyertakan `hold_id` dan dieksekusi via `.update(...)` pada baris yang sama di tabel `pos_held_orders` (dilarang melakukan `.insert()` duplikat). Kolom `created_at` diperbarui ke waktu sekarang (`now()`) agar draf terbaru naik ke urutan teratas.
+   - **Tenant-Isolated Admin Client (`dbClient = supabaseAdmin || supabase`):** Endpoint `/api/pos/hold` wajib menggunakan fallback `supabaseAdmin` dengan pembatasan ketat `.eq('business_id', businessId)` untuk menjamin integritas transaksi draf tidak pernah gagal akibat latensi sinkronisasi sesi profil pengguna (`profiles.active_business_id`).
+   - **Auto-Cleanup on Settlement (Zero Orphan Drafts):** Ketika transaksi kasir berhasil diselesaikan/dibayar hingga cetak struk, sistem wajib secara otomatis menghapus hold terkait dari database via *fire-and-forget background delete* tanpa menambah latensi kasir (0ms latency).
+   - **Parallel Initial Loading:** Pengambilan daftar pesanan tertahan (`GET /api/pos/hold`) wajib dimasukkan ke dalam `Promise.all` saat inisialisasi awal kasir (`POSWorkspace.tsx`) agar daftar draf langsung tampil tanpa memperpanjang waktu loading.
 

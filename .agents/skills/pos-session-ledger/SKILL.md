@@ -460,3 +460,34 @@ Setiap kali otorisasi disetujui (baik item harga satuan maupun diskon global):
   - **Diskon Global:** Jika kasir membuka kembali modal diskon global dan mengubah nilai atau tipe potongan (`isValueChanged === true`), status otorisasi lama otomatis menjadi tidak valid (`isApproved = false`). Tombol berubah menjadi `🔐 Minta Otorisasi Diskon` dan manajer wajib mengotorisasi ulang nilai diskon yang baru.
   - **Item Keranjang:** Jika kasir membuka kembali modal edit item dan menurunkan harga bersih lebih rendah daripada harga yang diotorisasi sebelumnya (`netUnitPrice < previousApprovedPrice`), status otorisasi otomatis batal dan wajib meminta otorisasi baru.
   - **Penghapusan Diskon:** Jika kasir menghapus diskon (nilai = 0 atau tombol Hapus), diskon dibatalkan dan rekaman otorisasi terkait dihapus dari memori keranjang tanpa memerlukan PIN.
+
+---
+
+## 15. POS Held Orders Lifecycle, Anti-Duplication Upsert & Auto-Cleanup Standard
+
+Dalam operasional ritel & kasir yang sibuk, pelanggan sering kali menunda pembayaran sementara untuk mengambil barang tambahan (*Hold Order*). Sistem POS ShapeUp CRM menerapkan standar baku untuk mengelola siklus hidup pesanan tertahan (*Held Orders*) agar tercegah dari duplikasi dan data yatim (*orphan drafts*):
+
+### 15.1 In-Place Upsert Anti-Duplikasi (Zero Duplication)
+- **Pelacakan Status Aktif (`activeHoldId`):**
+  - Ketika kasir me-resume pesanan tertahan dari modal draf via `handleResumeHoldOrder(h)`, sistem wajib menyimpan `h.id` ke dalam React state `activeHoldId`.
+  - Di atas keranjang belanja ditampilkan indikator visual yang jelas (`📥 Mengedit Draft Hold`) dan tombol aksi utama berubah label menjadi **"Update Hold"** (dengan aksen warna amber).
+- **In-Place Update di Database (`pos_held_orders`):**
+  - Saat kasir menekan tombol "Update Hold", endpoint `POST /api/pos/hold` memeriksa keberadaan parameter `hold_id`.
+  - Jika `hold_id` valid, endpoint mengeksekusi perintah SQL `.update(...)` pada baris yang sama (bukan membuat baris baru).
+  - Kolom timestamp `created_at` diperbarui ke waktu sekarang (`now()`) agar draf yang baru saja diupdate otomatis naik ke urutan teratas pada daftar draf kasir.
+  - Di sisi antarmuka, state lokal `heldOrders` menggantikan entri lama secara *in-place*, sehingga jumlah transaksi tertahan tetap konsisten (1 draf) tanpa duplikasi ganda.
+
+### 15.2 Auto-Cleanup Saat Transaksi Selesai (Zero Orphan Records)
+- Ketika kasir menyelesaikan pembayaran atas keranjang yang berasal dari draf hold (`activeHoldId !== null`):
+  - Sistem langsung mengosongkan keranjang dan menampilkan struk pembayaran (0ms latency bagi kasir & pembeli).
+  - Secara bersamaan, sistem memicu pembersihan draf di latar belakang (*Optimistic Fire-and-Forget*):
+    `POST /api/pos/hold` dengan body `{ action: 'delete', hold_id: completedHoldId }`.
+  - Draf tersebut otomatis terhapus dari tabel `pos_held_orders` dan hilang dari modal draf kasir, mencegah draf basi yang sudah lunas dibuka kembali secara tidak sengaja.
+
+### 15.3 Isolasi Multi-Tenant Kebal RLS (`dbClient = supabaseAdmin || supabase`)
+- Untuk mencegah draf gagal tersimpan/ter-update akibat latensi sinkronisasi kolom `profiles.active_business_id` pada akun staf kasir, endpoint `/api/pos/hold` menggunakan `dbClient = supabaseAdmin || supabase`.
+- Operasi database selalu diproteksi secara ketat dengan filter ganda `.eq('id', hold_id).eq('business_id', businessId)`. Integritas *multi-tenant* tetap terisolasi 100% dan proses *upsert* dijamin kebal kegagalan otentikasi sesi.
+
+### 15.4 Parallel Initial Loading (0ms Latency Overhead)
+- Saat antarmuka POS pertama kali dimuat (`POSWorkspace.tsx`), pemanggilan `GET /api/pos/hold` disatukan ke dalam `Promise.all` bersama katalog produk, kategori, dan bagan akun.
+- Kasir yang melakukan *refresh browser* atau membuka sesi kasir baru akan langsung melihat jumlah draf aktif tanpa latensi jaringan tambahan.
