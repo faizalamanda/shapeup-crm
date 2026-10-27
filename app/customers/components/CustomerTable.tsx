@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom'
 const formatIDR = (val: number) =>
   new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Math.round(val || 0))
 
+const CUSTOMER_TABLE_GRID_COLUMNS = '200px 1.1fr 1.3fr 95px 65px 95px 120px 110px 95px 64px'
+
 const TODAY = new Date()
 
 function getInitials(name: string): string {
@@ -302,7 +304,7 @@ function CustomerDesktopRow({
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '200px 1.1fr 1.3fr 95px 65px 95px 120px 110px 95px 64px',
+        gridTemplateColumns: CUSTOMER_TABLE_GRID_COLUMNS,
         alignItems: 'center',
         gap: 0,
         cursor: 'pointer',
@@ -688,11 +690,11 @@ export function CustomerTable({
         }}>
           {/* Horizontal scroll container for table */}
           <div className="overflow-x-auto">
-            <div style={{ minWidth: '1050px' }}>
+            <div style={{ minWidth: '1080px' }}>
               {/* Table Header */}
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: '200px 1.1fr 1.3fr 95px 65px 120px 110px 95px 64px',
+                gridTemplateColumns: CUSTOMER_TABLE_GRID_COLUMNS,
                 background: '#FAFAF8',
                 borderBottom: '1px solid var(--su-border)',
                 height: '38px',
