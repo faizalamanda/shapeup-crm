@@ -46,11 +46,18 @@ Dokumen skill ini menetapkan arsitektur standar untuk sistem Kasir / Point of Sa
   - Misal: Tunai Rp 50.000 + QRIS Rp 50.000 untuk total belanja Rp 100.000.
   - Masing-masing disimpan sebagai baris terpisah di `order_payments`.
 
-### 2.2 Integrasi Akuntansi Kas & Bank (Direct General Ledger Asset Binding)
+### 2.2 Integrasi Akuntansi Kas & Bank & Hybrid Tender Engine (Multi-QRIS & Laci Kas Fisik)
 - Sesuai standar POS kelas ERP (Odoo, NetSuite, SAP), setiap metode pembayaran di antarmuka kasir terikat langsung ke akun Aset Kas & Bank riil dari Bagan Akun (*Chart of Accounts*):
-  - Akun Kas POS: `101000 Kas POS (Tunai)`
-  - Akun Rekening Bank / QRIS: `101200 Bank / QRIS POS`, `101201 Bank BCA`, `101202 Bank Mandiri`, dsb.
+  - Akun Kas POS: `101000 Kas POS (Tunai)` / register laci shift aktif
+  - Akun Rekening Bank / QRIS: `101200 Bank / QRIS POS`, `101201 QRIS BCA`, `101202 QRIS Mandiri`, `101101 Bank BCA`, dsb.
   - Akun Kas Utama: `101100 Kas Utama`
+- **1-Click Cashier Ergonomics vs Chart of Accounts Abstraction:**
+  - Kasir memilih metode melalui tombol-tombol cepat (`💵 Tunai (Laci Kasir)`, `📱 QRIS BCA`, `📱 QRIS Mandiri`, `💳 EDC BCA`), bukan dropdown buku besar akuntansi mentah.
+  - Pemilihan tombol `Tunai` otomatis mengikat penerimaan kas ke laci fisik shift kasir yang aktif (`expected_cash`).
+  - Pemilihan tombol `QRIS` atau `Bank` otomatis mendebit rekening bank penerbit tanpa mencemari uang fisik di laci kasir.
+- **Konfigurasi Dedicated Tender di `/settings/pos`:**
+  - Pemilik toko dapat mengatur nama tombol, mengaktifkan/menonaktifkan tender, serta menambah multi-QRIS & multi-bank yang dipetakan ke akun Aset COA.
+  - Jika belum dikonfigurasi, sistem menerapkan *Smart Auto-Classification Fallback* dari COA secara otomatis.
 - Ketika transaksi dibayar:
   - Jurnal penerimaan kas mendebit langsung ke `payment_method_account_id` yang dipilih kasir tanpa perantara *clearing account* yang menggantung.
   - Saldo kas laci kasir dan saldo rekening bank di buku besar langsung bertambah secara presisi dan siap direkonsiliasi.
@@ -61,9 +68,9 @@ Sistem memisahkan dua konsep pemecahan secara tegas dan mendukung keduanya secar
    - **Mode A: Split by Item (Pecah per Menu):** Kasir mencentang menu tertentu untuk diselesaikan pada Sub-Bill 1. Sisa item yang belum dibayar otomatis diberi label penegasan **`SISA ITEM (BELUM LUNAS)`**.
    - **Mode B: Split Equal (Bagi Rata):** Tagihan dibagi rata ke $N$ orang (@ `grandTotal / N`). Porsi orang pertama dibayar, porsi sisanya ditandai **`BELUM LUNAS`**.
 2. **Split Tender (Pecah Metode Bayar):**
-   - Kasir menekan tombol `+ Tambah Pembayaran` untuk menambah baris pembayaran baru dalam 1 tagihan atau sub-bill.
+   - Kasir menekan tombol `+ Tambah Pembayaran (Split)` untuk menambah baris pembayaran baru dalam 1 tagihan atau sub-bill.
    - Sistem secara otomatis menghitung sisa nominal yang belum tertutup (`remaining = target - sum(lines)`).
-   - Setiap baris memilih akun Kas & Bank masing-masing dan mencatat rincian uang tunai / no. referensi EDC.
+   - Setiap baris memiliki tombol tender masing-masing (misal: Baris 1 Tunai Rp 50.000 + Baris 2 QRIS Mandiri Rp 50.000).
 
 ### 2.4 Cicilan & Uang Muka (Partial Payment / DP)
 - Jika pelanggan membayar kurang dari tagihan (`amount_paid < grand_total`):
@@ -75,7 +82,7 @@ Sistem memisahkan dua konsep pemecahan secara tegas dan mendukung keduanya secar
 
 ### 2.5 Standar Antarmuka Kasir Ultra-Minimalis (Zero-Clutter)
 - Mengacu pada hukum **Hick-Hyman**, beban kognitif kasir dioptimalkan dengan:
-  - **Nol Ikon Dekoratif:** Dilarang menggunakan emoji atau ikon kartun dekoratif (`💵`, `📱`, `💳`, `🔀`, `✓`, `⏳`) pada modal pembayaran yang membuat antarmuka sesak.
+  - **Glif Fungsional vs Ikon Dekoratif:** Simbol kategori pembayaran (`💵`, `📱`, `💳`, `🏦`) diizinkan murni sebagai penanda fungsional cepat (*glanceable tender category glyphs*) pada tombol kasir, namun dilarang menumpuk emoji kartun dekoratif non-fungsional (`✓`, `⏳`, `🎉`, dll) yang membuat antarmuka sesak.
   - **Hirarki Tipografi Monokrom:** Penegasan informasi menggunakan ketebalan teks (`slate-950`), kontras angka nominal, dan badge status fungsional (Emerald untuk `LUNAS`, Amber/Rose untuk `BELUM LUNAS` / `SISA PIUTANG`).
 
 ---

@@ -1448,6 +1448,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           variantName: c.selectedVariant?.name
         }))}
         accounts={accounts}
+        activeShift={activeShift}
+        activeRegisterAccountId={activeShift?.register_id ? posRegisters.find((r) => r.id === activeShift.register_id)?.account_id : null}
         businessId={activeBusiness?.id}
         onConfirmPayment={handleConfirmCheckout}
       />

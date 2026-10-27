@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
+import { resolveBusinessTenders, type POSTender, type TenderCategory } from '@/lib/pos/tenderResolver'
 
 export type PaymentMethod = 'cash' | 'bank' | 'qris'
 
@@ -58,6 +59,9 @@ type Props = {
   grandTotal: number
   cartItems?: CartItemForSplit[]
   accounts?: CashBankAccount[]
+  customTenders?: POSTender[]
+  activeRegisterAccountId?: string | null
+  activeShift?: any
   businessId?: string
   title?: string
   subtitle?: string
@@ -67,6 +71,7 @@ type Props = {
 
 type TenderLine = {
   id: string
+  tenderId?: string
   accountId: string
   amount: number
   cashReceived: number
@@ -82,6 +87,9 @@ export default function CashPaymentModal({
   grandTotal,
   cartItems = [],
   accounts: propAccounts,
+  customTenders: propCustomTenders,
+  activeRegisterAccountId,
+  activeShift,
   businessId,
   title,
   subtitle,
@@ -156,6 +164,23 @@ export default function CashPaymentModal({
     return () => { isSubscribed = false }
   }, [isOpen, propAccounts, businessId])
 
+  // Fetch custom tenders from settings API if not passed via props
+  const [fetchedCustomTenders, setFetchedCustomTenders] = useState<POSTender[] | null>(null)
+
+  useEffect(() => {
+    if (!isOpen || !businessId || propCustomTenders) return
+    let isSubscribed = true
+    fetch('/api/settings/pos/tenders')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.customTenders && isSubscribed) {
+          setFetchedCustomTenders(data.customTenders)
+        }
+      })
+      .catch(() => null)
+    return () => { isSubscribed = false }
+  }, [isOpen, businessId, propCustomTenders])
+
   // Filtered list of Cash & Bank accounts (Code 101xxx or bank_cash)
   const cashBankAccounts = useMemo(() => {
     const list = fetchedAccounts.filter(
@@ -172,24 +197,55 @@ export default function CashPaymentModal({
     ]
   }, [fetchedAccounts])
 
-  // Helper to check if an account represents physical cash
-  const isAccountCash = useCallback((accId: string): boolean => {
+  // Resolved list of POS Tenders (Hybrid: Settings or Smart COA auto-classification)
+  const tenderOptions = useMemo(() => {
+    return resolveBusinessTenders({
+      accounts: cashBankAccounts,
+      customTenders: propCustomTenders || fetchedCustomTenders,
+      activeRegisterAccountId
+    })
+  }, [cashBankAccounts, propCustomTenders, fetchedCustomTenders, activeRegisterAccountId])
+
+  // Helper to check if an account or tender represents physical cash
+  const isAccountCash = useCallback((accId: string, tenderId?: string): boolean => {
+    if (tenderId) {
+      const t = tenderOptions.find((o) => o.id === tenderId)
+      if (t) return t.category === 'cash'
+    }
+    const tByAcc = tenderOptions.find((o) => o.account_id === accId)
+    if (tByAcc) return tByAcc.category === 'cash'
+
     const acc = cashBankAccounts.find((a) => a.id === accId)
     if (!acc) return false
     const code = acc.code || ''
     const name = (acc.name || '').toLowerCase()
-    return code === '101000' || code === '101100' || name.includes('kas') || name.includes('tunai')
-  }, [cashBankAccounts])
+    return code === '101000' || name.includes('kas laci') || (name.includes('kas') && !name.includes('bank')) || name.includes('tunai')
+  }, [cashBankAccounts, tenderOptions])
 
   // Map account to standard method string
-  const getAccountMethod = useCallback((accId: string): PaymentMethod => {
+  const getAccountMethod = useCallback((accId: string, tenderId?: string): PaymentMethod => {
+    if (tenderId) {
+      const t = tenderOptions.find((o) => o.id === tenderId)
+      if (t) {
+        if (t.category === 'cash') return 'cash'
+        if (t.category === 'qris') return 'qris'
+        return 'bank'
+      }
+    }
+    const tByAcc = tenderOptions.find((o) => o.account_id === accId)
+    if (tByAcc) {
+      if (tByAcc.category === 'cash') return 'cash'
+      if (tByAcc.category === 'qris') return 'qris'
+      return 'bank'
+    }
+
     const acc = cashBankAccounts.find((a) => a.id === accId)
     if (!acc) return 'cash'
     const name = (acc.name || '').toLowerCase()
     if (isAccountCash(accId)) return 'cash'
     if (name.includes('qris')) return 'qris'
     return 'bank'
-  }, [cashBankAccounts, isAccountCash])
+  }, [cashBankAccounts, isAccountCash, tenderOptions])
 
   // Compute active bill target amount based on bill mode
   const activeBillTarget = useMemo(() => {
@@ -219,6 +275,24 @@ export default function CashPaymentModal({
     return Math.max(0, grandTotal - activeBillTarget)
   }, [grandTotal, activeBillTarget])
 
+  // Select tender for a specific tender line
+  const handleSelectTenderForLine = (lineId: string, tender: POSTender) => {
+    const isCash = tender.category === 'cash'
+    setTenderLines((prev) =>
+      prev.map((l) => {
+        if (l.id !== lineId) return l
+        const currentAmount = Number(l.amount) || grandTotal
+        return {
+          ...l,
+          tenderId: tender.id,
+          accountId: tender.account_id,
+          cashReceived: isCash ? Math.max(currentAmount, l.cashReceived || currentAmount) : currentAmount,
+          referenceNumber: isCash ? '' : l.referenceNumber
+        }
+      })
+    )
+  }
+
   // Reset state on open
   useEffect(() => {
     if (isOpen) {
@@ -235,19 +309,26 @@ export default function CashPaymentModal({
         setSelectedItemIds(new Set())
       }
 
-      // Default primary tender line
-      const defaultAcc = cashBankAccounts[0] || { id: 'default-pos-cash', code: '101000', name: 'Kas Laci POS (Tunai)' }
+      // Default primary tender line: prioritize Cash Tender
+      const defaultTender = tenderOptions.find((t) => t.category === 'cash') || tenderOptions[0]
+      const defaultAcc = defaultTender
+        ? cashBankAccounts.find((a) => a.id === defaultTender.account_id)
+        : cashBankAccounts[0]
+
+      const fallbackAccId = defaultTender?.account_id || defaultAcc?.id || 'default-pos-cash'
+
       setTenderLines([
         {
           id: 'line-1',
-          accountId: defaultAcc.id,
+          tenderId: defaultTender?.id,
+          accountId: fallbackAccId,
           amount: grandTotal,
           cashReceived: grandTotal,
           referenceNumber: ''
         }
       ])
     }
-  }, [isOpen, grandTotal, defaultMode]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOpen, grandTotal, defaultMode, tenderOptions]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // When activeBillTarget changes, if only 1 line exists, keep it synced
   useEffect(() => {
@@ -310,15 +391,19 @@ export default function CashPaymentModal({
   // Add tender line (Split Tender)
   const handleAddTenderLine = () => {
     const unallocated = Math.max(0, activeBillTarget - totalTenderAmount)
-    // Pick an account not yet used, or default to second account
+    // Pick a tender not yet used, or default to second tender
     const usedAccIds = new Set(tenderLines.map((l) => l.accountId))
-    const candidateAcc = cashBankAccounts.find((a) => !usedAccIds.has(a.id)) || cashBankAccounts[1] || cashBankAccounts[0]
+    const candidateTender = tenderOptions.find((t) => !usedAccIds.has(t.account_id)) || tenderOptions[1] || tenderOptions[0]
+    const candidateAcc = candidateTender
+      ? cashBankAccounts.find((a) => a.id === candidateTender.account_id)
+      : cashBankAccounts[1] || cashBankAccounts[0]
 
     setTenderLines((prev) => [
       ...prev,
       {
         id: 'line-' + Date.now(),
-        accountId: candidateAcc?.id || 'default-pos-bank',
+        tenderId: candidateTender?.id,
+        accountId: candidateTender?.account_id || candidateAcc?.id || 'default-pos-bank',
         amount: unallocated,
         cashReceived: unallocated,
         referenceNumber: ''
@@ -391,11 +476,13 @@ export default function CashPaymentModal({
       .filter((l) => Number(l.amount) > 0)
       .map((l) => {
         const acc = cashBankAccounts.find((a) => a.id === l.accountId)
-        const isCash = isAccountCash(l.accountId)
-        const method = getAccountMethod(l.accountId)
+        const isCash = isAccountCash(l.accountId, l.tenderId)
+        const method = getAccountMethod(l.accountId, l.tenderId)
+        const tenderObj = tenderOptions.find((t) => t.id === l.tenderId || t.account_id === l.accountId)
         const amt = Number(l.amount)
         const cashRec = isCash ? Number(l.cashReceived || amt) : amt
         const change = isCash ? Math.max(0, cashRec - amt) : 0
+        const tenderDisplayName = tenderObj?.name || acc?.name || (isCash ? 'Tunai (Laci Kasir)' : 'Transfer Bank')
 
         return {
           account_id: l.accountId,
@@ -408,7 +495,7 @@ export default function CashPaymentModal({
           cash_received: cashRec,
           change_amount: change,
           reference_number: l.referenceNumber.trim() || undefined,
-          notes: acc ? `Pembayaran via ${acc.code} ${acc.name}` : undefined
+          notes: `Pembayaran via ${tenderDisplayName} (${acc?.code || 'COA'})`
         }
       })
 
@@ -667,58 +754,96 @@ export default function CashPaymentModal({
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                Alokasi Akun Kas & Bank (Split Tender)
+                Metode Pembayaran (Split Tender)
               </span>
               <button
                 type="button"
                 onClick={handleAddTenderLine}
-                className="text-xs font-bold text-slate-900 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                className="text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-lg transition cursor-pointer"
               >
-                + Tambah Pembayaran
+                + Tambah Pembayaran (Split)
               </button>
             </div>
 
             <div className="space-y-3">
               {tenderLines.map((line, idx) => {
-                const isCash = isAccountCash(line.accountId)
+                const isCash = isAccountCash(line.accountId, line.tenderId)
                 const currentAcc = cashBankAccounts.find((a) => a.id === line.accountId)
+                const activeTender = tenderOptions.find((t) => t.id === line.tenderId || t.account_id === line.accountId)
                 const cashChange = isCash ? Math.max(0, line.cashReceived - line.amount) : 0
                 const isCashShort = isCash && line.cashReceived < line.amount
+
+                const categoryIcons: Record<string, string> = {
+                  cash: '💵',
+                  qris: '📱',
+                  bank: '🏦',
+                  edc: '💳'
+                }
 
                 return (
                   <div
                     key={line.id}
                     className="p-3.5 border border-slate-200 rounded-xl bg-white space-y-3 shadow-2xs"
                   >
-                    {/* Tender Header: Account Selector & Delete */}
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex-1">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                          Pembayaran #{idx + 1} — Akun Kas & Bank Akuntansi:
+                    {/* Tender Header: Quick Method Buttons & Delete */}
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                          Pembayaran #{idx + 1} — Pilih Metode:
                         </label>
-                        <select
-                          value={line.accountId}
-                          onChange={(e) => handleUpdateLine(line.id, { accountId: e.target.value })}
-                          className="w-full text-xs font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer"
-                        >
-                          {cashBankAccounts.map((acc) => (
-                            <option key={acc.id} value={acc.id}>
-                              [{acc.code}] {acc.name}
-                            </option>
-                          ))}
-                        </select>
+                        {tenderLines.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTenderLine(line.id)}
+                            className="text-xs text-rose-600 hover:text-rose-800 font-bold px-2 py-0.5 rounded hover:bg-rose-50 transition cursor-pointer"
+                            title="Hapus baris pembayaran ini"
+                          >
+                            ✕ Hapus
+                          </button>
+                        )}
                       </div>
 
-                      {tenderLines.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveTenderLine(line.id)}
-                          className="self-end text-xs text-rose-600 hover:text-rose-800 font-bold px-2 py-1.5 rounded hover:bg-rose-50 transition cursor-pointer"
-                          title="Hapus baris pembayaran ini"
-                        >
-                          Hapus
-                        </button>
-                      )}
+                      {/* Quick Tender Buttons (1-Click Cashier Ergonomics) */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {tenderOptions.map((t) => {
+                          const isSelected = line.accountId === t.account_id && (!line.tenderId || line.tenderId === t.id)
+
+                          return (
+                            <button
+                              key={t.id}
+                              type="button"
+                              onClick={() => handleSelectTenderForLine(line.id, t)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                                isSelected
+                                  ? 'bg-blue-600 text-white shadow-xs'
+                                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
+                              }`}
+                            >
+                              <span>{categoryIcons[t.category] || '💳'}</span>
+                              <span>{t.name}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      {/* Explicit Drawer & Account Badge */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] px-1 text-slate-500 gap-1 pt-0.5">
+                        {isCash ? (
+                          <span className="text-emerald-700 font-bold flex items-center gap-1">
+                            <span>💵</span>
+                            <span>Uang Fisik Masuk Laci Kasir (Shift Aktif)</span>
+                          </span>
+                        ) : (
+                          <span className="text-blue-700 font-semibold flex items-center gap-1">
+                            <span>📱</span>
+                            <span>Non-Tunai • Rekening Bank Toko (Tanpa Kas di Laci)</span>
+                          </span>
+                        )}
+
+                        <span className="text-[10px] text-slate-400">
+                          Akun Buku Besar: [{currentAcc?.code || activeTender?.account_code || '101xxx'}] {currentAcc?.name || activeTender?.name}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Nominal Input & Cash Handling */}

@@ -38,6 +38,44 @@ export default function POSSettingsPage() {
   const [selectedApproverIds, setSelectedApproverIds] = useState<Set<string>>(new Set())
   const [resettingUserId, setResettingUserId] = useState<string | null>(null)
 
+  // Active Tab: 'tenders' | 'protection'
+  const [activeTab, setActiveTab] = useState<'tenders' | 'protection'>('tenders')
+
+  // Tenders State
+  const [tenders, setTenders] = useState<any[]>([])
+  const [availableAccounts, setAvailableAccounts] = useState<any[]>([])
+  const [loadingTenders, setLoadingTenders] = useState(true)
+  const [savingTenders, setSavingTenders] = useState(false)
+  const [tenderSuccess, setTenderSuccess] = useState(false)
+  const [tenderError, setTenderError] = useState<string | null>(null)
+
+  // Add Tender Modal State
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false)
+  const [newTenderName, setNewTenderName] = useState('')
+  const [newTenderCategory, setNewTenderCategory] = useState<'cash' | 'qris' | 'bank' | 'edc'>('qris')
+  const [newTenderAccountId, setNewTenderAccountId] = useState('')
+
+  const fetchTenders = useCallback(async () => {
+    if (!activeBusinessId) return
+    setLoadingTenders(true)
+    setTenderError(null)
+    try {
+      const res = await fetch('/api/settings/pos/tenders')
+      const json = await res.json()
+      if (res.ok && json.success) {
+        setTenders(json.customTenders || json.resolvedTenders || [])
+        setAvailableAccounts(json.availableAccounts || [])
+      } else {
+        throw new Error(json.error || 'Gagal memuat metode pembayaran')
+      }
+    } catch (err: any) {
+      console.error('Fetch tenders error:', err)
+      setTenderError(err.message || 'Gagal memuat metode pembayaran')
+    } finally {
+      setLoadingTenders(false)
+    }
+  }, [activeBusinessId])
+
   const fetchSettings = useCallback(async () => {
     if (!activeBusinessId) {
       setLoading(false)
@@ -81,8 +119,9 @@ export default function POSSettingsPage() {
   useEffect(() => {
     if (activeBusinessId) {
       fetchSettings()
+      fetchTenders()
     }
-  }, [activeBusinessId, fetchSettings])
+  }, [activeBusinessId, fetchSettings, fetchTenders])
 
   const handleToggleApprover = (userId: string, isOwnerUser: boolean) => {
     if (isOwnerUser) return // Owner is always approver
@@ -128,6 +167,70 @@ export default function POSSettingsPage() {
     }
   }
 
+  const handleToggleTenderActive = (tenderId: string) => {
+    setTenders((prev) =>
+      prev.map((t) => (t.id === tenderId ? { ...t, is_active: !t.is_active } : t))
+    )
+  }
+
+  const handleUpdateTenderName = (tenderId: string, name: string) => {
+    setTenders((prev) =>
+      prev.map((t) => (t.id === tenderId ? { ...t, name } : t))
+    )
+  }
+
+  const handleRemoveTender = (tenderId: string) => {
+    setTenders((prev) => prev.filter((t) => t.id !== tenderId))
+  }
+
+  const handleAddTenderSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newTenderName.trim() || !newTenderAccountId) return
+
+    const acc = availableAccounts.find((a) => a.id === newTenderAccountId)
+    const newTender = {
+      id: `tender-${Date.now()}`,
+      name: newTenderName.trim(),
+      category: newTenderCategory,
+      account_id: newTenderAccountId,
+      account_code: acc?.code,
+      account_name: acc?.name,
+      is_active: true,
+      sort_order: tenders.length + 1
+    }
+
+    setTenders((prev) => [...prev, newTender])
+    setNewTenderName('')
+    setNewTenderAccountId('')
+    setIsAddModalOpen(false)
+  }
+
+  const handleSaveTenders = async () => {
+    setSavingTenders(true)
+    setTenderSuccess(false)
+    setTenderError(null)
+
+    try {
+      const res = await fetch('/api/settings/pos/tenders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenders })
+      })
+
+      const json = await res.json()
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Gagal menyimpan metode pembayaran')
+      }
+
+      setTenderSuccess(true)
+      setTimeout(() => setTenderSuccess(false), 3500)
+    } catch (err: any) {
+      setTenderError(err.message || 'Terjadi kesalahan saat menyimpan')
+    } finally {
+      setSavingTenders(false)
+    }
+  }
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     setSaving(true)
@@ -168,7 +271,7 @@ export default function POSSettingsPage() {
 
   if (bizLoading) {
     return (
-      <SettingsLayout title="Kasir POS & Proteksi HPP" subtitle="Memuat informasi unit bisnis...">
+      <SettingsLayout title="Pengaturan Kasir POS" subtitle="Memuat informasi unit bisnis...">
         <div className="bg-white rounded-2xl border border-[#E2E2DC] p-12 flex flex-col items-center justify-center min-h-[350px] gap-3">
           <div className="w-8 h-8 border-3 border-[#E2E2DC] border-t-blue-600 rounded-full animate-spin" />
           <p className="text-xs font-bold uppercase tracking-widest text-[#A8A89E]">Memeriksa Unit Bisnis Aktif...</p>
@@ -179,14 +282,14 @@ export default function POSSettingsPage() {
 
   if (!isAdminOrOwner) {
     return (
-      <SettingsLayout title="Kasir POS & Proteksi HPP" subtitle="Akses terbatas untuk Pemilik & Admin">
+      <SettingsLayout title="Pengaturan Kasir POS" subtitle="Akses terbatas untuk Pemilik & Admin">
         <div className="bg-white border border-[#E2E2DC] rounded-xl p-8 text-center space-y-4 max-w-xl mx-auto shadow-sm">
           <div className="w-12 h-12 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center text-xl mx-auto">
             🚫
           </div>
           <h2 className="text-xl font-bold text-[#1C1C1A]">Akses Dibatasi</h2>
           <p className="text-xs text-[#6B6B63]">
-            Halaman Pengaturan POS & Proteksi HPP hanya dapat diakses oleh Pemilik Unit Bisnis atau staf dengan wewenang Admin.
+            Halaman Pengaturan POS hanya dapat diakses oleh Pemilik Unit Bisnis atau staf dengan wewenang Admin.
           </p>
         </div>
       </SettingsLayout>
@@ -195,22 +298,209 @@ export default function POSSettingsPage() {
 
   return (
     <SettingsLayout
-      title="Kasir POS & Proteksi HPP"
-      subtitle={`Pengaturan proteksi harga jual minimum HPP, otorisasi diskon, dan penunjukan approver untuk ${activeBusinessName || 'Unit Bisnis'}`}
+      title="Pengaturan Kasir POS"
+      subtitle={`Pengaturan metode pembayaran kasir, tombol QRIS/Bank, dan proteksi harga HPP untuk ${activeBusinessName || 'Unit Bisnis'}`}
     >
       <div className="max-w-4xl space-y-6">
-        <div className="bg-white border border-[#E2E2DC] rounded-2xl shadow-xs p-6 md:p-8 space-y-6">
-          <div className="flex items-center gap-3 border-b border-[#E2E2DC] pb-5">
-            <div className="w-12 h-12 rounded-xl bg-blue-50 border border-blue-100 text-blue-600 font-extrabold flex items-center justify-center text-2xl">
-              🛡️
+        
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-2 border-b border-[#E2E2DC] pb-4">
+          <button
+            type="button"
+            onClick={() => setActiveTab('tenders')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+              activeTab === 'tenders'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-100 border border-[#E2E2DC]'
+            }`}
+          >
+            <span>💳</span>
+            <span>Metode Pembayaran Kasir (Tenders)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('protection')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+              activeTab === 'protection'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-100 border border-[#E2E2DC]'
+            }`}
+          >
+            <span>🛡️</span>
+            <span>Proteksi Margin & HPP</span>
+          </button>
+        </div>
+
+        {/* ── TAB 1: METODE PEMBAYARAN KASIR (TENDERS) ── */}
+        {activeTab === 'tenders' && (
+          <div className="bg-white border border-[#E2E2DC] rounded-2xl shadow-xs p-6 md:p-8 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E2E2DC] pb-5">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-blue-50 border border-blue-100 text-blue-600 font-extrabold flex items-center justify-center text-2xl">
+                  💳
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-[#1C1C1A]">Tombol Metode Pembayaran Kasir (POS Tenders)</h2>
+                  <p className="text-xs text-[#6B6B63]">
+                    Atur tombol pembayaran yang tampil di layar kasir. Hubungkan setiap tombol ke rekening Bank atau Laci Kasir.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setNewTenderName('')
+                  setNewTenderCategory('qris')
+                  if (availableAccounts.length > 0) {
+                    setNewTenderAccountId(availableAccounts[0].id)
+                  }
+                  setIsAddModalOpen(true)
+                }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 self-start sm:self-auto cursor-pointer"
+              >
+                <span>+ Tambah Metode (QRIS / Bank)</span>
+              </button>
             </div>
-            <div>
-              <h2 className="text-lg font-bold text-[#1C1C1A]">Proteksi Margin & Otorisasi Transaksi Kasir</h2>
-              <p className="text-xs text-[#6B6B63]">
-                Kendalikan harga jual di POS agar tidak mengalami kerugian akibat margin negatif di bawah HPP atau diskon tanpa izin.
-              </p>
-            </div>
+
+            {tenderError && (
+              <div className="p-4 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-center gap-2">
+                <span>⚠️</span>
+                <span>{tenderError}</span>
+              </div>
+            )}
+
+            {tenderSuccess && (
+              <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-2 animate-in fade-in">
+                <span>✅</span>
+                <span>Daftar tombol metode pembayaran kasir berhasil disimpan!</span>
+              </div>
+            )}
+
+            {loadingTenders ? (
+              <div className="p-12 text-center text-xs font-bold text-slate-400 animate-pulse">
+                Memuat daftar metode pembayaran...
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="p-4 bg-blue-50/70 border border-blue-100 rounded-xl text-xs text-blue-900 leading-relaxed space-y-1">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <span>💡</span>
+                    <span>Informasi Laci Kas & Multi-QRIS:</span>
+                  </div>
+                  <p className="text-[11px] text-blue-800">
+                    • <strong>Tunai (Laci Kasir):</strong> Uang tunai otomatis masuk ke laci fisik shift kasir yang aktif dan menambah saldo kas faktual laci.<br />
+                    • <strong>Multi-QRIS & Bank:</strong> Anda bisa menambahkan lebih dari satu QRIS (misal: QRIS BCA dan QRIS Mandiri). Setiap transaksi QRIS/Bank langsung didebit ke akun bank terkait tanpa mencemari uang fisik di laci kasir.
+                  </p>
+                </div>
+
+                {/* Tender List Table/Cards */}
+                <div className="space-y-3">
+                  {tenders.map((tender, idx) => {
+                    const isCash = tender.category === 'cash'
+                    const categoryBadges: Record<string, { label: string; icon: string; style: string }> = {
+                      cash: { label: 'Tunai Laci', icon: '💵', style: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+                      qris: { label: 'QRIS', icon: '📱', style: 'bg-blue-50 text-blue-800 border-blue-200' },
+                      bank: { label: 'Transfer Bank', icon: '🏦', style: 'bg-purple-50 text-purple-800 border-purple-200' },
+                      edc: { label: 'Mesin EDC', icon: '💳', style: 'bg-amber-50 text-amber-800 border-amber-200' }
+                    }
+                    const badge = categoryBadges[tender.category] || categoryBadges.bank
+
+                    return (
+                      <div
+                        key={tender.id || idx}
+                        className={`p-4 border rounded-xl transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                          tender.is_active ? 'bg-white border-slate-200 shadow-2xs' : 'bg-slate-50 border-slate-200 opacity-60'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-xl shrink-0">
+                            {badge.icon}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={tender.name}
+                                onChange={(e) => handleUpdateTenderName(tender.id, e.target.value)}
+                                className="font-bold text-sm text-slate-900 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-600 focus:outline-none transition px-1 py-0.5"
+                                placeholder="Nama Tombol di Kasir"
+                              />
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${badge.style}`}>
+                                {badge.label}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 px-1 mt-0.5">
+                              Akun GL: <strong>[{tender.account_code || 'COA'}]</strong> {tender.account_name || 'Akun Kas & Bank'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Controls: Active toggle and delete */}
+                        <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                          <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={tender.is_active}
+                              onChange={() => handleToggleTenderActive(tender.id)}
+                              className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                            />
+                            <span>{tender.is_active ? 'Aktif di Kasir' : 'Nonaktif'}</span>
+                          </label>
+
+                          {!isCash && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveTender(tender.id)}
+                              className="text-xs text-rose-600 hover:text-rose-800 font-bold px-2 py-1 rounded hover:bg-rose-50 transition cursor-pointer"
+                              title="Hapus metode ini"
+                            >
+                              Hapus
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Save Tenders Button */}
+                <div className="pt-4 border-t border-[#E2E2DC] flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleSaveTenders}
+                    disabled={savingTenders}
+                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-extrabold shadow-sm hover:shadow transition disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                  >
+                    {savingTenders ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>Menyimpan Perubahan...</span>
+                      </>
+                    ) : (
+                      <span>💾 Simpan Tombol Pembayaran POS</span>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
+        )}
+
+        {/* ── TAB 2: PROTEKSI MARGIN & HPP ── */}
+        {activeTab === 'protection' && (
+          <div className="bg-white border border-[#E2E2DC] rounded-2xl shadow-xs p-6 md:p-8 space-y-6">
+            <div className="flex items-center gap-3 border-b border-[#E2E2DC] pb-5">
+              <div className="w-12 h-12 rounded-xl bg-blue-50 border border-blue-100 text-blue-600 font-extrabold flex items-center justify-center text-2xl">
+                🛡️
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-[#1C1C1A]">Proteksi Margin & Otorisasi Transaksi Kasir</h2>
+                <p className="text-xs text-[#6B6B63]">
+                  Kendalikan harga jual di POS agar tidak mengalami kerugian akibat margin negatif di bawah HPP atau diskon tanpa izin.
+                </p>
+              </div>
+            </div>
 
           {loading ? (
             <div className="p-12 text-center text-xs font-bold text-slate-400 animate-pulse">
@@ -469,7 +759,135 @@ export default function POSSettingsPage() {
             </form>
           )}
         </div>
+        )}
+
       </div>
+
+      {/* Modal Tambah Metode Pembayaran POS */}
+      {isAddModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden flex flex-col">
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <h3 className="font-bold text-slate-900 text-sm">Tambah Metode Pembayaran Kasir</h3>
+              <button
+                type="button"
+                onClick={() => setIsAddModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleAddTenderSubmit} className="p-5 space-y-4">
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">
+                  Kategori Metode:
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewTenderCategory('qris')
+                      if (!newTenderName) setNewTenderName('QRIS')
+                    }}
+                    className={`py-2 px-2 rounded-xl border text-xs font-bold flex flex-col items-center gap-1 transition ${
+                      newTenderCategory === 'qris'
+                        ? 'bg-blue-50 border-blue-600 text-blue-700 shadow-xs'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>📱</span>
+                    <span>QRIS</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewTenderCategory('bank')
+                      if (!newTenderName) setNewTenderName('Transfer Bank')
+                    }}
+                    className={`py-2 px-2 rounded-xl border text-xs font-bold flex flex-col items-center gap-1 transition ${
+                      newTenderCategory === 'bank'
+                        ? 'bg-blue-50 border-blue-600 text-blue-700 shadow-xs'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>🏦</span>
+                    <span>Transfer</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewTenderCategory('edc')
+                      if (!newTenderName) setNewTenderName('Mesin EDC')
+                    }}
+                    className={`py-2 px-2 rounded-xl border text-xs font-bold flex flex-col items-center gap-1 transition ${
+                      newTenderCategory === 'edc'
+                        ? 'bg-blue-50 border-blue-600 text-blue-700 shadow-xs'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>💳</span>
+                    <span>EDC</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">
+                  Nama Tombol di Kasir:
+                </label>
+                <input
+                  type="text"
+                  value={newTenderName}
+                  onChange={(e) => setNewTenderName(e.target.value)}
+                  placeholder="Contoh: QRIS BCA Toko, Transfer Mandiri..."
+                  required
+                  className="w-full px-3.5 py-2 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block mb-1">
+                  Hubungkan ke Akun Bagan Akun (COA):
+                </label>
+                <select
+                  value={newTenderAccountId}
+                  onChange={(e) => setNewTenderAccountId(e.target.value)}
+                  required
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
+                >
+                  <option value="" disabled>Pilih Akun Kas & Bank...</option>
+                  {availableAccounts.map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      [{acc.code}] {acc.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Uang yang diterima dari tombol ini akan otomatis masuk ke saldo akun buku besar ini.
+                </p>
+              </div>
+
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddModalOpen(false)}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 transition"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={!newTenderName.trim() || !newTenderAccountId}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition disabled:opacity-50"
+                >
+                  Tambahkan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </SettingsLayout>
   )
 }
