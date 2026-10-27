@@ -108,12 +108,20 @@ export default function CashPaymentModal({
   const [isSplitTenderOpen, setIsSplitTenderOpen] = useState(false)
   const [isReceiptDetailsOpen, setIsReceiptDetailsOpen] = useState(false)
 
-  // 3. Akun Kas & Bank dan Metode Tender
+  // 3. Status Alur Pecah Metode (Split Tender) & Form Satu-Satu Saja
+  const [isSplitMode, setIsSplitMode] = useState(false)
+  const [editingLineId, setEditingLineId] = useState<string | null>(null)
+  const [formTenderId, setFormTenderId] = useState<string>('')
+  const [formAccountId, setFormAccountId] = useState<string>('')
+  const [formAmount, setFormAmount] = useState<number>(0)
+  const [formReferenceNumber, setFormReferenceNumber] = useState<string>('')
+
+  // 4. Akun Kas & Bank dan Metode Tender
   const [fetchedAccounts, setFetchedAccounts] = useState<CashBankAccount[]>([])
   const [loadingAccounts, setLoadingAccounts] = useState<boolean>(false)
   const [fetchedCustomTenders, setFetchedCustomTenders] = useState<POSTender[] | null>(null)
 
-  // 4. Baris Pembayaran (Tender Lines)
+  // 5. Baris Pembayaran (Tender Lines)
   const [tenderLines, setTenderLines] = useState<TenderLine[]>([])
 
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -282,6 +290,10 @@ export default function CashPaymentModal({
       const fallbackAccId = defaultTender?.account_id || defaultAcc?.id || 'default-pos-cash'
       const isCash = defaultTender ? defaultTender.category === 'cash' : true
 
+      setIsSplitMode(false)
+      setIsSplitTenderOpen(false)
+      setEditingLineId(null)
+
       setTenderLines([
         {
           id: 'line-1',
@@ -295,10 +307,10 @@ export default function CashPaymentModal({
     }
   }, [isOpen, grandTotal, defaultMode, tenderOptions]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sinkronisasi target tagihan saat split bill berubah
+  // Sinkronisasi target tagihan saat split bill berubah (jika belum dipecah manual)
   useEffect(() => {
     setTenderLines((prev) => {
-      if (prev.length <= 1 && prev[0]) {
+      if (!isSplitMode && prev.length <= 1 && prev[0]) {
         const isCash = isAccountCash(prev[0].accountId, prev[0].tenderId)
         return [
           {
@@ -310,7 +322,7 @@ export default function CashPaymentModal({
       }
       return prev
     })
-  }, [activeBillTarget, isAccountCash])
+  }, [activeBillTarget, isAccountCash, isSplitMode])
 
   // Baris pembayaran utama
   const primaryLine = tenderLines[0] || {
@@ -385,6 +397,139 @@ export default function CashPaymentModal({
       prev.map((l) => (l.id === id ? { ...l, ...updates } : l))
     )
     setErrorMsg(null)
+  }
+
+  // Buka modal untuk menambah pembayaran baru (1 per 1)
+  const openAddTenderModal = () => {
+    const unallocated = Math.max(0, activeBillTarget - totalTenderAmount)
+    const usedAccountIds = new Set(tenderLines.map((l) => l.accountId))
+    const candidate =
+      tenderOptions.find((t) => !usedAccountIds.has(t.account_id)) || tenderOptions[1] || tenderOptions[0]
+
+    setEditingLineId(null)
+    setFormTenderId(candidate?.id || '')
+    setFormAccountId(candidate?.account_id || 'default-pos-bank')
+    setFormAmount(unallocated)
+    setFormReferenceNumber('')
+    setIsSplitTenderOpen(true)
+  }
+
+  // Buka modal untuk mengedit satu baris pembayaran
+  const openEditTenderModal = (line: TenderLine) => {
+    setIsSplitMode(true)
+    setEditingLineId(line.id)
+    setFormTenderId(line.tenderId || '')
+    setFormAccountId(line.accountId)
+    setFormAmount(line.amount)
+    setFormReferenceNumber(line.referenceNumber || '')
+    setIsSplitTenderOpen(true)
+  }
+
+  // Hapus satu baris pembayaran
+  const handleDeleteTenderLine = (id: string) => {
+    setTenderLines((prev) => {
+      const filtered = prev.filter((l) => l.id !== id)
+      if (filtered.length === 0) {
+        setIsSplitMode(false)
+        const defaultT = tenderOptions[0]
+        return [
+          {
+            id: 'line-1',
+            tenderId: defaultT?.id,
+            accountId: defaultT?.account_id || 'default-pos-cash',
+            amount: activeBillTarget,
+            cashReceived: defaultT?.category === 'cash' ? 0 : activeBillTarget,
+            referenceNumber: ''
+          }
+        ]
+      }
+      return filtered
+    })
+  }
+
+  // Simpan form pembayaran tunggal (tambah baru atau edit)
+  const handleSaveTenderForm = () => {
+    if (formAmount <= 0) {
+      setErrorMsg('Nominal pembayaran harus lebih besar dari Rp 0.')
+      return
+    }
+
+    const isCash = isAccountCash(formAccountId, formTenderId)
+
+    if (editingLineId) {
+      setTenderLines((prev) =>
+        prev.map((l) => {
+          if (l.id === editingLineId) {
+            return {
+              ...l,
+              tenderId: formTenderId,
+              accountId: formAccountId,
+              amount: formAmount,
+              cashReceived: formAmount,
+              referenceNumber: isCash ? '' : formReferenceNumber.trim()
+            }
+          }
+          return l
+        })
+      )
+    } else {
+      const newLine: TenderLine = {
+        id: 'line-' + Date.now(),
+        tenderId: formTenderId,
+        accountId: formAccountId,
+        amount: formAmount,
+        cashReceived: formAmount,
+        referenceNumber: isCash ? '' : formReferenceNumber.trim()
+      }
+      setTenderLines((prev) => [...prev, newLine])
+    }
+
+    setIsSplitMode(true)
+    setIsSplitTenderOpen(false)
+    setErrorMsg(null)
+  }
+
+  // Mulai alur pecah metode dari workstation utama
+  const handleStartSplitTender = () => {
+    setIsSplitMode(true)
+    if (primaryLine.cashReceived > 0 && primaryLine.cashReceived < activeBillTarget) {
+      setTenderLines([
+        {
+          ...primaryLine,
+          amount: primaryLine.cashReceived,
+          cashReceived: primaryLine.cashReceived
+        }
+      ])
+      const remaining = activeBillTarget - primaryLine.cashReceived
+      const usedAcc = new Set([primaryLine.accountId])
+      const candidate =
+        tenderOptions.find((t) => !usedAcc.has(t.account_id)) || tenderOptions[1] || tenderOptions[0]
+
+      setEditingLineId(null)
+      setFormTenderId(candidate?.id || '')
+      setFormAccountId(candidate?.account_id || 'default-pos-bank')
+      setFormAmount(remaining)
+      setFormReferenceNumber('')
+      setIsSplitTenderOpen(true)
+    } else {
+      openEditTenderModal(primaryLine)
+    }
+  }
+
+  // Kembalikan ke 1 metode tunggal
+  const handleResetToSingleTender = () => {
+    setIsSplitMode(false)
+    const defaultT = tenderOptions[0]
+    setTenderLines([
+      {
+        id: 'line-1',
+        tenderId: defaultT?.id,
+        accountId: defaultT?.account_id || 'default-pos-cash',
+        amount: activeBillTarget,
+        cashReceived: defaultT?.category === 'cash' ? 0 : activeBillTarget,
+        referenceNumber: ''
+      }
+    ])
   }
 
   // Input Numpad (HANYA MENGISI UANG DITERIMA KASIR)
@@ -539,7 +684,8 @@ export default function CashPaymentModal({
   const activeTenderObj = tenderOptions.find((t) => t.id === primaryLine.tenderId) || tenderOptions[0]
   const isShortOfCash = isPrimaryCash && primaryLine.cashReceived < primaryLine.amount
   const unallocatedSplitAmount = Math.max(0, activeBillTarget - totalTenderAmount)
-  const isSplitTenderActive = tenderLines.length > 1
+  const isSplitTenderActive =
+    isSplitMode || tenderLines.length > 1 || (tenderLines.length === 1 && tenderLines[0].amount < activeBillTarget)
 
   return (
     <FullScreenModal
@@ -795,13 +941,19 @@ export default function CashPaymentModal({
                         Tagihan dipecah ke beberapa akun kas/bank secara bersamaan
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsSplitTenderOpen(true)}
-                      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs cursor-pointer"
-                    >
-                      ✏️ Ubah Pembagian
-                    </button>
+                    {totalTenderAmount < activeBillTarget ? (
+                      <button
+                        type="button"
+                        onClick={openAddTenderModal}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs cursor-pointer flex items-center gap-1 transition"
+                      >
+                        <span>➕ Tambah</span>
+                      </button>
+                    ) : (
+                      <span className="text-emerald-700 font-extrabold text-[11px] bg-emerald-100 px-2 py-0.5 rounded-full">
+                        ✓ Pas
+                      </span>
+                    )}
                   </div>
 
                   {/* List Baris Pembayaran yang Tersimpan */}
@@ -810,11 +962,18 @@ export default function CashPaymentModal({
                       const isCash = isAccountCash(line.accountId, line.tenderId)
                       const currentAcc = cashBankAccounts.find((a) => a.id === line.accountId)
                       const activeTender = tenderOptions.find((t) => t.id === line.tenderId || t.account_id === line.accountId)
+                      const categoryIcons: Record<string, string> = {
+                        cash: '💵',
+                        qris: '📱',
+                        bank: '🏦',
+                        edc: '💳'
+                      }
+                      const icon = categoryIcons[activeTender?.category || 'bank'] || (isCash ? '💵' : '🏦')
 
                       return (
-                        <div key={line.id} className="p-2.5 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between text-xs">
+                        <div key={line.id} className="p-2.5 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between text-xs hover:border-slate-300 transition">
                           <div className="flex items-center gap-2">
-                            <span className="text-base">{isCash ? '💵' : '🏦'}</span>
+                            <span className="text-base">{icon}</span>
                             <div>
                               <div className="font-bold text-slate-900">
                                 #{idx + 1} {activeTender?.name || currentAcc?.name}
@@ -824,65 +983,98 @@ export default function CashPaymentModal({
                               </div>
                             </div>
                           </div>
-                          <div className="font-mono font-black text-sm text-slate-900">
-                            {formatIDR(line.amount)}
+                          <div className="flex items-center gap-2">
+                            <div className="font-mono font-black text-sm text-slate-900">
+                              {formatIDR(line.amount)}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => openEditTenderModal(line)}
+                                className="px-2 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-bold cursor-pointer transition shadow-2xs"
+                                title="Ubah Pembayaran Ini"
+                              >
+                                ✏️
+                              </button>
+                              {tenderLines.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteTenderLine(line.id)}
+                                  className="px-2 py-1 rounded-lg bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 hover:border-rose-200 text-[11px] font-bold cursor-pointer transition shadow-2xs"
+                                  title="Hapus Pembayaran Ini"
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       )
                     })}
                   </div>
 
+                  {/* TOMBOL TAMBAH PAYMENT JIKA KURANG (SESUAI REQUEST USER) */}
+                  {totalTenderAmount < activeBillTarget && (
+                    <button
+                      type="button"
+                      onClick={openAddTenderModal}
+                      className="w-full py-2.5 sm:py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-extrabold text-xs sm:text-sm shadow-sm flex items-center justify-center gap-2 transition cursor-pointer animate-in fade-in"
+                    >
+                      <span className="text-base">➕</span>
+                      <span>Tambah Pembayaran</span>
+                      <span className="font-mono text-xs bg-indigo-500/80 px-2.5 py-0.5 rounded-full text-indigo-100 font-bold">
+                        (Kurang {formatIDR(activeBillTarget - totalTenderAmount)})
+                      </span>
+                    </button>
+                  )}
+
                   {/* Rangkuman Alokasi Pas vs Belum Pas */}
-                  <div className="p-3 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-between text-xs">
+                  <div className="p-2.5 sm:p-3 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-between text-xs">
                     <div>
-                      <span className="text-slate-500 font-semibold block text-[11px]">Total Tagihan:</span>
-                      <span className="font-mono font-bold text-slate-800 text-sm">{formatIDR(activeBillTarget)}</span>
+                      <span className="text-slate-500 font-semibold block text-[10px] sm:text-[11px]">Total Tagihan:</span>
+                      <span className="font-mono font-bold text-slate-800 text-xs sm:text-sm">{formatIDR(activeBillTarget)}</span>
                     </div>
                     <div className="text-center">
-                      <span className="text-slate-500 font-semibold block text-[11px]">Total Terbagi:</span>
-                      <span className="font-mono font-black text-slate-900 text-sm">{formatIDR(totalTenderAmount)}</span>
+                      <span className="text-slate-500 font-semibold block text-[10px] sm:text-[11px]">Total Terbagi:</span>
+                      <span className="font-mono font-black text-slate-900 text-xs sm:text-sm">{formatIDR(totalTenderAmount)}</span>
                     </div>
                     <div className="text-right">
-                      <span className="text-slate-500 font-semibold block text-[11px]">Status:</span>
+                      <span className="text-slate-500 font-semibold block text-[10px] sm:text-[11px]">Status:</span>
                       {totalTenderAmount === activeBillTarget ? (
                         <span className="text-emerald-700 font-extrabold text-[11px] bg-emerald-100 px-2 py-0.5 rounded-full">
                           ✓ Alokasi Pas
                         </span>
-                      ) : (
+                      ) : totalTenderAmount < activeBillTarget ? (
                         <span className="text-rose-700 font-extrabold text-[11px] bg-rose-100 px-2 py-0.5 rounded-full">
                           Kurang {formatIDR(activeBillTarget - totalTenderAmount)}
+                        </span>
+                      ) : (
+                        <span className="text-amber-700 font-extrabold text-[11px] bg-amber-100 px-2 py-0.5 rounded-full">
+                          Lebih {formatIDR(totalTenderAmount - activeBillTarget)}
                         </span>
                       )}
                     </div>
                   </div>
                 </div>
 
-                {/* Tombol Reset ke 1 Metode Tunggal */}
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                {/* Tombol Reset ke 1 Metode Tunggal & Tambah Pembayaran Lain */}
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
                   <button
                     type="button"
-                    onClick={() => {
-                      const defaultT = tenderOptions[0]
-                      setTenderLines([{
-                        id: 'line-1',
-                        tenderId: defaultT?.id,
-                        accountId: defaultT?.account_id || 'default-pos-cash',
-                        amount: activeBillTarget,
-                        cashReceived: defaultT?.category === 'cash' ? 0 : activeBillTarget,
-                        referenceNumber: ''
-                      }])
-                    }}
-                    className="text-xs font-bold text-rose-600 hover:text-rose-800 cursor-pointer"
+                    onClick={handleResetToSingleTender}
+                    className="font-bold text-rose-600 hover:text-rose-800 cursor-pointer transition"
                   >
                     Kembali ke 1 Metode Tunggal
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsSplitTenderOpen(true)}
-                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
-                  >
-                    + Tambah Akun Lain
-                  </button>
+                  {totalTenderAmount >= activeBillTarget && (
+                    <button
+                      type="button"
+                      onClick={openAddTenderModal}
+                      className="font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer transition flex items-center gap-1"
+                    >
+                      <span>+ Tambah Pembayaran Lain</span>
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -896,7 +1088,7 @@ export default function CashPaymentModal({
                     </span>
                     <button
                       type="button"
-                      onClick={() => setIsSplitTenderOpen(true)}
+                      onClick={handleStartSplitTender}
                       className="text-xs font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer"
                     >
                       <span>+ Pecah Metode (Split Tender)</span>
@@ -1287,21 +1479,30 @@ export default function CashPaymentModal({
       )}
 
       {/* ========================================================================= */}
-      {/* POP-UP 2: PECAH METODE BAYAR (SPLIT TENDER — 1 KOLOM INPUT NOMINAL)       */}
+      {/* ========================================================================= */}
+      {/* POP-UP 2: PEMILIHAN METODE & JUMLAH (HANYA SATU-SATU SAJA — ZERO SCROLL)  */}
       {/* ========================================================================= */}
       {isSplitTenderOpen && (
         <div className="fixed inset-0 z-[1300] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in">
-          <div className="w-full sm:max-w-2xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl p-4 sm:p-5 shadow-2xl flex flex-col text-slate-900 max-h-[92vh] sm:max-h-[85vh]">
+          <div className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl p-4 sm:p-5 shadow-2xl flex flex-col text-slate-900 max-h-[92vh] sm:max-h-[85vh] space-y-3">
             
             {/* Header Pop-up */}
-            <div className="shrink-0 flex items-center justify-between border-b border-slate-100 pb-2.5 mb-2.5">
+            <div className="shrink-0 flex items-center justify-between border-b border-slate-100 pb-2.5">
               <div>
                 <h3 className="font-extrabold text-sm sm:text-base text-slate-900 flex items-center gap-2">
                   <span>💳</span>
-                  <span>Pecah Metode Pembayaran (Split Tender)</span>
+                  <span>
+                    {editingLineId
+                      ? (editingLineId === tenderLines[0]?.id && tenderLines.length === 1
+                          ? 'Atur Pembayaran #1'
+                          : 'Ubah Pembayaran')
+                      : 'Tambah Pembayaran'}
+                  </span>
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Bagi pembayaran ke beberapa akun kas/bank (contoh: Tunai Rp 20.000 + Transfer Rp 130.000)
+                  {editingLineId
+                    ? 'Sesuaikan metode dan nominal yang dibayar'
+                    : 'Pilih metode dan masukkan nominal untuk pembayaran ini'}
                 </p>
               </div>
               <button
@@ -1313,146 +1514,164 @@ export default function CashPaymentModal({
               </button>
             </div>
 
-            {/* Banner Alokasi Target & Sisa yang Belum Dibagi */}
-            <div className="shrink-0 mb-2.5 p-2.5 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-between text-xs">
+            {/* Target & Sisa Tagihan Info */}
+            <div className="shrink-0 p-2.5 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-between text-xs">
               <div>
-                <span className="text-slate-500 font-semibold block text-[10px]">Total yang Harus Dialokasikan:</span>
-                <span className="font-mono text-sm sm:text-base font-black text-slate-900">{formatIDR(activeBillTarget)}</span>
+                <span className="text-slate-500 font-semibold block text-[10px]">Total Tagihan:</span>
+                <span className="font-mono text-sm font-black text-slate-900">{formatIDR(activeBillTarget)}</span>
               </div>
               <div className="text-right">
-                <span className="text-slate-500 font-semibold block text-[10px]">Belum Dialokasikan:</span>
-                <span className={`font-mono text-sm sm:text-base font-black ${unallocatedSplitAmount > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                  {formatIDR(unallocatedSplitAmount)}
+                <span className="text-slate-500 font-semibold block text-[10px]">
+                  {editingLineId ? 'Alokasi Saat Ini:' : 'Sisa Belum Dibagi:'}
+                </span>
+                <span className={`font-mono text-sm font-black ${unallocatedSplitAmount > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                  {editingLineId ? formatIDR(formAmount) : formatIDR(unallocatedSplitAmount)}
                 </span>
               </div>
             </div>
 
-            {/* Daftar Baris Pembayaran (Scrollable Area) */}
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-2.5 pr-1">
-              {tenderLines.map((line, idx) => {
-                const isCash = isAccountCash(line.accountId, line.tenderId)
-                const currentAcc = cashBankAccounts.find((a) => a.id === line.accountId)
-                const activeTender = tenderOptions.find((t) => t.id === line.tenderId || t.account_id === line.accountId)
+            {/* 1. Pilih Metode Pembayaran (1-Ketuk) */}
+            <div className="space-y-1.5">
+              <span className="font-extrabold text-[10px] uppercase tracking-wider text-slate-500 block">
+                Pilih Metode Pembayaran:
+              </span>
+              <div className="grid grid-cols-2 gap-1.5">
+                {tenderOptions.map((t) => {
+                  const isSelected = formTenderId === t.id || (!formTenderId && formAccountId === t.account_id)
+                  const categoryIcons: Record<string, string> = {
+                    cash: '💵',
+                    qris: '📱',
+                    bank: '🏦',
+                    edc: '💳'
+                  }
+                  const icon = categoryIcons[t.category] || '💳'
 
-                return (
-                  <div key={line.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-800">
-                        Pembayaran #{idx + 1}: <span className="text-indigo-700">{activeTender?.name || currentAcc?.name}</span>
-                      </span>
-                      {tenderLines.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => setTenderLines((p) => p.filter((l) => l.id !== line.id))}
-                          className="text-xs text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
-                        >
-                          ✕ Hapus Baris
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Pilih Metode untuk Baris Ini */}
-                    <div className="flex flex-wrap gap-1.5">
-                      {tenderOptions.map((t) => {
-                        const isSelected = line.tenderId === t.id || (!line.tenderId && line.accountId === t.account_id)
-                        return (
-                          <button
-                            key={t.id}
-                            type="button"
-                            onClick={() => {
-                              handleUpdateLine(line.id, {
-                                tenderId: t.id,
-                                accountId: t.account_id,
-                                cashReceived: line.amount
-                              })
-                            }}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition border cursor-pointer ${
-                              isSelected
-                                ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                            }`}
-                          >
-                            {t.name}
-                          </button>
-                        )
-                      })}
-                    </div>
-
-                    {/* 
-                      1 KOLOM INPUT TUNGGAL: NOMINAL DIBAYAR (RP)
-                      Menghilangkan kolom kedua yang redundan
-                    */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <label className="text-[10px] text-slate-600 font-bold block mb-1">
-                          Nominal {isCash ? 'Tunai' : ''} yang Dibayar (Rp):
-                        </label>
-                        <input
-                          type="text"
-                          value={line.amount > 0 ? String(line.amount) : ''}
-                          onChange={(e) => {
-                            const raw = Number(e.target.value.replace(/\D/g, '')) || 0
-                            handleUpdateLine(line.id, {
-                              amount: raw,
-                              cashReceived: raw
-                            })
-                          }}
-                          placeholder="0"
-                          className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 font-mono font-bold text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                        />
-                      </div>
-
-                      {!isCash && (
-                        <div>
-                          <label className="text-[10px] text-slate-600 font-bold block mb-1">
-                            No. Referensi / Trace (Opsional):
-                          </label>
-                          <input
-                            type="text"
-                            value={line.referenceNumber}
-                            onChange={(e) => handleUpdateLine(line.id, { referenceNumber: e.target.value })}
-                            placeholder="REF-123..."
-                            className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 font-mono text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900"
-                          />
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => {
+                        setFormTenderId(t.id)
+                        setFormAccountId(t.account_id)
+                      }}
+                      className={`p-2 rounded-xl border text-left transition cursor-pointer flex items-center gap-2 ${
+                        isSelected
+                          ? 'bg-slate-900 border-slate-900 text-white shadow-xs ring-2 ring-slate-900/10'
+                          : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
+                      }`}
+                    >
+                      <span className="text-lg shrink-0">{icon}</span>
+                      <div className="truncate">
+                        <div className="font-extrabold text-xs truncate leading-tight">{t.name}</div>
+                        <div className={`text-[9px] truncate ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                          {t.category === 'cash' ? 'Laci Kasir' : 'Bank/QRIS'}
                         </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
 
-            {/* Footer Pop-up Pecah Metode */}
-            <div className="shrink-0 pt-2.5 border-t border-slate-100 space-y-2">
-              <button
-                type="button"
-                onClick={() => {
-                  const unallocated = Math.max(0, activeBillTarget - totalTenderAmount)
-                  const used = new Set(tenderLines.map((l) => l.accountId))
-                  const candidate = tenderOptions.find((t) => !used.has(t.account_id)) || tenderOptions[1] || tenderOptions[0]
-                  setTenderLines((p) => [
-                    ...p,
-                    {
-                      id: 'line-' + Date.now(),
-                      tenderId: candidate?.id,
-                      accountId: candidate?.account_id || 'default-pos-bank',
-                      amount: unallocated,
-                      cashReceived: unallocated,
-                      referenceNumber: ''
+            {/* 2. Satu Kolom Input Nominal yang Dibayar */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-extrabold text-slate-700 flex items-center justify-between">
+                <span>Nominal yang Dibayarkan (Rp):</span>
+                {formAmount > 0 && (
+                  <span className="font-mono text-indigo-700 font-bold text-[11px]">
+                    {formatIDR(formAmount)}
+                  </span>
+                )}
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono font-bold text-slate-400 text-sm">
+                  Rp
+                </span>
+                <input
+                  type="text"
+                  autoFocus
+                  inputMode="numeric"
+                  value={formAmount > 0 ? formAmount.toLocaleString('id-ID') : ''}
+                  onChange={(e) => {
+                    const raw = Number(e.target.value.replace(/\D/g, '')) || 0
+                    if (raw <= 2_000_000_000) setFormAmount(raw)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleSaveTenderForm()
                     }
-                  ])
-                }}
-                className="w-full py-2 rounded-xl border border-dashed border-indigo-400 bg-indigo-50/50 hover:bg-indigo-50 text-xs font-bold text-indigo-700 transition cursor-pointer flex items-center justify-center gap-1.5"
-              >
-                <span>+ Tambah Baris Pembayaran Lain</span>
-              </button>
+                  }}
+                  placeholder="0"
+                  className="w-full pl-10 pr-3 py-2.5 rounded-xl bg-slate-50 focus:bg-white border border-slate-300 font-mono font-black text-slate-900 text-lg sm:text-xl focus:outline-none focus:ring-2 focus:ring-slate-900 transition"
+                />
+              </div>
 
+              {/* Quick Pills */}
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {unallocatedSplitAmount > 0 && formAmount !== unallocatedSplitAmount && (
+                  <button
+                    type="button"
+                    onClick={() => setFormAmount(unallocatedSplitAmount)}
+                    className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[11px] font-bold cursor-pointer transition"
+                  >
+                    Sisa ({formatIDR(unallocatedSplitAmount)})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setFormAmount(Math.round(activeBillTarget / 2))}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-[11px] font-bold cursor-pointer transition"
+                >
+                  Bagi 2 (50%)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormAmount(activeBillTarget)}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-[11px] font-bold cursor-pointer transition"
+                >
+                  Penuh ({formatIDR(activeBillTarget)})
+                </button>
+              </div>
+            </div>
+
+            {/* 3. Input Referensi Opsional jika Non-Tunai */}
+            {!isAccountCash(formAccountId, formTenderId) && (
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-600 block">
+                  No. Referensi / Trace (Opsional):
+                </label>
+                <input
+                  type="text"
+                  value={formReferenceNumber}
+                  onChange={(e) => setFormReferenceNumber(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleSaveTenderForm()
+                    }
+                  }}
+                  placeholder="Contoh: REF-987654 atau No. Kartu..."
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 focus:bg-white border border-slate-300 text-slate-900 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-slate-900 transition"
+                />
+              </div>
+            )}
+
+            {/* Footer Pop-up */}
+            <div className="pt-2 border-t border-slate-100 grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => setIsSplitTenderOpen(false)}
-                className="w-full py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs tracking-wider uppercase transition cursor-pointer shadow-sm"
+                className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer transition"
               >
-                Simpan Alokasi Pembayaran
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveTenderForm}
+                className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 active:bg-black text-white font-black text-xs cursor-pointer transition shadow-xs"
+              >
+                {editingLineId ? 'Simpan Perubahan' : 'Tambahkan Pembayaran'}
               </button>
             </div>
 
