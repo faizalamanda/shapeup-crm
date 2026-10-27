@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { useUserContext } from '@/components/UserContext'
 
 type OrderItem = {
   name?: string | null
   product_name?: string | null
+  parent_name?: string | null
   quantity?: number | string | null
 }
 
@@ -84,7 +86,7 @@ const cleanProductName = (value: string) => value.replace(/\s+/g, ' ').trim()
 const getOrderProductNames = (order: FlowOrder) => {
   const items = parseArray<OrderItem>(order.items_json)
   const names = items
-    .map((item) => cleanProductName(item.name || item.product_name || ''))
+    .map((item) => cleanProductName(item.name || item.product_name || item.parent_name || ''))
     .filter(Boolean)
 
   return Array.from(new Set(names))
@@ -440,8 +442,38 @@ type RpcRetentionResult = {
   destinations: RpcDestination[]
 }
 
+const normalizeRpcResult = (data: any): RpcRetentionResult | null => {
+  if (!data || typeof data !== 'object') return null
+
+  const cohortSize = Number(data.cohortSize ?? data.total_cohort_customers ?? 0)
+  const retainedCount = Number(data.retainedCount ?? data.retained_customers ?? 0)
+  const bouncedCount = Number(data.bouncedCount ?? Math.max(0, cohortSize - retainedCount))
+
+  const rawDests = Array.isArray(data.destinations)
+    ? data.destinations
+    : Array.isArray(data.next_purchases)
+      ? data.next_purchases
+      : []
+
+  const destinations: RpcDestination[] = rawDests
+    .map((d: any) => ({
+      productName: String(d.productName ?? d.product_name ?? ''),
+      customersCount: Number(d.customersCount ?? d.count ?? 0),
+      ordersCount: Number(d.ordersCount ?? d.count ?? 0),
+    }))
+    .filter((d: RpcDestination) => Boolean(d.productName))
+
+  return {
+    cohortSize,
+    retainedCount,
+    bouncedCount,
+    destinations,
+  }
+}
+
 export default function ProductRetentionPage() {
-  // Using singleton supabase client from @/lib/supabase
+  const { activeBusiness } = useUserContext()
+  const businessId = activeBusiness?.id
 
   const [orders, setOrders] = useState<FlowOrder[]>([])
   const [loading, setLoading] = useState(true)
@@ -453,34 +485,30 @@ export default function ProductRetentionPage() {
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   const fetchOrders = useCallback(async () => {
+    if (!businessId) {
+      setLoading(false)
+      return
+    }
+
+    setLoading(true)
+
+    // 1. Try PostgreSQL RPC Function for High-Scale Server-Side Processing
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_product_retention_flow', {
+        p_business_id: businessId,
+        p_product_filter: productFilterValue,
+        p_operator: productFilterOperator,
+      })
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('active_business_id')
-        .eq('id', user.id)
-        .single()
-
-      if (!profile?.active_business_id) return
-
-      const businessId = profile.active_business_id
-
-      // 1. Try PostgreSQL RPC Function for High-Scale Server-Side Processing
-      try {
-        const { data: rpcData, error: rpcError } = await supabase.rpc('get_product_retention_flow', {
-          p_business_id: businessId,
-          p_product_filter: productFilterValue,
-          p_operator: productFilterOperator,
-        })
-
-        if (!rpcError && rpcData && typeof rpcData === 'object') {
-          setServerFlowData(rpcData as RpcRetentionResult)
+      if (!rpcError && rpcData && typeof rpcData === 'object') {
+        const parsed = normalizeRpcResult(rpcData)
+        // Only use RPC if it returned valid cohort or destinations (if empty, fallback to client)
+        if (parsed && (parsed.cohortSize > 0 || parsed.destinations.length > 0)) {
+          setServerFlowData(parsed)
           setIsUsingRpc(true)
           setLoading(false)
 
-          // Also fetch list asynchronously for top product suggestions list
+          // Also fetch list asynchronously for top product suggestions list if not yet loaded
           if (orders.length === 0) {
             const { data: firstPage } = await supabase
               .from('orders')
@@ -494,27 +522,30 @@ export default function ProductRetentionPage() {
           }
           return
         }
-      } catch {
-        // Fallback to client-side processing if RPC is not deployed yet
       }
+    } catch (err) {
+      console.warn('RPC retention failed, falling back to client-side processing:', err)
+    }
 
-      setIsUsingRpc(false)
-      const cacheKey = `${CACHE_KEY_PREFIX}${businessId}`
+    // Fallback to client-side computing if RPC is not available or returned 0/incompatible
+    setIsUsingRpc(false)
+    const cacheKey = `${CACHE_KEY_PREFIX}${businessId}`
 
-      // Check sessionStorage cache first for immediate render
-      const cached = sessionStorage.getItem(cacheKey)
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached)
-          if (Date.now() - parsed.timestamp < CACHE_TTL_MS && Array.isArray(parsed.orders)) {
-            setOrders(parsed.orders)
-            setLoading(false)
-          }
-        } catch {
-          // Ignore cache parse error
+    // Check sessionStorage cache first for immediate render
+    const cached = typeof window !== 'undefined' ? sessionStorage.getItem(cacheKey) : null
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached)
+        if (Date.now() - parsed.timestamp < CACHE_TTL_MS && Array.isArray(parsed.orders) && parsed.orders.length > 0) {
+          setOrders(parsed.orders)
+          setLoading(false)
         }
+      } catch {
+        // Ignore cache parse error
       }
+    }
 
+    try {
       // Fetch from DB for client-side processing
       const allOrders: FlowOrder[] = []
       let from = 0
@@ -555,43 +586,36 @@ export default function ProductRetentionPage() {
     } finally {
       setLoading(false)
     }
-  }, [supabase, productFilterValue, productFilterOperator, orders.length])
+  }, [businessId, productFilterValue, productFilterOperator, orders.length])
 
   useEffect(() => {
     let isMounted = true
     let ordersChannel: ReturnType<typeof supabase.channel> | null = null
 
-    const subscribeToOrderChanges = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user || !isMounted) return
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('active_business_id')
-        .eq('id', user.id)
-        .single()
-
-      if (!profile?.active_business_id || !isMounted) return
-
-      ordersChannel = supabase
-        .channel(`product-retention-orders-${profile.active_business_id}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'orders',
-            filter: `business_id=eq.${profile.active_business_id}`,
-          },
-          () => {
-            fetchOrders()
-          }
-        )
-        .subscribe()
+    if (!businessId) {
+      setLoading(false)
+      return
     }
 
     fetchOrders()
-    subscribeToOrderChanges()
+
+    ordersChannel = supabase
+      .channel(`product-retention-orders-${businessId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'orders',
+          filter: `business_id=eq.${businessId}`,
+        },
+        () => {
+          if (isMounted) {
+            fetchOrders()
+          }
+        }
+      )
+      .subscribe()
 
     return () => {
       isMounted = false
@@ -599,7 +623,7 @@ export default function ProductRetentionPage() {
         supabase.removeChannel(ordersChannel)
       }
     }
-  }, [fetchOrders, supabase])
+  }, [businessId, fetchOrders])
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -673,11 +697,11 @@ export default function ProductRetentionPage() {
     if (isUsingRpc && serverFlowData) {
       const cohortSize = serverFlowData.cohortSize || 0
       const retainedCount = serverFlowData.retainedCount || 0
-      const bouncedCount = serverFlowData.bouncedCount || 0
+      const bouncedCount = serverFlowData.bouncedCount || Math.max(0, cohortSize - retainedCount)
       const destList = (serverFlowData.destinations || []).map((d) => ({
         productName: d.productName,
         customers: new Set<string>(Array.from({ length: d.customersCount }, (_, i) => `rpc-${d.productName}-${i}`)),
-        orders: d.ordersCount,
+        orders: d.ordersCount || d.customersCount || 0,
       }))
 
       return {
