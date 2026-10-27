@@ -860,20 +860,20 @@ export default function CashPaymentModal({
                 <span className="font-mono font-semibold text-slate-700">{formatIDR(grandTotal)}</span>
               </div>
 
-              {/* Total Tagihan Read-Only Besar */}
-              <div className="p-2.5 sm:p-3 rounded-xl bg-slate-900 text-white flex items-baseline justify-between shadow-xs">
+              {/* Total Tagihan Read-Only Kompak & Light */}
+              <div className="p-2 sm:p-2.5 rounded-xl bg-slate-50 border border-slate-200/90 flex items-baseline justify-between">
                 <div>
-                  <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
                     {billMode === 'full' ? 'Total Tagihan:' : 'Tagihan Sub-Bill Ini:'}
                   </span>
-                  <span className="text-xl sm:text-2xl font-black font-mono text-emerald-400 tracking-tight">
+                  <span className="text-base sm:text-lg font-black font-mono text-slate-900 tracking-tight">
                     {formatIDR(activeBillTarget)}
                   </span>
                 </div>
                 {unpaidOutsideBill > 0 && (
                   <div className="text-right">
-                    <span className="text-[9px] uppercase font-bold text-amber-400 block">Sisa Piutang:</span>
-                    <span className="font-mono text-[11px] font-bold text-amber-300">{formatIDR(unpaidOutsideBill)}</span>
+                    <span className="text-[9px] uppercase font-bold text-amber-600 block">Sisa Piutang:</span>
+                    <span className="font-mono text-xs font-bold text-amber-700">{formatIDR(unpaidOutsideBill)}</span>
                   </div>
                 )}
               </div>
@@ -1111,16 +1111,16 @@ export default function CashPaymentModal({
                           key={t.id}
                           type="button"
                           onClick={() => handleSelectTender(t)}
-                          className={`p-2 rounded-xl border text-left transition cursor-pointer flex items-center gap-2 min-h-[44px] sm:min-h-[48px] ${
+                          className={`p-2 rounded-xl border-2 text-left transition cursor-pointer flex items-center gap-2 min-h-[44px] sm:min-h-[48px] ${
                             isSelected
-                              ? 'bg-slate-900 border-slate-900 text-white shadow-xs ring-2 ring-slate-900/10'
-                              : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
+                              ? 'bg-indigo-50/90 border-indigo-600 text-indigo-950 shadow-xs ring-2 ring-indigo-500/20'
+                              : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-800'
                           }`}
                         >
                           <span className="text-lg shrink-0">{categoryIcons[t.category] || '💳'}</span>
                           <div className="truncate">
                             <div className="font-extrabold text-xs truncate leading-tight">{t.name}</div>
-                            <div className={`text-[9px] truncate ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                            <div className={`text-[9px] truncate font-medium ${isSelected ? 'text-indigo-600 font-bold' : 'text-slate-400'}`}>
                               {t.category === 'cash' ? 'Laci Kasir' : 'Bank'}
                             </div>
                           </div>
@@ -1132,16 +1132,17 @@ export default function CashPaymentModal({
                   {/* Dua Kotak Display: Total Tagihan Read-Only + Uang Diterima Aktif */}
                   <div className="grid grid-cols-2 gap-2 pt-0.5">
                     {/* Kotak 1: TOTAL TAGIHAN (READ-ONLY MUTLAK) */}
-                    <div className="py-1.5 px-2.5 sm:px-3 rounded-xl bg-slate-100 border border-slate-200/90 select-none">
+                    <div className="py-1.5 px-2.5 sm:px-3 rounded-xl bg-white border border-slate-200 select-none">
                       <div className="flex items-center justify-between">
                         <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 block">
                           Total Tagihan
                         </span>
-                        <span className="text-[9px] font-bold text-slate-400 bg-slate-200/60 px-1 py-0.2 rounded">
-                          Terkunci
+                        <span className="text-[9px] font-semibold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                          <span>🔒</span>
+                          <span>Terkunci</span>
                         </span>
                       </div>
-                      <div className="font-mono text-sm sm:text-base lg:text-lg font-black text-slate-900 truncate mt-0.5">
+                      <div className="font-mono text-sm sm:text-base font-extrabold text-slate-700 truncate mt-0.5">
                         {formatIDR(primaryLine.amount)}
                       </div>
                     </div>
@@ -1554,16 +1555,16 @@ export default function CashPaymentModal({
                         setFormTenderId(t.id)
                         setFormAccountId(t.account_id)
                       }}
-                      className={`p-2 rounded-xl border text-left transition cursor-pointer flex items-center gap-2 ${
+                      className={`p-2 rounded-xl border-2 text-left transition cursor-pointer flex items-center gap-2 ${
                         isSelected
-                          ? 'bg-slate-900 border-slate-900 text-white shadow-xs ring-2 ring-slate-900/10'
-                          : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
+                          ? 'bg-indigo-50/90 border-indigo-600 text-indigo-950 shadow-xs ring-2 ring-indigo-500/20'
+                          : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-800'
                       }`}
                     >
                       <span className="text-lg shrink-0">{icon}</span>
                       <div className="truncate">
                         <div className="font-extrabold text-xs truncate leading-tight">{t.name}</div>
-                        <div className={`text-[9px] truncate ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                        <div className={`text-[9px] truncate font-medium ${isSelected ? 'text-indigo-600 font-bold' : 'text-slate-400'}`}>
                           {t.category === 'cash' ? 'Laci Kasir' : 'Bank/QRIS'}
                         </div>
                       </div>
