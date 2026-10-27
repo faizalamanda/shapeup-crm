@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import VariantSelectorModal from './VariantSelectorModal'
 import CashPaymentModal, { type PaymentResult } from './CashPaymentModal'
 import ReceiptPreviewModal from './ReceiptPreviewModal'
+import PaymentSuccessModal from './PaymentSuccessModal'
 import ShiftModal from './ShiftModal'
 import HoldModal from './HoldModal'
 import AddCustomerModal from '../../orders/pos/components/AddCustomerModal'
@@ -133,6 +134,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
 
   // Receipt & Payment Data
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null)
+  const [lastCreatedOrderId, setLastCreatedOrderId] = useState<string | null>(null)
   const [checkingOut, setCheckingOut] = useState(false)
   const [loyaltySettings, setLoyaltySettings] = useState<LoyaltySettings | null>(null)
 
@@ -615,6 +617,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       const effectiveCustomerId = selectedCustomer?.id || 'guest'
 
       // 1. Instant Optimistic Action (0ms Latency for Customer & Cashier)
+      setLastCreatedOrderId(null)
       setReceiptData(receipt)
       setIsPaymentModalOpen(false)
       setIsMobileCartOpen(false)
@@ -662,10 +665,12 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         })
       })
       .then(async (res) => {
+        const result = await res.json().catch(() => null)
         if (!res.ok) {
-          const result = await res.json().catch(() => null)
           console.error(`[POS Sync Error] Pesanan #${orderNumber} gagal tersimpan:`, result?.error)
           alert(`⚠️ Peringatan: Pesanan #${orderNumber} gagal disimpan ke server.\nPesan: ${result?.error || 'Server error'}`)
+        } else if (result?.order_id) {
+          setLastCreatedOrderId(result.order_id)
         }
       })
       .catch((err) => {
@@ -1454,10 +1459,11 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         onConfirmPayment={handleConfirmCheckout}
       />
 
-      <ReceiptPreviewModal
+      <PaymentSuccessModal
         isOpen={isReceiptModalOpen}
         onClose={() => setIsReceiptModalOpen(false)}
         receipt={receiptData}
+        orderId={lastCreatedOrderId}
       />
 
       <ShiftModal
