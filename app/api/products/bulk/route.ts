@@ -50,20 +50,19 @@ export async function POST(req: Request) {
     const categoryNameToIdMap = new Map<string, string>()
 
     if (distinctCategoryNames.length > 0) {
-      // Query existing categories
+      // Query all existing categories for this business to ensure 100% case-insensitive matching
       const { data: existingCats, error: catFetchErr } = await supabaseAdmin
         .from('categories')
         .select('id, name')
         .eq('business_id', businessId)
-        .in('name', distinctCategoryNames)
 
       if (catFetchErr) {
         console.error('[ProductsBulk] Error fetching categories:', catFetchErr)
       } else if (existingCats) {
-        existingCats.forEach(c => categoryNameToIdMap.set(c.name.toLowerCase(), c.id))
+        existingCats.forEach(c => categoryNameToIdMap.set(c.name.trim().toLowerCase(), c.id))
       }
 
-      // Filter categories that need to be created
+      // Filter categories that truly do not exist in this business yet
       const missingCategoryNames = distinctCategoryNames.filter(
         name => !categoryNameToIdMap.has(name.toLowerCase())
       )
@@ -85,16 +84,15 @@ export async function POST(req: Request) {
             .from('categories')
             .select('id, name')
             .eq('business_id', businessId)
-            .in('name', missingCategoryNames)
 
-          refetchedCats?.forEach(c => categoryNameToIdMap.set(c.name.toLowerCase(), c.id))
+          refetchedCats?.forEach(c => categoryNameToIdMap.set(c.name.trim().toLowerCase(), c.id))
         } else if (createdCats) {
-          createdCats.forEach(c => categoryNameToIdMap.set(c.name.toLowerCase(), c.id))
+          createdCats.forEach(c => categoryNameToIdMap.set(c.name.trim().toLowerCase(), c.id))
         }
       }
     }
 
-    // 4. Fetch existing products for duplicate detection (by SKU or Name)
+    // 4. Fetch existing products for duplicate detection safely without fragile PostgREST .or() string concatenation
     const incomingSkus = Array.from(
       new Set(
         products
@@ -105,63 +103,94 @@ export async function POST(req: Request) {
     const incomingNames = Array.from(
       new Set(
         products
-          .map(p => (p.name ? String(p.name).trim().toLowerCase() : ''))
+          .map(p => (p.name ? String(p.name).trim() : ''))
           .filter(Boolean)
       )
     )
 
-    // Build query conditions
-    const orConditions: string[] = []
-    if (incomingSkus.length > 0) {
-      orConditions.push(`sku.in.(${incomingSkus.map(s => `"${s.replace(/"/g, '')}"`).join(',')})`)
-    }
-    if (incomingNames.length > 0) {
-      orConditions.push(`name.in.(${incomingNames.map(n => `"${n.replace(/"/g, '')}"`).join(',')})`)
-    }
+    const existingProductsMap = new Map<string, {
+      id: string
+      sku: string | null
+      name: string
+      stock_quantity: number
+      cost_price: number
+      stock_type: string
+    }>()
 
-    let existingProductsMap = new Map<string, { id: string; sku: string | null; name: string }>()
-    if (orConditions.length > 0) {
-      const { data: existingProds, error: prodFetchErr } = await supabaseAdmin
-        .from('products')
-        .select('id, sku, name')
-        .eq('business_id', businessId)
-        .or(orConditions.join(','))
+    const [prodsBySkuRes, prodsByNameRes] = await Promise.all([
+      incomingSkus.length > 0
+        ? supabaseAdmin
+            .from('products')
+            .select('id, sku, name, stock_quantity, cost_price, stock_type')
+            .eq('business_id', businessId)
+            .in('sku', incomingSkus)
+        : Promise.resolve({ data: [] as any[], error: null }),
+      incomingNames.length > 0
+        ? supabaseAdmin
+            .from('products')
+            .select('id, sku, name, stock_quantity, cost_price, stock_type')
+            .eq('business_id', businessId)
+            .in('name', incomingNames)
+        : Promise.resolve({ data: [] as any[], error: null })
+    ])
 
-      if (prodFetchErr) {
-        console.warn('[ProductsBulk] Error checking existing products:', prodFetchErr.message)
-      } else if (existingProds) {
-        existingProds.forEach(p => {
-          if (p.sku) existingProductsMap.set(`sku:${p.sku.trim().toLowerCase()}`, p)
-          if (p.name) existingProductsMap.set(`name:${p.name.trim().toLowerCase()}`, p)
-        })
-      }
+    if (prodsBySkuRes.data) {
+      prodsBySkuRes.data.forEach(p => {
+        if (p.sku) existingProductsMap.set(`sku:${p.sku.trim().toLowerCase()}`, p)
+      })
+    }
+    if (prodsByNameRes.data) {
+      prodsByNameRes.data.forEach(p => {
+        if (p.name) existingProductsMap.set(`name:${p.name.trim().toLowerCase()}`, p)
+      })
     }
 
     // 5. Partition products into Inserts and Updates
     let insertedCount = 0
     let updatedCount = 0
     let skippedCount = 0
+    const failedItems: { index: number; name: string; sku?: string | null; reason: string }[] = []
 
-    const productsToInsert: any[] = []
-    const productsToUpdate: { id: string; payload: any }[] = []
+    const productsToInsert: { originalIndex: number; payload: any }[] = []
+    const productsToUpdate: { originalIndex: number; id: string; existingStock: number; payload: any }[] = []
 
     for (let i = 0; i < products.length; i++) {
       const item = products[i]
       const rawName = item.name ? String(item.name).trim() : ''
       if (!rawName) {
         skippedCount++
+        failedItems.push({
+          index: i,
+          name: item.name || '-',
+          sku: item.sku || null,
+          reason: 'Nama produk kosong atau tidak valid'
+        })
         continue
       }
 
       const rawSku = item.sku ? String(item.sku).trim() : null
       const cleanPrice = Number(item.price) >= 0 ? Number(item.price) : 0
       const cleanCostPrice = Number(item.cost_price) >= 0 ? Number(item.cost_price) : 0
-      const cleanStockQty = Number(item.stock_quantity) >= 0 ? Number(item.stock_quantity) : 0
+      const rawStockNumber = Number(item.stock_quantity) >= 0 ? Number(item.stock_quantity) : 0
+      // PostgreSQL integer round
+      const cleanStockQty = Math.round(rawStockNumber)
       const cleanUnit = item.unit ? String(item.unit).trim() : 'pcs'
       const cleanType = item.type === 'service' ? 'service' : 'physical'
-      const cleanStockType = ['tracked', 'available', 'unavailable'].includes(item.stock_type || '')
-        ? (item.stock_type as 'tracked' | 'available' | 'unavailable')
-        : (cleanType === 'physical' ? 'tracked' : 'available')
+
+      // Auto-determine stock_type: If stock > 0, make sure stock_type is 'tracked' so stock is preserved
+      let cleanStockType: 'tracked' | 'available' | 'unavailable' = 'available'
+      if (cleanType === 'service') {
+        cleanStockType = 'available'
+      } else if (item.stock_type === 'unavailable') {
+        cleanStockType = 'unavailable'
+      } else if (item.stock_type === 'available') {
+        cleanStockType = 'available'
+      } else if (item.stock_type === 'tracked' || cleanStockQty > 0) {
+        cleanStockType = 'tracked'
+      } else {
+        cleanStockType = 'tracked'
+      }
+
       const cleanHppType = item.hpp_type === 'variable' ? 'variable' : 'fixed'
       const cleanDesc = item.description ? String(item.description).trim() : null
 
@@ -175,12 +204,14 @@ export async function POST(req: Request) {
         resolvedCategoryId = defaultCategoryId
       }
 
-      // Check duplicate
+      // Check duplicate:
+      // STRICT SKU-FIRST RULE:
+      // If SKU is provided, match ONLY by SKU. Do NOT collapse different SKU variants just because they share the same name!
+      // If SKU is not provided, fallback to matching by product name.
       let existingMatch = null
       if (rawSku) {
         existingMatch = existingProductsMap.get(`sku:${rawSku.toLowerCase()}`)
-      }
-      if (!existingMatch) {
+      } else {
         existingMatch = existingProductsMap.get(`name:${rawName.toLowerCase()}`)
       }
 
@@ -203,64 +234,114 @@ export async function POST(req: Request) {
       if (existingMatch) {
         if (duplicateAction === 'update') {
           productsToUpdate.push({
+            originalIndex: i,
             id: existingMatch.id,
+            existingStock: Number(existingMatch.stock_quantity || 0),
             payload: productPayload
           })
         } else {
           skippedCount++
         }
       } else {
-        productsToInsert.push(productPayload)
-        // Mark in in-memory map to prevent duplicate in same file batch
-        if (rawSku) {
-          existingProductsMap.set(`sku:${rawSku.toLowerCase()}`, { id: 'pending', sku: rawSku, name: rawName })
+        productsToInsert.push({
+          originalIndex: i,
+          payload: productPayload
+        })
+        // Mark in in-memory map to prevent duplicates within the same batch
+        const pendingObj = {
+          id: 'pending',
+          sku: rawSku,
+          name: rawName,
+          stock_quantity: cleanStockQty,
+          cost_price: cleanCostPrice,
+          stock_type: cleanStockType
         }
-        existingProductsMap.set(`name:${rawName.toLowerCase()}`, { id: 'pending', sku: rawSku, name: rawName })
+        if (rawSku) {
+          existingProductsMap.set(`sku:${rawSku.toLowerCase()}`, pendingObj)
+        } else {
+          existingProductsMap.set(`name:${rawName.toLowerCase()}`, pendingObj)
+        }
       }
     }
 
     // 6. Execute Inserts
     const insertedProductRows: any[] = []
     if (productsToInsert.length > 0) {
+      const payloads = productsToInsert.map(p => p.payload)
       const { data: insertedData, error: insErr } = await supabaseAdmin
         .from('products')
-        .insert(productsToInsert)
+        .insert(payloads)
         .select('id, name, sku, stock_quantity, cost_price, stock_type')
 
       if (insErr) {
-        throw new Error(`Gagal menyimpan produk baru: ${insErr.message}`)
-      }
+        console.error('[ProductsBulk] Insert chunk failed, retrying rows:', insErr)
+        // If bulk insert failed, fallback to individual row insert to salvage valid rows
+        for (const item of productsToInsert) {
+          const { data: singleData, error: singleErr } = await supabaseAdmin
+            .from('products')
+            .insert(item.payload)
+            .select('id, name, sku, stock_quantity, cost_price, stock_type')
+            .maybeSingle()
 
-      if (insertedData) {
+          if (singleErr) {
+            failedItems.push({
+              index: item.originalIndex,
+              name: item.payload.name,
+              sku: item.payload.sku,
+              reason: singleErr.message || 'Gagal menyimpan produk'
+            })
+          } else if (singleData) {
+            insertedProductRows.push(singleData)
+            insertedCount++
+          }
+        }
+      } else if (insertedData) {
         insertedProductRows.push(...insertedData)
         insertedCount += insertedData.length
       }
     }
 
-    // 7. Execute Updates
+    // 7. Execute Updates in parallel chunks of 10 to eliminate N+1 timeout risk
     if (productsToUpdate.length > 0) {
-      for (const item of productsToUpdate) {
-        const { error: updErr } = await supabaseAdmin
-          .from('products')
-          .update(item.payload)
-          .eq('id', item.id)
+      const CHUNK_SIZE = 10
+      for (let i = 0; i < productsToUpdate.length; i += CHUNK_SIZE) {
+        const chunk = productsToUpdate.slice(i, i + CHUNK_SIZE)
+        const results = await Promise.all(
+          chunk.map(async item => {
+            const { error: updErr } = await supabaseAdmin
+              .from('products')
+              .update(item.payload)
+              .eq('id', item.id)
+            return { item, error: updErr }
+          })
+        )
 
-        if (updErr) {
-          console.error(`Failed to update product ${item.id}:`, updErr)
-          skippedCount++
-        } else {
-          updatedCount++
+        for (const res of results) {
+          if (res.error) {
+            console.error(`Failed to update product ${res.item.id}:`, res.error)
+            skippedCount++
+            failedItems.push({
+              index: res.item.originalIndex,
+              name: res.item.payload.name,
+              sku: res.item.payload.sku,
+              reason: res.error.message || 'Gagal memperbarui produk'
+            })
+          } else {
+            updatedCount++
+          }
         }
       }
     }
 
-    // 8. Event Sourcing: Record initial stock movements for new tracked products with stock > 0
-    const productsNeedingStockMoves = insertedProductRows.filter(
+    // 8. Event Sourcing: Record initial stock movements for new & updated tracked products
+    const stockMovesToInsert: any[] = []
+
+    // 8a. Initial stock moves for new tracked products with stock > 0
+    const newProductsNeedingStockMoves = insertedProductRows.filter(
       p => p.stock_type === 'tracked' && Number(p.stock_quantity) > 0
     )
-
-    if (productsNeedingStockMoves.length > 0) {
-      const stockMovesToInsert = productsNeedingStockMoves.map(p => ({
+    for (const p of newProductsNeedingStockMoves) {
+      stockMovesToInsert.push({
         business_id: businessId,
         product_id: p.id,
         reference: 'STOK-AWAL-IMPORT',
@@ -274,8 +355,41 @@ export async function POST(req: Request) {
         destination_location_id: null,
         lot_number: null,
         created_at: new Date().toISOString()
-      }))
+      })
+    }
 
+    // 8b. Adjustment stock moves for updated tracked products where stock changed
+    if (duplicateAction === 'update') {
+      for (const item of productsToUpdate) {
+        if (item.payload.stock_type === 'tracked') {
+          const currentStock = Number(item.existingStock || 0)
+          const targetStock = Number(item.payload.stock_quantity || 0)
+          const diff = targetStock - currentStock
+
+          if (diff !== 0) {
+            stockMovesToInsert.push({
+              business_id: businessId,
+              product_id: item.id,
+              reference: 'PENYESUAIAN-STOK-IMPORT',
+              qty: Math.abs(diff),
+              unit_cost: Number(item.payload.cost_price || 0),
+              type: 'adjustment',
+              status: 'done',
+              bucket: 'main',
+              source_type: 'manual',
+              // diff > 0 -> origin null (penambahan stok)
+              // diff < 0 -> origin dummy UUID (pengurangan stok)
+              origin_location_id: diff < 0 ? '00000000-0000-0000-0000-000000000000' : null,
+              destination_location_id: null,
+              lot_number: null,
+              created_at: new Date().toISOString()
+            })
+          }
+        }
+      }
+    }
+
+    if (stockMovesToInsert.length > 0) {
       const { error: stockMoveErr } = await supabaseAdmin
         .from('stock_moves')
         .insert(stockMovesToInsert)
@@ -290,8 +404,9 @@ export async function POST(req: Request) {
       insertedCount,
       updatedCount,
       skippedCount,
+      failedItems,
       totalProcessed: products.length,
-      message: `Berhasil memproses ${products.length} produk (Ditambahkan: ${insertedCount}, Diperbarui: ${updatedCount}, Dilewati: ${skippedCount})`
+      message: `Berhasil memproses ${products.length} produk (Ditambahkan: ${insertedCount}, Diperbarui: ${updatedCount}, Dilewati: ${skippedCount}, Gagal: ${failedItems.length})`
     })
 
   } catch (err: any) {

@@ -17,10 +17,10 @@ const TARGET_FIELDS = [
   { key: 'price', name: 'Harga Jual', required: false, desc: 'Harga jual satuan (default: Rp 0)' },
   { key: 'cost_price', name: 'HPP / Harga Modal Beli', required: false, desc: 'Harga modal perolehan barang (default: Rp 0)' },
   { key: 'category', name: 'Kategori Produk', required: false, desc: 'Kategori barang (otomatis dibuat jika belum ada)' },
-  { key: 'stock_quantity', name: 'Stok Awal Fisik', required: false, desc: 'Jumlah fisik stok awal (default: 0)' },
-  { key: 'unit', name: 'Satuan Unit', required: false, desc: 'Satuan item (pcs, box, kg, liter, dll)' },
-  { key: 'type', name: 'Tipe Produk', required: false, desc: 'Barang Fisik (physical) atau Jasa (service)' },
-  { key: 'stock_type', name: 'Lacak Stok', required: false, desc: 'Lacak Stok (tracked) atau Selalu Tersedia (available)' },
+  { key: 'stock_quantity', name: 'Stok Awal Fisik', required: false, desc: 'Jumlah fisik stok awal (contoh: 10, 50, 100)' },
+  { key: 'unit', name: 'Satuan Unit', required: false, desc: 'Satuan barang (pcs, box, kg, botol, pack, dll)' },
+  { key: 'type', name: 'Tipe Produk', required: false, desc: 'Barang Fisik (physical) atau Layanan Jasa (service)' },
+  { key: 'stock_type', name: 'Status Pelacakan Stok', required: false, desc: 'Isi: "lacak" / "tracked" (hitung saldo rak), "tersedia" / "available" (selalu ada/bebas), atau kosongkan (otomatis di-set ke Lacak Stok)' },
   { key: 'description', name: 'Deskripsi / Detail', required: false, desc: 'Catatan detail spesifikasi produk' }
 ]
 
@@ -38,6 +38,9 @@ const detectProductFieldByHeader = (header: string): string => {
   }
   if (h.includes('kategori') || h.includes('category') || h.includes('jenis') || h.includes('golongan') || h.includes('kelompok') || h.includes('katalog')) {
     return 'category'
+  }
+  if (h.includes('statusstok') || h.includes('tipestok') || h.includes('stocktype') || h.includes('lacakstok') || h.includes('lacak') || h.includes('tracking')) {
+    return 'stock_type'
   }
   if (h.includes('stokawal') || h.includes('openingstock') || h.includes('stok') || h.includes('stock') || h.includes('qty') || h.includes('quantity') || h.includes('jumlah') || h.includes('saldo')) {
     return 'stock_quantity'
@@ -88,6 +91,7 @@ export default function ProductImportPage() {
   const [defaultCategory, setDefaultCategory] = useState<string>('')
   const [defaultUnit, setDefaultUnit] = useState<string>('pcs')
   const [defaultType, setDefaultType] = useState<'physical' | 'service'>('physical')
+  // Default stock is STRICTLY tracked
   const [defaultStockType, setDefaultStockType] = useState<'tracked' | 'available'>('tracked')
   const [duplicateAction, setDuplicateAction] = useState<'skip' | 'update'>('skip')
 
@@ -98,6 +102,17 @@ export default function ProductImportPage() {
   const [insertedTotal, setInsertedTotal] = useState(0)
   const [updatedTotal, setUpdatedTotal] = useState(0)
   const [skippedTotal, setSkippedTotal] = useState(0)
+  const [failedRows, setFailedRows] = useState<Array<{
+    rowNumber: number
+    name: string
+    sku: string | null
+    price: number
+    cost_price: number
+    category: string | null
+    stock_quantity: number
+    unit: string
+    reason: string
+  }>>([])
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isCancelled, setIsCancelled] = useState(false)
   const isCancelledRef = useRef(false)
@@ -328,12 +343,13 @@ export default function ProductImportPage() {
       result.type = typeStr.includes('jasa') || typeStr.includes('service') ? 'service' : defaultType
 
       const stockTypeStr = String(rawStockType || '').toLowerCase()
-      if (stockTypeStr.includes('lacak') || stockTypeStr.includes('tracked')) {
-        result.stock_type = 'tracked'
-      } else if (stockTypeStr.includes('tersedia') || stockTypeStr.includes('available')) {
+      if (stockTypeStr.includes('tersedia') || stockTypeStr.includes('available') || stockTypeStr.includes('bebas')) {
         result.stock_type = 'available'
+      } else if (stockTypeStr.includes('tidak') || stockTypeStr.includes('unavailable')) {
+        result.stock_type = 'unavailable'
       } else {
-        result.stock_type = result.type === 'physical' ? defaultStockType : 'available'
+        // Strict default: Physical products are ALWAYS tracked (lacak stok)
+        result.stock_type = result.type === 'service' ? 'available' : 'tracked'
       }
 
       result._valid = result._errors.length === 0
@@ -348,24 +364,75 @@ export default function ProductImportPage() {
     return { total, valid, errors }
   }, [parsedData])
 
-  // Streaming Batch Import (Zero-Timeout Engine)
-  const handleStartImport = async () => {
-    const validRows = parsedData.filter(d => d._valid).map(d => ({
-      name: d.name,
-      sku: d.sku,
-      price: d.price,
-      cost_price: d.cost_price,
-      category: d.category,
-      stock_quantity: d.stock_quantity,
-      unit: d.unit,
-      type: d.type,
-      stock_type: d.stock_type,
-      description: d.description,
-      hpp_type: 'fixed'
+  // Download Failed Rows as Excel (.xlsx)
+  const handleDownloadFailedRows = () => {
+    if (failedRows.length === 0) return
+
+    const exportData = failedRows.map(r => ({
+      'Baris ke- (File Asli)': r.rowNumber,
+      'Nama Produk': r.name,
+      'SKU / Barcode': r.sku || '',
+      'Kategori': r.category || '',
+      'Harga Jual': r.price,
+      'HPP Modal': r.cost_price,
+      'Stok Awal': r.stock_quantity,
+      'Satuan': r.unit,
+      'Alasan Kegagalan': r.reason
     }))
 
-    if (validRows.length === 0) {
-      alert('Tidak ada data produk yang valid untuk diimpor!')
+    const ws = XLSX.utils.json_to_sheet(exportData)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Baris Gagal')
+
+    // Column widths for neat formatting
+    ws['!cols'] = [
+      { wch: 22 },
+      { wch: 32 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 10 },
+      { wch: 45 }
+    ]
+
+    const cleanBaseName = fileName ? fileName.replace(/\.[^/.]+$/, '') : 'produk'
+    XLSX.writeFile(wb, `gagal_import_${cleanBaseName}_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  }
+
+  // Streaming Batch Import (Zero-Timeout Engine) with Resilient Failure Isolation
+  const handleStartImport = async () => {
+    // 1. Collect pre-validation errors (e.g. empty name)
+    const currentFailedRows: typeof failedRows = []
+
+    parsedData.forEach((d, idx) => {
+      if (!d._valid) {
+        currentFailedRows.push({
+          rowNumber: idx + 2, // 1-based, considering header is row 1
+          name: d.name || '-',
+          sku: d.sku || null,
+          price: d.price || 0,
+          cost_price: d.cost_price || 0,
+          category: d.category || null,
+          stock_quantity: d.stock_quantity || 0,
+          unit: d.unit || defaultUnit,
+          reason: d._errors.join(', ') || 'Nama produk wajib diisi'
+        })
+      }
+    })
+
+    const validRowsWithMeta = parsedData
+      .map((d, idx) => ({ ...d, _rowNumber: idx + 2 }))
+      .filter(d => d._valid)
+
+    if (validRowsWithMeta.length === 0) {
+      if (currentFailedRows.length > 0) {
+        setFailedRows(currentFailedRows)
+        setStep('result')
+      } else {
+        alert('Tidak ada data produk yang valid untuk diimpor!')
+      }
       return
     }
 
@@ -373,9 +440,10 @@ export default function ProductImportPage() {
     setErrorMessage(null)
     setIsCancelled(false)
     isCancelledRef.current = false
+    setFailedRows([])
 
-    const BATCH_SIZE = 100 // 100 rows per HTTP batch (150-300ms execution, zero timeout)
-    const totalRows = validRows.length
+    const BATCH_SIZE = 100 // 100 rows per HTTP batch
+    const totalRows = validRowsWithMeta.length
     setTotalToImport(totalRows)
     setProcessedCount(0)
     setImportProgress(0)
@@ -384,19 +452,32 @@ export default function ProductImportPage() {
     let cumUpdated = 0
     let cumSkipped = 0
 
-    try {
-      for (let i = 0; i < totalRows; i += BATCH_SIZE) {
-        if (isCancelledRef.current) {
-          break
-        }
+    for (let i = 0; i < totalRows; i += BATCH_SIZE) {
+      if (isCancelledRef.current) {
+        break
+      }
 
-        const chunk = validRows.slice(i, i + BATCH_SIZE)
+      const chunkMeta = validRowsWithMeta.slice(i, i + BATCH_SIZE)
+      const chunkPayload = chunkMeta.map(d => ({
+        name: d.name,
+        sku: d.sku,
+        price: d.price,
+        cost_price: d.cost_price,
+        category: d.category,
+        stock_quantity: d.stock_quantity,
+        unit: d.unit,
+        type: d.type,
+        stock_type: d.stock_type,
+        description: d.description,
+        hpp_type: 'fixed'
+      }))
 
+      try {
         const response = await fetch('/api/products/bulk', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            products: chunk,
+            products: chunkPayload,
             duplicateAction,
             defaultCategoryId: defaultCategory || null
           })
@@ -404,32 +485,80 @@ export default function ProductImportPage() {
 
         const data = await response.json()
         if (!response.ok) {
-          throw new Error(data.error || `Gagal mengimpor batch ${Math.floor(i / BATCH_SIZE) + 1}`)
+          // If this batch failed, isolate it and record all items as failed, but CONTINUE loop
+          const errMsg = data.error || `HTTP ${response.status}: Gagal memproses batch`
+          chunkMeta.forEach(item => {
+            currentFailedRows.push({
+              rowNumber: item._rowNumber,
+              name: item.name,
+              sku: item.sku,
+              price: item.price,
+              cost_price: item.cost_price,
+              category: item.category,
+              stock_quantity: item.stock_quantity,
+              unit: item.unit,
+              reason: errMsg
+            })
+          })
+        } else {
+          cumInserted += data.insertedCount || 0
+          cumUpdated += data.updatedCount || 0
+          cumSkipped += data.skippedCount || 0
+
+          // If API returned individual row failures
+          if (Array.isArray(data.failedItems) && data.failedItems.length > 0) {
+            data.failedItems.forEach((f: any) => {
+              const matched = chunkMeta[f.index]
+              if (matched) {
+                currentFailedRows.push({
+                  rowNumber: matched._rowNumber,
+                  name: f.name || matched.name,
+                  sku: f.sku || matched.sku,
+                  price: matched.price,
+                  cost_price: matched.cost_price,
+                  category: matched.category,
+                  stock_quantity: matched.stock_quantity,
+                  unit: matched.unit,
+                  reason: f.reason || 'Gagal disimpan'
+                })
+              }
+            })
+          }
         }
-
-        cumInserted += data.insertedCount || 0
-        cumUpdated += data.updatedCount || 0
-        cumSkipped += data.skippedCount || 0
-
-        const currentProcessed = Math.min(i + BATCH_SIZE, totalRows)
-        setProcessedCount(currentProcessed)
-        setInsertedTotal(cumInserted)
-        setUpdatedTotal(cumUpdated)
-        setSkippedTotal(cumSkipped)
-        setImportProgress(Math.round((currentProcessed / totalRows) * 100))
+      } catch (err: any) {
+        // Network or connection timeout failure for this chunk
+        const errMsg = err.message || 'Koneksi jaringan terputus saat memproses batch'
+        chunkMeta.forEach(item => {
+          currentFailedRows.push({
+            rowNumber: item._rowNumber,
+            name: item.name,
+            sku: item.sku,
+            price: item.price,
+            cost_price: item.cost_price,
+            category: item.category,
+            stock_quantity: item.stock_quantity,
+            unit: item.unit,
+            reason: errMsg
+          })
+        })
       }
 
-      // Invalidate products cache in sessionStorage so /products displays fresh data immediately
-      if (activeBizId) {
-        sessionStorage.removeItem(`su_products_data_${activeBizId}`)
-      }
-
-      setStep('result')
-    } catch (err: any) {
-      console.error('Import process failed:', err)
-      setErrorMessage(err.message || 'Terjadi kesalahan saat memproses data.')
-      setStep('result')
+      const currentProcessed = Math.min(i + BATCH_SIZE, totalRows)
+      setProcessedCount(currentProcessed)
+      setInsertedTotal(cumInserted)
+      setUpdatedTotal(cumUpdated)
+      setSkippedTotal(cumSkipped)
+      setImportProgress(Math.round((currentProcessed / totalRows) * 100))
     }
+
+    setFailedRows(currentFailedRows)
+
+    // Invalidate products cache in sessionStorage so /products displays fresh data immediately
+    if (activeBizId) {
+      sessionStorage.removeItem(`su_products_data_${activeBizId}`)
+    }
+
+    setStep('result')
   }
 
   const formatPrice = (val: number) => {
@@ -843,18 +972,32 @@ export default function ProductImportPage() {
               </div>
 
               {/* Live Mini Counters */}
-              <div className="grid grid-cols-3 gap-2 pt-2">
-                <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
+                <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2.5">
                   <span className="text-[10px] font-bold text-emerald-600 uppercase block">Ditambahkan</span>
                   <span className="text-base font-black text-emerald-800">{insertedTotal}</span>
                 </div>
-                <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+                <div className="bg-blue-50 border border-blue-100 rounded-xl p-2.5">
                   <span className="text-[10px] font-bold text-blue-600 uppercase block">Diperbarui</span>
                   <span className="text-base font-black text-blue-800">{updatedTotal}</span>
                 </div>
-                <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-2.5">
                   <span className="text-[10px] font-bold text-gray-500 uppercase block">Dilewati</span>
                   <span className="text-base font-black text-gray-700">{skippedTotal}</span>
+                </div>
+                <div className={`border rounded-xl p-2.5 ${
+                  failedRows.length > 0 ? 'bg-rose-50 border-rose-200' : 'bg-gray-50 border-gray-200 opacity-60'
+                }`}>
+                  <span className={`text-[10px] font-bold uppercase block ${
+                    failedRows.length > 0 ? 'text-rose-600' : 'text-gray-400'
+                  }`}>
+                    Gagal
+                  </span>
+                  <span className={`text-base font-black ${
+                    failedRows.length > 0 ? 'text-rose-800' : 'text-gray-400'
+                  }`}>
+                    {failedRows.length}
+                  </span>
                 </div>
               </div>
             </div>
@@ -862,18 +1005,18 @@ export default function ProductImportPage() {
 
           {/* STEP 5: RESULT & AUDIT */}
           {step === 'result' && (
-            <div className="py-8 px-4 max-w-lg mx-auto text-center space-y-6">
-              {errorMessage ? (
+            <div className="py-8 px-4 max-w-xl mx-auto text-center space-y-6">
+              {failedRows.length > 0 && insertedTotal === 0 && updatedTotal === 0 ? (
                 <>
                   <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 mx-auto flex items-center justify-center text-2xl">
                     ✕
                   </div>
                   <div>
                     <h2 className="text-lg font-black text-gray-900 uppercase tracking-tight">
-                      Impor Mengalami Kendala
+                      Seluruh Baris Gagal Diimpor
                     </h2>
                     <p className="text-xs text-rose-600 font-medium mt-1">
-                      {errorMessage}
+                      {errorMessage || `Terdapat ${failedRows.length} baris produk yang bermasalah.`}
                     </p>
                   </div>
                 </>
@@ -884,41 +1027,108 @@ export default function ProductImportPage() {
                   </div>
                   <div>
                     <h2 className="text-lg font-black text-gray-900 uppercase tracking-tight">
-                      Impor Produk Selesai!
+                      Proses Impor Selesai!
                     </h2>
                     <p className="text-xs text-gray-500 font-medium mt-1">
-                      Data produk telah berhasil disimpan ke database master Anda.
+                      Data produk telah selesai diproses ke database master Anda.
                     </p>
                   </div>
-
-                  {/* Summary Metric Cards */}
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5">
-                      <span className="text-[10px] font-black uppercase text-emerald-600 tracking-wider block">
-                        Ditambahkan
-                      </span>
-                      <span className="text-xl font-black text-emerald-900 mt-0.5 block">
-                        {insertedTotal}
-                      </span>
-                    </div>
-                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-3.5">
-                      <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider block">
-                        Diperbarui
-                      </span>
-                      <span className="text-xl font-black text-blue-900 mt-0.5 block">
-                        {updatedTotal}
-                      </span>
-                    </div>
-                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-3.5">
-                      <span className="text-[10px] font-black uppercase text-gray-500 tracking-wider block">
-                        Dilewati
-                      </span>
-                      <span className="text-xl font-black text-gray-800 mt-0.5 block">
-                        {skippedTotal}
-                      </span>
-                    </div>
-                  </div>
                 </>
+              )}
+
+              {/* Summary Metric Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                  <span className="text-[10px] font-black uppercase text-emerald-600 tracking-wider block">
+                    Ditambahkan
+                  </span>
+                  <span className="text-xl font-black text-emerald-900 mt-0.5 block">
+                    {insertedTotal}
+                  </span>
+                </div>
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+                  <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider block">
+                    Diperbarui
+                  </span>
+                  <span className="text-xl font-black text-blue-900 mt-0.5 block">
+                    {updatedTotal}
+                  </span>
+                </div>
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+                  <span className="text-[10px] font-black uppercase text-gray-500 tracking-wider block">
+                    Dilewati
+                  </span>
+                  <span className="text-xl font-black text-gray-800 mt-0.5 block">
+                    {skippedTotal}
+                  </span>
+                </div>
+                <div className={`border rounded-xl p-3 ${
+                  failedRows.length > 0 ? 'bg-rose-50 border-rose-200' : 'bg-gray-50 border-gray-200 opacity-60'
+                }`}>
+                  <span className={`text-[10px] font-black uppercase tracking-wider block ${
+                    failedRows.length > 0 ? 'text-rose-600' : 'text-gray-400'
+                  }`}>
+                    Gagal
+                  </span>
+                  <span className={`text-xl font-black mt-0.5 block ${
+                    failedRows.length > 0 ? 'text-rose-900' : 'text-gray-400'
+                  }`}>
+                    {failedRows.length}
+                  </span>
+                </div>
+              </div>
+
+              {/* FAILED ROWS ACTION & DOWNLOAD BANNER */}
+              {failedRows.length > 0 && (
+                <div className="bg-rose-50/90 border border-rose-200 rounded-2xl p-4 text-left space-y-3 shadow-xs">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-2.5">
+                      <span className="text-xl leading-none mt-0.5">⚠️</span>
+                      <div>
+                        <h4 className="text-xs font-black text-rose-900 uppercase tracking-tight">
+                          Terdapat {failedRows.length} baris produk yang gagal
+                        </h4>
+                        <p className="text-[11px] text-rose-700 font-medium">
+                          Unduh file Excel berisi baris gagal beserta alasan kegagalannya untuk diperbaiki.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleDownloadFailedRows}
+                      className="w-full sm:w-auto px-4 py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-98 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer"
+                    >
+                      📥 Download Baris Gagal ({failedRows.length}) (.xlsx)
+                    </button>
+                  </div>
+
+                  {/* Quick table preview of failed rows */}
+                  <div className="max-h-40 overflow-y-auto border border-rose-200/80 rounded-lg bg-white">
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="bg-rose-100/50 text-rose-900 font-bold uppercase sticky top-0 text-[10px]">
+                        <tr>
+                          <th className="py-1.5 px-2.5">Baris</th>
+                          <th className="py-1.5 px-2.5">Nama Produk</th>
+                          <th className="py-1.5 px-2.5">Keterangan Error</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-rose-100 font-medium text-gray-700">
+                        {failedRows.slice(0, 15).map((r, i) => (
+                          <tr key={i} className="hover:bg-rose-50/50">
+                            <td className="py-1.5 px-2.5 font-bold text-gray-500">{r.rowNumber}</td>
+                            <td className="py-1.5 px-2.5 font-bold text-gray-900">{r.name}</td>
+                            <td className="py-1.5 px-2.5 text-rose-700">{r.reason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {failedRows.length > 15 && (
+                    <p className="text-[10px] text-gray-400 italic text-center">
+                      Menampilkan 15 dari total {failedRows.length} baris gagal. Silakan klik tombol di atas untuk mengunduh data lengkap.
+                    </p>
+                  )}
+                </div>
               )}
 
               {/* Action Buttons */}

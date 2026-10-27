@@ -281,4 +281,37 @@ When deleting products in bulk (either by selection or a total business catalog 
    - Products are removed from client-side state and `sessionStorage` optimistically (0ms perceived latency).
    - If blocked products are reported by the backend or a network failure occurs, a compensating rollback automatically restores the affected products to the local view with informative feedback.
 
+---
+
+## 6. Massive Bulk Product & Stock Import Architecture (Zero-Timeout, Multi-Variant & Event Sourcing Ledger)
+
+When importing or updating large catalogs (> 4,000 items) via Excel / CSV:
+
+1. **SKU-First Deduplication (Variant Integrity):**
+   - If SKU is provided in the row, deduplication **MUST ONLY** compare by SKU (`sku = item.sku`).
+   - Falling back to name matching when SKU is present will collapse variants (e.g. sizes/colors like "Kaos Polos - M" and "Kaos Polos - L") into a single row.
+   - Fallback to matching by product name (`name = item.name`) is strictly reserved for rows where SKU is completely absent.
+
+2. **Default Tracked Physical Stock:**
+   - Physical products are strictly defaulted to `stock_type = 'tracked'` (Lacak Stok).
+   - Any non-zero stock count in an imported row must never be zeroed out by UI fallback states.
+
+3. **Event Sourcing for Both New & Updated Products (`stock_moves` Integration):**
+   - **New Products:** Record an initial stock movement with `reference: 'STOK-AWAL-IMPORT'`, `type: 'adjustment'`, `status: 'done'`, `bucket: 'main'`, and `origin_location_id: null`.
+   - **Updated Products (`duplicateAction = 'update'`):**
+     - Compare `targetStock` against `currentStock`.
+     - If `diff > 0` (Excess): Insert adjustment move with `qty: diff`, `origin_location_id: null`.
+     - If `diff < 0` (Deficit): Insert adjustment move with `qty: Math.abs(diff)`, `origin_location_id: '00000000-0000-0000-0000-000000000000'`.
+     - This guarantees that PostgreSQL's automated trigger `trg_sync_product_stock_from_moves` recalculates the physical stock seamlessly without reverting to stale ledger quantities.
+
+4. **Bypassing the 1,000-Row PostgREST Cap:**
+   - Supabase PostgREST queries without pagination silently cap results at 1,000 rows (`PGRST_MAX_ROWS = 1000`).
+   - Catalog management pages (`/products`) MUST use chunked iteration (`.range(from, from + 999)`) to retrieve all items so large inventories (> 4,000 items) remain 100% visible and searchable.
+   - Client-side cache (`sessionStorage`) must be bypassed or cleared for payloads > 2,000 items to avoid `QuotaExceededError`.
+
+5. **Fault-Isolated Batch Processing & Audit Trail:**
+   - Process imports in micro-batches (e.g. 100 items per batch).
+   - If a batch fails, isolate that batch without terminating the loop so subsequent batches proceed to completion.
+   - Collect failed rows with exact original row indices and error reasons, providing an automated **Download Baris Gagal (.xlsx)** export.
+
 

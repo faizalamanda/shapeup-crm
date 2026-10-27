@@ -117,6 +117,11 @@ export default function ProductsPage() {
 
   const writeCache = (bid: string, prods: Product[], cats: Category[]) => {
     try {
+      // Don't bloat sessionStorage if catalogue is large (> 2000 items) to prevent QuotaExceededError
+      if (prods.length > 2000) {
+        sessionStorage.removeItem(`su_products_data_${bid}`)
+        return
+      }
       const payload: ProductCachePayload = {
         products: prods,
         categories: cats,
@@ -129,7 +134,7 @@ export default function ProductsPage() {
     }
   }
 
-  // Fetch Products & Categories
+  // Fetch Products & Categories (Bypassing PostgREST 1000 Row Limit)
   const fetchProductsAndCategories = useCallback(async (businessId: string, background = false) => {
     if (!background) setLoading(true)
     try {
@@ -144,19 +149,29 @@ export default function ProductsPage() {
       const fetchedCats = catData || []
       setCategories(fetchedCats)
 
-      // 2. Fetch products with categories join
-      const { data: prodData, error: prodErr } = await supabase
-        .from('products')
-        .select('*, categories(id, name)')
-        .eq('business_id', businessId)
-        .order('created_at', { ascending: false })
+      // 2. Fetch all products in chunks of 1000 to bypass PostgREST max-rows limit (World-Class Chunking)
+      const CHUNK_SIZE = 1000
+      let allProducts: Product[] = []
+      let from = 0
+      while (true) {
+        const { data: chunk, error: prodErr } = await supabase
+          .from('products')
+          .select('*, categories(id, name)')
+          .eq('business_id', businessId)
+          .order('created_at', { ascending: false })
+          .range(from, from + CHUNK_SIZE - 1)
 
-      if (prodErr) throw prodErr
-      const fetchedProds = prodData || []
-      setProducts(fetchedProds)
+        if (prodErr) throw prodErr
+        if (!chunk || chunk.length === 0) break
+        allProducts = allProducts.concat(chunk as Product[])
+        if (chunk.length < CHUNK_SIZE) break
+        from += CHUNK_SIZE
+      }
 
-      // Save to cache
-      writeCache(businessId, fetchedProds, fetchedCats)
+      setProducts(allProducts)
+
+      // Save to cache (safely guarded against quota exhaustion)
+      writeCache(businessId, allProducts, fetchedCats)
     } catch (err) {
       console.error('Error fetching data:', err)
     } finally {

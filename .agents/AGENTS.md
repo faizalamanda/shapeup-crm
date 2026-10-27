@@ -119,6 +119,13 @@
    - Jika pengguna secara sadar mengaktifkan *forceStockCleanup*, sistem harus menghapus `inventory_stock_summary` dan `stock_moves` milik produk tersebut sebelum menghapus baris di `products`, dalam ruang lingkup unit bisnis aktif saja.
    - Dilarang keras menyentuh tabel `businesses` atau entitas milik bisnis/user lain selama proses pembersihan produk.
 
+8. **Enterprise Bulk Product & Stock Import Standards:**
+   - **SKU-First Deduplication:** Jika baris memiliki SKU, pencocokan duplikasi **HANYA** membandingkan `sku`. Dilarang mencocokkan nama agar tidak menggabungkan varian produk yang berbeda (*variant collapse*). Pencocokan nama hanya diperbolehkan sebagai fallback jika SKU tidak diisi.
+   - **Default Tracked Physical Stock:** Produk fisik secara baku wajib berstatus `stock_type = 'tracked'` (Lacak Stok) dan jumlah stok fisik awal tidak boleh di-nol-kan.
+   - **Event-Sourced Stock Movements on Update & Insert:** Setiap penambahan produk baru dengan stok > 0 wajib mencatat `stock_moves` (`STOK-AWAL-IMPORT`). Setiap update produk yang mengubah saldo stok fisik (`duplicateAction = 'update'`) wajib mencatat `stock_moves` penyesuaian (`PENYESUAIAN-STOK-IMPORT`) dengan penanda `origin_location_id` (null jika penambahan, dummy UUID jika pengurangan) agar trigger database `trg_sync_product_stock_from_moves` tidak membalikkan saldo stok historis.
+   - **Bypass 1.000 PostgREST Limit:** Tampilan katalog produk (`/products`) wajib memuat seluruh data secara bertahap menggunakan chunked `.range()` untuk menjamin katalog besar (> 4.000 produk) tampil utuh tanpa terpotong batas bawaan server Supabase.
+   - **Fault-Isolated Batch Processing & Audit Trail:** Proses impor wajib memproses chunk terisolasi (100 baris/batch) dan menyediakan fitur unduh data gagal (.xlsx) berisikan nomor baris dan alasan kegagalan spesifik.
+
 
 ## Research & Planning
 
