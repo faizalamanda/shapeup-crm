@@ -167,6 +167,10 @@ export async function POST(req: Request) {
       change_amount: number
       reference_number: string | null
       notes: string | null
+      is_cash?: boolean
+      payment_method_account_id?: string | null
+      account_id?: string | null
+      account_name?: string | null
     }> = Array.isArray(payments) && payments.length > 0
       ? payments.map((p: any) => ({
           method: String(p.method || 'cash').toLowerCase(),
@@ -174,7 +178,11 @@ export async function POST(req: Request) {
           cash_received: Number(p.cash_received || p.amount || 0),
           change_amount: Number(p.change_amount || 0),
           reference_number: p.reference_number || null,
-          notes: p.notes || null
+          notes: p.notes || null,
+          is_cash: p.is_cash,
+          payment_method_account_id: p.payment_method_account_id || p.account_id || null,
+          account_id: p.account_id || p.payment_method_account_id || null,
+          account_name: p.account_name || null
         }))
       : [
           {
@@ -183,7 +191,10 @@ export async function POST(req: Request) {
             cash_received: Number(cash_received || numGrandTotal) || 0,
             change_amount: Number(change_amount || 0),
             reference_number: reference_number || null,
-            notes: null
+            notes: null,
+            payment_method_account_id: null,
+            account_id: null,
+            account_name: null
           }
         ]
 
@@ -303,8 +314,11 @@ export async function POST(req: Request) {
       const paymentInserts = effectivePayments
         .filter((p) => p.amount > 0)
         .map((p) => {
-          const isCash = p.method === 'cash'
-          const accId = isCash ? shiftCashAccId : accountMap['101200']
+          const isCash = p.method === 'cash' || p.is_cash === true
+          const customAccId = p.payment_method_account_id || p.account_id
+          const accId = isUuid(customAccId)
+            ? customAccId
+            : (isCash ? shiftCashAccId : accountMap['101200'])
           return {
             business_id: businessId,
             order_id: order.id,
@@ -316,7 +330,7 @@ export async function POST(req: Request) {
             cash_received: p.cash_received || p.amount,
             change_amount: p.change_amount || 0,
             reference_number: p.reference_number || null,
-            notes: p.notes || `Pembayaran POS #${orderNumber}`,
+            notes: p.notes || (p.account_name ? `Pembayaran POS #${orderNumber} via ${p.account_name}` : `Pembayaran POS #${orderNumber}`),
             payment_kind: 'payment'
           }
         })

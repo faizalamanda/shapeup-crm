@@ -236,3 +236,12 @@
    - **Auto-Cleanup on Settlement (Zero Orphan Drafts):** Ketika transaksi kasir berhasil diselesaikan/dibayar hingga cetak struk, sistem wajib secara otomatis menghapus hold terkait dari database via *fire-and-forget background delete* tanpa menambah latensi kasir (0ms latency).
    - **Parallel Initial Loading:** Pengambilan daftar pesanan tertahan (`GET /api/pos/hold`) wajib dimasukkan ke dalam `Promise.all` saat inisialisasi awal kasir (`POSWorkspace.tsx`) agar daftar draf langsung tampil tanpa memperpanjang waktu loading.
 
+17. **POS Dual Split Engine, Split Tender & Accounting Asset Account Binding Standards:**
+   - **Direct General Ledger Asset Binding:** Setiap baris tender pembayaran di kasir POS **WAJIB** terikat langsung ke akun Aset Kas & Bank riil dari Bagan Akun (*Chart of Accounts*) bisnis via `payment_method_account_id` (tabel `accounts`, `type = 'ASSET'` kode `101xxx`). Jurnal penerimaan kas mendebit akun yang bersangkutan secara langsung tanpa akun penampung sementara (*clearing accounts*).
+   - **Dual Split Separation of Concerns:**
+     - **Split Bill (Pecah Tagihan / Orang):** Mendukung *Split by Item* (mencentang menu tertentu untuk Sub-Bill 1) dan *Split Equal* (membagi rata nominal ke $N$ orang). Porsi tagihan yang belum terselesaikan **WAJIB** ditandai tegas dengan status **`BELUM LUNAS`** dan nilai saldo sisa **`SISA PIUTANG`**.
+     - **Split Tender (Pecah Metode Bayar):** Menambah baris pembayaran (`+ Tambah Pembayaran`) dalam 1 tagihan atau sub-bill dengan kombinasi akun Kas & Bank berbeda (misal: Kas Tunai + Bank BCA).
+   - **Ultra-Minimalist Cashier UX Standard (Zero Clutter):**
+     - Seluruh modal pembayaran kasir (`CashPaymentModal.tsx`) **DILARANG KERAS** menyematkan emoji atau ikon dekoratif (`💵`, `📱`, `💳`, `🔀`, `✓`, `⏳`) yang membuat visual sesak.
+     - Keterbacaan dan hirarki dibangun murni menggunakan tipografi monokrom tegas (`slate-950`), spasi terukur, dan badge status berbobot semantik (Emerald untuk `LUNAS`, Amber/Rose untuk `BELUM LUNAS` / `SISA PIUTANG`).
+

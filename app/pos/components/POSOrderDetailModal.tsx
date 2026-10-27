@@ -314,10 +314,11 @@ export default function POSOrderDetailModal({
             order_id: currentOrder.id,
             amount: item.amount,
             payment_method: item.method,
+            payment_method_account_id: item.payment_method_account_id || item.account_id || null,
             cash_received: item.cash_received || item.amount,
             change_amount: item.change_amount || 0,
             reference_number: item.reference_number || null,
-            notes: `Pelunasan #${currentOrder.order_number}`
+            notes: item.notes || `Pelunasan #${currentOrder.order_number}`
           })
         })
 
@@ -824,6 +825,7 @@ export default function POSOrderDetailModal({
           isOpen={isPayModalOpen}
           onClose={() => setIsPayModalOpen(false)}
           grandTotal={outstanding}
+          businessId={currentOrder.business_id}
           title={`Pelunasan Tagihan #${currentOrder.order_number}`}
           subtitle={`Sisa yang belum dibayar: ${formatIDR(outstanding)}`}
           defaultMode="full"

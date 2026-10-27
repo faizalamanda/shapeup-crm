@@ -549,10 +549,10 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       const orderNumber = 'POS-' + Date.now().toString().slice(-8)
 
       const paymentTitle = paymentInfo.isPartial 
-        ? `Cicilan (DP Rp ${paymentInfo.amountPaid.toLocaleString('id-ID')})`
+        ? `Sebagian / Sisa Piutang (Rp ${paymentInfo.amountPaid.toLocaleString('id-ID')})`
         : (paymentInfo.method === 'split' 
-            ? 'Split Payment' 
-            : (paymentInfo.method === 'cash' ? 'Tunai (Cash)' : paymentInfo.method === 'qris' ? 'QRIS' : 'Transfer/Kartu'))
+            ? 'Split Kas & Bank' 
+            : (paymentInfo.payments[0]?.account_name || (paymentInfo.method === 'cash' ? 'Tunai (Cash)' : paymentInfo.method === 'qris' ? 'QRIS' : 'Transfer/Kartu')))
 
       // Read stored receipt settings synchronously (0ms)
       const defaultStoreTitle = activeBusiness?.name || (userProfile?.full_name ? `${userProfile.full_name}'s Store` : 'ShapeUp POS')
@@ -1440,6 +1440,15 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         isOpen={isPaymentModalOpen}
         onClose={() => setIsPaymentModalOpen(false)}
         grandTotal={grandTotal}
+        cartItems={cart.map((c) => ({
+          id: c.product.id,
+          name: c.product.name,
+          price: c.finalPrice,
+          quantity: c.quantity,
+          variantName: c.selectedVariant?.name
+        }))}
+        accounts={accounts}
+        businessId={activeBusiness?.id}
         onConfirmPayment={handleConfirmCheckout}
       />
 
