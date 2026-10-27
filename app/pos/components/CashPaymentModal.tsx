@@ -282,7 +282,6 @@ export default function CashPaymentModal({
       const fallbackAccId = defaultTender?.account_id || defaultAcc?.id || 'default-pos-cash'
       const isCash = defaultTender ? defaultTender.category === 'cash' : true
 
-      // Default Uang Diterima: Rp 0 untuk Tunai, atau Uang Pas jika Non-Tunai
       setTenderLines([
         {
           id: 'line-1',
@@ -305,7 +304,6 @@ export default function CashPaymentModal({
           {
             ...prev[0],
             amount: activeBillTarget,
-            // Jika non-tunai, selalu pas; jika tunai, pertahankan jika sudah ada input atau tetap 0
             cashReceived: isCash ? Math.min(prev[0].cashReceived, activeBillTarget) : activeBillTarget
           }
         ]
@@ -372,7 +370,6 @@ export default function CashPaymentModal({
           ...updated[0],
           tenderId: tender.id,
           accountId: tender.account_id,
-          // Tunai default Rp 0 (atau pertahankan input kasir); Non-tunai langsung pas
           cashReceived: isCash ? (updated[0].cashReceived > 0 ? updated[0].cashReceived : 0) : currentAmt,
           referenceNumber: isCash ? '' : updated[0].referenceNumber
         }
@@ -406,7 +403,6 @@ export default function CashPaymentModal({
     } else if (char === '00') {
       if (currentNum > 0) newNum = Number(String(currentNum) + '00')
     } else {
-      // Digit 0 - 9
       const s = currentNum === 0 ? char : String(currentNum) + char
       newNum = Number(s)
     }
@@ -415,15 +411,12 @@ export default function CashPaymentModal({
     handleUpdateLine(primaryLine.id, { cashReceived: newNum })
   }, [primaryLine])
 
-  // DUKUNGAN PENUH KEYBOARD FISIK & NUMKEY EKSTERNAL
+  // DUKUNGAN KEYBOARD FISIK & NUMKEY EKSTERNAL
   useEffect(() => {
     if (!isOpen) return
 
     const handlePhysicalKeyDown = (e: KeyboardEvent) => {
-      // Jika modal split sedang terbuka, abaikan agar tidak tabrakan dengan input di dalam popup
       if (isSplitBillOpen || isSplitTenderOpen || isReceiptDetailsOpen) return
-
-      // Jangan cegah shortcut browser seperti F5 atau Ctrl+R
       if (e.ctrlKey || e.metaKey || e.altKey) return
 
       const key = e.key
@@ -546,6 +539,7 @@ export default function CashPaymentModal({
   const activeTenderObj = tenderOptions.find((t) => t.id === primaryLine.tenderId) || tenderOptions[0]
   const isShortOfCash = isPrimaryCash && primaryLine.cashReceived < primaryLine.amount
   const unallocatedSplitAmount = Math.max(0, activeBillTarget - totalTenderAmount)
+  const isSplitTenderActive = tenderLines.length > 1
 
   return (
     <FullScreenModal
@@ -558,89 +552,98 @@ export default function CashPaymentModal({
       title={null}
     >
       {/* 
-        CONTAINER UTAMA (WARNA HARMONIS SLATE KASIR UTAMA POS)
-        100% Bebas Scroll di Tablet & Mobile (h-[100dvh] overflow-hidden)
+        CONTAINER UTAMA (OPTIMASI TABLET LANSKAP & PORTRAIT — 100dvh ZERO SCROLL)
+        Menggunakan Adaptive Landscape Vertical Compression
       */}
-      <div className="w-full max-w-[1280px] mx-auto h-[100dvh] flex flex-col bg-slate-100 text-slate-900 overflow-hidden p-2 sm:p-3.5 lg:p-4">
+      <div className="w-full max-w-[1280px] mx-auto h-[100dvh] max-h-[100dvh] flex flex-col bg-slate-100 text-slate-900 overflow-hidden p-2 sm:p-2.5 lg:p-3">
 
-        {/* 1. TOP NAVBAR HEADER (Sama Persis dengan Header POS Kasir Utama) */}
-        <header className="h-12 sm:h-14 shrink-0 bg-slate-900 text-white rounded-2xl px-3 sm:px-4 flex items-center justify-between shadow-md mb-2">
-          <div className="flex items-center gap-2.5">
+        {/* 1. TOP NAVBAR HEADER KOMPAK */}
+        <header className="h-10 sm:h-11 shrink-0 bg-slate-900 text-white rounded-xl px-3 sm:px-3.5 flex items-center justify-between shadow-xs mb-1.5 sm:mb-2">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white flex items-center gap-1.5 text-xs font-bold transition border border-slate-700/80 cursor-pointer"
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white flex items-center gap-1 text-xs font-bold transition border border-slate-700/80 cursor-pointer"
               title="Kembali ke Layar Kasir"
             >
               <span>←</span>
               <span>Kembali</span>
             </button>
 
-            <div className="h-4 w-px bg-slate-700 hidden sm:block"></div>
+            <div className="h-3.5 w-px bg-slate-700 hidden sm:block"></div>
 
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-indigo-500 to-violet-500 text-white font-black flex items-center justify-center text-xs shadow-xs">
+            <div className="flex items-center gap-1.5">
+              <div className="w-6 h-6 rounded-md bg-gradient-to-tr from-indigo-500 to-violet-500 text-white font-black flex items-center justify-center text-[10px] shadow-xs">
                 POS
               </div>
-              <h1 className="font-extrabold text-sm sm:text-base leading-tight text-white">
+              <h1 className="font-extrabold text-xs sm:text-sm leading-tight text-white">
                 {title || 'Pembayaran Kasir'}
               </h1>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {activeShift && (
-              <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-700">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span>Shift: {activeShift.cashier_name}</span>
-              </span>
-            )}
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Tombol Pecah Tagihan (Muncul di layar kecil/ponsel agar kasir tidak kehilangan fitur split) */}
+            <button
+              type="button"
+              onClick={() => setIsSplitBillOpen(true)}
+              className="lg:hidden px-2.5 py-1 rounded-lg bg-indigo-900/80 hover:bg-indigo-800 text-indigo-200 border border-indigo-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+            >
+              <span>🔀 Pecah Tagihan</span>
+            </button>
 
-            {/* Tombol Lihat Menu (Khusus Mobile / Tablet Sempit) */}
+            {/* Tombol Lihat Menu (Khusus Mobile) */}
             <button
               type="button"
               onClick={() => setIsReceiptDetailsOpen(true)}
-              className="lg:hidden px-3 py-1.5 rounded-xl bg-slate-800 text-xs font-bold text-slate-200 border border-slate-700 flex items-center gap-1.5"
+              className="lg:hidden px-2.5 py-1 rounded-lg bg-slate-800 text-xs font-bold text-slate-200 border border-slate-700 flex items-center gap-1"
             >
-              <span>🧾 Rincian ({cartItems.length})</span>
+              <span>🧾 Menu ({cartItems.length})</span>
             </button>
+
+            {activeShift && (
+              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Shift: {activeShift.cashier_name}</span>
+              </span>
+            )}
           </div>
         </header>
 
         {/* 
-          2. WORKSPACE 2-PANEL KHUSUS TABLET (768px - 1024px)
-          Panel Kiri: Struk Kasir & Total Tagihan (38%)
+          2. WORKSPACE 2-PANEL KHUSUS TABLET (768px - 1024px LANSKAP & PORTRAIT)
+          Panel Kiri: Struk Kasir (38%)
           Panel Kanan: Workstation Numpad & Tender (62%)
         */}
-        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4 overflow-hidden">
+        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-2 sm:gap-2.5 overflow-hidden">
           
           {/* ========================================================= */}
-          {/* PANEL KIRI (38%): STRUK NOTA KASIR (PUTIH BERSIH MODERN)  */}
+          {/* PANEL KIRI (38%): STRUK NOTA KASIR                        */}
           {/* ========================================================= */}
-          <aside className="hidden lg:flex lg:col-span-5 flex-col bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm overflow-hidden justify-between">
+          <aside className="hidden lg:flex lg:col-span-5 flex-col bg-white border border-slate-200/90 rounded-xl p-3 sm:p-3.5 shadow-2xs overflow-hidden justify-between">
             
             {/* Header Struk Nota */}
-            <div className="shrink-0 border-b border-slate-100 pb-3 mb-2 flex items-center justify-between">
+            <div className="shrink-0 border-b border-slate-100 pb-2 mb-1.5 flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-mono font-black text-xs text-slate-500 uppercase tracking-wider">
                     Nota #{Date.now().toString().slice(-6)}
                   </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
                     Kasir Aktif
                   </span>
                 </div>
-                <div className="text-xs font-semibold text-slate-600 mt-1">
+                <div className="text-[11px] font-semibold text-slate-600 mt-0.5">
                   Pelanggan: <span className="text-slate-900 font-bold">Umum (Tamu)</span>
                 </div>
               </div>
 
-              {/* Tombol Pecah Tagihan (Buka Pop-up Split Bill) */}
+              {/* Tombol Pecah Tagihan */}
               <button
                 type="button"
                 onClick={() => setIsSplitBillOpen(true)}
-                className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 text-xs font-bold border border-slate-200 hover:border-indigo-300 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 text-xs font-bold border border-slate-200 hover:border-indigo-300 transition flex items-center gap-1 cursor-pointer shadow-2xs"
               >
                 <span>🔀</span>
                 <span>Pecah Tagihan</span>
@@ -649,29 +652,29 @@ export default function CashPaymentModal({
 
             {/* Banner Penegasan Jika Mode Split Bill Aktif */}
             {billMode !== 'full' && (
-              <div className="shrink-0 mb-2 p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs font-semibold flex items-center justify-between">
+              <div className="shrink-0 mb-1.5 p-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 text-xs font-semibold flex items-center justify-between">
                 <div>
-                  <span className="font-bold block">
+                  <span className="font-bold block text-[11px]">
                     📌 {billMode === 'split_equal' ? `Bagi Rata (${splitCount} Orang)` : (billMode === 'split_item' ? 'Pecah per Menu' : 'Cicil / Uang Muka')}
                   </span>
-                  <span className="text-[11px] text-blue-700">
+                  <span className="text-[10px] text-blue-700">
                     Sisa belum lunas: {formatIDR(unpaidOutsideBill)}
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setBillMode('full')}
-                  className="text-[11px] text-rose-600 hover:text-rose-800 font-bold underline cursor-pointer"
+                  className="text-[10px] text-rose-600 hover:text-rose-800 font-bold underline cursor-pointer"
                 >
-                  Reset Penuh
+                  Reset
                 </button>
               </div>
             )}
 
-            {/* Daftar Item Pesanan (Scroll Internal Terisolasi dalam Struk) */}
-            <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2 divide-y divide-slate-100">
+            {/* Daftar Item Pesanan (Scroll Internal Terisolasi) */}
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-1.5 divide-y divide-slate-100">
               {cartItems.length === 0 ? (
-                <div className="text-xs text-slate-400 py-8 text-center font-medium">
+                <div className="text-xs text-slate-400 py-6 text-center font-medium">
                   Keranjang pesanan kosong.
                 </div>
               ) : (
@@ -680,22 +683,22 @@ export default function CashPaymentModal({
                   return (
                     <div
                       key={item.id}
-                      className={`pt-2 first:pt-0 flex items-start justify-between text-xs ${
+                      className={`pt-1.5 first:pt-0 flex items-start justify-between text-xs ${
                         !isCheckedForSubBill ? 'opacity-40 line-through' : ''
                       }`}
                     >
-                      <div className="pr-2">
-                        <div className="font-bold text-slate-900 leading-snug">
+                      <div className="pr-2 leading-tight">
+                        <div className="font-bold text-slate-900">
                           {item.quantity}x {item.name}
                         </div>
                         {item.variantName && (
-                          <div className="text-[11px] text-slate-500 mt-0.5">{item.variantName}</div>
+                          <div className="text-[10px] text-slate-500">{item.variantName}</div>
                         )}
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        <div className="text-[10px] text-slate-400 font-mono">
                           @{formatIDR(item.price)}
                         </div>
                       </div>
-                      <div className="font-mono font-bold text-slate-900 shrink-0">
+                      <div className="font-mono font-bold text-slate-900 shrink-0 text-xs">
                         {formatIDR(item.price * item.quantity)}
                       </div>
                     </div>
@@ -705,44 +708,44 @@ export default function CashPaymentModal({
             </div>
 
             {/* Ringkasan Finansial Struk */}
-            <div className="shrink-0 border-t border-slate-100 pt-3 mt-2 space-y-2">
-              <div className="flex justify-between text-xs text-slate-500">
-                <span>Subtotal Seluruh Menu</span>
+            <div className="shrink-0 border-t border-slate-100 pt-2 mt-1.5 space-y-1.5">
+              <div className="flex justify-between text-[11px] text-slate-500">
+                <span>Subtotal Pesanan</span>
                 <span className="font-mono font-semibold text-slate-700">{formatIDR(grandTotal)}</span>
               </div>
 
-              {/* Total Tagihan (KOTAK STATIS READ-ONLY BESAR) */}
-              <div className="p-3.5 rounded-xl bg-slate-900 text-white flex items-baseline justify-between shadow-xs mt-1">
+              {/* Total Tagihan Read-Only Besar */}
+              <div className="p-2.5 sm:p-3 rounded-xl bg-slate-900 text-white flex items-baseline justify-between shadow-xs">
                 <div>
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                  <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400 block">
                     {billMode === 'full' ? 'Total Tagihan:' : 'Tagihan Sub-Bill Ini:'}
                   </span>
-                  <span className="text-2xl sm:text-3xl font-black font-mono text-emerald-400 tracking-tight">
+                  <span className="text-xl sm:text-2xl font-black font-mono text-emerald-400 tracking-tight">
                     {formatIDR(activeBillTarget)}
                   </span>
                 </div>
                 {unpaidOutsideBill > 0 && (
                   <div className="text-right">
-                    <span className="text-[10px] uppercase font-bold text-amber-400 block">Sisa Piutang:</span>
-                    <span className="font-mono text-xs font-bold text-amber-300">{formatIDR(unpaidOutsideBill)}</span>
+                    <span className="text-[9px] uppercase font-bold text-amber-400 block">Sisa Piutang:</span>
+                    <span className="font-mono text-[11px] font-bold text-amber-300">{formatIDR(unpaidOutsideBill)}</span>
                   </div>
                 )}
               </div>
 
-              {/* Status Kembalian / Kekurangan Uang */}
-              {isPrimaryCash && (
-                <div className={`p-2.5 rounded-xl flex items-center justify-between text-xs font-bold border transition ${
+              {/* Status Kembalian (Jika metode tunggal tunai aktif) */}
+              {!isSplitTenderActive && isPrimaryCash && (
+                <div className={`p-2 rounded-lg flex items-center justify-between text-xs font-bold border transition ${
                   isShortOfCash
                     ? 'bg-rose-50 border-rose-200 text-rose-800'
                     : 'bg-emerald-50 border-emerald-300 text-emerald-900'
                 }`}>
-                  <div className="flex items-center gap-1.5 truncate">
+                  <div className="flex items-center gap-1 truncate">
                     <span>💵</span>
-                    <span className="truncate">
-                      {isShortOfCash ? 'Uang Masih Kurang:' : 'Kembalian Diserahkan:'}
+                    <span className="truncate text-[11px]">
+                      {isShortOfCash ? 'Uang Kurang:' : 'Kembalian:'}
                     </span>
                   </div>
-                  <span className="font-mono text-sm font-black shrink-0">
+                  <span className="font-mono text-xs sm:text-sm font-black shrink-0">
                     {isShortOfCash
                       ? `- ${formatIDR(primaryLine.amount - primaryLine.cashReceived)}`
                       : formatIDR(totalChangeAmount)}
@@ -755,18 +758,18 @@ export default function CashPaymentModal({
                 type="button"
                 onClick={handleConfirm}
                 disabled={isSubmitting || totalTenderAmount <= 0}
-                className={`w-full py-3.5 rounded-xl font-black text-sm tracking-wide transition shadow-md flex items-center justify-center gap-2 cursor-pointer ${
+                className={`w-full py-2.5 sm:py-3 rounded-xl font-black text-xs sm:text-sm tracking-wide transition shadow-sm flex items-center justify-center gap-2 cursor-pointer ${
                   isSubmitting || totalTenderAmount <= 0
                     ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                    : 'bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white shadow-emerald-700/20'
+                    : 'bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white'
                 }`}
               >
                 {isSubmitting ? (
-                  <span>Memproses Pembayaran...</span>
+                  <span>Memproses...</span>
                 ) : (
                   <>
                     <span>Selesaikan Transaksi</span>
-                    <span className="font-mono text-emerald-100">({formatIDR(totalTenderAmount)})</span>
+                    <span className="font-mono text-emerald-100 text-xs">({formatIDR(totalTenderAmount)})</span>
                   </>
                 )}
               </button>
@@ -774,252 +777,352 @@ export default function CashPaymentModal({
           </aside>
 
           {/* ========================================================= */}
-          {/* PANEL KANAN (62%): WORKSTATION NUMPAD & TENDER (PUTIH)     */}
+          {/* PANEL KANAN (62%): WORKSTATION NUMPAD / SPLIT BREAKDOWN   */}
           {/* ========================================================= */}
-          <main className="col-span-1 lg:col-span-7 flex flex-col bg-white border border-slate-200/90 rounded-2xl p-3 sm:p-4 shadow-sm overflow-hidden justify-between">
+          <main className="col-span-1 lg:col-span-7 flex flex-col bg-white border border-slate-200/90 rounded-xl p-2.5 sm:p-3 shadow-2xs overflow-hidden justify-between">
             
-            {/* Baris Atas: Tombol Metode Tender */}
-            <div className="shrink-0 space-y-2 mb-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-extrabold uppercase tracking-wider text-slate-500">
-                  Pilih Metode Pembayaran:
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsSplitTenderOpen(true)}
-                  className="text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer"
-                >
-                  <span>+ Pecah Metode (Split Tender)</span>
-                </button>
-              </div>
-
-              {/* Grid Tombol Tender (1-Ketuk Ramah Sentuh) */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {tenderOptions.slice(0, 4).map((t) => {
-                  const isSelected = primaryLine.tenderId === t.id || (!primaryLine.tenderId && primaryLine.accountId === t.account_id)
-                  const categoryIcons: Record<string, string> = {
-                    cash: '💵',
-                    qris: '📱',
-                    bank: '🏦',
-                    edc: '💳'
-                  }
-
-                  return (
+            {/* JIKA SPLIT TENDER AKTIF: TAMPILKAN KARTU RANGKUMAN MULTI-TENDER */}
+            {isSplitTenderActive ? (
+              <div className="flex-1 flex flex-col justify-between space-y-2">
+                <div className="space-y-2">
+                  <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl flex items-center justify-between">
+                    <div>
+                      <span className="font-black text-xs text-indigo-950 flex items-center gap-1.5">
+                        <span>💳</span>
+                        <span>Pembayaran Multi-Metode Aktif ({tenderLines.length} Metode)</span>
+                      </span>
+                      <p className="text-[11px] text-indigo-700 mt-0.5">
+                        Tagihan dipecah ke beberapa akun kas/bank secara bersamaan
+                      </p>
+                    </div>
                     <button
-                      key={t.id}
                       type="button"
-                      onClick={() => handleSelectTender(t)}
-                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex items-center gap-2.5 ${
-                        isSelected
-                          ? 'bg-slate-900 border-slate-900 text-white shadow-md ring-2 ring-slate-900/10'
-                          : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
-                      }`}
+                      onClick={() => setIsSplitTenderOpen(true)}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs cursor-pointer"
                     >
-                      <span className="text-xl shrink-0">{categoryIcons[t.category] || '💳'}</span>
-                      <div className="truncate">
-                        <div className="font-extrabold text-xs truncate">{t.name}</div>
-                        <div className={`text-[10px] truncate ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
-                          {t.category === 'cash' ? 'Laci Kasir' : 'Bank'}
-                        </div>
-                      </div>
+                      ✏️ Ubah Pembagian
                     </button>
-                  )
-                })}
-              </div>
-
-              {/* 
-                DUA KOTAK DISPLAY (KOTAK TOTAL TAGIHAN READ-ONLY + KOTAK UANG DITERIMA AKTIF)
-              */}
-              <div className="grid grid-cols-2 gap-2 sm:gap-3 pt-1">
-                {/* 
-                  Kotak 1: TOTAL TAGIHAN (READ-ONLY MUTLAK)
-                  Terkunci permanen, tidak bisa diklik Numpad agar tidak ter-reset
-                */}
-                <div className="p-2.5 rounded-xl bg-slate-100 border border-slate-200/90 select-none">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
-                      Total Tagihan
-                    </span>
-                    <span className="text-[10px] font-bold text-slate-400 bg-slate-200/60 px-1.5 py-0.5 rounded">
-                      Terkunci
-                    </span>
                   </div>
-                  <div className="font-mono text-base sm:text-xl font-black text-slate-900 truncate mt-0.5">
-                    {formatIDR(primaryLine.amount)}
+
+                  {/* List Baris Pembayaran yang Tersimpan */}
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                    {tenderLines.map((line, idx) => {
+                      const isCash = isAccountCash(line.accountId, line.tenderId)
+                      const currentAcc = cashBankAccounts.find((a) => a.id === line.accountId)
+                      const activeTender = tenderOptions.find((t) => t.id === line.tenderId || t.account_id === line.accountId)
+
+                      return (
+                        <div key={line.id} className="p-2.5 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">{isCash ? '💵' : '🏦'}</span>
+                            <div>
+                              <div className="font-bold text-slate-900">
+                                #{idx + 1} {activeTender?.name || currentAcc?.name}
+                              </div>
+                              <div className="text-[10px] text-slate-500 font-mono">
+                                Akun: {currentAcc?.code || 'COA'} {line.referenceNumber ? `• Ref: ${line.referenceNumber}` : ''}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="font-mono font-black text-sm text-slate-900">
+                            {formatIDR(line.amount)}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Rangkuman Alokasi Pas vs Belum Pas */}
+                  <div className="p-3 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-between text-xs">
+                    <div>
+                      <span className="text-slate-500 font-semibold block text-[11px]">Total Tagihan:</span>
+                      <span className="font-mono font-bold text-slate-800 text-sm">{formatIDR(activeBillTarget)}</span>
+                    </div>
+                    <div className="text-center">
+                      <span className="text-slate-500 font-semibold block text-[11px]">Total Terbagi:</span>
+                      <span className="font-mono font-black text-slate-900 text-sm">{formatIDR(totalTenderAmount)}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-slate-500 font-semibold block text-[11px]">Status:</span>
+                      {totalTenderAmount === activeBillTarget ? (
+                        <span className="text-emerald-700 font-extrabold text-[11px] bg-emerald-100 px-2 py-0.5 rounded-full">
+                          ✓ Alokasi Pas
+                        </span>
+                      ) : (
+                        <span className="text-rose-700 font-extrabold text-[11px] bg-rose-100 px-2 py-0.5 rounded-full">
+                          Kurang {formatIDR(activeBillTarget - totalTenderAmount)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                {/* 
-                  Kotak 2: UANG DITERIMA (TARGET UTAMA NUMPAD)
-                  Selalu Aktif & Menyala Hijau Zamrud
-                */}
-                <div className="p-2.5 rounded-xl bg-emerald-50 border-2 border-emerald-500 ring-2 ring-emerald-500/20 transition select-none">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 block">
-                      Uang Diterima
-                    </span>
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  </div>
-                  <div className="font-mono text-base sm:text-xl font-black text-emerald-950 truncate mt-0.5">
-                    {formatIDR(primaryLine.cashReceived)}
-                  </div>
+                {/* Tombol Reset ke 1 Metode Tunggal */}
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const defaultT = tenderOptions[0]
+                      setTenderLines([{
+                        id: 'line-1',
+                        tenderId: defaultT?.id,
+                        accountId: defaultT?.account_id || 'default-pos-cash',
+                        amount: activeBillTarget,
+                        cashReceived: defaultT?.category === 'cash' ? 0 : activeBillTarget,
+                        referenceNumber: ''
+                      }])
+                    }}
+                    className="text-xs font-bold text-rose-600 hover:text-rose-800 cursor-pointer"
+                  >
+                    Kembali ke 1 Metode Tunggal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsSplitTenderOpen(true)}
+                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                  >
+                    + Tambah Akun Lain
+                  </button>
                 </div>
               </div>
-            </div>
+            ) : (
+              /* JIKA METODE TUNGGAL: TAMPILKAN WORKSTATION NUMPAD ELEGAN */
+              <>
+                {/* Baris Atas: Tombol Metode Tender */}
+                <div className="shrink-0 space-y-1.5 mb-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-extrabold uppercase tracking-wider text-slate-500 text-[10px]">
+                      Pilih Metode Pembayaran:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsSplitTenderOpen(true)}
+                      className="text-xs font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>+ Pecah Metode (Split Tender)</span>
+                    </button>
+                  </div>
 
-            {/* 
-              GRID NUMPAD LAYAR SENTUH (4 BARIS X 4 KOLOM)
-              Warna Terang Bersih Selaras POS Kasir Utama
-            */}
-            <div className="flex-1 min-h-0 grid grid-cols-4 gap-2 my-1">
-              {/* Baris 1: 1, 2, 3, Uang Pas */}
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('1')}
-                className="rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl sm:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
-              >
-                1
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('2')}
-                className="rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl sm:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
-              >
-                2
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('3')}
-                className="rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl sm:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
-              >
-                3
-              </button>
-              <button
-                type="button"
-                onClick={() => handleUpdateLine(primaryLine.id, { cashReceived: primaryLine.amount })}
-                className="rounded-2xl bg-emerald-50 hover:bg-emerald-100 text-xs sm:text-sm font-bold text-emerald-900 flex flex-col items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
-              >
-                <span className="text-[10px] uppercase font-bold text-emerald-700">Uang Pas</span>
-                <span className="font-mono text-xs">{formatIDR(primaryLine.amount)}</span>
-              </button>
+                  {/* Grid Tombol Tender (1-Ketuk) */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                    {tenderOptions.slice(0, 4).map((t) => {
+                      const isSelected = primaryLine.tenderId === t.id || (!primaryLine.tenderId && primaryLine.accountId === t.account_id)
+                      const categoryIcons: Record<string, string> = {
+                        cash: '💵',
+                        qris: '📱',
+                        bank: '🏦',
+                        edc: '💳'
+                      }
 
-              {/* Baris 2: 4, 5, 6, Pecahan 1 */}
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('4')}
-                className="rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl sm:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
-              >
-                4
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('5')}
-                className="rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl sm:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
-              >
-                5
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('6')}
-                className="rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl sm:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
-              >
-                6
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const val = quickCashChips[1] || primaryLine.amount * 2
-                  handleUpdateLine(primaryLine.id, { cashReceived: val })
-                }}
-                className="rounded-2xl bg-slate-100 hover:bg-slate-200 text-xs sm:text-sm font-bold text-slate-800 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-300/80 font-mono shadow-2xs"
-              >
-                {formatIDR(quickCashChips[1] || primaryLine.amount * 2)}
-              </button>
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => handleSelectTender(t)}
+                          className={`p-2 rounded-xl border text-left transition cursor-pointer flex items-center gap-2 min-h-[44px] sm:min-h-[48px] ${
+                            isSelected
+                              ? 'bg-slate-900 border-slate-900 text-white shadow-xs ring-2 ring-slate-900/10'
+                              : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
+                          }`}
+                        >
+                          <span className="text-lg shrink-0">{categoryIcons[t.category] || '💳'}</span>
+                          <div className="truncate">
+                            <div className="font-extrabold text-xs truncate leading-tight">{t.name}</div>
+                            <div className={`text-[9px] truncate ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                              {t.category === 'cash' ? 'Laci Kasir' : 'Bank'}
+                            </div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
 
-              {/* Baris 3: 7, 8, 9, Pecahan 2 */}
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('7')}
-                className="rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl sm:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
-              >
-                7
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('8')}
-                className="rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl sm:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
-              >
-                8
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('9')}
-                className="rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl sm:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
-              >
-                9
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const val = quickCashChips[2] || (primaryLine.amount + 50000)
-                  handleUpdateLine(primaryLine.id, { cashReceived: val })
-                }}
-                className="rounded-2xl bg-slate-100 hover:bg-slate-200 text-xs sm:text-sm font-bold text-slate-800 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-300/80 font-mono shadow-2xs"
-              >
-                {formatIDR(quickCashChips[2] || (primaryLine.amount + 50000))}
-              </button>
+                  {/* Dua Kotak Display: Total Tagihan Read-Only + Uang Diterima Aktif */}
+                  <div className="grid grid-cols-2 gap-2 pt-0.5">
+                    {/* Kotak 1: TOTAL TAGIHAN (READ-ONLY MUTLAK) */}
+                    <div className="py-1.5 px-2.5 sm:px-3 rounded-xl bg-slate-100 border border-slate-200/90 select-none">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 block">
+                          Total Tagihan
+                        </span>
+                        <span className="text-[9px] font-bold text-slate-400 bg-slate-200/60 px-1 py-0.2 rounded">
+                          Terkunci
+                        </span>
+                      </div>
+                      <div className="font-mono text-sm sm:text-base lg:text-lg font-black text-slate-900 truncate mt-0.5">
+                        {formatIDR(primaryLine.amount)}
+                      </div>
+                    </div>
 
-              {/* Baris 4: Reset C, 0, 000, Hapus ⌫ */}
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('CLEAR')}
-                className="rounded-2xl bg-rose-50 hover:bg-rose-100 text-sm sm:text-base font-bold text-rose-700 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-200 shadow-2xs"
-              >
-                Reset
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('0')}
-                className="rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl sm:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
-              >
-                0
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('000')}
-                className="rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-base sm:text-xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 font-mono shadow-2xs"
-              >
-                000
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('BACKSPACE')}
-                className="rounded-2xl bg-amber-50 hover:bg-amber-100 text-lg sm:text-2xl font-bold text-amber-800 flex items-center justify-center transition active:scale-95 cursor-pointer border border-amber-200 shadow-2xs"
-              >
-                ⌫
-              </button>
-            </div>
+                    {/* Kotak 2: UANG DITERIMA (TARGET UTAMA NUMPAD) */}
+                    <div className="py-1.5 px-2.5 sm:px-3 rounded-xl bg-emerald-50 border-2 border-emerald-500 ring-2 ring-emerald-500/20 select-none">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-800 block">
+                          Uang Diterima
+                        </span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      </div>
+                      <div className="font-mono text-sm sm:text-base lg:text-lg font-black text-emerald-950 truncate mt-0.5">
+                        {formatIDR(primaryLine.cashReceived)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-            {/* Kembalian & Tombol Bayar (Khusus Layar Mobile/Tablet Portrait) */}
-            <div className="lg:hidden shrink-0 pt-2 space-y-2">
-              <div className={`p-2.5 rounded-xl flex items-center justify-between text-xs font-bold border ${
-                isShortOfCash
-                  ? 'bg-rose-50 border-rose-200 text-rose-800'
-                  : 'bg-emerald-50 border-emerald-300 text-emerald-900'
-              }`}>
-                <span>{isShortOfCash ? 'Kurang:' : 'Kembalian:'}</span>
-                <span className="font-mono text-base font-black">
-                  {isShortOfCash
-                    ? `- ${formatIDR(primaryLine.amount - primaryLine.cashReceived)}`
-                    : formatIDR(totalChangeAmount)}
-                </span>
-              </div>
+                {/* GRID NUMPAD (Skala Dinamis untuk Tablet Lanskap) */}
+                <div className="flex-1 min-h-0 grid grid-cols-4 gap-1.5 my-1">
+                  {/* Baris 1: 1, 2, 3, Uang Pas */}
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('1')}
+                    className="rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
+                  >
+                    1
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('2')}
+                    className="rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
+                  >
+                    2
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('3')}
+                    className="rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
+                  >
+                    3
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateLine(primaryLine.id, { cashReceived: primaryLine.amount })}
+                    className="rounded-xl sm:rounded-2xl bg-emerald-50 hover:bg-emerald-100 text-xs font-bold text-emerald-900 flex flex-col items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs p-1"
+                  >
+                    <span className="text-[9px] uppercase font-bold text-emerald-700">Uang Pas</span>
+                    <span className="font-mono text-[10px] sm:text-xs truncate max-w-full">{formatIDR(primaryLine.amount)}</span>
+                  </button>
+
+                  {/* Baris 2: 4, 5, 6, Pecahan 1 */}
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('4')}
+                    className="rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
+                  >
+                    4
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('5')}
+                    className="rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
+                  >
+                    5
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('6')}
+                    className="rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
+                  >
+                    6
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const val = quickCashChips[1] || primaryLine.amount * 2
+                      handleUpdateLine(primaryLine.id, { cashReceived: val })
+                    }}
+                    className="rounded-xl sm:rounded-2xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-800 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-300/80 font-mono shadow-2xs truncate px-1"
+                  >
+                    {formatIDR(quickCashChips[1] || primaryLine.amount * 2)}
+                  </button>
+
+                  {/* Baris 3: 7, 8, 9, Pecahan 2 */}
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('7')}
+                    className="rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
+                  >
+                    7
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('8')}
+                    className="rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
+                  >
+                    8
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('9')}
+                    className="rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
+                  >
+                    9
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const val = quickCashChips[2] || (primaryLine.amount + 50000)
+                      handleUpdateLine(primaryLine.id, { cashReceived: val })
+                    }}
+                    className="rounded-xl sm:rounded-2xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-800 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-300/80 font-mono shadow-2xs truncate px-1"
+                  >
+                    {formatIDR(quickCashChips[2] || (primaryLine.amount + 50000))}
+                  </button>
+
+                  {/* Baris 4: Reset C, 0, 000, Hapus ⌫ */}
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('CLEAR')}
+                    className="rounded-xl sm:rounded-2xl bg-rose-50 hover:bg-rose-100 text-xs sm:text-sm font-bold text-rose-700 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-200 shadow-2xs"
+                  >
+                    Reset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('0')}
+                    className="rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 shadow-2xs"
+                  >
+                    0
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('000')}
+                    className="rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-sm sm:text-base font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200/80 font-mono shadow-2xs"
+                  >
+                    000
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumpadInput('BACKSPACE')}
+                    className="rounded-xl sm:rounded-2xl bg-amber-50 hover:bg-amber-100 text-base sm:text-xl font-bold text-amber-800 flex items-center justify-center transition active:scale-95 cursor-pointer border border-amber-200 shadow-2xs"
+                  >
+                    ⌫
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* Kembalian & Tombol Bayar (Khusus Layar Mobile / Tablet Portrait) */}
+            <div className="lg:hidden shrink-0 pt-1.5 space-y-1.5">
+              {!isSplitTenderActive && isPrimaryCash && (
+                <div className={`p-2 rounded-lg flex items-center justify-between text-xs font-bold border ${
+                  isShortOfCash
+                    ? 'bg-rose-50 border-rose-200 text-rose-800'
+                    : 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                }`}>
+                  <span>{isShortOfCash ? 'Uang Kurang:' : 'Kembalian:'}</span>
+                  <span className="font-mono text-xs sm:text-sm font-black">
+                    {isShortOfCash
+                      ? `- ${formatIDR(primaryLine.amount - primaryLine.cashReceived)}`
+                      : formatIDR(totalChangeAmount)}
+                  </span>
+                </div>
+              )}
 
               <button
                 type="button"
                 onClick={handleConfirm}
                 disabled={isSubmitting || totalTenderAmount <= 0}
-                className={`w-full py-3.5 rounded-xl font-black text-sm tracking-wide transition shadow-md flex items-center justify-center gap-2 cursor-pointer ${
+                className={`w-full py-3 rounded-xl font-black text-xs sm:text-sm tracking-wide transition shadow-md flex items-center justify-center gap-1.5 cursor-pointer ${
                   isSubmitting || totalTenderAmount <= 0
                     ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
                     : 'bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white'
@@ -1034,7 +1137,7 @@ export default function CashPaymentModal({
 
         {/* Notifikasi Error Validasi */}
         {errorMsg && (
-          <div className="shrink-0 mt-2 p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs">
+          <div className="shrink-0 mt-1.5 p-2 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg text-xs font-bold flex items-center gap-2 shadow-xs">
             <span>⚠️</span>
             <span>{errorMsg}</span>
           </div>
@@ -1047,21 +1150,21 @@ export default function CashPaymentModal({
       {/* ========================================================================= */}
       {isSplitBillOpen && (
         <div className="fixed inset-0 z-[1300] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in">
-          <div className="w-full sm:max-w-lg bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl p-5 shadow-2xl space-y-4 text-slate-900 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="w-full sm:max-w-lg bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl p-4 sm:p-5 shadow-2xl space-y-3.5 text-slate-900 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
               <div>
-                <h3 className="font-extrabold text-base text-slate-900 flex items-center gap-2">
+                <h3 className="font-extrabold text-sm sm:text-base text-slate-900 flex items-center gap-2">
                   <span>🔀</span>
                   <span>Pecah Tagihan (Split Bill)</span>
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
+                <p className="text-[11px] text-slate-500 mt-0.5">
                   Tentukan nominal porsi yang dibayar pelanggan saat ini
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsSplitBillOpen(false)}
-                className="w-8 h-8 rounded-xl bg-slate-100 text-slate-600 hover:text-slate-900 flex items-center justify-center font-bold text-sm cursor-pointer"
+                className="w-7 h-7 rounded-lg bg-slate-100 text-slate-600 hover:text-slate-900 flex items-center justify-center font-bold text-xs cursor-pointer"
               >
                 ✕
               </button>
@@ -1072,28 +1175,28 @@ export default function CashPaymentModal({
               <button
                 type="button"
                 onClick={() => setBillMode('full')}
-                className={`py-2 rounded-lg transition ${billMode === 'full' ? 'bg-white text-slate-900 shadow-xs border border-slate-200' : 'text-slate-600 hover:text-slate-900'}`}
+                className={`py-1.5 rounded-lg transition ${billMode === 'full' ? 'bg-white text-slate-900 shadow-xs border border-slate-200' : 'text-slate-600 hover:text-slate-900'}`}
               >
                 Penuh
               </button>
               <button
                 type="button"
                 onClick={() => setBillMode('split_equal')}
-                className={`py-2 rounded-lg transition ${billMode === 'split_equal' ? 'bg-white text-slate-900 shadow-xs border border-slate-200' : 'text-slate-600 hover:text-slate-900'}`}
+                className={`py-1.5 rounded-lg transition ${billMode === 'split_equal' ? 'bg-white text-slate-900 shadow-xs border border-slate-200' : 'text-slate-600 hover:text-slate-900'}`}
               >
                 Bagi Rata
               </button>
               <button
                 type="button"
                 onClick={() => setBillMode('split_item')}
-                className={`py-2 rounded-lg transition ${billMode === 'split_item' ? 'bg-white text-slate-900 shadow-xs border border-slate-200' : 'text-slate-600 hover:text-slate-900'}`}
+                className={`py-1.5 rounded-lg transition ${billMode === 'split_item' ? 'bg-white text-slate-900 shadow-xs border border-slate-200' : 'text-slate-600 hover:text-slate-900'}`}
               >
                 Pecah Menu
               </button>
               <button
                 type="button"
                 onClick={() => setBillMode('partial')}
-                className={`py-2 rounded-lg transition ${billMode === 'partial' ? 'bg-white text-slate-900 shadow-xs border border-slate-200' : 'text-slate-600 hover:text-slate-900'}`}
+                className={`py-1.5 rounded-lg transition ${billMode === 'partial' ? 'bg-white text-slate-900 shadow-xs border border-slate-200' : 'text-slate-600 hover:text-slate-900'}`}
               >
                 Cicil / DP
               </button>
@@ -1101,18 +1204,18 @@ export default function CashPaymentModal({
 
             {/* Konfigurasi Tiap Mode */}
             {billMode === 'split_equal' && (
-              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
                 <div>
-                  <span className="font-bold text-sm block">Bagi Rata ke Berapa Orang?</span>
-                  <span className="text-xs text-slate-500 mt-0.5 block">
+                  <span className="font-bold text-xs sm:text-sm block">Bagi Rata ke Berapa Orang?</span>
+                  <span className="text-[11px] text-slate-500 mt-0.5 block">
                     {formatIDR(grandTotal)} dibagi {splitCount} = <b className="text-emerald-700">{formatIDR(activeBillTarget)}</b> / orang
                   </span>
                 </div>
-                <div className="flex items-center gap-2 bg-white p-1 rounded-xl border border-slate-300">
+                <div className="flex items-center gap-2 bg-white p-1 rounded-lg border border-slate-300">
                   <button
                     type="button"
                     onClick={() => setSplitCount((p) => Math.max(2, p - 1))}
-                    className="w-8 h-8 flex items-center justify-center font-bold text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer"
+                    className="w-7 h-7 flex items-center justify-center font-bold text-slate-700 hover:bg-slate-100 rounded cursor-pointer"
                   >
                     -
                   </button>
@@ -1120,7 +1223,7 @@ export default function CashPaymentModal({
                   <button
                     type="button"
                     onClick={() => setSplitCount((p) => Math.min(20, p + 1))}
-                    className="w-8 h-8 flex items-center justify-center font-bold text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer"
+                    className="w-7 h-7 flex items-center justify-center font-bold text-slate-700 hover:bg-slate-100 rounded cursor-pointer"
                   >
                     +
                   </button>
@@ -1129,14 +1232,14 @@ export default function CashPaymentModal({
             )}
 
             {billMode === 'split_item' && (
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <span className="text-xs font-bold text-slate-700 block">
                   Pilih menu yang dibayar pada sub-bill ini ({selectedItemIds.size}/{cartItems.length}):
                 </span>
-                <div className="max-h-52 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-xl bg-slate-50 p-1">
+                <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-xl bg-slate-50 p-1">
                   {cartItems.map((item) => (
-                    <label key={item.id} className="p-2.5 flex items-center justify-between text-xs cursor-pointer hover:bg-white rounded-lg">
-                      <div className="flex items-center gap-2.5">
+                    <label key={item.id} className="p-2 flex items-center justify-between text-xs cursor-pointer hover:bg-white rounded-lg">
+                      <div className="flex items-center gap-2">
                         <input
                           type="checkbox"
                           checked={selectedItemIds.has(item.id)}
@@ -1158,16 +1261,16 @@ export default function CashPaymentModal({
             )}
 
             {billMode === 'partial' && (
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <span className="text-xs font-bold text-slate-700 block">
-                  Nominal Uang Muka / Cicilan yang Dibayar Hari Ini (Rp):
+                  Nominal Uang Muka / Cicilan Hari Ini (Rp):
                 </span>
                 <input
                   type="text"
                   value={partialAmountInput}
                   onChange={(e) => setPartialAmountInput(e.target.value.replace(/\D/g, ''))}
                   placeholder="0"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 font-mono text-base font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-300 font-mono text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
                 />
               </div>
             )}
@@ -1175,7 +1278,7 @@ export default function CashPaymentModal({
             <button
               type="button"
               onClick={() => setIsSplitBillOpen(false)}
-              className="w-full py-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs tracking-wider uppercase transition cursor-pointer shadow-sm"
+              className="w-full py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs tracking-wider uppercase transition cursor-pointer shadow-sm"
             >
               Terapkan ke Layar Pembayaran ({formatIDR(activeBillTarget)})
             </button>
@@ -1184,55 +1287,55 @@ export default function CashPaymentModal({
       )}
 
       {/* ========================================================================= */}
-      {/* POP-UP 2: PECAH METODE BAYAR (SPLIT TENDER — RESPONSIVE FULL WIDTH)       */}
+      {/* POP-UP 2: PECAH METODE BAYAR (SPLIT TENDER — 1 KOLOM INPUT NOMINAL)       */}
       {/* ========================================================================= */}
       {isSplitTenderOpen && (
         <div className="fixed inset-0 z-[1300] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in">
-          <div className="w-full sm:max-w-2xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl p-4 sm:p-6 shadow-2xl flex flex-col text-slate-900 max-h-[92vh] sm:max-h-[85vh]">
+          <div className="w-full sm:max-w-2xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl p-4 sm:p-5 shadow-2xl flex flex-col text-slate-900 max-h-[92vh] sm:max-h-[85vh]">
             
             {/* Header Pop-up */}
-            <div className="shrink-0 flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+            <div className="shrink-0 flex items-center justify-between border-b border-slate-100 pb-2.5 mb-2.5">
               <div>
-                <h3 className="font-extrabold text-base text-slate-900 flex items-center gap-2">
+                <h3 className="font-extrabold text-sm sm:text-base text-slate-900 flex items-center gap-2">
                   <span>💳</span>
                   <span>Pecah Metode Pembayaran (Split Tender)</span>
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Bagi pembayaran ke beberapa akun kas/bank (contoh: Tunai Rp 50.000 + QRIS Rp 50.000)
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Bagi pembayaran ke beberapa akun kas/bank (contoh: Tunai Rp 20.000 + Transfer Rp 130.000)
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsSplitTenderOpen(false)}
-                className="w-8 h-8 rounded-xl bg-slate-100 text-slate-600 hover:text-slate-900 flex items-center justify-center font-bold text-sm cursor-pointer"
+                className="w-7 h-7 rounded-lg bg-slate-100 text-slate-600 hover:text-slate-900 flex items-center justify-center font-bold text-xs cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
             {/* Banner Alokasi Target & Sisa yang Belum Dibagi */}
-            <div className="shrink-0 mb-3 p-3 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-between text-xs">
+            <div className="shrink-0 mb-2.5 p-2.5 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-between text-xs">
               <div>
-                <span className="text-slate-500 font-semibold block">Total yang Harus Dialokasikan:</span>
-                <span className="font-mono text-base font-black text-slate-900">{formatIDR(activeBillTarget)}</span>
+                <span className="text-slate-500 font-semibold block text-[10px]">Total yang Harus Dialokasikan:</span>
+                <span className="font-mono text-sm sm:text-base font-black text-slate-900">{formatIDR(activeBillTarget)}</span>
               </div>
               <div className="text-right">
-                <span className="text-slate-500 font-semibold block">Belum Dialokasikan:</span>
-                <span className={`font-mono text-base font-black ${unallocatedSplitAmount > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                <span className="text-slate-500 font-semibold block text-[10px]">Belum Dialokasikan:</span>
+                <span className={`font-mono text-sm sm:text-base font-black ${unallocatedSplitAmount > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                   {formatIDR(unallocatedSplitAmount)}
                 </span>
               </div>
             </div>
 
             {/* Daftar Baris Pembayaran (Scrollable Area) */}
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1">
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-2.5 pr-1">
               {tenderLines.map((line, idx) => {
                 const isCash = isAccountCash(line.accountId, line.tenderId)
                 const currentAcc = cashBankAccounts.find((a) => a.id === line.accountId)
                 const activeTender = tenderOptions.find((t) => t.id === line.tenderId || t.account_id === line.accountId)
 
                 return (
-                  <div key={line.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                  <div key={line.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-800">
                         Pembayaran #{idx + 1}: <span className="text-indigo-700">{activeTender?.name || currentAcc?.name}</span>
@@ -1257,11 +1360,10 @@ export default function CashPaymentModal({
                             key={t.id}
                             type="button"
                             onClick={() => {
-                              const cashMode = t.category === 'cash'
                               handleUpdateLine(line.id, {
                                 tenderId: t.id,
                                 accountId: t.account_id,
-                                cashReceived: cashMode ? (line.cashReceived || line.amount) : line.amount
+                                cashReceived: line.amount
                               })
                             }}
                             className={`px-2.5 py-1 rounded-lg text-xs font-bold transition border cursor-pointer ${
@@ -1276,10 +1378,15 @@ export default function CashPaymentModal({
                       })}
                     </div>
 
-                    {/* Input Nominal & Uang Diterima */}
-                    <div className="grid grid-cols-2 gap-2 text-xs">
+                    {/* 
+                      1 KOLOM INPUT TUNGGAL: NOMINAL DIBAYAR (RP)
+                      Menghilangkan kolom kedua yang redundan
+                    */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                       <div>
-                        <label className="text-[10px] text-slate-600 font-bold block mb-1">Nominal Alokasi (Rp):</label>
+                        <label className="text-[10px] text-slate-600 font-bold block mb-1">
+                          Nominal {isCash ? 'Tunai' : ''} yang Dibayar (Rp):
+                        </label>
                         <input
                           type="text"
                           value={line.amount > 0 ? String(line.amount) : ''}
@@ -1287,30 +1394,28 @@ export default function CashPaymentModal({
                             const raw = Number(e.target.value.replace(/\D/g, '')) || 0
                             handleUpdateLine(line.id, {
                               amount: raw,
-                              cashReceived: isCash ? Math.max(line.cashReceived, raw) : raw
+                              cashReceived: raw
                             })
                           }}
+                          placeholder="0"
                           className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 font-mono font-bold text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
                         />
                       </div>
-                      <div>
-                        <label className="text-[10px] text-slate-600 font-bold block mb-1">
-                          {isCash ? 'Uang Tunai Diterima (Rp):' : 'No. Referensi / Trace:'}
-                        </label>
-                        <input
-                          type="text"
-                          value={isCash ? (line.cashReceived > 0 ? String(line.cashReceived) : '') : line.referenceNumber}
-                          onChange={(e) => {
-                            if (isCash) {
-                              handleUpdateLine(line.id, { cashReceived: Number(e.target.value.replace(/\D/g, '')) || 0 })
-                            } else {
-                              handleUpdateLine(line.id, { referenceNumber: e.target.value })
-                            }
-                          }}
-                          placeholder={isCash ? '0' : 'REF-123...'}
-                          className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 font-mono font-bold text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                        />
-                      </div>
+
+                      {!isCash && (
+                        <div>
+                          <label className="text-[10px] text-slate-600 font-bold block mb-1">
+                            No. Referensi / Trace (Opsional):
+                          </label>
+                          <input
+                            type="text"
+                            value={line.referenceNumber}
+                            onChange={(e) => handleUpdateLine(line.id, { referenceNumber: e.target.value })}
+                            placeholder="REF-123..."
+                            className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 font-mono text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900"
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 )
@@ -1318,7 +1423,7 @@ export default function CashPaymentModal({
             </div>
 
             {/* Footer Pop-up Pecah Metode */}
-            <div className="shrink-0 pt-3 border-t border-slate-100 space-y-2">
+            <div className="shrink-0 pt-2.5 border-t border-slate-100 space-y-2">
               <button
                 type="button"
                 onClick={() => {
@@ -1337,7 +1442,7 @@ export default function CashPaymentModal({
                     }
                   ])
                 }}
-                className="w-full py-2.5 rounded-xl border border-dashed border-indigo-400 bg-indigo-50/50 hover:bg-indigo-50 text-xs font-bold text-indigo-700 transition cursor-pointer flex items-center justify-center gap-1.5"
+                className="w-full py-2 rounded-xl border border-dashed border-indigo-400 bg-indigo-50/50 hover:bg-indigo-50 text-xs font-bold text-indigo-700 transition cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <span>+ Tambah Baris Pembayaran Lain</span>
               </button>
@@ -1345,7 +1450,7 @@ export default function CashPaymentModal({
               <button
                 type="button"
                 onClick={() => setIsSplitTenderOpen(false)}
-                className="w-full py-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs tracking-wider uppercase transition cursor-pointer shadow-md"
+                className="w-full py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs tracking-wider uppercase transition cursor-pointer shadow-sm"
               >
                 Simpan Alokasi Pembayaran
               </button>
@@ -1356,28 +1461,28 @@ export default function CashPaymentModal({
       )}
 
       {/* ========================================================================= */}
-      {/* POP-UP 3: RINCIAN STRUK LENGKAP (KHUSUS MOBILE)                           */}
+      {/* POP-UP 3: RINCIAN STRUK LENGKAP (KHUSUS MOBILE DENGAN OPSI SPLIT)        */}
       {/* ========================================================================= */}
       {isReceiptDetailsOpen && (
         <div className="fixed inset-0 z-[1300] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in">
-          <div className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl p-5 shadow-2xl space-y-4 text-slate-900 max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-extrabold text-base text-slate-900 flex items-center gap-2">
+          <div className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl p-4 sm:p-5 shadow-2xl space-y-3.5 text-slate-900 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <h3 className="font-extrabold text-sm sm:text-base text-slate-900 flex items-center gap-2">
                 <span>🧾</span>
                 <span>Rincian Struk Pesanan</span>
               </h3>
               <button
                 type="button"
                 onClick={() => setIsReceiptDetailsOpen(false)}
-                className="w-8 h-8 rounded-xl bg-slate-100 text-slate-600 hover:text-slate-900 flex items-center justify-center font-bold text-sm cursor-pointer"
+                className="w-7 h-7 rounded-lg bg-slate-100 text-slate-600 hover:text-slate-900 flex items-center justify-center font-bold text-xs cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 space-y-2">
+            <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 space-y-1.5">
               {cartItems.map((item) => (
-                <div key={item.id} className="pt-2 first:pt-0 flex items-center justify-between text-xs">
+                <div key={item.id} className="pt-1.5 first:pt-0 flex items-center justify-between text-xs">
                   <div>
                     <div className="font-bold text-slate-900">{item.name}</div>
                     <div className="text-[10px] text-slate-400 font-mono">{item.quantity} x {formatIDR(item.price)}</div>
@@ -1389,24 +1494,37 @@ export default function CashPaymentModal({
               ))}
             </div>
 
-            <div className="border-t border-slate-100 pt-3 space-y-1.5 text-xs">
+            <div className="border-t border-slate-100 pt-2.5 space-y-1 text-xs">
               <div className="flex justify-between text-slate-500">
                 <span>Total Pesanan:</span>
                 <span className="font-mono font-bold text-slate-900">{formatIDR(grandTotal)}</span>
               </div>
-              <div className="flex justify-between font-black text-emerald-700 text-sm pt-1">
+              <div className="flex justify-between font-black text-emerald-700 text-sm pt-0.5">
                 <span>Tagihan Aktif:</span>
                 <span className="font-mono">{formatIDR(activeBillTarget)}</span>
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setIsReceiptDetailsOpen(false)}
-              className="w-full py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs cursor-pointer"
-            >
-              Tutup Rincian
-            </button>
+            {/* Opsi Pecah Tagihan di Dalam Modal Rincian Mobile */}
+            <div className="pt-2 border-t border-slate-100 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsReceiptDetailsOpen(false)
+                  setIsSplitBillOpen(true)
+                }}
+                className="w-full py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs flex items-center justify-center gap-1 cursor-pointer"
+              >
+                <span>🔀 Pecah Tagihan</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsReceiptDetailsOpen(false)}
+                className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
           </div>
         </div>
       )}
