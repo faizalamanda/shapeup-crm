@@ -55,6 +55,42 @@ export function formatExportDateTime(
 }
 
 /**
+ * Resolves the creator / operator attribution label for an order.
+ * - POS: Returns cashier name (e.g. 'Kasir 1')
+ * - Invoice / Manual: Returns user full_name or email
+ * - Integrations: Returns 'Sistem (WooCommerce)', 'Sistem (Accurate Online)', etc.
+ * - Fallback: Returns 'Sistem'
+ */
+export function resolveOrderCreator(o: any): string {
+  if (o.created_by && typeof o.created_by === 'string' && o.created_by.trim() !== '') {
+    return o.created_by.trim()
+  }
+
+  // POS Cashier check
+  if (o.cashier_name && typeof o.cashier_name === 'string' && o.cashier_name.trim() !== '') {
+    return o.cashier_name.trim()
+  }
+  if (o.raw_source_data?.cashier_name && typeof o.raw_source_data.cashier_name === 'string') {
+    return o.raw_source_data.cashier_name.trim()
+  }
+
+  // Profile User check
+  const profileName = o.creator?.full_name || o.creator?.email || o.user?.full_name || o.user?.email
+  if (profileName && typeof profileName === 'string' && profileName.trim() !== '') {
+    return profileName.trim()
+  }
+
+  // Integration Platform check
+  const platform = String(o.source_platform || '').trim()
+  const lowerPlat = platform.toLowerCase()
+  if (lowerPlat && !['manual', 'pos', 'invoice'].includes(lowerPlat)) {
+    return `Sistem (${platform})`
+  }
+
+  return 'Sistem'
+}
+
+/**
  * Builds rows for Order Summary (Sheet 1: 1 row per order)
  * Separates SKU and Product Name into distinct columns with synchronized multi-line wrap (\n).
  */
@@ -108,6 +144,7 @@ export function buildOrderSummaryRows(orders: any[], timezone: string = DEFAULT_
       'Tanggal': date,
       'Waktu': time,
       'Platform': o.source_platform || 'Manual',
+      'Dibuat Oleh': resolveOrderCreator(o),
       'Status Pesanan': o.status || '-',
       'Status Pembayaran': payStatusLabel,
       'Metode Pembayaran': o.payment_method || '-',
@@ -151,6 +188,7 @@ export function buildOrderItemRows(orders: any[], timezone: string = DEFAULT_TIM
         'Tanggal': date,
         'Waktu': time,
         'Platform': o.source_platform || 'Manual',
+        'Dibuat Oleh': resolveOrderCreator(o),
         'Nama Pelanggan': o.customer?.name || 'Tanpa Nama',
         'No. WhatsApp / HP': o.customer?.phone ? String(o.customer.phone) : '-',
         'SKU Produk': '-',
@@ -188,6 +226,7 @@ export function buildOrderItemRows(orders: any[], timezone: string = DEFAULT_TIM
         'Tanggal': date,
         'Waktu': time,
         'Platform': o.source_platform || 'Manual',
+        'Dibuat Oleh': resolveOrderCreator(o),
         'Nama Pelanggan': o.customer?.name || 'Tanpa Nama',
         'No. WhatsApp / HP': o.customer?.phone ? String(o.customer.phone) : '-',
         'SKU Produk': item.sku || '-',

@@ -265,6 +265,7 @@ export async function POST(req: Request) {
 
     const orderPayload: any = {
       business_id: businessId,
+      user_id: user.id,
       customer_id: resolvedCustomerId,
       order_number: orderNumber,
       source_platform: 'POS',

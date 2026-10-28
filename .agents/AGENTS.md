@@ -252,3 +252,15 @@
      - Seluruh modal pembayaran kasir (`CashPaymentModal.tsx`) **DILARANG KERAS** menyematkan emoji atau ikon dekoratif (`💵`, `📱`, `💳`, `🔀`, `✓`, `⏳`) yang membuat visual sesak.
      - Keterbacaan dan hirarki dibangun murni menggunakan tipografi monokrom tegas (`slate-950`), spasi terukur, dan badge status berbobot semantik (Emerald untuk `LUNAS`, Amber/Rose untuk `BELUM LUNAS` / `SISA PIUTANG`).
 
+18. **Order Export & Attribution Standards (User Input vs Integrasi Sistem):**
+   - **Kolom Atribusi Wajib (`Dibuat Oleh`):** Seluruh berkas ekspor pesanan (baik Sheet *Ringkasan Pesanan* maupun Sheet *Rincian Produk*) **WAJIB** menyertakan kolom `Dibuat Oleh` tepat setelah kolom `Platform` untuk transparansi audit transaksi multi-channel.
+   - **Hierarki Resolusi Identitas Penginput (Zero-Ambiguity):**
+     1. **POS (Kasir):** Menggunakan `pos_shifts.cashier_name` (nama kasir yang bertugas) atau nama staf profil kasir.
+     2. **Invoice & Order Manual:** Menggunakan `profiles.full_name` (fallback `profiles.email`) staf/owner yang menginput.
+     3. **Integrasi Pihak Ketiga (WooCommerce, Accurate Online, TikTok, Shopee, dll):** Wajib dilabeli dengan format informatif **`Sistem ([Platform])`** (contoh: `Sistem (WooCommerce)`, `Sistem (Accurate Online)`).
+     4. **Fallback:** `Sistem` jika tidak teratribusi ke profil pengguna atau integrasi tertentu.
+   - **Zero-Tolerance N+1 & Double-Layer Resiliency:**
+     - Proyeksi utama dilakukan langsung di SQL RPC `public.get_order_list` via `LEFT JOIN profiles u ON o.user_id = u.id` dan `LEFT JOIN pos_shifts ps ON o.shift_id = ps.id`.
+     - Endpoint `/api/orders/export` dan modul `orderExportService.ts` menerapkan fallback bertingkat (*graceful degradation*) agar data atribut pembuat transaksi selalu terisi utuh baik saat diekspor bertahap (*chunked streaming*) maupun dari state halaman aktif (*scope = 'page'*).
+
+

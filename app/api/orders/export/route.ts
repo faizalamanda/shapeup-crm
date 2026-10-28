@@ -40,6 +40,55 @@ export async function POST(req: Request) {
 
     const orders = Array.isArray(data) ? data : []
 
+    // 4. Resilient creator attribution enrichment (Graceful fallback before/after DB RPC migration)
+    const needsEnrichment = orders.some(o => !o.created_by)
+    if (needsEnrichment && orders.length > 0) {
+      const internalOrders = orders.filter(o => 
+        !o.created_by && ['pos', 'invoice', 'manual'].includes(String(o.source_platform || '').toLowerCase())
+      )
+      
+      if (internalOrders.length > 0) {
+        const orderIds = internalOrders.map(o => o.id).filter(Boolean)
+        const { data: dbOrders } = await supabaseAdmin
+          .from('orders')
+          .select('id, user_id, shift_id, pos_shifts(cashier_name), profiles:user_id(full_name, email)')
+          .in('id', orderIds)
+
+        if (dbOrders && dbOrders.length > 0) {
+          const map = new Map<string, any>()
+          dbOrders.forEach((d: any) => map.set(d.id, d))
+
+          orders.forEach((o: any) => {
+            if (!o.created_by) {
+              const matched = map.get(o.id)
+              if (matched) {
+                const cashier = matched.pos_shifts?.cashier_name
+                const profileName = matched.profiles?.full_name || matched.profiles?.email
+                if (cashier && cashier.trim()) {
+                  o.created_by = cashier.trim()
+                } else if (profileName && profileName.trim()) {
+                  o.created_by = profileName.trim()
+                }
+              }
+            }
+          })
+        }
+      }
+
+      // Assign system label for integration platforms if still empty
+      orders.forEach((o: any) => {
+        if (!o.created_by) {
+          const plat = String(o.source_platform || '').trim()
+          const lower = plat.toLowerCase()
+          if (lower && !['manual', 'pos', 'invoice'].includes(lower)) {
+            o.created_by = `Sistem (${plat})`
+          } else {
+            o.created_by = 'Sistem'
+          }
+        }
+      })
+    }
+
     return NextResponse.json({
       success: true,
       orders,
