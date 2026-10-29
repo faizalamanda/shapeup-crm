@@ -20,6 +20,8 @@ interface BulkRequestBody {
   products: ProductImportRow[]
   duplicateAction?: 'skip' | 'update'
   defaultCategoryId?: string | null
+  defaultStockType?: 'tracked' | 'available' | 'unavailable'
+  defaultType?: 'physical' | 'service'
 }
 
 export async function POST(req: Request) {
@@ -36,7 +38,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Data produk tidak boleh kosong.' }, { status: 400 })
     }
 
-    const { products, duplicateAction = 'skip', defaultCategoryId = null } = body
+    const { products, duplicateAction = 'skip', defaultCategoryId = null, defaultStockType = 'tracked', defaultType = 'physical' } = body
 
     // 3. Resolve and auto-create Categories in batch
     const distinctCategoryNames = Array.from(
@@ -175,18 +177,24 @@ export async function POST(req: Request) {
       // PostgreSQL integer round
       const cleanStockQty = Math.round(rawStockNumber)
       const cleanUnit = item.unit ? String(item.unit).trim() : 'pcs'
-      const cleanType = item.type === 'service' ? 'service' : 'physical'
+      const cleanType = item.type === 'service' ? 'service' : (item.type === 'physical' ? 'physical' : (defaultType === 'service' ? 'service' : 'physical'))
 
-      // Auto-determine stock_type: If stock > 0, make sure stock_type is 'tracked' so stock is preserved
+      // Determine stock_type based on explicit row value, then fallback to defaultStockType
       let cleanStockType: 'tracked' | 'available' | 'unavailable' = 'available'
-      if (cleanType === 'service') {
-        cleanStockType = 'available'
-      } else if (item.stock_type === 'unavailable') {
+      if (item.stock_type === 'unavailable') {
         cleanStockType = 'unavailable'
       } else if (item.stock_type === 'available') {
         cleanStockType = 'available'
-      } else if (item.stock_type === 'tracked' || cleanStockQty > 0) {
+      } else if (item.stock_type === 'tracked') {
         cleanStockType = 'tracked'
+      } else if (cleanStockQty > 0) {
+        cleanStockType = 'tracked'
+      } else if (defaultStockType === 'unavailable') {
+        cleanStockType = 'unavailable'
+      } else if (defaultStockType === 'available') {
+        cleanStockType = 'available'
+      } else if (cleanType === 'service') {
+        cleanStockType = 'available'
       } else {
         cleanStockType = 'tracked'
       }

@@ -19,8 +19,8 @@ const TARGET_FIELDS = [
   { key: 'category', name: 'Kategori Produk', required: false, desc: 'Kategori barang (otomatis dibuat jika belum ada)' },
   { key: 'stock_quantity', name: 'Stok Awal Fisik', required: false, desc: 'Jumlah fisik stok awal (contoh: 10, 50, 100)' },
   { key: 'unit', name: 'Satuan Unit', required: false, desc: 'Satuan barang (pcs, box, kg, botol, pack, dll)' },
-  { key: 'type', name: 'Tipe Produk', required: false, desc: 'Barang Fisik (physical) atau Layanan Jasa (service)' },
-  { key: 'stock_type', name: 'Status Pelacakan Stok', required: false, desc: 'Isi: "lacak" / "tracked" (hitung saldo rak), "tersedia" / "available" (selalu ada/bebas), atau kosongkan (otomatis di-set ke Lacak Stok)' },
+  { key: 'type', name: 'Tipe Produk (Fisik / Jasa)', required: false, desc: 'Tipe item: "Barang Fisik" (physical) atau "Jasa / Layanan" (service)' },
+  { key: 'stock_type', name: 'Manajemen Stok (Tersedia / Tidak Tersedia / Di Track)', required: false, desc: 'Status stok: "tersedia" (available), "tidak tersedia" (unavailable), atau "di track" / "lacak" (tracked)' },
   { key: 'description', name: 'Deskripsi / Detail', required: false, desc: 'Catatan detail spesifikasi produk' }
 ]
 
@@ -36,14 +36,31 @@ const detectProductFieldByHeader = (header: string): string => {
   if (h.includes('hargajual') || h.includes('harga') || h.includes('price') || h.includes('jual') || h.includes('tarif') || h.includes('retail')) {
     return 'price'
   }
-  if (h.includes('kategori') || h.includes('category') || h.includes('jenis') || h.includes('golongan') || h.includes('kelompok') || h.includes('katalog')) {
-    return 'category'
+  // Detect Tipe Produk before category to avoid "jenis produk" matching category
+  if (h.includes('tipeproduk') || h.includes('jenisproduk') || h.includes('producttype') || h.includes('itemtype') || h === 'tipe' || h === 'type') {
+    return 'type'
   }
-  if (h.includes('statusstok') || h.includes('tipestok') || h.includes('stocktype') || h.includes('lacakstok') || h.includes('lacak') || h.includes('tracking')) {
+  // Detect Manajemen Stok before stock_quantity so "manajemen stok" doesn't falsely match "stok"
+  if (
+    h.includes('manajemenstok') ||
+    h.includes('statusstok') ||
+    h.includes('tipestok') ||
+    h.includes('stocktype') ||
+    h.includes('lacakstok') ||
+    h.includes('lacak') ||
+    h.includes('tracking') ||
+    h.includes('stockmanagement') ||
+    h.includes('stockstatus') ||
+    h.includes('manajemen') ||
+    h.includes('ditrack')
+  ) {
     return 'stock_type'
   }
   if (h.includes('stokawal') || h.includes('openingstock') || h.includes('stok') || h.includes('stock') || h.includes('qty') || h.includes('quantity') || h.includes('jumlah') || h.includes('saldo')) {
     return 'stock_quantity'
+  }
+  if (h.includes('kategori') || h.includes('category') || h.includes('golongan') || h.includes('kelompok') || h.includes('katalog') || (h.includes('jenis') && !h.includes('produk'))) {
+    return 'category'
   }
   if (h.includes('satuan') || h.includes('unit') || h.includes('uom')) {
     return 'unit'
@@ -51,7 +68,7 @@ const detectProductFieldByHeader = (header: string): string => {
   if (h.includes('deskripsi') || h.includes('keterangan') || h.includes('desc') || h.includes('detail') || h.includes('catatan') || h.includes('notes')) {
     return 'description'
   }
-  if (h.includes('tipe') || h.includes('type') || h.includes('jenisproduk')) {
+  if (h.includes('tipe') || h.includes('type')) {
     return 'type'
   }
   if (h.includes('namaproduk') || h.includes('namabarang') || h.includes('nama') || h.includes('product') || h.includes('title') || h.includes('item')) {
@@ -91,8 +108,7 @@ export default function ProductImportPage() {
   const [defaultCategory, setDefaultCategory] = useState<string>('')
   const [defaultUnit, setDefaultUnit] = useState<string>('pcs')
   const [defaultType, setDefaultType] = useState<'physical' | 'service'>('physical')
-  // Default stock is STRICTLY tracked
-  const [defaultStockType, setDefaultStockType] = useState<'tracked' | 'available'>('tracked')
+  const [defaultStockType, setDefaultStockType] = useState<'tracked' | 'available' | 'unavailable'>('tracked')
   const [duplicateAction, setDuplicateAction] = useState<'skip' | 'update'>('skip')
 
   // Streaming Import Progress & Results
@@ -106,6 +122,8 @@ export default function ProductImportPage() {
     rowNumber: number
     name: string
     sku: string | null
+    type: 'physical' | 'service'
+    stock_type: 'tracked' | 'available' | 'unavailable'
     price: number
     cost_price: number
     category: string | null
@@ -242,6 +260,8 @@ export default function ProductImportPage() {
       {
         'Nama Produk': 'Kemeja Flannel Pria',
         'SKU': 'KFL-001',
+        'Tipe Produk': 'Barang Fisik',
+        'Manajemen Stok': 'Di Track',
         'Harga Jual': 175000,
         'HPP Modal': 95000,
         'Kategori': 'Pakaian Pria',
@@ -252,22 +272,38 @@ export default function ProductImportPage() {
       {
         'Nama Produk': 'Celana Chino Slim Fit',
         'SKU': 'CCN-002',
+        'Tipe Produk': 'Barang Fisik',
+        'Manajemen Stok': 'Tersedia',
         'Harga Jual': 195000,
         'HPP Modal': 110000,
         'Kategori': 'Pakaian Pria',
-        'Stok Awal': 40,
+        'Stok Awal': 0,
         'Satuan': 'pcs',
         'Deskripsi': 'Celana chino stretch katun twill'
       },
       {
         'Nama Produk': 'Jasa Jahit & Vermak',
         'SKU': 'SRV-001',
+        'Tipe Produk': 'Jasa',
+        'Manajemen Stok': 'Tersedia',
         'Harga Jual': 35000,
         'HPP Modal': 10000,
         'Kategori': 'Jasa',
         'Stok Awal': 0,
         'Satuan': 'pcs',
         'Deskripsi': 'Jasa potong dan vermak pakaian'
+      },
+      {
+        'Nama Produk': 'Sample Produk Nonaktif',
+        'SKU': 'SMP-004',
+        'Tipe Produk': 'Barang Fisik',
+        'Manajemen Stok': 'Tidak Tersedia',
+        'Harga Jual': 50000,
+        'HPP Modal': 30000,
+        'Kategori': 'Umum',
+        'Stok Awal': 0,
+        'Satuan': 'pcs',
+        'Deskripsi': 'Contoh produk yang status stoknya tidak tersedia'
       }
     ]
 
@@ -339,17 +375,44 @@ export default function ProductImportPage() {
       }
 
       // Type & Stock Type
-      const typeStr = String(rawType || '').toLowerCase()
-      result.type = typeStr.includes('jasa') || typeStr.includes('service') ? 'service' : defaultType
-
-      const stockTypeStr = String(rawStockType || '').toLowerCase()
-      if (stockTypeStr.includes('tersedia') || stockTypeStr.includes('available') || stockTypeStr.includes('bebas')) {
-        result.stock_type = 'available'
-      } else if (stockTypeStr.includes('tidak') || stockTypeStr.includes('unavailable')) {
-        result.stock_type = 'unavailable'
+      const typeStr = String(rawType || '').toLowerCase().trim()
+      if (typeStr.includes('jasa') || typeStr.includes('service') || typeStr.includes('layanan')) {
+        result.type = 'service'
+      } else if (typeStr.includes('fisik') || typeStr.includes('physical') || typeStr.includes('barang')) {
+        result.type = 'physical'
       } else {
-        // Strict default: Physical products are ALWAYS tracked (lacak stok)
-        result.stock_type = result.type === 'service' ? 'available' : 'tracked'
+        result.type = defaultType
+      }
+
+      const stockTypeStr = String(rawStockType || '').toLowerCase().trim()
+      if (
+        stockTypeStr.includes('tidak') ||
+        stockTypeStr.includes('unavailable') ||
+        stockTypeStr.includes('habis') ||
+        stockTypeStr.includes('kosong')
+      ) {
+        result.stock_type = 'unavailable'
+      } else if (
+        stockTypeStr.includes('track') ||
+        stockTypeStr.includes('lacak') ||
+        stockTypeStr.includes('kelola') ||
+        stockTypeStr.includes('hitung')
+      ) {
+        result.stock_type = 'tracked'
+      } else if (
+        stockTypeStr.includes('tersedia') ||
+        stockTypeStr.includes('available') ||
+        stockTypeStr.includes('bebas') ||
+        stockTypeStr.includes('ada')
+      ) {
+        result.stock_type = 'available'
+      } else {
+        // If empty / unmapped:
+        if (result.type === 'service' && defaultStockType === 'tracked') {
+          result.stock_type = 'available'
+        } else {
+          result.stock_type = defaultStockType
+        }
       }
 
       result._valid = result._errors.length === 0
@@ -372,6 +435,8 @@ export default function ProductImportPage() {
       'Baris ke- (File Asli)': r.rowNumber,
       'Nama Produk': r.name,
       'SKU / Barcode': r.sku || '',
+      'Tipe Produk': r.type === 'service' ? 'Jasa' : 'Barang Fisik',
+      'Manajemen Stok': r.stock_type === 'tracked' ? 'Di Track' : r.stock_type === 'unavailable' ? 'Tidak Tersedia' : 'Tersedia',
       'Kategori': r.category || '',
       'Harga Jual': r.price,
       'HPP Modal': r.cost_price,
@@ -388,6 +453,8 @@ export default function ProductImportPage() {
     ws['!cols'] = [
       { wch: 22 },
       { wch: 32 },
+      { wch: 18 },
+      { wch: 16 },
       { wch: 18 },
       { wch: 18 },
       { wch: 14 },
@@ -412,6 +479,8 @@ export default function ProductImportPage() {
           rowNumber: idx + 2, // 1-based, considering header is row 1
           name: d.name || '-',
           sku: d.sku || null,
+          type: d.type || defaultType,
+          stock_type: d.stock_type || defaultStockType,
           price: d.price || 0,
           cost_price: d.cost_price || 0,
           category: d.category || null,
@@ -479,7 +548,9 @@ export default function ProductImportPage() {
           body: JSON.stringify({
             products: chunkPayload,
             duplicateAction,
-            defaultCategoryId: defaultCategory || null
+            defaultCategoryId: defaultCategory || null,
+            defaultStockType,
+            defaultType
           })
         })
 
@@ -492,6 +563,8 @@ export default function ProductImportPage() {
               rowNumber: item._rowNumber,
               name: item.name,
               sku: item.sku,
+              type: item.type,
+              stock_type: item.stock_type,
               price: item.price,
               cost_price: item.cost_price,
               category: item.category,
@@ -514,6 +587,8 @@ export default function ProductImportPage() {
                   rowNumber: matched._rowNumber,
                   name: f.name || matched.name,
                   sku: f.sku || matched.sku,
+                  type: matched.type,
+                  stock_type: matched.stock_type,
                   price: matched.price,
                   cost_price: matched.cost_price,
                   category: matched.category,
@@ -533,6 +608,8 @@ export default function ProductImportPage() {
             rowNumber: item._rowNumber,
             name: item.name,
             sku: item.sku,
+            type: item.type,
+            stock_type: item.stock_type,
             price: item.price,
             cost_price: item.cost_price,
             category: item.category,
@@ -726,7 +803,7 @@ export default function ProductImportPage() {
                 <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">
                   ⚙️ Pengaturan Default (Jika Kolom di File Kosong)
                 </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
                   
                   {/* Default Category */}
                   <div>
@@ -769,8 +846,24 @@ export default function ProductImportPage() {
                       onChange={e => setDefaultType(e.target.value as 'physical' | 'service')}
                       className="w-full text-xs font-semibold p-2 border border-gray-300 rounded-lg bg-white outline-none focus:border-indigo-600"
                     >
-                      <option value="physical">Barang Fisik</option>
-                      <option value="service">Jasa / Service</option>
+                      <option value="physical">Barang Fisik (Physical)</option>
+                      <option value="service">Jasa / Layanan (Service)</option>
+                    </select>
+                  </div>
+
+                  {/* Default Stock Type */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-600 uppercase mb-1">
+                      Manajemen Stok Default
+                    </label>
+                    <select
+                      value={defaultStockType}
+                      onChange={e => setDefaultStockType(e.target.value as 'tracked' | 'available' | 'unavailable')}
+                      className="w-full text-xs font-semibold p-2 border border-gray-300 rounded-lg bg-white outline-none focus:border-indigo-600"
+                    >
+                      <option value="tracked">Di Track (Lacak Saldo)</option>
+                      <option value="available">Tersedia (Tanpa Lacak)</option>
+                      <option value="unavailable">Tidak Tersedia</option>
                     </select>
                   </div>
 
@@ -887,6 +980,8 @@ export default function ProductImportPage() {
                       <th className="py-2.5 px-3">No</th>
                       <th className="py-2.5 px-3">Status</th>
                       <th className="py-2.5 px-3">Nama Produk</th>
+                      <th className="py-2.5 px-3">Tipe</th>
+                      <th className="py-2.5 px-3">Manajemen Stok</th>
                       <th className="py-2.5 px-3">SKU</th>
                       <th className="py-2.5 px-3">Harga Jual</th>
                       <th className="py-2.5 px-3">HPP Modal</th>
@@ -915,6 +1010,32 @@ export default function ProductImportPage() {
                           {row._errors.length > 0 && (
                             <span className="block text-[10px] text-rose-600 font-medium">
                               {row._errors.join(', ')}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          {row.type === 'service' ? (
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                              ⚡ Jasa
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                              📦 Fisik
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          {row.stock_type === 'tracked' ? (
+                            <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                              📊 Di Track
+                            </span>
+                          ) : row.stock_type === 'unavailable' ? (
+                            <span className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                              ✕ Tidak Tersedia
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                              ✓ Tersedia
                             </span>
                           )}
                         </td>
