@@ -95,20 +95,30 @@ export async function POST(req: Request) {
     }
 
     // 4. Fetch existing products for duplicate detection safely without fragile PostgREST .or() string concatenation
-    const incomingSkus = Array.from(
-      new Set(
-        products
-          .map(p => (p.sku ? String(p.sku).trim() : ''))
-          .filter(Boolean)
-      )
-    )
-    const incomingNames = Array.from(
-      new Set(
-        products
-          .map(p => (p.name ? String(p.name).trim() : ''))
-          .filter(Boolean)
-      )
-    )
+    const incomingSkusSet = new Set<string>()
+    products.forEach(p => {
+      if (p.sku) {
+        const s = String(p.sku).trim()
+        if (s) {
+          incomingSkusSet.add(s)
+          incomingSkusSet.add(s.toUpperCase())
+          incomingSkusSet.add(s.toLowerCase())
+        }
+      }
+    })
+    const incomingSkus = Array.from(incomingSkusSet)
+
+    const incomingNamesSet = new Set<string>()
+    products.forEach(p => {
+      if (p.name) {
+        const n = String(p.name).trim()
+        if (n) {
+          incomingNamesSet.add(n)
+          incomingNamesSet.add(n.toLowerCase())
+        }
+      }
+    })
+    const incomingNames = Array.from(incomingNamesSet)
 
     const existingProductsMap = new Map<string, {
       id: string
@@ -367,10 +377,59 @@ export async function POST(req: Request) {
     }
 
     // 8b. Adjustment stock moves for updated tracked products where stock changed
-    if (duplicateAction === 'update') {
+    if (duplicateAction === 'update' && productsToUpdate.length > 0) {
+      // Query actual physical on-hand stock from stock_moves for updated products
+      const actualStockMap = new Map<string, number>()
+      const trackedUpdateProducts = productsToUpdate.filter(p => p.payload.stock_type === 'tracked')
+      const trackedUpdateIds = trackedUpdateProducts.map(p => p.id)
+
+      if (trackedUpdateIds.length > 0) {
+        const CHUNK_SIZE = 150
+        for (let i = 0; i < trackedUpdateIds.length; i += CHUNK_SIZE) {
+          const idChunk = trackedUpdateIds.slice(i, i + CHUNK_SIZE)
+          const { data: movesData, error: movesErr } = await supabaseAdmin
+            .from('stock_moves')
+            .select('product_id, type, qty, origin_location_id, destination_location_id')
+            .eq('business_id', businessId)
+            .eq('bucket', 'main')
+            .eq('status', 'done')
+            .in('product_id', idChunk)
+
+          if (!movesErr && movesData) {
+            for (const m of movesData) {
+              const current = actualStockMap.get(m.product_id) || 0
+              let delta = 0
+              if (m.type === 'receipt' || m.type === 'refund') {
+                delta = Number(m.qty)
+              } else if (m.type === 'delivery') {
+                delta = -Number(m.qty)
+              } else if (m.type === 'adjustment') {
+                if (m.origin_location_id === null || (m.destination_location_id !== null && m.origin_location_id === null)) {
+                  delta = Number(m.qty)
+                } else {
+                  delta = -Number(m.qty)
+                }
+              } else if (m.type === 'transfer') {
+                if (m.destination_location_id !== null) {
+                  delta = Number(m.qty)
+                } else {
+                  delta = -Number(m.qty)
+                }
+              }
+              actualStockMap.set(m.product_id, current + delta)
+            }
+          }
+        }
+      }
+
       for (const item of productsToUpdate) {
         if (item.payload.stock_type === 'tracked') {
-          const currentStock = Number(item.existingStock || 0)
+          // If product already has historical stock_moves, use actual ledger balance.
+          // Otherwise fallback to existing product stock_quantity column.
+          const currentStock = actualStockMap.has(item.id)
+            ? Number(actualStockMap.get(item.id) || 0)
+            : Number(item.existingStock || 0)
+
           const targetStock = Number(item.payload.stock_quantity || 0)
           const diff = targetStock - currentStock
 
