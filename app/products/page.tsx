@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import ProductModal from './components/ProductModal'
 import { useUserContext } from '@/components/UserContext'
 import Link from 'next/link'
+import { Pagination } from '@/app/components/Pagination'
 
 type Category = {
   id: string
@@ -64,13 +65,31 @@ export default function ProductsPage() {
 
   // Filters State
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('')
   const [selectedType, setSelectedType] = useState('')
   const [selectedStockType, setSelectedStockType] = useState('')
 
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+
+  // Debounce search input (250ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery)
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
   // Sorting State
   const [sortField, setSortField] = useState<SortField | null>(null)
   const [sortOrder, setSortOrder] = useState<SortOrder>(null)
+
+  // Reset page when filter or search changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [debouncedSearch, selectedCategory, selectedType, selectedStockType, sortField, sortOrder])
 
   // Selection State for Bulk Actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -288,11 +307,12 @@ export default function ProductsPage() {
 
   // Filtered & Sorted Products list
   const filteredProducts = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase()
     const filtered = products.filter(p => {
-      const matchesSearch =
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.sku || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.description || '').toLowerCase().includes(searchQuery.toLowerCase())
+      const matchesSearch = !q ||
+        p.name.toLowerCase().includes(q) ||
+        (p.sku || '').toLowerCase().includes(q) ||
+        (p.description || '').toLowerCase().includes(q)
 
       const matchesCategory = selectedCategory ? p.category_id === selectedCategory : true
       const matchesType = selectedType ? p.type === selectedType : true
@@ -360,7 +380,21 @@ export default function ProductsPage() {
 
       return sortOrder === 'asc' ? comparison : -comparison
     })
-  }, [products, searchQuery, selectedCategory, selectedType, selectedStockType, sortField, sortOrder, getCategoryName])
+  }, [products, debouncedSearch, selectedCategory, selectedType, selectedStockType, sortField, sortOrder, getCategoryName])
+
+  // Paginated Products slice for performance
+  const paginatedProducts = useMemo(() => {
+    const startIdx = (currentPage - 1) * pageSize
+    return filteredProducts.slice(startIdx, startIdx + pageSize)
+  }, [filteredProducts, currentPage, pageSize])
+
+  // Auto-clamp currentPage if filteredProducts reduces
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filteredProducts.length / pageSize))
+    if (currentPage > maxPage) {
+      setCurrentPage(1)
+    }
+  }, [filteredProducts.length, pageSize, currentPage])
 
   // ─── Selection Helpers ─────────────────────────────────────────────────────
 
@@ -369,17 +403,22 @@ export default function ProductsPage() {
     return filteredProducts.every(p => selectedIds.has(p.id))
   }, [filteredProducts, selectedIds])
 
-  const someFilteredSelected = useMemo(() => {
-    if (allFilteredSelected) return false
-    return filteredProducts.some(p => selectedIds.has(p.id))
-  }, [filteredProducts, selectedIds, allFilteredSelected])
+  const allPageSelected = useMemo(() => {
+    if (paginatedProducts.length === 0) return false
+    return paginatedProducts.every(p => selectedIds.has(p.id))
+  }, [paginatedProducts, selectedIds])
 
-  // Sync indeterminate state to header checkbox
+  const somePageSelected = useMemo(() => {
+    if (allPageSelected) return false
+    return paginatedProducts.some(p => selectedIds.has(p.id))
+  }, [paginatedProducts, selectedIds, allPageSelected])
+
+  // Sync indeterminate state to header checkbox for current page
   useEffect(() => {
     if (selectAllCheckboxRef.current) {
-      selectAllCheckboxRef.current.indeterminate = someFilteredSelected
+      selectAllCheckboxRef.current.indeterminate = somePageSelected
     }
-  }, [someFilteredSelected])
+  }, [somePageSelected])
 
   const toggleSelectProduct = (id: string) => {
     setSelectedIds(prev => {
@@ -388,6 +427,24 @@ export default function ProductsPage() {
       else next.add(id)
       return next
     })
+  }
+
+  const toggleSelectAllPage = () => {
+    if (allPageSelected) {
+      // Unselect all items on this page
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        paginatedProducts.forEach(p => next.delete(p.id))
+        return next
+      })
+    } else {
+      // Select all items on this page
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        paginatedProducts.forEach(p => next.add(p.id))
+        return next
+      })
+    }
   }
 
   const toggleSelectAllFiltered = () => {
@@ -687,11 +744,13 @@ export default function ProductsPage() {
             <button
               onClick={() => {
                 setSearchQuery('')
+                setDebouncedSearch('')
                 setSelectedCategory('')
                 setSelectedType('')
                 setSelectedStockType('')
                 setSortField(null)
                 setSortOrder(null)
+                setCurrentPage(1)
               }}
               className="text-[10px] font-black text-red-500 hover:text-red-700 uppercase tracking-widest transition-all cursor-pointer"
             >
@@ -804,9 +863,25 @@ export default function ProductsPage() {
             </div>
           ) : (
             <>
+              {/* Top Pagination */}
+              {!loading && filteredProducts.length > 0 && (
+                <Pagination
+                  currentPage={currentPage}
+                  totalCount={filteredProducts.length}
+                  pageSize={pageSize}
+                  onPageChange={page => setCurrentPage(page)}
+                  onPageSizeChange={newSize => {
+                    setPageSize(newSize)
+                    setCurrentPage(1)
+                  }}
+                  pageSizeOptions={[10, 25, 50, 100]}
+                  position="top"
+                />
+              )}
+
               {/* MOBILE VIEW (Card Grid) — hidden on desktop */}
               <div className="grid grid-cols-1 gap-4 md:hidden">
-                {filteredProducts.map(p => {
+                {paginatedProducts.map(p => {
                   const isChecked = selectedIds.has(p.id)
                   return (
                     <div
@@ -901,10 +976,10 @@ export default function ProductsPage() {
                             <input
                               ref={selectAllCheckboxRef}
                               type="checkbox"
-                              checked={allFilteredSelected}
-                              onChange={toggleSelectAllFiltered}
+                              checked={allPageSelected}
+                              onChange={toggleSelectAllPage}
                               className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300 cursor-pointer"
-                              title={allFilteredSelected ? 'Batal pilih semua' : 'Pilih semua di halaman/filter ini'}
+                              title={allPageSelected ? 'Batal pilih di halaman ini' : 'Pilih semua di halaman ini'}
                             />
                           </th>
                         )}
@@ -920,7 +995,7 @@ export default function ProductsPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {filteredProducts.map(p => {
+                      {paginatedProducts.map(p => {
                         const isChecked = selectedIds.has(p.id)
                         return (
                           <tr
@@ -1043,6 +1118,22 @@ export default function ProductsPage() {
                   </table>
                 </div>
               </div>
+
+              {/* Bottom Pagination */}
+              {!loading && filteredProducts.length > 0 && (
+                <Pagination
+                  currentPage={currentPage}
+                  totalCount={filteredProducts.length}
+                  pageSize={pageSize}
+                  onPageChange={page => setCurrentPage(page)}
+                  onPageSizeChange={newSize => {
+                    setPageSize(newSize)
+                    setCurrentPage(1)
+                  }}
+                  pageSizeOptions={[10, 25, 50, 100]}
+                  position="bottom"
+                />
+              )}
             </>
           )}
         </>
