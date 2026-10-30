@@ -1,5 +1,6 @@
 "use client"
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
 import { OrderStats } from './components/OrderStats'
@@ -325,6 +326,43 @@ export default function OrderPage() {
                 • Memperbarui...
               </span>
             )}
+            <Link
+              href="/orders/import"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                fontSize: '11px',
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+                background: 'var(--su-primary-light, #EEF2FF)',
+                color: 'var(--su-primary, #4F46E5)',
+                border: '1px solid rgba(79, 70, 229, 0.25)',
+                transition: 'all 0.15s',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                textDecoration: 'none',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = '#E0E7FF'
+                e.currentTarget.style.borderColor = '#4F46E5'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'var(--su-primary-light, #EEF2FF)'
+                e.currentTarget.style.borderColor = 'rgba(79, 70, 229, 0.25)'
+              }}
+              title="Import data pesanan massal dari Excel atau CSV"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 5 17 10" />
+                <line x1="12" y1="5" x2="12" y2="17" />
+              </svg>
+              <span>Import Pesanan</span>
+            </Link>
+
             <button
               type="button"
               onClick={() => setIsExportModalOpen(true)}
