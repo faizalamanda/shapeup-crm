@@ -173,7 +173,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       posSettingsRes,
       holdRes
     ] = await Promise.all([
-      supabase.from('products').select('*').eq('business_id', bId).order('name', { ascending: true }),
+      supabase.from('products').select('*, product_variants(*), product_modifiers(*)').eq('business_id', bId).order('name', { ascending: true }),
       supabase.from('categories').select('*').eq('business_id', bId).order('name', { ascending: true }),
       supabase.from('customer_metrics').select('customer_id, name, phone, loyalty_points, loyalty_tier').eq('business_id', bId).limit(100),
       supabase.from('accounts').select('id, code, name, type').eq('business_id', bId).in('type', ['ASSET', 'EQUITY']).order('code', { ascending: true }),
@@ -229,7 +229,11 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       const matchSearch =
         !debouncedSearch ||
         p.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-        (p.sku && p.sku.toLowerCase().includes(debouncedSearch.toLowerCase()))
+        (p.sku && p.sku.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
+        (Array.isArray(p.product_variants) && p.product_variants.some((v: any) =>
+          (v.name && v.name.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
+          (v.sku && v.sku.toLowerCase().includes(debouncedSearch.toLowerCase()))
+        ))
 
       const matchCategory = !selectedCategoryId || p.category_id === selectedCategoryId
       return matchSearch && matchCategory
@@ -317,7 +321,9 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   // Product Tap Action
   const handleProductTap = (p: any) => {
     if (p.stock_type === 'unavailable') return
-    if (p.has_variants || p.type === 'fnb') {
+    const hasVariants = (Array.isArray(p.product_variants) && p.product_variants.length > 0) || p.has_variants
+    const hasModifiers = (Array.isArray(p.product_modifiers) && p.product_modifiers.length > 0) || p.type === 'fnb'
+    if (hasVariants || hasModifiers) {
       setSelectedProductForVariant(p)
       setIsVariantModalOpen(true)
     } else {
@@ -339,18 +345,43 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   }
 
   const handleAddVariantItem = (itemData: any) => {
-    setCart((prev) => [
-      ...prev,
-      {
-        product: itemData.product,
-        selectedVariant: itemData.selectedVariant,
-        selectedModifiers: itemData.selectedModifiers,
-        note: itemData.note,
-        quantity: 1,
-        finalPrice: itemData.finalPrice,
-        discount: 0
+    const rawName = itemData.product.name
+    const variantName = itemData.selectedVariant?.name
+    const displayName = (variantName && !rawName.toLowerCase().includes(variantName.toLowerCase()))
+      ? `${rawName} - ${variantName}`
+      : rawName
+
+    setCart((prev) => {
+      const existingIdx = prev.findIndex((item) =>
+        item.product.id === itemData.product.id &&
+        item.selectedVariant?.id === itemData.selectedVariant?.id &&
+        (item.note || '') === (itemData.note || '') &&
+        JSON.stringify(item.selectedModifiers || []) === JSON.stringify(itemData.selectedModifiers || [])
+      )
+
+      if (existingIdx > -1) {
+        const copy = [...prev]
+        copy[existingIdx].quantity += 1
+        return copy
       }
-    ])
+
+      return [
+        ...prev,
+        {
+          product: {
+            ...itemData.product,
+            name: displayName,
+            baseName: rawName
+          },
+          selectedVariant: itemData.selectedVariant,
+          selectedModifiers: itemData.selectedModifiers,
+          note: itemData.note,
+          quantity: 1,
+          finalPrice: itemData.finalPrice,
+          discount: 0
+        }
+      ]
+    })
   }
 
   const handleUpdateQty = (index: number, delta: number) => {
@@ -1258,6 +1289,11 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeClass} truncate max-w-[100px]`}>
                               {p.sku || 'RETAIL'}
                             </span>
+                            {Array.isArray(p.product_variants) && p.product_variants.length > 0 && (
+                              <span className="text-[9px] bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded-full border border-indigo-200/60">
+                                {p.product_variants.length} Varian
+                              </span>
+                            )}
                             {isOutOfStock ? (
                               <span className="text-[9px] bg-rose-100 text-rose-700 font-extrabold px-2 py-0.5 rounded-full">Habis</span>
                             ) : p.stock_type === 'tracked' ? (

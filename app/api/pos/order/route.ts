@@ -209,12 +209,17 @@ export async function POST(req: Request) {
     
     const lineItems = items.map((item: any, idx: number) => {
       const isCustom = String(item.id).startsWith('custom-')
-      const name = isCustom ? (item.name || 'Biaya Kustom') : productMap.get(item.id).name
+      const baseName = isCustom ? (item.name || 'Biaya Kustom') : productMap.get(item.id).name
+      const variantName = item.variantName ? String(item.variantName).trim() : null
+      const fullName = (variantName && !baseName.toLowerCase().includes(variantName.toLowerCase()))
+        ? `${baseName} - ${variantName}`
+        : baseName
+
       const sku = isCustom ? 'CUSTOM' : (productMap.get(item.id).sku || '')
       
       const metaData: any[] = []
       if (item.discount > 0) metaData.push({ key: 'Discount', value: String(item.discount) })
-      if (item.variantName) metaData.push({ key: 'Variant', value: String(item.variantName) })
+      if (variantName) metaData.push({ key: 'Variant', value: variantName })
       if (item.modifiers && Array.isArray(item.modifiers) && item.modifiers.length > 0) {
         metaData.push({ key: 'Modifiers', value: item.modifiers.map((m: any) => `${m.group}: ${m.name}`).join(', ') })
       }
@@ -222,10 +227,11 @@ export async function POST(req: Request) {
 
       return {
         id: idx + 1,
-        name: name,
+        name: fullName,
         product_id: item.id,
+        variant_id: item.variantId || null,
         variation_id: item.variantId || 0,
-        variant_name: item.variantName || null,
+        variant_name: variantName,
         modifiers: item.modifiers || [],
         note: item.note || '',
         quantity: item.quantity,

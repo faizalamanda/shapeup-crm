@@ -30,7 +30,7 @@ SUM(
       END
     ELSE 0
   END
-) OVER (PARTITION BY sm.product_id ORDER BY sm.created_at ASC, sm.id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as system_stock,
+) OVER (PARTITION BY sm.product_id, COALESCE(sm.variant_id, '00000000-0000-0000-0000-000000000000'::uuid) ORDER BY sm.created_at ASC, sm.id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as system_stock,
 
 -- 2. Saldo Berjalan Karantina Retur
 SUM(
@@ -43,7 +43,7 @@ SUM(
       END
     ELSE 0
   END
-) OVER (PARTITION BY sm.product_id ORDER BY sm.created_at ASC, sm.id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as quarantine_stock,
+) OVER (PARTITION BY sm.product_id, COALESCE(sm.variant_id, '00000000-0000-0000-0000-000000000000'::uuid) ORDER BY sm.created_at ASC, sm.id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as quarantine_stock,
 
 -- 3. Saldo Berjalan Dalam Pengiriman (In-Transit)
 SUM(
@@ -56,9 +56,11 @@ SUM(
       END
     ELSE 0
   END
-) OVER (PARTITION BY sm.product_id ORDER BY sm.created_at ASC, sm.id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as in_transit_stock
+) OVER (PARTITION BY sm.product_id, COALESCE(sm.variant_id, '00000000-0000-0000-0000-000000000000'::uuid) ORDER BY sm.created_at ASC, sm.id ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as in_transit_stock
 ```
-This guarantees that only confirmed movements in the main warehouse (`status = 'done' AND bucket = 'main'`) alter the active physical on-hand running balance (`system_stock`), while `quarantine` and `in_transit` moves are strictly isolated into their respective bucket running balances without corrupting active inventory.
+This guarantees that:
+1. Only confirmed movements in the main warehouse (`status = 'done' AND bucket = 'main'`) alter the active physical on-hand running balance (`system_stock`), while `quarantine` and `in_transit` moves are strictly isolated into their respective bucket running balances without corrupting active inventory.
+2. For products with multiple variations (e.g. Size S, M, L), stock running balances are strictly isolated per-SKU via `variant_id`, while simple products without variants fall back gracefully to the parent composite partition without any schema divergence.
 
 ## Usage in API / Frontend
 When fetching stock moves for a product:

@@ -36,6 +36,15 @@ type RecipeRow = {
   stock_quantity: number
 }
 
+type VariantRow = {
+  id?: string
+  name: string
+  sku: string
+  price: number
+  cost_price: number
+  stock_quantity: number
+}
+
 type ProductModalProps = {
   isOpen: boolean
   onClose: () => void
@@ -210,6 +219,10 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
   const [newCategoryName, setNewCategoryName] = useState('')
   const [categoryError, setCategoryError] = useState('')
 
+  // Variant Rows State
+  const [variantRows, setVariantRows] = useState<VariantRow[]>([])
+  const [loadingVariants, setLoadingVariants] = useState(false)
+
   // Set mounted
   useEffect(() => {
     setMounted(true)
@@ -293,8 +306,10 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
 
         if (product.id) {
           fetchProductRecipes(product.id)
+          fetchProductVariants(product.id)
         } else {
           setRecipeRows([])
+          setVariantRows([])
         }
       } else {
         // Reset to defaults for Create mode
@@ -312,6 +327,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         setHppType('fixed')
         setPreventBelowHpp(false)
         setRecipeRows([])
+        setVariantRows([])
         setShowNewCategoryInput(false)
         setNewCategoryName('')
         setCategoryError('')
@@ -390,6 +406,32 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
       setRecipeRows([])
     } finally {
       setLoadingRecipes(false)
+    }
+  }
+
+  const fetchProductVariants = async (productId: string) => {
+    setLoadingVariants(true)
+    try {
+      const { data, error } = await supabase
+        .from('product_variants')
+        .select('*')
+        .eq('product_id', productId)
+        .order('created_at', { ascending: true })
+
+      if (!error && data) {
+        setVariantRows(data.map((v: any) => ({
+          id: v.id,
+          name: v.name,
+          sku: v.sku || '',
+          price: Number(v.price || 0),
+          cost_price: Number(v.cost_price || 0),
+          stock_quantity: Number(v.stock_quantity || 0)
+        })))
+      }
+    } catch (err) {
+      console.warn('Error fetching variants:', err)
+    } finally {
+      setLoadingVariants(false)
     }
   }
 
@@ -597,6 +639,49 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
           }
         } catch (rErr) {
           console.warn('Note: Recipe save fallback:', rErr)
+        }
+      }
+
+      // 4. Save product variants
+      if (savedProductId) {
+        try {
+          if (product?.id) {
+            const currentIds = variantRows.filter(v => v.id).map(v => v.id)
+            if (currentIds.length > 0) {
+              await supabase
+                .from('product_variants')
+                .delete()
+                .eq('product_id', savedProductId)
+                .not('id', 'in', `(${currentIds.join(',')})`)
+            } else if (variantRows.length === 0) {
+              await supabase
+                .from('product_variants')
+                .delete()
+                .eq('product_id', savedProductId)
+            }
+          }
+
+          if (variantRows.length > 0) {
+            for (const v of variantRows) {
+              if (!v.name.trim()) continue
+              const vPayload = {
+                business_id: businessId,
+                product_id: savedProductId,
+                name: v.name.trim(),
+                sku: v.sku ? v.sku.trim() : null,
+                price: Number(v.price) || 0,
+                cost_price: Number(v.cost_price) || 0,
+                stock_quantity: Number(v.stock_quantity) || 0
+              }
+              if (v.id) {
+                await supabase.from('product_variants').update(vPayload).eq('id', v.id)
+              } else {
+                await supabase.from('product_variants').insert(vPayload)
+              }
+            }
+          }
+        } catch (vErr) {
+          console.warn('Note: Variant save fallback:', vErr)
         }
       } else if (savedProductId && hppType === 'fixed') {
         try {
@@ -1149,6 +1234,139 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                       }`}></div>
                     </label>
                   </div>
+                </div>
+
+                {/* 4. Variasi Produk (Multi-Varian SKU) */}
+                <div className="bg-slate-50/70 border border-slate-200/90 rounded-2xl p-5 space-y-4">
+                  <div className="flex justify-between items-center border-b border-slate-200/60 pb-3">
+                    <div>
+                      <h4 className="text-xs font-black text-slate-850 uppercase tracking-wider flex items-center gap-1.5">
+                        <span>🏷️</span> 4. Variasi Produk (Ukuran / Warna / Varian SKU)
+                      </h4>
+                      <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                        Kelola variasi ukuran, warna, atau volume. Kasir POS akan menampilkan pilihan varian saat produk dipilih.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVariantRows(prev => [
+                          ...prev,
+                          {
+                            name: '',
+                            sku: sku ? `${sku}-${prev.length + 1}` : '',
+                            price: price || 0,
+                            cost_price: hppType === 'variable' ? calculatedDynamicHpp : (costPrice || 0),
+                            stock_quantity: 0
+                          }
+                        ])
+                      }}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1 shrink-0"
+                    >
+                      <span>➕</span>
+                      <span>Tambah Varian</span>
+                    </button>
+                  </div>
+
+                  {variantRows.length === 0 ? (
+                    <div className="text-center py-5 border border-dashed border-slate-200 rounded-xl bg-white/70">
+                      <p className="text-xs font-semibold text-slate-500">Produk Tunggal (Tanpa Variasi)</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        Klik "Tambah Varian" jika produk ini memiliki opsi fisik berbeda (misal: S, M, L atau Botol 250ml, 500ml).
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {variantRows.map((v, vIdx) => (
+                        <div key={vIdx} className="p-3 bg-white border border-slate-200 rounded-xl shadow-2xs space-y-2.5">
+                          <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-1.5">
+                            <span className="text-[11px] font-extrabold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100/60">
+                              Varian #{vIdx + 1}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setVariantRows(prev => prev.filter((_, i) => i !== vIdx))}
+                              className="text-slate-400 hover:text-rose-600 text-xs font-bold px-2 py-0.5 rounded-md hover:bg-rose-50 transition"
+                              title="Hapus varian"
+                            >
+                              ✕ Hapus
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                            <div className="sm:col-span-4">
+                              <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Nama Varian *</label>
+                              <input
+                                type="text"
+                                required
+                                placeholder="Contoh: Ukuran XL, 500ml"
+                                className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
+                                value={v.name}
+                                onChange={e => {
+                                  const val = e.target.value
+                                  setVariantRows(prev => {
+                                    const copy = [...prev]
+                                    copy[vIdx].name = val
+                                    return copy
+                                  })
+                                }}
+                              />
+                            </div>
+                            <div className="sm:col-span-3">
+                              <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">SKU Varian</label>
+                              <input
+                                type="text"
+                                placeholder="SKU-XL"
+                                className="w-full p-2 border border-slate-200 rounded-lg text-xs font-mono font-semibold text-slate-800 outline-none focus:border-blue-600"
+                                value={v.sku}
+                                onChange={e => {
+                                  const val = e.target.value
+                                  setVariantRows(prev => {
+                                    const copy = [...prev]
+                                    copy[vIdx].sku = val
+                                    return copy
+                                  })
+                                }}
+                              />
+                            </div>
+                            <div className="sm:col-span-3">
+                              <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Harga Jual (Rp)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
+                                value={v.price}
+                                onChange={e => {
+                                  const val = Number(e.target.value) || 0
+                                  setVariantRows(prev => {
+                                    const copy = [...prev]
+                                    copy[vIdx].price = val
+                                    return copy
+                                  })
+                                }}
+                              />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Stok Varian</label>
+                              <input
+                                type="number"
+                                min="0"
+                                className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
+                                value={v.stock_quantity}
+                                onChange={e => {
+                                  const val = Number(e.target.value) || 0
+                                  setVariantRows(prev => {
+                                    const copy = [...prev]
+                                    copy[vIdx].stock_quantity = val
+                                    return copy
+                                  })
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 

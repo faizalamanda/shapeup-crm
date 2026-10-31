@@ -192,7 +192,7 @@ export async function applyStockMovement(
   const hppMap = precomputedHppMap ?? await calculateProductsHppBatch(productIds, supabase)
 
   // 2. Build target stock movements list
-  const targetMoves = new Map<string, { dbProduct: any; qty: number }>()
+  const targetMoves = new Map<string, { dbProduct: any; variantId?: string | null; qty: number }>()
 
   for (const { item, dbProduct } of matchedProducts) {
     const itemQty = parseFloat(item.quantity) || 1
@@ -212,23 +212,22 @@ export async function applyStockMovement(
         }
       }
     } else if (dbProduct.stock_type === 'tracked') {
-      const current = targetMoves.get(dbProduct.id)
+      const variantId = isUuid(item.variant_id) ? item.variant_id : (isUuid(item.variation_id) ? item.variation_id : (isUuid(item.variantId) ? item.variantId : null))
+      const moveKey = variantId ? `${dbProduct.id}_${variantId}` : dbProduct.id
+      const current = targetMoves.get(moveKey)
       if (current) {
         current.qty += itemQty
       } else {
-        targetMoves.set(dbProduct.id, { dbProduct, qty: itemQty })
+        targetMoves.set(moveKey, { dbProduct, variantId, qty: itemQty })
       }
     }
   }
 
   if (targetMoves.size === 0) return
 
-  const targetProductIds = Array.from(targetMoves.keys())
-
   // 3. Prepare stock move inputs
   const stockMoveInputs: any[] = []
-  for (const pId of targetProductIds) {
-    const moveInfo = targetMoves.get(pId)
+  for (const [, moveInfo] of targetMoves.entries()) {
     if (!moveInfo || moveInfo.qty <= 0) continue
 
     const isOrderReturn = direction === 'restore' && sourceType === 'order'
@@ -238,7 +237,8 @@ export async function applyStockMovement(
 
     stockMoveInputs.push({
       businessId,
-      productId: pId,
+      productId: moveInfo.dbProduct.id,
+      variantId: moveInfo.variantId || null,
       reference,
       qty: moveInfo.qty,
       unitCost: Number(moveInfo.dbProduct.cost_price || 0),

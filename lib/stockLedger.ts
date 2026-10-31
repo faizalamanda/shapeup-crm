@@ -7,6 +7,7 @@ export type MoveSourceType = 'purchase' | 'order' | 'stock_opname' | 'refund' | 
 export interface StockMoveInput {
   businessId: string
   productId: string
+  variantId?: string | null
   reference: string
   qty: number
   unitCost: number
@@ -60,14 +61,14 @@ export async function recordStockMovements(
     const [{ data: existingBySource }, { data: existingByRef }] = await Promise.all([
       supabase
         .from('stock_moves')
-        .select('product_id, type, source_type, source_id, reference')
+        .select('product_id, variant_id, type, source_type, source_id, reference')
         .eq('business_id', businessId)
         .in('product_id', productIds)
         .eq('source_type', sourceType)
         .eq('source_id', sourceId),
       supabase
         .from('stock_moves')
-        .select('product_id, type, source_type, source_id, reference')
+        .select('product_id, variant_id, type, source_type, source_id, reference')
         .eq('business_id', businessId)
         .in('product_id', productIds)
         .eq('reference', reference)
@@ -76,7 +77,7 @@ export async function recordStockMovements(
   } else {
     const { data: existing } = await supabase
       .from('stock_moves')
-      .select('product_id, type, source_type, source_id, reference')
+      .select('product_id, variant_id, type, source_type, source_id, reference')
       .eq('business_id', businessId)
       .in('product_id', productIds)
       .eq('reference', reference)
@@ -85,16 +86,16 @@ export async function recordStockMovements(
 
   const existingKeySet = new Set(
     existingMovesData.flatMap(e => [
-      e.source_type && e.source_id ? `${e.product_id}_${e.source_type}_${e.source_id}_${e.type}` : null,
-      e.reference ? `${e.product_id}_${e.reference}_${e.type}` : null
+      e.source_type && e.source_id ? `${e.product_id}_${e.variant_id || 'novar'}_${e.source_type}_${e.source_id}_${e.type}` : null,
+      e.reference ? `${e.product_id}_${e.variant_id || 'novar'}_${e.reference}_${e.type}` : null
     ]).filter(Boolean)
   )
 
   const buildRows = (includeSource: boolean) => {
     return moves
       .filter(m => {
-        const keyBySource = m.sourceType && m.sourceId ? `${m.productId}_${m.sourceType}_${m.sourceId}_${m.type}` : null
-        const keyByRef = m.reference ? `${m.productId}_${m.reference}_${m.type}` : null
+        const keyBySource = m.sourceType && m.sourceId ? `${m.productId}_${m.variantId || 'novar'}_${m.sourceType}_${m.sourceId}_${m.type}` : null
+        const keyByRef = m.reference ? `${m.productId}_${m.variantId || 'novar'}_${m.reference}_${m.type}` : null
         if (keyBySource && existingKeySet.has(keyBySource)) return false
         if (keyByRef && existingKeySet.has(keyByRef)) return false
         return true
@@ -113,6 +114,7 @@ export async function recordStockMovements(
           lot_number: m.lotNumber || null,
           created_at: m.createdAt || new Date().toISOString()
         }
+        if (m.variantId) row.variant_id = m.variantId
         if (m.bucket) row.bucket = m.bucket
         if (includeSource && m.sourceType) row.source_type = m.sourceType
         if (includeSource && m.sourceId) row.source_id = m.sourceId
@@ -127,9 +129,13 @@ export async function recordStockMovements(
     .from('stock_moves')
     .insert(newMoveRows)
 
-  // If DB does not have source_type / source_id columns yet, fallback to inserting without them
-  if (error && error.code === 'PGRST204') {
-    newMoveRows = buildRows(false)
+  // If DB does not have source_type / source_id / variant_id columns yet, fallback to inserting without them
+  if (error && (error.code === 'PGRST204' || error.message?.includes('variant_id') || error.message?.includes('source_'))) {
+    newMoveRows = buildRows(false).map(r => {
+      const copy = { ...r }
+      delete copy.variant_id
+      return copy
+    })
     if (newMoveRows.length === 0) return { inserted: 0, insertedProductIds: [] }
     const fallbackRes = await supabase
       .from('stock_moves')

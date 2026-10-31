@@ -1,5 +1,5 @@
 "use client"
-import { useState } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 
 export type VariantOption = {
   id: string
@@ -29,7 +29,9 @@ type Props = {
     price: number
     stock_quantity: number
     variants?: VariantOption[]
+    product_variants?: any[]
     modifiers?: ModifierGroup[]
+    product_modifiers?: any[]
   } | null
   onAddToCart: (item: {
     product: any
@@ -43,52 +45,67 @@ type Props = {
 export default function VariantSelectorModal({ isOpen, onClose, product, onAddToCart }: Props) {
   if (!isOpen || !product) return null
 
-  // Sample default variants if product doesn't have custom ones
-  const variants: VariantOption[] = product.variants && product.variants.length > 0 ? product.variants : [
-    { id: 'v-regular', name: 'Regular / Standard', price: product.price },
-    { id: 'v-large', name: 'Large / Jumbo (+Rp 5.000)', price: product.price + 5000 },
-  ]
-
-  // Sample default F&B modifiers
-  const modifierGroups: ModifierGroup[] = product.modifiers && product.modifiers.length > 0 ? product.modifiers : [
-    {
-      id: 'm-ice',
-      name: 'Tingkat Es (Ice Level)',
-      required: true,
-      options: [
-        { id: 'ice-normal', name: 'Normal Ice', priceExtra: 0 },
-        { id: 'ice-less', name: 'Less Ice 50%', priceExtra: 0 },
-        { id: 'ice-none', name: 'No Ice', priceExtra: 0 },
-      ]
-    },
-    {
-      id: 'm-sugar',
-      name: 'Tingkat Gula (Sugar Level)',
-      required: true,
-      options: [
-        { id: 's-normal', name: 'Normal Sugar 100%', priceExtra: 0 },
-        { id: 's-less', name: 'Less Sugar 50%', priceExtra: 0 },
-        { id: 's-zero', name: 'Zero Sugar 0%', priceExtra: 0 },
-      ]
-    },
-    {
-      id: 'm-topping',
-      name: 'Topping Tambahan (Opsional)',
-      required: false,
-      options: [
-        { id: 'top-boba', name: 'Bobba Brown Sugar', priceExtra: 4000 },
-        { id: 'top-jelly', name: 'Grass Jelly', priceExtra: 3000 },
-        { id: 'top-cheese', name: 'Cheese Cream', priceExtra: 5000 },
-      ]
+  // Resolve real database variants or props
+  const variants: VariantOption[] = useMemo(() => {
+    const raw = (product as any).product_variants || product.variants
+    if (Array.isArray(raw) && raw.length > 0) {
+      return raw.map((v: any) => ({
+        id: v.id,
+        name: v.name,
+        price: Number(v.price ?? product.price),
+        costPrice: Number(v.cost_price ?? 0),
+        stockQuantity: Number(v.stock_quantity ?? 0)
+      }))
     }
-  ]
+    return []
+  }, [product])
 
-  const [selectedVariant, setSelectedVariant] = useState<VariantOption>(variants[0])
-  const [selectedModifiers, setSelectedModifiers] = useState<Record<string, { group: string; name: string; priceExtra: number }>>({
-    'm-ice': { group: 'Ice Level', name: 'Normal Ice', priceExtra: 0 },
-    'm-sugar': { group: 'Sugar Level', name: 'Normal Sugar 100%', priceExtra: 0 },
-  })
+  // Resolve real database modifiers or props
+  const modifierGroups: ModifierGroup[] = useMemo(() => {
+    const raw = (product as any).product_modifiers || product.modifiers
+    if (Array.isArray(raw) && raw.length > 0) {
+      if (raw[0].group_name) {
+        const map: Record<string, ModifierGroup> = {}
+        for (const m of raw) {
+          const gName = m.group_name || 'Kustomisasi'
+          if (!map[gName]) {
+            map[gName] = {
+              id: `g-${gName}`,
+              name: gName,
+              required: Boolean(m.is_required),
+              options: []
+            }
+          }
+          map[gName].options.push({
+            id: m.id,
+            name: m.option_name,
+            priceExtra: Number(m.price_extra || 0)
+          })
+        }
+        return Object.values(map)
+      }
+      return raw
+    }
+    return []
+  }, [product])
+
+  const [selectedVariant, setSelectedVariant] = useState<VariantOption | null>(variants[0] || null)
+  const [selectedModifiers, setSelectedModifiers] = useState<Record<string, { group: string; name: string; priceExtra: number }>>({})
   const [note, setNote] = useState('')
+
+  useEffect(() => {
+    if (product) {
+      setSelectedVariant(variants[0] || null)
+      const initialMods: Record<string, { group: string; name: string; priceExtra: number }> = {}
+      for (const g of modifierGroups) {
+        if (g.required && g.options.length > 0) {
+          initialMods[g.id] = { group: g.name, name: g.options[0].name, priceExtra: g.options[0].priceExtra }
+        }
+      }
+      setSelectedModifiers(initialMods)
+      setNote('')
+    }
+  }, [product, variants, modifierGroups])
 
   // Calculate final unit price
   const extraTotal = Object.values(selectedModifiers).reduce((acc, m) => acc + m.priceExtra, 0)
@@ -96,16 +113,21 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
   const finalPrice = basePrice + extraTotal
 
   const handleToggleModifier = (group: ModifierGroup, opt: { id: string; name: string; priceExtra: number }) => {
-    setSelectedModifiers(prev => ({
-      ...prev,
-      [group.id]: { group: group.name, name: opt.name, priceExtra: opt.priceExtra }
-    }))
+    setSelectedModifiers(prev => {
+      const copy = { ...prev }
+      if (copy[group.id]?.name === opt.name && !group.required) {
+        delete copy[group.id]
+      } else {
+        copy[group.id] = { group: group.name, name: opt.name, priceExtra: opt.priceExtra }
+      }
+      return copy
+    })
   }
 
   const handleConfirm = () => {
     onAddToCart({
       product,
-      selectedVariant,
+      selectedVariant: selectedVariant || undefined,
       selectedModifiers: Object.values(selectedModifiers),
       note,
       finalPrice

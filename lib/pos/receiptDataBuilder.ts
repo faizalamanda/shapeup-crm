@@ -47,9 +47,18 @@ export function buildReceiptDataFromOrder(order: any, options: ReceiptBuildOptio
     const qty = Number(item.quantity || item.qty || 1)
     const price = Number(item.price || item.finalPrice || 0)
     const subtotal = Number(item.subtotal || item.total || (price * qty))
+
+    const rawName = item.name || item.product_name || item.product?.name || 'Produk'
+    const variantStr = (item.variant || item.variant_name || item.selectedVariant?.name || '').trim()
+
+    // Format nama produk flat / tidak bertingkat (Nama Produk - Varian)
+    const displayName = (variantStr && !rawName.toLowerCase().includes(variantStr.toLowerCase()))
+      ? `${rawName} - ${variantStr}`
+      : rawName
+
     return {
-      name: item.name || item.product_name || item.product?.name || 'Produk',
-      variant: item.variant || item.variant_name || item.selectedVariant?.name || undefined,
+      name: displayName,
+      variant: undefined, // Dikosongkan agar cetak struk flat / tidak bertingkat
       quantity: qty,
       price: price,
       subtotal: subtotal,
