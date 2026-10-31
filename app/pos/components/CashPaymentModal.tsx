@@ -70,6 +70,8 @@ type Props = {
   businessId?: string
   title?: string
   subtitle?: string
+  customerName?: string
+  customerPhone?: string
   defaultMode?: 'full' | 'split_item' | 'split_equal' | 'partial' | 'split'
   onConfirmPayment: (result: PaymentResult) => Promise<void> | void
 }
@@ -96,6 +98,8 @@ export default function CashPaymentModal({
   businessId,
   title,
   subtitle,
+  customerName = 'Walk-in Customer',
+  customerPhone = '',
   defaultMode = 'full',
   onConfirmPayment
 }: Props) {
@@ -276,6 +280,19 @@ export default function CashPaymentModal({
             cashReceived: activeBillTarget
           }
         ]
+      } else if (prev.length > 1) {
+        // Skala ulang atau alokasikan kembali baris pertama
+        const firstLine = prev[0]
+        const otherAllocated = prev.slice(1).reduce((sum, l) => sum + (Number(l.amount) || 0), 0)
+        const adjustedFirst = Math.max(0, activeBillTarget - otherAllocated)
+        return [
+          {
+            ...firstLine,
+            amount: adjustedFirst,
+            cashReceived: firstLine.category === 'cash' ? Math.max(firstLine.cashReceived, adjustedFirst) : adjustedFirst
+          },
+          ...prev.slice(1)
+        ]
       }
       return prev
     })
@@ -291,51 +308,50 @@ export default function CashPaymentModal({
     return tenderLines.find((l) => l.id === activeLineId) || tenderLines[0]
   }, [tenderLines, activeLineId])
 
-  // Pilih Metode Tender (Odoo-Style Seamless Multi-Tender)
+  // PILIH / PECAH METODE PEMBAYARAN (SEAMLESS MULTI-TENDER ODOO STYLE)
   const handleSelectTender = (tender: POSTender) => {
     setErrorMsg(null)
+
+    // 1. Cek apakah metode ini sudah ada di daftar baris pembayaran
     const existingIndex = tenderLines.findIndex(
       (l) => l.tenderId === tender.id || l.accountId === tender.account_id
     )
 
-    // Jika metode sudah ada di baris, langsung fokuskan baris tersebut
     if (existingIndex >= 0) {
+      // Jika sudah ada, langsung fokuskan baris tersebut dan siap ketik
       setActiveLineId(tenderLines[existingIndex].id)
       setIsFirstTouch(true)
       return
     }
 
-    // Jika hanya ada 1 baris dan nominalnya masih sama persis dengan total tagihan penuh, switch tender
-    if (tenderLines.length === 1 && tenderLines[0].amount === activeBillTarget) {
-      const acc = cashBankAccounts.find((a) => a.id === tender.account_id)
-      setTenderLines([
-        {
-          ...tenderLines[0],
-          tenderId: tender.id,
-          accountId: tender.account_id,
-          accountCode: acc?.code,
-          accountName: acc?.name,
-          tenderName: tender.name,
-          category: tender.category,
-          amount: activeBillTarget,
-          cashReceived: activeBillTarget,
-          referenceNumber: ''
-        }
-      ])
-      setIsFirstTouch(true)
-      return
-    }
-
-    // Jika membuat baris baru (Split Tender Odoo-Style)
-    const otherAllocated = tenderLines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0)
-    const unallocated = Math.max(0, activeBillTarget - otherAllocated)
-
-    if (unallocated <= 0) {
-      setErrorMsg(`Tagihan sudah teralokasi penuh (${formatIDR(activeBillTarget)}). Kurangi nominal baris aktif jika ingin membagi ke metode ${tender.name}.`)
-      return
-    }
-
+    // 2. Jika belum ada: TAMBAHKAN METODE BARU INI KE DAFTAR PEMBAYARAN (SPLIT PAYMENT)
     const acc = cashBankAccounts.find((a) => a.id === tender.account_id)
+    const currentTotalAllocated = tenderLines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0)
+    const unallocated = Math.max(0, activeBillTarget - currentTotalAllocated)
+
+    let newLineAmount = 0
+    let updatedLines = [...tenderLines]
+
+    if (unallocated > 0) {
+      // Ada sisa yang belum teralokasi: berikan sisa tersebut ke metode baru
+      newLineAmount = unallocated
+    } else {
+      // Tagihan sudah teralokasi 100%:
+      if (tenderLines.length === 1) {
+        // Jika baru 1 metode (misal Tunai Rp 66.000), bagi 2 agar metode baru langsung aktif teralokasi!
+        const half = Math.floor(activeBillTarget / 2)
+        updatedLines[0] = {
+          ...updatedLines[0],
+          amount: half,
+          cashReceived: updatedLines[0].category === 'cash' ? Math.max(updatedLines[0].cashReceived, half) : half
+        }
+        newLineAmount = activeBillTarget - half
+      } else {
+        // Jika sudah multi-baris, baris baru masuk dengan amount 0 dan menjadi fokus kasir untuk mengetik
+        newLineAmount = 0
+      }
+    }
+
     const newLineId = 'line-' + Date.now()
     const newLine: KeypadTenderLine = {
       id: newLineId,
@@ -345,12 +361,12 @@ export default function CashPaymentModal({
       accountName: acc?.name,
       tenderName: tender.name,
       category: tender.category,
-      amount: unallocated,
-      cashReceived: unallocated,
+      amount: newLineAmount,
+      cashReceived: newLineAmount,
       referenceNumber: ''
     }
 
-    setTenderLines((prev) => [...prev, newLine])
+    setTenderLines([...updatedLines, newLine])
     setActiveLineId(newLineId)
     setIsFirstTouch(true)
   }
@@ -420,41 +436,88 @@ export default function CashPaymentModal({
     })
   }
 
-  // Eksekusi Numpad Action pada Baris Terfokus
+  // Eksekusi Numpad Action pada Baris Terfokus dengan Auto-Balance Dinamis
   const handleNumpadInput = useCallback((action: string) => {
     if (!activeLine) return
     setErrorMsg(null)
 
     const isCash = activeLine.category === 'cash'
-    const otherAllocated = tenderLines
-      .filter((l) => l.id !== activeLine.id)
-      .reduce((sum, l) => sum + (Number(l.amount) || 0), 0)
-    const maxAllowedNonCash = Math.max(0, activeBillTarget - otherAllocated)
-
     const currentVal = isCash ? activeLine.cashReceived : activeLine.amount
 
     const { nextValue, nextFirstTouch } = processNumpadAction({
       currentValue: currentVal,
       action,
       isFirstTouch,
-      maxLimit: isCash ? 2_000_000_000 : maxAllowedNonCash
+      maxLimit: isCash ? 2_000_000_000 : activeBillTarget
     })
 
     setIsFirstTouch(nextFirstTouch)
 
-    setTenderLines((prev) =>
-      prev.map((line) => {
+    setTenderLines((prev) => {
+      // Jika mode 2 baris (split 2 metode): pengetikan pada 1 baris otomatis menyeimbangkan baris lainnya
+      if (prev.length === 2) {
+        const otherIndex = prev.findIndex((l) => l.id !== activeLine.id)
+        const otherLine = prev[otherIndex]
+
+        if (isCash) {
+          // Kasir mengetik uang tunai pada baris tunai
+          const newAllocated = Math.min(nextValue, activeBillTarget)
+          const otherAmount = Math.max(0, activeBillTarget - newAllocated)
+
+          return prev.map((l, idx) => {
+            if (l.id === activeLine.id) {
+              return { ...l, amount: newAllocated, cashReceived: nextValue }
+            }
+            if (idx === otherIndex) {
+              return {
+                ...otherLine,
+                amount: otherAmount,
+                cashReceived: otherLine.category === 'cash' ? Math.max(otherLine.cashReceived, otherAmount) : otherAmount
+              }
+            }
+            return l
+          })
+        } else {
+          // Kasir mengetik nominal pada baris non-tunai (QRIS / EDC / Bank)
+          const cappedVal = Math.min(nextValue, activeBillTarget)
+          const otherAmount = Math.max(0, activeBillTarget - cappedVal)
+
+          return prev.map((l, idx) => {
+            if (l.id === activeLine.id) {
+              return { ...l, amount: cappedVal, cashReceived: cappedVal }
+            }
+            if (idx === otherIndex) {
+              return {
+                ...otherLine,
+                amount: otherAmount,
+                cashReceived: otherLine.category === 'cash' ? Math.max(otherLine.cashReceived, otherAmount) : otherAmount
+              }
+            }
+            return l
+          })
+        }
+      }
+
+      // Jika baris tunggal atau lebih dari 2 baris
+      return prev.map((line) => {
         if (line.id !== activeLine.id) return line
 
         if (line.category === 'cash') {
-          const newAllocated = Math.min(nextValue, Math.max(0, activeBillTarget - otherAllocated))
+          const otherTotal = prev
+            .filter((l) => l.id !== line.id)
+            .reduce((sum, l) => sum + (Number(l.amount) || 0), 0)
+          const maxAllocatable = Math.max(0, activeBillTarget - otherTotal)
           return {
             ...line,
-            amount: newAllocated,
+            amount: Math.min(nextValue, maxAllocatable),
             cashReceived: nextValue
           }
         } else {
-          const cappedVal = Math.min(nextValue, maxAllowedNonCash)
+          const otherTotal = prev
+            .filter((l) => l.id !== line.id)
+            .reduce((sum, l) => sum + (Number(l.amount) || 0), 0)
+          const maxAllocatable = Math.max(0, activeBillTarget - otherTotal)
+          const cappedVal = Math.min(nextValue, maxAllocatable)
           return {
             ...line,
             amount: cappedVal,
@@ -462,8 +525,8 @@ export default function CashPaymentModal({
           }
         }
       })
-    )
-  }, [activeLine, isFirstTouch, tenderLines, activeBillTarget])
+    })
+  }, [activeLine, isFirstTouch, activeBillTarget])
 
   // Update Nomor Referensi untuk Baris Non-Tunai
   const handleUpdateReference = (refNo: string) => {
@@ -614,14 +677,10 @@ export default function CashPaymentModal({
       contentClassName="!p-0 !overflow-hidden flex flex-col h-full bg-slate-100"
       title={null}
     >
-      {/* 
-        CONTAINER UTAMA (ODOO POS ARCHITECTURE — 100dvh ZERO SCROLL)
-        Kiri (38%): Action & Control Pad (Tender Selector, Keypad, Validate)
-        Kanan (62%): Display Canvas (Total Raksasa, Status Dua Arah, Baris Pembayaran)
-      */}
+      {/* CONTAINER UTAMA (ODOO POS ARCHITECTURE — 100dvh ZERO SCROLL) */}
       <div className="w-full max-w-[1440px] mx-auto h-[100dvh] max-h-[100dvh] flex flex-col bg-slate-100 text-slate-900 overflow-hidden p-2 sm:p-2.5 lg:p-3">
 
-        {/* TOP NAVBAR HEADER KOMPAK */}
+        {/* 1. TOP NAVBAR HEADER */}
         <header className="h-10 sm:h-11 shrink-0 bg-slate-900 text-white rounded-xl px-3 sm:px-3.5 flex items-center justify-between shadow-xs mb-1.5 sm:mb-2">
           <div className="flex items-center gap-2">
             <button
@@ -642,27 +701,40 @@ export default function CashPaymentModal({
                 Nota #{Date.now().toString().slice(-6)}
               </span>
               <span className="text-slate-500 hidden sm:inline">•</span>
-              <span className="text-xs text-slate-300 hidden sm:inline">
-                Pelanggan: <b className="text-white">Umum (Tamu)</b>
+              <span className="text-xs text-slate-300 flex items-center gap-1">
+                <span>Pelanggan:</span>
+                <b className="text-emerald-300 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-700/80">
+                  {customerName}
+                </b>
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <button
-              type="button"
-              onClick={() => setIsSplitBillOpen(true)}
-              className="px-2.5 py-1 rounded-lg bg-indigo-900/80 hover:bg-indigo-800 text-indigo-200 border border-indigo-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
-            >
-              <span>✂ Split Tagihan</span>
-            </button>
-
+          <div className="flex items-center gap-2">
+            {/* Tombol Lihat Menu Rincian (Mudah Diakses di Header) */}
             <button
               type="button"
               onClick={() => setIsReceiptDetailsOpen(true)}
-              className="lg:hidden px-2.5 py-1 rounded-lg bg-slate-800 text-xs font-bold text-slate-200 border border-slate-700 flex items-center gap-1"
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 hover:text-white border border-slate-700 flex items-center gap-1.5 transition cursor-pointer"
+              title="Buka rincian pesanan"
             >
-              <span>🧾 Menu ({cartItems.length})</span>
+              <span>🧾</span>
+              <span>Rincian Menu ({cartItems.length})</span>
+            </button>
+
+            {/* Tombol Split Tagihan di Header */}
+            <button
+              type="button"
+              onClick={() => setIsSplitBillOpen(true)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                billMode !== 'full'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-indigo-900/80 hover:bg-indigo-800 text-indigo-200 border border-indigo-700'
+              }`}
+            >
+              <span>✂</span>
+              <span>Split Tagihan</span>
+              {billMode !== 'full' && <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>}
             </button>
 
             {activeShift && (
@@ -687,18 +759,19 @@ export default function CashPaymentModal({
           <aside className="col-span-1 lg:col-span-5 xl:col-span-5 flex flex-col bg-white border border-slate-200/90 rounded-2xl p-2.5 sm:p-3 shadow-2xs overflow-hidden justify-between">
             
             <div className="space-y-1.5 shrink-0">
-              {/* 1. METODE PEMBAYARAN VERTICAL / COMPACT GRID DENGAN INDIKATOR AKTIF YANG SANGAT JELAS */}
+              
+              {/* METODE PEMBAYARAN: MULTI-TENDER DENGAN INDIKATOR STATUS SANGAT JELAS */}
               <div>
                 <div className="flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
-                  <span>METODE PEMBAYARAN:</span>
-                  <span className="text-blue-600 font-bold lowercase">pilih untuk alokasi</span>
+                  <span>METODE PEMBAYARAN ({tenderLines.length} Aktif):</span>
+                  <span className="text-indigo-600 font-bold lowercase">klik untuk pecah / fokus</span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-1.5">
                   {tenderOptions.map((t) => {
-                    const isSelectedAndActive = activeLine?.tenderId === t.id || (!activeLine?.tenderId && activeLine?.accountId === t.account_id)
+                    const isFocusedAndEditing = activeLine?.tenderId === t.id || (!activeLine?.tenderId && activeLine?.accountId === t.account_id)
                     const lineEntry = tenderLines.find((l) => l.tenderId === t.id || l.accountId === t.account_id)
-                    const isAllocated = Boolean(lineEntry)
+                    const isAllocatedInSplit = Boolean(lineEntry)
                     const glyph = CATEGORY_GLYPHS[t.category] || '💳'
 
                     return (
@@ -707,10 +780,10 @@ export default function CashPaymentModal({
                         type="button"
                         onClick={() => handleSelectTender(t)}
                         className={`relative p-2 rounded-xl border-2 text-left transition cursor-pointer flex items-center justify-between min-h-[50px] ${
-                          isSelectedAndActive
+                          isFocusedAndEditing
                             ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-sm ring-2 ring-emerald-500/20'
-                            : isAllocated
-                            ? 'bg-slate-50 border-slate-400 text-slate-900'
+                            : isAllocatedInSplit
+                            ? 'bg-blue-50/70 border-blue-400 text-blue-950'
                             : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
                         }`}
                       >
@@ -728,16 +801,20 @@ export default function CashPaymentModal({
 
                         {/* TANDA METODE AKTIF YANG SANGAT JELAS */}
                         <div className="shrink-0 flex flex-col items-end pl-1">
-                          {isSelectedAndActive ? (
+                          {isFocusedAndEditing ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black bg-emerald-600 text-white shadow-xs animate-in fade-in">
                               <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
-                              <span>Aktif</span>
+                              <span>Diedit</span>
                             </span>
                           ) : lineEntry ? (
-                            <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-200 text-slate-700 font-mono">
-                              {formatIDR(lineEntry.amount)}
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-800 font-mono">
+                              ✓ {formatIDR(lineEntry.amount)}
                             </span>
-                          ) : null}
+                          ) : (
+                            <span className="text-[9px] text-slate-400 font-semibold">
+                              + Pecah
+                            </span>
+                          )}
                         </div>
                       </button>
                     )
@@ -745,31 +822,46 @@ export default function CashPaymentModal({
                 </div>
               </div>
 
-              {/* 2. BARIS TOMBOL CUSTOMER & SPLIT BILL */}
+              {/* BARIS INFO PELANGGAN & TOMBOL SPLIT BILL */}
               <div className="grid grid-cols-2 gap-1.5 pt-0.5">
-                <div className="p-1.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-1.5 text-xs">
-                  <span>👤</span>
+                <div className="p-1.5 px-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-1.5 text-xs">
+                  <span className="text-base">👤</span>
                   <div className="truncate">
                     <span className="text-[9px] uppercase font-bold text-slate-400 block leading-none">Pelanggan:</span>
-                    <span className="font-extrabold text-[11px] text-slate-800 truncate block">Umum (Tamu)</span>
+                    <span className="font-extrabold text-[11px] text-slate-900 truncate block">
+                      {customerName}
+                    </span>
                   </div>
                 </div>
 
                 <button
                   type="button"
                   onClick={() => setIsSplitBillOpen(true)}
-                  className="p-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-900 flex items-center justify-center gap-1 text-xs font-bold transition cursor-pointer"
+                  className={`p-1.5 px-2 rounded-xl border flex items-center justify-between text-xs font-bold transition cursor-pointer ${
+                    billMode !== 'full'
+                      ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs'
+                      : 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-900'
+                  }`}
                 >
-                  <span>✂</span>
-                  <span>Split Tagihan</span>
-                  {billMode !== 'full' && (
-                    <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
-                  )}
+                  <div className="flex items-center gap-1 truncate">
+                    <span>✂</span>
+                    <span className="truncate">
+                      {billMode === 'split_equal'
+                        ? `Bagi ${splitCount}`
+                        : billMode === 'split_item'
+                        ? `Pecah (${selectedItemIds.size})`
+                        : billMode === 'partial'
+                        ? 'Cicilan'
+                        : 'Split Tagihan'}
+                    </span>
+                  </div>
+                  <span className="text-[10px] opacity-80">⚙</span>
                 </button>
               </div>
+
             </div>
 
-            {/* 3. KEYPAD NUMERIK 4-KOLOM DENGAN TOMBOL HIJAU +10K, +20K, +50K & BACKSPACE MERAH */}
+            {/* KEYPAD NUMERIK 4-KOLOM ODOO STYLE */}
             <div className="flex-1 min-h-0 grid grid-cols-4 gap-1.5 my-1.5">
               {/* Baris 1: 1, 2, 3, +10.000 */}
               <button
@@ -892,7 +984,7 @@ export default function CashPaymentModal({
               </button>
             </div>
 
-            {/* 4. FOOTER AKSI: BACK (KIRI) & VALIDATE (KANAN) SEPERTI ODOO */}
+            {/* FOOTER AKSI: BATAL & VALIDATE (ODOO BUTTONS) */}
             <div className="shrink-0 pt-1 grid grid-cols-5 gap-2">
               <button
                 type="button"
@@ -923,34 +1015,105 @@ export default function CashPaymentModal({
           {/* ========================================================= */}
           <main className="col-span-1 lg:col-span-7 xl:col-span-7 flex flex-col bg-white border border-slate-200/90 rounded-2xl p-3 sm:p-5 shadow-2xs overflow-hidden justify-between">
             
-            {/* 1. TOTAL TAGIHAN RAKSASA DI BAGIAN ATAS (HIJAU TEBAL SEPERTI ODOO) */}
-            <div className="text-center py-2 sm:py-4 border-b border-slate-100 shrink-0">
+            {/* TOTAL TAGIHAN RAKSASA DI BAGIAN ATAS (HIJAU TEBAL SEPERTI ODOO) */}
+            <div className="text-center py-2 sm:py-3 border-b border-slate-100 shrink-0">
               <span className="text-[11px] sm:text-xs font-black uppercase tracking-widest text-slate-400 block">
                 {billMode === 'full' ? 'TOTAL TAGIHAN' : 'TAGIHAN SUB-BILL'}
               </span>
               <div className="text-4xl sm:text-5xl lg:text-6xl font-black font-mono text-emerald-600 tracking-tight mt-1">
                 {formatIDR(activeBillTarget)}
               </div>
-              {unpaidOutsideBill > 0 && (
-                <div className="text-xs font-bold text-amber-700 mt-1">
-                  Sisa Piutang Diluar Tagihan Ini: {formatIDR(unpaidOutsideBill)}
-                </div>
-              )}
             </div>
 
-            {/* 2. AREA STATUS DUA ARAH & BARIS PEMBAYARAN AKTIF (KOTAK MERAH ODOO) */}
-            <div className="flex-1 min-h-0 flex flex-col justify-start py-3 space-y-3 max-w-xl mx-auto w-full">
+            {/* BANNER SPLIT BILL (JIKA SEDANG AKTIF) */}
+            {billMode !== 'full' && (
+              <div className="shrink-0 my-2 p-2.5 px-3 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-950 flex items-center justify-between text-xs shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">📌</span>
+                  <div>
+                    <span className="font-extrabold text-xs block">
+                      {billMode === 'split_equal'
+                        ? `Split Tagihan: Bagi Rata (${splitCount} Orang)`
+                        : billMode === 'split_item'
+                        ? `Split Tagihan: Pecah Menu (${selectedItemIds.size} Item Dipilih)`
+                        : 'Split Tagihan: Cicilan / DP'}
+                    </span>
+                    <span className="text-[11px] text-indigo-700">
+                      Sisa piutang pesanan: <b>{formatIDR(unpaidOutsideBill)}</b>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsSplitBillOpen(true)}
+                    className="px-2.5 py-1 rounded-xl bg-white hover:bg-indigo-100 text-indigo-800 border border-indigo-300 font-bold text-xs cursor-pointer"
+                  >
+                    Ubah
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBillMode('full')}
+                    className="px-2.5 py-1 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* KARTU RINCIAN PESANAN (SANGAT MUDAH DILIHAT & DIAKSES DI KOLOM KANAN) */}
+            <div className="shrink-0 my-1 bg-slate-50 border border-slate-200 rounded-2xl p-2.5 px-3.5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="text-xl shrink-0">🧾</span>
+                <div className="truncate">
+                  <span className="text-xs font-black text-slate-900 block truncate">
+                    Rincian Pesanan ({cartItems.length} Menu) • Pelanggan: <b className="text-emerald-700">{customerName}</b>
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    Total Keranjang: {formatIDR(grandTotal)}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowItemAccordion(!showItemAccordion)}
+                className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 text-xs font-bold transition cursor-pointer shadow-2xs flex items-center gap-1 shrink-0"
+              >
+                <span>{showItemAccordion ? 'Tutup ▲' : 'Lihat Menu ▼'}</span>
+              </button>
+            </div>
+
+            {/* ACCORDION DAFTAR ITEM (JIKA DIBUKA) */}
+            {showItemAccordion && (
+              <div className="shrink-0 mb-2 p-2.5 bg-slate-50 rounded-2xl border border-slate-200 max-h-44 overflow-y-auto space-y-1 divide-y divide-slate-100 text-xs">
+                {cartItems.map((item) => (
+                  <div key={item.id} className="pt-1 first:pt-0 flex justify-between items-center">
+                    <div>
+                      <span className="font-bold text-slate-800">{item.quantity}x {item.name}</span>
+                      {item.variantName && <span className="text-[10px] text-slate-500 ml-1">({item.variantName})</span>}
+                    </div>
+                    <span className="font-mono font-bold text-slate-900">{formatIDR(item.price * item.quantity)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* AREA STATUS DUA ARAH & BARIS MULTI-TENDER (KOTAK MERAH ODOO) */}
+            <div className="flex-1 min-h-0 flex flex-col justify-start py-2 space-y-2.5 max-w-xl mx-auto w-full">
               
-              {/* KOTAK STATUS DUA ARAH (REMAINING / SISA ATAU CHANGE / KEMBALIAN) */}
-              <div className={`p-3 sm:p-3.5 rounded-2xl border flex items-center justify-between text-sm sm:text-base font-black transition shadow-2xs ${
+              {/* KOTAK STATUS DUA ARAH (REMAINING ATAU KEMBALIAN) */}
+              <div className={`p-3 rounded-2xl border flex items-center justify-between text-sm sm:text-base font-black transition shadow-2xs ${
                 calculation.totalChange > 0
                   ? 'bg-emerald-500 border-emerald-600 text-white'
                   : calculation.remainingBill > 0
-                  ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950'
+                  ? 'bg-amber-50/90 border-amber-300 text-amber-950'
                   : 'bg-emerald-100 border-emerald-400 text-emerald-900'
               }`}>
                 <span className="uppercase tracking-wider text-xs sm:text-sm font-extrabold">
-                  {calculation.totalChange > 0 ? 'Kembalian:' : 'Sisa Tagihan (Remaining):'}
+                  {calculation.totalChange > 0 ? 'Kembalian (Change):' : 'Sisa Tagihan (Remaining):'}
                 </span>
                 <span className="font-mono text-base sm:text-xl font-black">
                   {calculation.totalChange > 0
@@ -959,8 +1122,8 @@ export default function CashPaymentModal({
                 </span>
               </div>
 
-              {/* DAFTAR BARIS PEMBAYARAN AKTIF MULTI-TENDER (SEPERTI BARIS CASH DI SCREENSHOT ODOO) */}
-              <div className="space-y-2 overflow-y-auto max-h-64 pr-1">
+              {/* DAFTAR BARIS PEMBAYARAN AKTIF MULTI-TENDER */}
+              <div className="space-y-2 overflow-y-auto max-h-60 pr-1">
                 {tenderLines.map((line) => {
                   const isFocused = line.id === activeLineId
                   const glyph = CATEGORY_GLYPHS[line.category] || '💳'
@@ -973,9 +1136,9 @@ export default function CashPaymentModal({
                           setActiveLineId(line.id)
                           setIsFirstTouch(true)
                         }}
-                        className={`p-3 sm:p-3.5 rounded-2xl border transition flex items-center justify-between cursor-pointer ${
+                        className={`p-3 sm:p-3.5 rounded-2xl border-2 transition flex items-center justify-between cursor-pointer ${
                           isFocused
-                            ? 'bg-slate-100/90 border-slate-400 ring-2 ring-slate-400/30 shadow-xs'
+                            ? 'bg-emerald-50/60 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs'
                             : 'bg-slate-50 hover:bg-slate-100 border-slate-200'
                         }`}
                       >
@@ -986,7 +1149,7 @@ export default function CashPaymentModal({
                               {line.tenderName}
                             </span>
                             <span className="text-[10px] text-slate-500 font-mono">
-                              {line.accountCode || 'COA'} {isCash ? `• Uang Tunai: ${formatIDR(line.cashReceived)}` : ''}
+                              {line.accountCode || 'COA'} {isCash ? `• Uang Tunai Diterima: ${formatIDR(line.cashReceived)}` : ''}
                             </span>
                           </div>
                         </div>
@@ -996,18 +1159,20 @@ export default function CashPaymentModal({
                             {formatIDR(line.amount)}
                           </span>
 
-                          <button
-                            type="button"
-                            onClick={(e) => handleDeleteLine(line.id, e)}
-                            className="w-7 h-7 rounded-xl bg-white hover:bg-rose-50 text-rose-500 hover:text-rose-700 border border-slate-200 hover:border-rose-300 flex items-center justify-center font-black text-sm transition cursor-pointer"
-                            title="Hapus baris ini"
-                          >
-                            ✕
-                          </button>
+                          {tenderLines.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteLine(line.id, e)}
+                              className="w-7 h-7 rounded-xl bg-white hover:bg-rose-50 text-rose-500 hover:text-rose-700 border border-slate-200 hover:border-rose-300 flex items-center justify-center font-black text-sm transition cursor-pointer"
+                              title="Hapus metode ini"
+                            >
+                              ✕
+                            </button>
+                          )}
                         </div>
                       </div>
 
-                      {/* Input Referensi jika Baris Non-Tunai Aktif Sedang Terpilih */}
+                      {/* Input Referensi jika Baris Non-Tunai Sedang Terfokus */}
                       {isFocused && line.category !== 'cash' && (
                         <div className="flex items-center gap-2 p-1.5 px-3 rounded-xl bg-slate-50 border border-slate-200 animate-in fade-in">
                           <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0">
@@ -1029,33 +1194,10 @@ export default function CashPaymentModal({
 
             </div>
 
-            {/* 3. ACCORDION / TOGGLE RINCIAN MENU NOTA DI KANAN BAWAH */}
-            <div className="shrink-0 border-t border-slate-100 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowItemAccordion(!showItemAccordion)}
-                className="w-full py-2 px-3 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold flex items-center justify-between transition cursor-pointer"
-              >
-                <div className="flex items-center gap-2">
-                  <span>🧾</span>
-                  <span>Rincian Menu Belanja ({cartItems.length} Item)</span>
-                </div>
-                <span>{showItemAccordion ? '▲ Tutup' : '▼ Lihat'}</span>
-              </button>
-
-              {showItemAccordion && (
-                <div className="mt-2 p-2 bg-slate-50 rounded-xl border border-slate-200 max-h-40 overflow-y-auto space-y-1 divide-y divide-slate-100 text-xs">
-                  {cartItems.map((item) => (
-                    <div key={item.id} className="pt-1 first:pt-0 flex justify-between items-center">
-                      <div>
-                        <span className="font-bold text-slate-800">{item.quantity}x {item.name}</span>
-                        {item.variantName && <span className="text-[10px] text-slate-500 ml-1">({item.variantName})</span>}
-                      </div>
-                      <span className="font-mono font-bold text-slate-900">{formatIDR(item.price * item.quantity)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+            {/* FOOTER CANVAS KANAN */}
+            <div className="shrink-0 border-t border-slate-100 pt-2 flex items-center justify-between text-xs text-slate-500 font-medium">
+              <span>Total Terbayar: <b className="font-mono text-slate-900">{formatIDR(calculation.totalAllocated)}</b></span>
+              <span>Status: <b className={calculation.isFullyCovered ? 'text-emerald-700' : 'text-amber-700'}>{calculation.statusLabel}</b></span>
             </div>
 
           </main>
@@ -1209,7 +1351,7 @@ export default function CashPaymentModal({
         </div>
       )}
 
-      {/* POP-UP RINCIAN STRUK LENGKAP (KHUSUS MOBILE) */}
+      {/* POP-UP RINCIAN STRUK LENGKAP */}
       {isReceiptDetailsOpen && (
         <div className="fixed inset-0 z-[1300] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in">
           <div className="w-full sm:max-w-md bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl p-4 sm:p-5 shadow-2xl space-y-3.5 text-slate-900 max-h-[85vh] overflow-y-auto">
@@ -1225,6 +1367,12 @@ export default function CashPaymentModal({
               >
                 ✕
               </button>
+            </div>
+
+            <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+              <span className="text-slate-400 font-bold block text-[10px] uppercase">Pelanggan:</span>
+              <span className="font-black text-slate-900 text-sm">{customerName}</span>
+              {customerPhone && <span className="font-mono text-slate-500 block text-[10px]">{customerPhone}</span>}
             </div>
 
             <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 space-y-1.5">

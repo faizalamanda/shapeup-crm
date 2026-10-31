@@ -1452,6 +1452,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           quantity: c.quantity,
           variantName: c.selectedVariant?.name
         }))}
+        customerName={selectedCustomer?.name || 'Walk-in Customer'}
+        customerPhone={selectedCustomer?.phone || ''}
         accounts={accounts}
         activeShift={activeShift}
         activeRegisterAccountId={activeShift?.register_id ? posRegisters.find((r) => r.id === activeShift.register_id)?.account_id : null}

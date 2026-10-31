@@ -828,6 +828,8 @@ export default function POSOrderDetailModal({
           businessId={currentOrder.business_id}
           title={`Pelunasan Tagihan #${currentOrder.order_number}`}
           subtitle={`Sisa yang belum dibayar: ${formatIDR(outstanding)}`}
+          customerName={currentOrder.customer_name || 'Walk-in Customer'}
+          customerPhone={currentOrder.customer_phone || ''}
           defaultMode="full"
           onConfirmPayment={handleConfirmPayRemaining}
         />
