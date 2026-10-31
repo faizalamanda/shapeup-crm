@@ -307,23 +307,22 @@ export default function CashPaymentModal({
     return tenderLines.find((l) => l.id === activeLineId) || tenderLines[0]
   }, [tenderLines, activeLineId])
 
-  // PILIH / PECAH METODE PEMBAYARAN (SEAMLESS MULTI-TENDER ODOO STYLE)
-  const handleSelectTender = (tender: POSTender) => {
+  // TOGGLE METODE PEMBAYARAN: NYALAKAN / MATIKAN DARI PANEL KIRI
+  const handleToggleTender = (tender: POSTender) => {
     setErrorMsg(null)
 
-    // 1. Cek apakah metode ini sudah ada di daftar baris pembayaran
+    // 1. Cek apakah metode ini sudah nyala (ada di daftar baris pembayaran)
     const existingIndex = tenderLines.findIndex(
       (l) => l.tenderId === tender.id || l.accountId === tender.account_id
     )
 
     if (existingIndex >= 0) {
-      // Jika sudah ada, langsung fokuskan baris tersebut dan siap ketik
-      setActiveLineId(tenderLines[existingIndex].id)
-      setIsFirstTouch(true)
+      // METODE SEDANG NYALA: Klik tombol ini akan MEMATIKAN / MENGHAPUS baris pembayaran!
+      handleDeleteLine(tenderLines[existingIndex].id)
       return
     }
 
-    // 2. Jika belum ada: TAMBAHKAN METODE BARU INI KE DAFTAR PEMBAYARAN (SPLIT PAYMENT)
+    // 2. METODE SEDANG MATI: Klik tombol ini akan MENYALAKAN (menambahkan ke baris pembayaran)
     const acc = cashBankAccounts.find((a) => a.id === tender.account_id)
     const currentTotalAllocated = tenderLines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0)
     const unallocated = Math.max(0, activeBillTarget - currentTotalAllocated)
@@ -337,7 +336,7 @@ export default function CashPaymentModal({
     } else {
       // Tagihan sudah teralokasi 100%:
       if (tenderLines.length === 1) {
-        // Jika baru 1 metode (misal Tunai Rp 66.000), bagi 2 agar metode baru langsung aktif teralokasi!
+        // Jika baru 1 metode (misal Tunai full), bagi 2 agar metode baru langsung aktif teralokasi!
         const half = Math.floor(activeBillTarget / 2)
         updatedLines[0] = {
           ...updatedLines[0],
@@ -565,7 +564,7 @@ export default function CashPaymentModal({
         const tenderIndex = parseInt(key, 10) - 1
         if (tenderOptions[tenderIndex]) {
           e.preventDefault()
-          handleSelectTender(tenderOptions[tenderIndex])
+          handleToggleTender(tenderOptions[tenderIndex])
           return
         }
       }
@@ -775,31 +774,30 @@ export default function CashPaymentModal({
             
             <div className="space-y-1.5 shrink-0">
               
-              {/* METODE PEMBAYARAN: MULTI-TENDER DENGAN INDIKATOR STATUS SANGAT JELAS */}
+              {/* METODE PEMBAYARAN: TOGGLE NYALAKAN / MATIKAN DENGAN STATUS YANG SANGAT JELAS */}
               <div>
                 <div className="flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
-                  <span>METODE PEMBAYARAN ({tenderLines.length} Aktif):</span>
-                  <span className="text-indigo-600 font-bold lowercase">klik untuk pecah / fokus</span>
+                  <span>METODE PEMBAYARAN ({tenderLines.length} Nyala):</span>
+                  <span className="text-emerald-700 font-bold lowercase">klik untuk nyala / matikan</span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-1.5">
                   {tenderOptions.map((t) => {
-                    const isFocusedAndEditing = activeLine?.tenderId === t.id || (!activeLine?.tenderId && activeLine?.accountId === t.account_id)
                     const lineEntry = tenderLines.find((l) => l.tenderId === t.id || l.accountId === t.account_id)
-                    const isAllocatedInSplit = Boolean(lineEntry)
+                    const isTurnedOn = Boolean(lineEntry)
+                    const isFocusedAndEditing = activeLine?.tenderId === t.id || (!activeLine?.tenderId && activeLine?.accountId === t.account_id)
                     const glyph = CATEGORY_GLYPHS[t.category] || '💳'
 
                     return (
                       <button
                         key={t.id}
                         type="button"
-                        onClick={() => handleSelectTender(t)}
-                        className={`relative p-2 rounded-xl border-2 text-left transition cursor-pointer flex items-center justify-between min-h-[50px] ${
-                          isFocusedAndEditing
-                            ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-sm ring-2 ring-emerald-500/20'
-                            : isAllocatedInSplit
-                            ? 'bg-blue-50/70 border-blue-400 text-blue-950'
-                            : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
+                        onClick={() => handleToggleTender(t)}
+                        title={isTurnedOn ? 'Klik untuk mematikan / menghapus metode ini' : 'Klik untuk menyalakan metode ini'}
+                        className={`relative p-2 rounded-xl border-2 text-left transition cursor-pointer flex items-center justify-between min-h-[52px] ${
+                          isTurnedOn
+                            ? 'bg-emerald-50/80 border-emerald-500 text-emerald-950 shadow-2xs'
+                            : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
                         }`}
                       >
                         <div className="flex items-center gap-2 min-w-0 truncate">
@@ -814,20 +812,21 @@ export default function CashPaymentModal({
                           </div>
                         </div>
 
-                        {/* TANDA METODE AKTIF YANG SANGAT JELAS */}
+                        {/* TOGGLE INDIKATOR: NYALA (KLIK UNTUK MATIKAN) ATAU MATI (KLIK UNTUK NYALAKAN) */}
                         <div className="shrink-0 flex flex-col items-end pl-1">
-                          {isFocusedAndEditing ? (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black bg-emerald-600 text-white shadow-xs animate-in fade-in">
-                              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
-                              <span>Diedit</span>
-                            </span>
-                          ) : lineEntry ? (
-                            <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-800 font-mono">
-                              ✓ {formatIDR(lineEntry.category === 'cash' ? (lineEntry.cashReceived || lineEntry.amount) : lineEntry.amount)}
-                            </span>
+                          {lineEntry ? (
+                            <>
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-600 text-white shadow-2xs">
+                                <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+                                <span>Nyala</span>
+                              </span>
+                              <span className="text-[9px] text-emerald-900 font-mono font-bold mt-0.5">
+                                {formatIDR(lineEntry.category === 'cash' ? (lineEntry.cashReceived || lineEntry.amount) : lineEntry.amount)}
+                              </span>
+                            </>
                           ) : (
-                            <span className="text-[9px] text-slate-400 font-semibold">
-                              + Pecah
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-100 text-slate-400 border border-slate-200">
+                              + Nyalakan
                             </span>
                           )}
                         </div>
@@ -1099,8 +1098,8 @@ export default function CashPaymentModal({
                 </span>
               </div>
 
-              {/* DAFTAR BARIS PEMBAYARAN AKTIF MULTI-TENDER (FLAT SEAMLESS TANPA BOX BERLAPIS) */}
-              <div className="divide-y divide-slate-100 overflow-y-auto max-h-72 my-1">
+              {/* DAFTAR BARIS PEMBAYARAN AKTIF MULTI-TENDER (FLAT SEAMLESS TANPA SCROLLBAR KAKU) */}
+              <div className="flex-1 divide-y divide-slate-100 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden my-1 pr-0.5">
                 {tenderLines.map((line) => {
                   const isFocused = line.id === activeLineId
                   const glyph = CATEGORY_GLYPHS[line.category] || '💳'
@@ -1116,7 +1115,7 @@ export default function CashPaymentModal({
                         }}
                         className={`p-3 sm:py-3.5 sm:px-3 rounded-xl transition flex items-center justify-between cursor-pointer ${
                           isFocused
-                            ? 'bg-emerald-50/90 text-emerald-950 font-medium'
+                            ? 'bg-emerald-50/90 text-emerald-950 font-medium ring-2 ring-emerald-500/20 shadow-2xs'
                             : 'hover:bg-slate-50 text-slate-700'
                         }`}
                       >
@@ -1128,8 +1127,9 @@ export default function CashPaymentModal({
                                 {line.tenderName}
                               </span>
                               {isFocused && (
-                                <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-600 text-white">
-                                  Aktif
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black bg-emerald-600 text-white shadow-2xs">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+                                  <span>Diedit</span>
                                 </span>
                               )}
                             </div>
