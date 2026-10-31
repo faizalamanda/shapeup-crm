@@ -523,3 +523,46 @@ Dalam operasional ritel & kasir yang sibuk, pelanggan sering kali menunda pembay
 ### 15.4 Parallel Initial Loading (0ms Latency Overhead)
 - Saat antarmuka POS pertama kali dimuat (`POSWorkspace.tsx`), pemanggilan `GET /api/pos/hold` disatukan ke dalam `Promise.all` bersama katalog produk, kategori, dan bagan akun.
 - Kasir yang melakukan *refresh browser* atau membuka sesi kasir baru akan langsung melihat jumlah draf aktif tanpa latensi jaringan tambahan.
+
+---
+
+## 16. Odoo-Style High-Throughput Cashier Payment Screen & Auto-Replace Numpad Engine
+
+Untuk mentransformasi antarmuka pembayaran kasir dari form input statis menjadi mesin transaksi berkecepatan tinggi (*high-throughput terminal*) dengan target waktu penyelesaian (*Average Handling Time* / AHT) $< 4$ detik, sistem menerapkan arsitektur Odoo-style payment engine terpadu:
+
+### 16.1 Zero-Popup Seamless Multi-Tender Flow
+- **Eliminasi Modal Pop-up:** Menghapus tombol toggle manual dan modal dialog terpisah untuk pecah metode (*split tender*).
+- **1-Click Tender Activation:**
+  - Metode pembayaran dibaca secara dinamis dari pengaturan unit bisnis (`/api/settings/pos/tenders`) melalui `resolveBusinessTenders()`.
+  - Mengklik chip metode pembayaran (Tunai, QRIS, EDC, Bank) langsung memfokuskan baris yang sudah ada, atau menambahkan baris pembayaran baru secara instan di layar utama.
+  - Sisa tagihan yang belum teralokasi ($\text{unallocated} = \max(0, \text{Target} - \sum \text{Allocated})$) otomatis dipindahkan ke baris metode baru tersebut tanpa perlu input manual.
+
+### 16.2 First-Touch Auto-Replace & Append Numpad Ergonomics (`paymentKeypadCalculator.ts`)
+- **Auto-Replace on First Touch:** Saat kasir memilih atau berpindah ke suatu baris pembayaran yang sudah memiliki nilai nominal *prefilled*, sentuhan pertama pada tombol angka numpad (layar sentuh maupun keyboard fisik) langsung **menimpa (*overwrite*)** nilai lama, bukan menambahkan karakter di belakang (*string append*).
+- **Subsequent Append Mode:** Sentuhan angka berikutnya beralih secara otomatis ke mode *append*.
+- **Backspace Reset:** Menekan tombol Backspace saat baris baru terpilih (*first touch*) langsung mereset nominal baris tersebut menjadi Rp 0.
+
+### 16.3 Real-Time Two-Way Auto-Balance & Strict Non-Cash Ceiling
+- **Indikator Status Dua Arah:**
+  - Jika $\sum \text{Alokasi} < \text{Tagihan}$: Menampilkan kartu status **SISA TAGIHAN: Rp [X]** (warna amber).
+  - Jika $\sum \text{Alokasi} \ge \text{Tagihan}$: Menampilkan kartu status **KEMBALIAN: Rp [X]** (warna hijau emerald kontras tinggi).
+- **Strict Non-Cash Ceiling:**
+  - Metode non-tunai (QRIS, EDC, Transfer Bank) dikunci maksimal sebesar sisa tagihan. Sistem mencegah input non-tunai melebihi tagihan untuk menjaga akurasi rekonsiliasi mutasi bank.
+  - Kelebihan bayar (*overpayment*) dan kembalian hanya berlaku pada metode **Tunai** (`category === 'cash'`).
+
+### 16.4 Auto-Redistribution on Line Delete
+- Ketika kasir menghapus salah satu baris pembayaran via tombol `[X]`:
+  - Jika tersisa 1 baris, baris tersebut otomatis memperluas alokasi nominalnya kembali ke nilai tagihan penuh.
+  - Jika tersisa beberapa baris, sisa nominal yang bebas otomatis didistribusikan kembali ke baris aktif yang sedang terfokus, sehingga transaksi tidak perlu diulang dari awal.
+
+### 16.5 Tablet Landscape Ergonomics (35% Left Bill : 65% Right Action) & Headless Keyboard Shortcuts
+- **Rasio Layar 35% : 65%:**
+  - Kolom Kiri (35%): Konteks nota, pelanggan, tombol aksi `[ ✂ Split Tagihan ]` (item-level / equal / partial), rincian menu belanja, dan total tagihan.
+  - Kolom Kanan (65%): Chips metode pembayaran dinamis, daftar baris aktif multi-tender, status dua arah, dynamic quick cash chips, keypad numerik sentuh berukuran besar ($\ge 54\text{px}$), dan tombol penuh **`VALIDASI & SELESAIKAN (Enter / Spasi)`**.
+- **100dvh Zero-Scroll:** Seluruh antarmuka terkunci pada tinggi viewport perangkat tanpa scrollbar halaman luar.
+- **Headless Keyboard Listener (Desktop High-Volume Retail):**
+  - Numpad 0–9 memasukkan digit angka.
+  - Backspace menghapus digit terakhir; Delete / C mereset ke 0; Escape menutup modal (jika nilai 0).
+  - Enter atau Spasi mengeksekusi validasi transaksi.
+  - Pintasan `Alt + 1`, `Alt + 2`, `Alt + 3` beralih antar-metode pembayaran secara instan tanpa menggunakan mouse.
+
