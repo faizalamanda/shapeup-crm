@@ -89,13 +89,73 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
     return []
   }, [product])
 
+  // Check if variants follow the multi-attribute hyphen pattern (e.g. "Hitam - XL")
+  const isMultiAttribute = useMemo(() => {
+    return variants.length > 1 && variants.every(v => v.name.includes(' - '))
+  }, [variants])
+
+  // Extract unique attribute dimensions
+  const attributeDimensions = useMemo(() => {
+    if (!isMultiAttribute) return []
+    const sampleParts = variants[0].name.split(' - ')
+    const numDimensions = sampleParts.length
+
+    const dims: Array<{ label: string; values: string[] }> = []
+    for (let i = 0; i < numDimensions; i++) {
+      const uniqueValues = Array.from(new Set(variants.map(v => {
+        const parts = v.name.split(' - ')
+        return parts[i]?.trim() || ''
+      }).filter(Boolean)))
+
+      // Intelligent Auto-Naming for Group Labels
+      let detectedLabel = `Pilihan Atribut ${i + 1}`
+      const lowerVals = uniqueValues.map(v => v.toLowerCase())
+      const sizeKeywords = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl', 'all size', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', 'small', 'medium', 'large']
+      const colorKeywords = ['hitam', 'putih', 'merah', 'biru', 'kuning', 'hijau', 'navy', 'abu', 'cokelat', 'maroon', 'pink', 'gold', 'silver', 'black', 'white', 'red', 'blue', 'green', 'cream', 'beige']
+      const tempKeywords = ['panas', 'dingin', 'hangat', 'hot', 'ice', 'iced', 'less ice', 'normal ice', 'no ice']
+
+      if (lowerVals.some(v => colorKeywords.includes(v))) {
+        detectedLabel = 'Warna'
+      } else if (lowerVals.some(v => sizeKeywords.includes(v))) {
+        detectedLabel = 'Ukuran / Size'
+      } else if (lowerVals.some(v => tempKeywords.includes(v))) {
+        detectedLabel = 'Suhu / Es'
+      } else {
+        detectedLabel = i === 0 ? 'Tipe / Atribut 1' : `Pilihan Atribut ${i + 1}`
+      }
+
+      dims.push({
+        label: detectedLabel,
+        values: uniqueValues
+      })
+    }
+    return dims
+  }, [variants, isMultiAttribute])
+
+  const [selectedAttrValues, setSelectedAttrValues] = useState<Record<number, string>>({})
+
+  useEffect(() => {
+    if (isMultiAttribute && attributeDimensions.length > 0) {
+      const initialAttrs: Record<number, string> = {}
+      attributeDimensions.forEach((dim, idx) => {
+        initialAttrs[idx] = dim.values[0] || ''
+      })
+      setSelectedAttrValues(initialAttrs)
+      const targetName = attributeDimensions.map((_, i) => initialAttrs[i]).filter(Boolean).join(' - ')
+      const found = variants.find(v => v.name.trim() === targetName)
+      if (found) setSelectedVariant(found)
+    }
+  }, [isMultiAttribute, attributeDimensions, variants])
+
   const [selectedVariant, setSelectedVariant] = useState<VariantOption | null>(variants[0] || null)
   const [selectedModifiers, setSelectedModifiers] = useState<Record<string, { group: string; name: string; priceExtra: number }>>({})
   const [note, setNote] = useState('')
 
   useEffect(() => {
     if (product) {
-      setSelectedVariant(variants[0] || null)
+      if (!isMultiAttribute) {
+        setSelectedVariant(variants[0] || null)
+      }
       const initialMods: Record<string, { group: string; name: string; priceExtra: number }> = {}
       for (const g of modifierGroups) {
         if (g.required && g.options.length > 0) {
@@ -105,7 +165,7 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
       setSelectedModifiers(initialMods)
       setNote('')
     }
-  }, [product, variants, modifierGroups])
+  }, [product, variants, modifierGroups, isMultiAttribute])
 
   // Calculate final unit price
   const extraTotal = Object.values(selectedModifiers).reduce((acc, m) => acc + m.priceExtra, 0)
@@ -157,30 +217,87 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
           {/* Varian Selection */}
           {variants.length > 0 && (
             <div>
-              <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">
-                Opsi Varian <span className="text-red-500">*</span>
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                {variants.map((v) => {
-                  const isSelected = selectedVariant?.id === v.id
-                  return (
-                    <button
-                      key={v.id}
-                      onClick={() => setSelectedVariant(v)}
-                      className={`p-3 text-left rounded-xl border font-medium transition flex flex-col justify-between ${
-                        isSelected 
-                          ? 'border-indigo-600 bg-indigo-50/60 text-indigo-900 ring-1 ring-indigo-500' 
-                          : 'border-gray-200 hover:border-gray-300 text-gray-800'
-                      }`}
-                    >
-                      <span className="text-sm font-semibold">{v.name}</span>
-                      <span className="text-xs text-indigo-600 font-bold mt-1">
-                        Rp {v.price.toLocaleString('id-ID')}
+              {isMultiAttribute ? (
+                /* Multi-Attribute Chip Selector (e.g. Warna -> Ukuran) */
+                <div className="space-y-4">
+                  {attributeDimensions.map((dim, dimIdx) => (
+                    <div key={dimIdx}>
+                      <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">
+                        {dim.label} <span className="text-red-500">*</span>
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {dim.values.map(val => {
+                          const isSelected = selectedAttrValues[dimIdx] === val
+                          return (
+                            <button
+                              key={val}
+                              type="button"
+                              onClick={() => {
+                                const updated = { ...selectedAttrValues, [dimIdx]: val }
+                                setSelectedAttrValues(updated)
+                                const targetName = attributeDimensions.map((_, i) => updated[i]).filter(Boolean).join(' - ')
+                                const found = variants.find(v => v.name.trim() === targetName)
+                                if (found) setSelectedVariant(found)
+                              }}
+                              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition border ${
+                                isSelected
+                                  ? 'border-indigo-600 bg-indigo-600 text-white shadow-xs'
+                                  : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+                              }`}
+                            >
+                              {val}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+
+                  {selectedVariant && (
+                    <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl flex items-center justify-between text-xs">
+                      <div>
+                        <span className="font-bold text-indigo-950">{selectedVariant.name}</span>
+                        {selectedVariant.stockQuantity !== undefined && (
+                          <span className="ml-2 text-[10px] text-slate-500 font-semibold">
+                            (Stok: {selectedVariant.stockQuantity})
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-extrabold text-indigo-700">
+                        Rp {selectedVariant.price.toLocaleString('id-ID')}
                       </span>
-                    </button>
-                  )
-                })}
-              </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Classic 1D Grid Selection */
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">
+                    Opsi Varian <span className="text-red-500">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {variants.map((v) => {
+                      const isSelected = selectedVariant?.id === v.id
+                      return (
+                        <button
+                          key={v.id}
+                          onClick={() => setSelectedVariant(v)}
+                          className={`p-3 text-left rounded-xl border font-medium transition flex flex-col justify-between ${
+                            isSelected 
+                              ? 'border-indigo-600 bg-indigo-50/60 text-indigo-900 ring-1 ring-indigo-500' 
+                              : 'border-gray-200 hover:border-gray-300 text-gray-800'
+                          }`}
+                        >
+                          <span className="text-sm font-semibold">{v.name}</span>
+                          <span className="text-xs text-indigo-600 font-bold mt-1">
+                            Rp {v.price.toLocaleString('id-ID')}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

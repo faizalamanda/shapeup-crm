@@ -192,7 +192,7 @@ export async function applyStockMovement(
   const hppMap = precomputedHppMap ?? await calculateProductsHppBatch(productIds, supabase)
 
   // 2. Build target stock movements list
-  const targetMoves = new Map<string, { dbProduct: any; variantId?: string | null; qty: number }>()
+  const targetMoves = new Map<string, { dbProduct: any; variantId?: string | null; qty: number; unitCost?: number }>()
 
   for (const { item, dbProduct } of matchedProducts) {
     const itemQty = parseFloat(item.quantity) || 1
@@ -214,11 +214,12 @@ export async function applyStockMovement(
     } else if (dbProduct.stock_type === 'tracked') {
       const variantId = isUuid(item.variant_id) ? item.variant_id : (isUuid(item.variation_id) ? item.variation_id : (isUuid(item.variantId) ? item.variantId : null))
       const moveKey = variantId ? `${dbProduct.id}_${variantId}` : dbProduct.id
+      const variantCost = Number(item.cost_price || item.costPrice || dbProduct.cost_price || 0)
       const current = targetMoves.get(moveKey)
       if (current) {
         current.qty += itemQty
       } else {
-        targetMoves.set(moveKey, { dbProduct, variantId, qty: itemQty })
+        targetMoves.set(moveKey, { dbProduct, variantId, qty: itemQty, unitCost: variantCost })
       }
     }
   }
@@ -241,7 +242,7 @@ export async function applyStockMovement(
       variantId: moveInfo.variantId || null,
       reference,
       qty: moveInfo.qty,
-      unitCost: Number(moveInfo.dbProduct.cost_price || 0),
+      unitCost: Number(moveInfo.unitCost !== undefined ? moveInfo.unitCost : (moveInfo.dbProduct.cost_price || 0)),
       type: moveType,
       sourceType,
       sourceId,

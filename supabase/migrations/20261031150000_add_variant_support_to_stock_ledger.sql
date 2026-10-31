@@ -3,8 +3,10 @@
 -- Timestamp: 20261031150000_add_variant_support_to_stock_ledger.sql
 -- Description:
 -- 1. Adds variant_id column to public.stock_moves (FK to product_variants)
--- 2. Updates database view v_stock_moves_ledger with composite partitioning
--- 3. Updates trigger sync_product_stock_from_moves to sync both variant and parent
+-- 2. Replaces uq_stock_moves_document_product_type with variant-aware unique index
+-- 3. Updates database view v_stock_moves_ledger with composite partitioning
+-- 4. Updates trigger sync_product_stock_from_moves to intelligently sync variant and parent
+-- 5. Modernizes RLS policies for product_variants, product_modifiers, products, categories
 -- ==============================================================================
 
 -- 1. Add variant_id to public.stock_moves
@@ -13,6 +15,21 @@ ADD COLUMN IF NOT EXISTS variant_id UUID REFERENCES public.product_variants(id) 
 
 CREATE INDEX IF NOT EXISTS idx_stock_moves_variant_id ON public.stock_moves(variant_id);
 CREATE INDEX IF NOT EXISTS idx_stock_moves_prod_variant ON public.stock_moves(product_id, variant_id);
+
+-- 1b. Replace document product unique index with variant-aware composite unique index
+-- Prevents collision when a single order/purchase contains multiple variants of the same product
+DROP INDEX IF EXISTS public.uq_stock_moves_document_product_type;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_moves_document_product_variant_type
+  ON public.stock_moves (
+    business_id, 
+    source_type, 
+    source_id, 
+    product_id, 
+    COALESCE(variant_id, '00000000-0000-0000-0000-000000000000'::uuid), 
+    type
+  )
+  WHERE source_id IS NOT NULL;
 
 -- 2. Update Database View: v_stock_moves_ledger
 DROP VIEW IF EXISTS public.v_stock_moves_ledger CASCADE;
@@ -87,14 +104,22 @@ RETURNS TRIGGER AS $$
 DECLARE
   target_product_id UUID;
   target_variant_id UUID;
+  old_variant_id UUID;
   new_variant_stock NUMERIC;
   new_parent_stock NUMERIC;
+  has_product_variants BOOLEAN;
 BEGIN
   target_product_id := COALESCE(NEW.product_id, OLD.product_id);
-  target_variant_id := COALESCE(NEW.variant_id, OLD.variant_id);
+  target_variant_id := NEW.variant_id;
+  old_variant_id := OLD.variant_id;
 
+  -- 1. Check if the product has defined variants in product_variants
+  SELECT EXISTS (
+    SELECT 1 FROM public.product_variants WHERE product_id = target_product_id
+  ) INTO has_product_variants;
+
+  -- 2. If move is attached to a variant, update that specific variant's stock
   IF target_variant_id IS NOT NULL THEN
-    -- Recalculate specific variant stock_quantity in product_variants
     SELECT COALESCE(SUM(
       CASE
         WHEN type IN ('receipt', 'refund') THEN qty
@@ -115,8 +140,35 @@ BEGIN
     UPDATE public.product_variants
     SET stock_quantity = new_variant_stock
     WHERE id = target_variant_id;
+  END IF;
 
-    -- Aggregate sum of all variants into parent product stock_quantity
+  -- 3. If an UPDATE changed the variant_id or a DELETE occurred with OLD.variant_id
+  IF (TG_OP = 'UPDATE' OR TG_OP = 'DELETE') AND old_variant_id IS NOT NULL AND old_variant_id IS DISTINCT FROM target_variant_id THEN
+    SELECT COALESCE(SUM(
+      CASE
+        WHEN type IN ('receipt', 'refund') THEN qty
+        WHEN type = 'delivery' THEN -qty
+        WHEN type = 'adjustment' AND (origin_location_id IS NULL OR (destination_location_id IS NOT NULL AND origin_location_id IS NULL)) THEN qty
+        WHEN type = 'adjustment' THEN -qty
+        WHEN type = 'transfer' AND destination_location_id IS NOT NULL THEN qty
+        WHEN type = 'transfer' THEN -qty
+        ELSE 0
+      END
+    ), 0) INTO new_variant_stock
+    FROM public.stock_moves
+    WHERE product_id = target_product_id 
+      AND variant_id = old_variant_id
+      AND status = 'done' 
+      AND bucket = 'main';
+
+    UPDATE public.product_variants
+    SET stock_quantity = new_variant_stock
+    WHERE id = old_variant_id;
+  END IF;
+
+  -- 4. Update parent product stock_quantity
+  IF has_product_variants THEN
+    -- Aggregate sum of all variants into parent product
     SELECT COALESCE(SUM(stock_quantity), 0) INTO new_parent_stock
     FROM public.product_variants
     WHERE product_id = target_product_id;
@@ -126,7 +178,7 @@ BEGIN
         updated_at = NOW()
     WHERE id = target_product_id;
   ELSE
-    -- Standard product without variant: calculate net stock for bucket 'main'
+    -- Standard product without variants: calculate net stock directly from stock_moves
     SELECT COALESCE(SUM(
       CASE
         WHEN type IN ('receipt', 'refund') THEN qty
@@ -160,7 +212,7 @@ AFTER INSERT OR UPDATE OR DELETE ON public.stock_moves
 FOR EACH ROW
 EXECUTE FUNCTION public.sync_product_stock_from_moves();
 
--- 4. Modernize RLS Policies on product_variants & product_modifiers (Rule 14 & 15 compliant)
+-- 4. Modernize RLS Policies on product_variants, product_modifiers, products, categories (Rule 14 & 15 compliant)
 ALTER TABLE public.product_variants ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage product_variants" ON public.product_variants;
 CREATE POLICY "Users can manage product_variants" ON public.product_variants
@@ -186,6 +238,50 @@ CREATE POLICY "Users can manage product_variants" ON public.product_variants
 ALTER TABLE public.product_modifiers ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can manage product_modifiers" ON public.product_modifiers;
 CREATE POLICY "Users can manage product_modifiers" ON public.product_modifiers
+    FOR ALL
+    TO authenticated
+    USING (
+      business_id IN (
+        SELECT id FROM public.businesses WHERE owner_id = auth.uid()
+        UNION
+        SELECT business_id FROM public.business_staff WHERE profile_id = auth.uid()
+      )
+      OR business_id = (SELECT active_business_id FROM public.profiles WHERE id = auth.uid())
+    )
+    WITH CHECK (
+      business_id IN (
+        SELECT id FROM public.businesses WHERE owner_id = auth.uid()
+        UNION
+        SELECT business_id FROM public.business_staff WHERE profile_id = auth.uid()
+      )
+      OR business_id = (SELECT active_business_id FROM public.profiles WHERE id = auth.uid())
+    );
+
+ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can manage their own business products" ON public.products;
+CREATE POLICY "Users can manage their own business products" ON public.products
+    FOR ALL
+    TO authenticated
+    USING (
+      business_id IN (
+        SELECT id FROM public.businesses WHERE owner_id = auth.uid()
+        UNION
+        SELECT business_id FROM public.business_staff WHERE profile_id = auth.uid()
+      )
+      OR business_id = (SELECT active_business_id FROM public.profiles WHERE id = auth.uid())
+    )
+    WITH CHECK (
+      business_id IN (
+        SELECT id FROM public.businesses WHERE owner_id = auth.uid()
+        UNION
+        SELECT business_id FROM public.business_staff WHERE profile_id = auth.uid()
+      )
+      OR business_id = (SELECT active_business_id FROM public.profiles WHERE id = auth.uid())
+    );
+
+ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can manage their own business categories" ON public.categories;
+CREATE POLICY "Users can manage their own business categories" ON public.categories
     FOR ALL
     TO authenticated
     USING (

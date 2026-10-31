@@ -223,6 +223,14 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
   const [variantRows, setVariantRows] = useState<VariantRow[]>([])
   const [loadingVariants, setLoadingVariants] = useState(false)
 
+  // Matrix Generator State
+  const [showMatrixGen, setShowMatrixGen] = useState(false)
+  const [matrixAttr1Values, setMatrixAttr1Values] = useState('Hitam, Putih, Merah')
+  const [matrixAttr2Values, setMatrixAttr2Values] = useState('S, M, L, XL')
+  const [bulkMatrixPrice, setBulkMatrixPrice] = useState<number>(0)
+  const [bulkMatrixCostPrice, setBulkMatrixCostPrice] = useState<number>(0)
+  const [bulkMatrixStock, setBulkMatrixStock] = useState<number>(10)
+
   // Set mounted
   useEffect(() => {
     setMounted(true)
@@ -435,6 +443,50 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
     }
   }
 
+  const handleGenerateMatrix = () => {
+    const vals1 = matrixAttr1Values.split(',').map(s => s.trim()).filter(Boolean)
+    const vals2 = matrixAttr2Values.split(',').map(s => s.trim()).filter(Boolean)
+
+    if (vals1.length === 0 && vals2.length === 0) {
+      alert('Masukkan setidaknya satu nilai atribut!')
+      return
+    }
+
+    const generated: VariantRow[] = []
+    const baseSkuVal = sku ? sku.trim() : (name ? name.slice(0, 3).toUpperCase() : 'SKU')
+    const finalPriceVal = Number(bulkMatrixPrice || price || 0)
+    const finalCostVal = Number(bulkMatrixCostPrice || (hppType === 'variable' ? calculatedDynamicHpp : (costPrice || 0)))
+    const finalStockVal = Number(bulkMatrixStock || 0)
+
+    if (vals1.length > 0 && vals2.length > 0) {
+      for (const v1 of vals1) {
+        for (const v2 of vals2) {
+          generated.push({
+            name: `${v1} - ${v2}`, // Format strip standar
+            sku: `${baseSkuVal}-${v1.slice(0, 3).toUpperCase()}-${v2.toUpperCase()}`,
+            price: finalPriceVal,
+            cost_price: finalCostVal,
+            stock_quantity: finalStockVal
+          })
+        }
+      }
+    } else {
+      const singleVals = vals1.length > 0 ? vals1 : vals2
+      for (const val of singleVals) {
+        generated.push({
+          name: val,
+          sku: `${baseSkuVal}-${val.toUpperCase()}`,
+          price: finalPriceVal,
+          cost_price: finalCostVal,
+          stock_quantity: finalStockVal
+        })
+      }
+    }
+
+    setVariantRows(generated)
+    setShowMatrixGen(false)
+  }
+
   // Calculate dynamic recipe HPP
   const calculatedDynamicHpp = useMemo(() => {
     if (hppType !== 'variable' || recipeRows.length === 0) return 0
@@ -569,7 +621,9 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         type,
         category_id: finalCategoryId,
         stock_type: stockType,
-        stock_quantity: stockType === 'tracked' ? Number(stockQuantity) : 0,
+        stock_quantity: stockType === 'tracked'
+          ? (variantRows.length > 0 ? variantRows.reduce((sum, v) => sum + (Number(v.stock_quantity) || 0), 0) : Number(stockQuantity))
+          : 0,
         unit: effectiveUnit,
         hpp_type: hppType,
         prevent_below_hpp: globalPriceGuardEnabled ? true : preventBelowHpp,
@@ -611,6 +665,24 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
 
       if (res.error) throw res.error
       if (res.data?.id) savedProductId = res.data.id
+
+      // Record initial opening stock for standard product if newly created with stock > 0 and no variants
+      if (!product?.id && savedProductId && variantRows.length === 0 && stockType === 'tracked' && Number(stockQuantity) > 0) {
+        try {
+          await supabase.from('stock_moves').insert({
+            business_id: businessId,
+            product_id: savedProductId,
+            type: 'receipt',
+            bucket: 'main',
+            qty: Number(stockQuantity),
+            reference: 'STOK-AWAL',
+            description: `Stok awal produk: ${name.trim()}`,
+            status: 'done'
+          })
+        } catch (smErr) {
+          console.warn('Note: initial product stock_moves fallback:', smErr)
+        }
+      }
 
       // 3. Save recipe rows if variable HPP
       if (savedProductId && hppType === 'variable') {
@@ -676,7 +748,24 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
               if (v.id) {
                 await supabase.from('product_variants').update(vPayload).eq('id', v.id)
               } else {
-                await supabase.from('product_variants').insert(vPayload)
+                const { data: newV } = await supabase.from('product_variants').insert(vPayload).select('id').single()
+                if (newV?.id && Number(v.stock_quantity) > 0) {
+                  try {
+                    await supabase.from('stock_moves').insert({
+                      business_id: businessId,
+                      product_id: savedProductId,
+                      variant_id: newV.id,
+                      type: 'receipt',
+                      bucket: 'main',
+                      qty: Number(v.stock_quantity),
+                      reference: 'STOK-AWAL-VARIAN',
+                      description: `Stok awal variasi: ${v.name.trim()}`,
+                      status: 'done'
+                    })
+                  } catch (smErr) {
+                    console.warn('Note: initial variant stock_moves fallback:', smErr)
+                  }
+                }
               }
             }
           }
@@ -935,19 +1024,35 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                   {stockType === 'tracked' && (
                     <div className="mt-3 p-3 bg-blue-50/50 border border-blue-100 rounded-xl space-y-1 animate-in slide-in-from-top-2 duration-150">
                       <div className="flex justify-between items-center">
-                        <label className="block text-[10px] font-bold text-blue-800 uppercase tracking-wider">Jumlah Stok Tersedia *</label>
+                        <label className="block text-[10px] font-bold text-blue-800 uppercase tracking-wider">
+                          {variantRows.length > 0 ? 'Total Stok Varian (Akumulasi Otomatis)' : 'Jumlah Stok Tersedia *'}
+                        </label>
                         <span className="text-[10px] font-bold text-blue-600 uppercase">Satuan: {unit === 'custom' ? (customUnit || 'pcs') : unit}</span>
                       </div>
-                      <input
-                        type="number"
-                        step="any"
-                        min="0"
-                        required
-                        className="w-full max-w-[160px] p-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 bg-white"
-                        value={stockQuantity === 0 ? '' : stockQuantity}
-                        onChange={e => setStockQuantity(e.target.value === '' ? 0 : Number(e.target.value))}
-                        placeholder="0"
-                      />
+                      {variantRows.length > 0 ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            disabled
+                            className="w-full max-w-[160px] p-2 border border-blue-200 rounded-lg text-xs font-bold text-blue-900 bg-blue-100/60 cursor-not-allowed"
+                            value={variantRows.reduce((sum, v) => sum + (Number(v.stock_quantity) || 0), 0)}
+                          />
+                          <span className="text-[11px] font-medium text-slate-500">
+                            (Akumulasi dari {variantRows.length} variasi di Bagian 4)
+                          </span>
+                        </div>
+                      ) : (
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          required
+                          className="w-full max-w-[160px] p-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 bg-white"
+                          value={stockQuantity === 0 ? '' : stockQuantity}
+                          onChange={e => setStockQuantity(e.target.value === '' ? 0 : Number(e.target.value))}
+                          placeholder="0"
+                        />
+                      )}
                     </div>
                   )}
                 </div>
@@ -1238,35 +1343,144 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
 
                 {/* 4. Variasi Produk (Multi-Varian SKU) */}
                 <div className="bg-slate-50/70 border border-slate-200/90 rounded-2xl p-5 space-y-4">
-                  <div className="flex justify-between items-center border-b border-slate-200/60 pb-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/60 pb-3">
                     <div>
                       <h4 className="text-xs font-black text-slate-850 uppercase tracking-wider flex items-center gap-1.5">
                         <span>🏷️</span> 4. Variasi Produk (Ukuran / Warna / Varian SKU)
                       </h4>
                       <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-                        Kelola variasi ukuran, warna, atau volume. Kasir POS akan menampilkan pilihan varian saat produk dipilih.
+                        Gunakan format pemisah strip <code className="bg-slate-200/80 px-1 py-0.5 rounded text-[10px] font-bold">Warna - Ukuran</code>. Kasir POS akan menampilkan pilihan chip varian saat produk dipilih.
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setVariantRows(prev => [
-                          ...prev,
-                          {
-                            name: '',
-                            sku: sku ? `${sku}-${prev.length + 1}` : '',
-                            price: price || 0,
-                            cost_price: hppType === 'variable' ? calculatedDynamicHpp : (costPrice || 0),
-                            stock_quantity: 0
-                          }
-                        ])
-                      }}
-                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1 shrink-0"
-                    >
-                      <span>➕</span>
-                      <span>Tambah Varian</span>
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setShowMatrixGen(!showMatrixGen)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1 ${
+                          showMatrixGen 
+                            ? 'bg-purple-600 text-white' 
+                            : 'bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200/60'
+                        }`}
+                      >
+                        <span>⚡</span>
+                        <span>{showMatrixGen ? 'Tutup Generator' : 'Generator Matriks'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVariantRows(prev => [
+                            ...prev,
+                            {
+                              name: '',
+                              sku: sku ? `${sku}-${prev.length + 1}` : '',
+                              price: price || 0,
+                              cost_price: hppType === 'variable' ? calculatedDynamicHpp : (costPrice || 0),
+                              stock_quantity: 0
+                            }
+                          ])
+                        }}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1"
+                      >
+                        <span>➕</span>
+                        <span>Tambah Manual</span>
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Collapsible Matrix Generator Workstation */}
+                  {showMatrixGen && (
+                    <div className="p-4 bg-purple-50/60 border border-purple-200/80 rounded-2xl space-y-3 animate-in fade-in slide-in-from-top-2 duration-150">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-purple-950 uppercase tracking-wide flex items-center gap-1">
+                          <span>⚡</span> Generator Matriks Variasi Otomatis (Format Strip)
+                        </span>
+                        <span className="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
+                          Kombinasi Cartesian
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <label className="block text-[10px] font-bold text-purple-900 uppercase mb-1">
+                            Atribut 1 (contoh: Warna / Rasa) - Pisahkan koma
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Hitam, Putih, Merah"
+                            className="w-full p-2 border border-purple-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                            value={matrixAttr1Values}
+                            onChange={e => setMatrixAttr1Values(e.target.value)}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-purple-900 uppercase mb-1">
+                            Atribut 2 (contoh: Ukuran / Kapasitas) - Pisahkan koma
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="S, M, L, XL"
+                            className="w-full p-2 border border-purple-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                            value={matrixAttr2Values}
+                            onChange={e => setMatrixAttr2Values(e.target.value)}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-purple-900 uppercase mb-1">
+                            Harga Jual Massal (Rp)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="65000"
+                            className="w-full p-2 border border-purple-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                            value={bulkMatrixPrice === 0 ? '' : bulkMatrixPrice}
+                            onChange={e => setBulkMatrixPrice(Number(e.target.value) || 0)}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-purple-900 uppercase mb-1">
+                            Modal HPP Massal (Rp)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="35000"
+                            className="w-full p-2 border border-purple-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                            value={bulkMatrixCostPrice === 0 ? '' : bulkMatrixCostPrice}
+                            onChange={e => setBulkMatrixCostPrice(Number(e.target.value) || 0)}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-purple-900 uppercase mb-1">
+                            Stok Awal Tiap Varian
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="10"
+                            className="w-full p-2 border border-purple-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                            value={bulkMatrixStock}
+                            onChange={e => setBulkMatrixStock(Number(e.target.value) || 0)}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end pt-1">
+                        <button
+                          type="button"
+                          onClick={handleGenerateMatrix}
+                          className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1.5"
+                        >
+                          <span>⚡</span>
+                          <span>Generate Kombinasi Varian</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {variantRows.length === 0 ? (
                     <div className="text-center py-5 border border-dashed border-slate-200 rounded-xl bg-white/70">
@@ -1293,12 +1507,12 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                             </button>
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-                            <div className="sm:col-span-4">
+                            <div className="sm:col-span-3">
                               <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Nama Varian *</label>
                               <input
                                 type="text"
                                 required
-                                placeholder="Contoh: Ukuran XL, 500ml"
+                                placeholder="Contoh: Hitam - M"
                                 className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
                                 value={v.name}
                                 onChange={e => {
@@ -1315,7 +1529,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                               <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">SKU Varian</label>
                               <input
                                 type="text"
-                                placeholder="SKU-XL"
+                                placeholder="SKU-VAR"
                                 className="w-full p-2 border border-slate-200 rounded-lg text-xs font-mono font-semibold text-slate-800 outline-none focus:border-blue-600"
                                 value={v.sku}
                                 onChange={e => {
@@ -1328,7 +1542,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                                 }}
                               />
                             </div>
-                            <div className="sm:col-span-3">
+                            <div className="sm:col-span-2">
                               <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Harga Jual (Rp)</label>
                               <input
                                 type="number"
@@ -1340,6 +1554,23 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                                   setVariantRows(prev => {
                                     const copy = [...prev]
                                     copy[vIdx].price = val
+                                    return copy
+                                  })
+                                }}
+                              />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <label className="block text-[9px] font-bold text-indigo-700 uppercase mb-1">Modal HPP (Rp)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                className="w-full p-2 border border-indigo-200 bg-indigo-50/40 rounded-lg text-xs font-semibold text-indigo-900 outline-none focus:border-indigo-600"
+                                value={v.cost_price}
+                                onChange={e => {
+                                  const val = Number(e.target.value) || 0
+                                  setVariantRows(prev => {
+                                    const copy = [...prev]
+                                    copy[vIdx].cost_price = val
                                     return copy
                                   })
                                 }}

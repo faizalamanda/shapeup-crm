@@ -107,7 +107,7 @@ export async function generateItemizedHppJournalLines(
     // Skip non-physical items (e.g. services / digital)
     if (prodType !== 'physical') continue
 
-    let effectiveCost = Number(dbProduct?.cost_price || 0)
+    let effectiveCost = Number((item as any).cost_price || (item as any).costPrice || dbProduct?.cost_price || 0)
     let isVariableHpp = false
 
     // Check if dynamic recipe / Variable HPP calculation applies

@@ -574,6 +574,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         discount: item.discount || 0,
         variantId: item.selectedVariant?.id,
         variantName: item.selectedVariant?.name,
+        costPrice: item.selectedVariant?.cost_price || item.product.cost_price || 0,
         modifiers: item.selectedModifiers,
         note: item.note
       }))
