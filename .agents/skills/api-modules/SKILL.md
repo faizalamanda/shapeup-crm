@@ -177,6 +177,10 @@ const syncRes = await syncOrderToLedger(orderId, supabase, preloadedOrder)
   - *Non-COD (Transfer Bank, Gateway, QRIS, Kartu Kredit):* Pelanggan membayar di muka. Saat pesanan `processing`, `shipped`, `completed`, atau memiliki `date_paid`, status pembayarannya adalah `'paid'`, piutang nol (`amount_paid = grand_total`), dan kas diakui seketika di jurnal.
   - *COD (Bayar di Tempat):* Saat `processing` atau `shipped`, status pembayaran adalah `'unpaid'` dan mencatat Piutang COD (`103000`). Status baru berubah menjadi `'paid'` setelah pesanan `completed` (kurir menyetor dana).
 - **Auto-Sync to `order_payments`:** Setiap pesanan non-COD yang terbayar otomatis dijamin memiliki baris rekaman di tabel `order_payments` serta memperbarui `orders.payment_status` dan `orders.amount_paid` secara atomik di database.
+- **Refund & Pembatalan Pesanan (Ledger Resilience):**
+  - Pemanggilan `syncOrderToLedger()` saat pembatalan/refund wajib menggunakan `supabaseAdmin || supabase`.
+  - Jika transaksi header pembayaran awal (`paymentTx`) belum tercatat, sistem menerapkan fallback otomatis membaca baris aktif di `order_payments` untuk menerbitkan jurnal pembalikan kas/bank secara akurat.
+  - Insert baris `payment_kind = 'refund'` di `order_payments` berstatus fatal (`throw refErr`) untuk mencegah partial commit kasir.
 
 ---
 
@@ -223,7 +227,7 @@ await postJournalTransaction(
 **Fitur:**
 - Idempotency: Cek existing transaction (`business_id, order_id, description`) sebelum insert.
 - Anti-Duplikasi (Strict): Dilarang mengasumsikan `isNewOrder = Boolean(preloadedOrder)`. Di `orderLedger.ts`, existing transactions wajib selalu di-fetch via `order_id` dan `skipExistingCheck` diset `false` agar tidak menghasilkan duplikasi transaksi Penjualan.
-- Self-healing: partial commit (header tanpa lines) otomatis diperbaiki
+- Self-healing Defensive: Jika `journal_lines` pada join PostgREST kosong akibat izin RLS, fungsi memverifikasi langsung via `select('id', { count: 'exact', head: true })` sebelum menyisipkan ulang baris jurnal untuk mencegah duplikasi (2x, 3x).
 - Dipakai oleh `orderLedger.ts` dan `pos/shifts/route.ts`
 
 ---

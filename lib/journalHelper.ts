@@ -33,12 +33,24 @@ export async function postJournalTransaction(
       const tx = existingTx[0]
       transactionId = tx.id
       
-      const hasLines = tx.journal_lines && tx.journal_lines.length > 0
+      let hasLines = tx.journal_lines && tx.journal_lines.length > 0
+      if (!hasLines) {
+        // Direct count check to prevent false-positive self-healing when nested join is filtered by RLS
+        const { count, error: countErr } = await supabase
+          .from('journal_lines')
+          .select('id', { count: 'exact', head: true })
+          .eq('transaction_id', tx.id)
+        
+        if (!countErr && (count ?? 0) > 0) {
+          hasLines = true
+        }
+      }
+
       if (hasLines) {
         // Transaction already properly exists, no partial-commit issue
         return { success: true, transactionId, action: 'skipped' }
       } else {
-        // SELF HEALING: Transaction exists but no lines (Partial Commit Bug)
+        // SELF HEALING: Transaction exists but genuinely has no lines (Partial Commit Bug)
         // We will re-insert the lines below.
         console.warn(`[Journal] Self-healing partial commit for transaction ${tx.id}`)
       }

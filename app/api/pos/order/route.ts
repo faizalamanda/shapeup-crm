@@ -354,7 +354,7 @@ export async function POST(req: Request) {
     // 8. Record Ledger transaction, stock reduction & journal lines in background
     after(async () => {
       try {
-        const syncRes = await syncOrderToLedger(order.id, supabase, fullOrder)
+        const syncRes = await syncOrderToLedger(order.id, supabaseAdmin || supabase, fullOrder)
         if (!syncRes.success) {
           console.error(`[Background Sync] Failed to sync order ${order.id} to ledger:`, syncRes.message)
         }

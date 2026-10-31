@@ -108,6 +108,28 @@ Dilarang keras melakukan `DELETE` atau menghapus rekaman pembayaran historis.
   2. `syncOrderToLedger()` membalikkan stok secara massal ke gudang dan menjurnal balik penjualan.
   3. Semua baris pembayaran aktif di-insert baris penyeimbang `payment_kind = 'refund'` dengan `shift_id = current_shift_id` (agar laci kasir yang mengeluarkan uang tunai fisik berkurang secara tepat).
 
+### 3.3 Arsitektur Ketahanan Buku Besar Refund & Pencegahan Duplikasi (Ledger Resilience & Anti-Duplication)
+Untuk menjamin integritas buku besar dan laci kasir saat terjadi pembatalan pesanan:
+1. **Service Role / Admin DB Client on Refund:**
+   - Endpoint `/api/pos/refund` dan background execution hook `after()` pada checkout wajib menggunakan `dbClient = supabaseAdmin || supabase`. Hal ini mencegah kegagalan RLS parsial (*partial commit*) di mana status pesanan berubah menjadi `cancelled`, namun penulisan `order_payments` bertipe `payment_kind = 'refund'` terblokir oleh RLS sesi kasir.
+2. **Fatal Error on Payment Ledger Refund (`throw refErr`):**
+   - Operasi insert `order_payments` penyeimbang refund **DILARANG KERAS** dibungkus hanya dengan `console.warn`. Jika penulisan refund gagal, operasi wajib melempar exception (`throw refErr`) agar pembatalan gagal secara atomik dan tidak menghasilkan desinkronisasi kas laci.
+3. **Resilient Fallback for Missing Initial Payment Transaction:**
+   - Di `syncOrderToLedger()`, jika transaksi header pembayaran awal (`paymentTx`) belum terbentuk di `transactions` (akibat kegagalan background sync saat checkout), sistem secara otomatis membaca baris aktif di `order_payments` (`payment_kind = 'payment'`) untuk menyusun jurnal pembalikan kas/bank secara akurat (Debit Piutang `103000`, Credit Kas/Bank sesuai tender masing-masing).
+4. **Defensive PostgREST Self-Healing in `postJournalTransaction()`:**
+   - Pada pengecekan transaksi eksisting (`select('id, journal_lines(id)')`), jika relasi nested `journal_lines` mengembalikan array kosong akibat batasan seleksi RLS, fungsi wajib melakukan verifikasi kedua secara langsung:
+     ```typescript
+     const { count, error } = await supabase
+       .from('journal_lines')
+       .select('id', { count: 'exact', head: true })
+       .eq('transaction_id', tx.id)
+     if (!error && (count ?? 0) > 0) hasLines = true
+     ```
+     Hal ini mencegah self-healing salah mengira transaksi belum memiliki baris jurnal, yang sebelumnya memicu duplikasi baris jurnal (2x, 3x, 9x) saat retry refund.
+5. **Direct Shelf Restock untuk Nota POS:**
+   - Mutasi pengembalian barang atas pembatalan/refund nota POS langsung mengembalikan stok barang ke rak display kasir (`bucket: 'main'` dengan `status: 'done'`), bukan ke karantina.
+   - Catatan: mutasi stok fisik hanya terjadi pada produk bertipe `stock_type = 'tracked'`.
+
 ---
 
 ## 4. Standar Kode & Endpoint Terkait
@@ -526,43 +548,67 @@ Dalam operasional ritel & kasir yang sibuk, pelanggan sering kali menunda pembay
 
 ---
 
-## 16. Odoo-Style High-Throughput Cashier Payment Screen & Auto-Replace Numpad Engine
+## 16. Odoo-Style High-Throughput Cashier Payment Screen & Ergonomic Keypad Engine
 
 Untuk mentransformasi antarmuka pembayaran kasir dari form input statis menjadi mesin transaksi berkecepatan tinggi (*high-throughput terminal*) dengan target waktu penyelesaian (*Average Handling Time* / AHT) $< 4$ detik, sistem menerapkan arsitektur Odoo-style payment engine terpadu:
 
-### 16.1 Zero-Popup Seamless Multi-Tender Flow
-- **Eliminasi Modal Pop-up:** Menghapus tombol toggle manual dan modal dialog terpisah untuk pecah metode (*split tender*).
-- **1-Click Tender Activation:**
-  - Metode pembayaran dibaca secara dinamis dari pengaturan unit bisnis (`/api/settings/pos/tenders`) melalui `resolveBusinessTenders()`.
-  - Mengklik chip metode pembayaran (Tunai, QRIS, EDC, Bank) langsung memfokuskan baris yang sudah ada, atau menambahkan baris pembayaran baru secara instan di layar utama.
-  - Sisa tagihan yang belum teralokasi ($\text{unallocated} = \max(0, \text{Target} - \sum \text{Allocated})$) otomatis dipindahkan ke baris metode baru tersebut tanpa perlu input manual.
-
-### 16.2 First-Touch Auto-Replace & Append Numpad Ergonomics (`paymentKeypadCalculator.ts`)
-- **Auto-Replace on First Touch:** Saat kasir memilih atau berpindah ke suatu baris pembayaran yang sudah memiliki nilai nominal *prefilled*, sentuhan pertama pada tombol angka numpad (layar sentuh maupun keyboard fisik) langsung **menimpa (*overwrite*)** nilai lama, bukan menambahkan karakter di belakang (*string append*).
-- **Subsequent Append Mode:** Sentuhan angka berikutnya beralih secara otomatis ke mode *append*.
-- **Backspace Reset:** Menekan tombol Backspace saat baris baru terpilih (*first touch*) langsung mereset nominal baris tersebut menjadi Rp 0.
-
-### 16.3 Real-Time Two-Way Auto-Balance & Strict Non-Cash Ceiling
-- **Indikator Status Dua Arah:**
-  - Jika $\sum \text{Alokasi} < \text{Tagihan}$: Menampilkan kartu status **SISA TAGIHAN: Rp [X]** (warna amber).
-  - Jika $\sum \text{Alokasi} \ge \text{Tagihan}$: Menampilkan kartu status **KEMBALIAN: Rp [X]** (warna hijau emerald kontras tinggi).
-- **Strict Non-Cash Ceiling:**
-  - Metode non-tunai (QRIS, EDC, Transfer Bank) dikunci maksimal sebesar sisa tagihan. Sistem mencegah input non-tunai melebihi tagihan untuk menjaga akurasi rekonsiliasi mutasi bank.
-  - Kelebihan bayar (*overpayment*) dan kembalian hanya berlaku pada metode **Tunai** (`category === 'cash'`).
-
-### 16.4 Auto-Redistribution on Line Delete
-- Ketika kasir menghapus salah satu baris pembayaran via tombol `[X]`:
-  - Jika tersisa 1 baris, baris tersebut otomatis memperluas alokasi nominalnya kembali ke nilai tagihan penuh.
-  - Jika tersisa beberapa baris, sisa nominal yang bebas otomatis didistribusikan kembali ke baris aktif yang sedang terfokus, sehingga transaksi tidak perlu diulang dari awal.
-
-### 16.5 Tablet Landscape Ergonomics (35% Left Bill : 65% Right Action) & Headless Keyboard Shortcuts
-- **Rasio Layar 35% : 65%:**
-  - Kolom Kiri (35%): Konteks nota, pelanggan, tombol aksi `[ ✂ Split Tagihan ]` (item-level / equal / partial), rincian menu belanja, dan total tagihan.
-  - Kolom Kanan (65%): Chips metode pembayaran dinamis, daftar baris aktif multi-tender, status dua arah, dynamic quick cash chips, keypad numerik sentuh berukuran besar ($\ge 54\text{px}$), dan tombol penuh **`VALIDASI & SELESAIKAN (Enter / Spasi)`**.
+### 16.1 Left Keypad & Right Canvas Layout (Odoo Terminal Architecture)
+- **Rasio Layar 38% Kiri : 62% Kanan:**
+  - **Panel Kiri (38% - Action & Control Pad):**
+    - Baris Saklar Toggle Metode Pembayaran (`handleToggleTender`).
+    - Kartu info pelanggan riil (`customerName`, `customerPhone`).
+    - Tombol cepat Split Bill (`[ ✂ Split Tagihan ]`).
+    - Keypad numerik sentuh 4-kolom berukuran besar ($\ge 54\text{px}$) dengan digit `1–9`, tombol cepat pecahan uang `+10k`, `+20k`, `+50k`, tombol `0`, `000`, dan `⌫ Backspace`.
+    - Footer aksi: Tombol `Batal (Esc)` dan tombol utama `Validate (Enter / Spasi)` berlatar ungu khas Odoo (`#714B67`).
+  - **Kolom Kanan (62% - Display Canvas):**
+    - Display Grand Total Tagihan raksasa berwarna hijau emerald kontras tinggi di bagian paling atas.
+    - Banner mode Split Bill aktif (dengan tombol Ubah & Reset jika aktif).
+    - Status Dua Arah (Sisa Tagihan vs Kembalian).
+    - Daftar Baris Pembayaran Aktif Datar (*Flat Seamless List*) tanpa kotak berlapis.
+    - Footer rincian: Total Terbayar dan Status Pelunasan (`LUNAS`, `BELUM LUNAS`, `LEBIH`).
 - **100dvh Zero-Scroll:** Seluruh antarmuka terkunci pada tinggi viewport perangkat tanpa scrollbar halaman luar.
-- **Headless Keyboard Listener (Desktop High-Volume Retail):**
-  - Numpad 0–9 memasukkan digit angka.
-  - Backspace menghapus digit terakhir; Delete / C mereset ke 0; Escape menutup modal (jika nilai 0).
-  - Enter atau Spasi mengeksekusi validasi transaksi.
-  - Pintasan `Alt + 1`, `Alt + 2`, `Alt + 3` beralih antar-metode pembayaran secara instan tanpa menggunakan mouse.
+
+### 16.2 Toggle On/Off Tender Switch (Panel Kiri) vs Right-Canvas Focus Activation
+- **Panel Kiri (Saklar Switch On/Off):**
+  - Mengklik chip metode pembayaran di panel kiri berfungsi murni sebagai **Toggle Saklar**:
+    - **Saat MATI (Belum dipilih):** Tombol berlatar putih dengan badge `+ Nyalakan`. Mengkliknya akan **MENYALAKAN** metode tersebut (menambahkan baris baru ke daftar pembayaran dan mengalokasikan sisa tagihan).
+    - **Saat NYALA (Sudah ada):** Tombol berlatar hijau emerald dengan badge `● Nyala` dan nominalnya. Mengklik kembali tombol ini akan **MEMATIKAN / MENGHAPUS** baris pembayaran tersebut dari daftar pembayaran.
+- **Kolom Kanan (Aktivasi Fokus Edit Numpad):**
+  - Pemilihan baris yang sedang diedit angkanya oleh numpad dilakukan dengan **mengklik baris pembayaran di kolom kanan** (`onClick={() => { setActiveLineId(line.id); setIsFirstTouch(true); }}`).
+  - Baris yang sedang terfokus memiliki badge emerald `● Diedit` dan efek highlight visual (`ring-2 ring-emerald-500/20`) sehingga kasir tahu persis pengetikan numpad akan mengubah baris mana.
+
+### 16.3 Numpad Cash Input & Overpayment Retention (Anti-Reset Standard)
+- **Pertahankan Nominal Riil Input Kasir (`cashReceived`):**
+  - Ketika kasir menginput nominal uang tunai yang melebihi tagihan (misal: sisa tagihan Rp 184.390, kasir mengetik lembaran uang Rp 200.000 atau Rp 9.000.000):
+    - Pada baris Tunai di kolom kanan dan badge panel kiri, angka yang ditampilkan **TETAP NOMINAL RIIL** yang diinput kasir (`formatIDR(line.cashReceived)`), **DILARANG KERAS** di-clamp/reset ke total tagihan di UI agar kasir tidak bingung.
+    - Porsi penutupan tagihan dicatat di `line.amount` (Rp 184.390), dan kelebihan pembayaran otomatis dialirkan ke kartu **Kembalian (Change)**.
+- **Perlindungan Multi-Tender (Zero Unintentional Zeroing):**
+  - Pada transaksi split 2 metode (misal: Transfer Rp 50.000 + Tunai sisa Rp 50.000), jika kasir mengetik uang tunai melebihi sisa tagihan (misal Rp 100.000):
+    - Metode Transfer yang Rp 50.000 **TIDAK BOLEH di-nol-kan**.
+    - Baris Tunai mengalokasikan Rp 50.000 untuk menutup sisa tagihan, menerima uang tunai Rp 100.000, dan menghasilkan kembalian Rp 50.000.
+
+### 16.4 Flat Seamless List & Zero-Scrollbox Architecture
+- **Eliminasi "Box di Dalam Box":**
+  - Menghapus pembungkus border 2px tebal per baris (`rounded-2xl border-2`).
+  - Baris pembayaran disusun dalam format list datar (*flat list*) dengan pembatas halus (`divide-y divide-slate-100`) yang menyatu elegan dengan canvas box utama.
+- **Zero-Scrollbox Utility:**
+  - Mengganti `max-h-72` kaku dengan `flex-1` agar memanfaatkan tinggi penuh viewport.
+  - Menerapkan utilitas peredam scrollbar lintas-browser: `[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden`.
+  - Bilah abu-abu vertikal (scroll box) hilang 100%, namun kasir tetap dapat men-scroll dengan mulus jika baris transaksi sangat banyak.
+
+### 16.5 First-Touch Auto-Replace & Auto-Redistribution
+- **Auto-Replace on First Touch (`paymentKeypadCalculator.ts`):** Saat kasir memilih atau berpindah ke suatu baris pembayaran yang sudah memiliki nilai prefilled, sentuhan pertama pada tombol angka numpad langsung **menimpa (*overwrite*)** nilai lama. Sentuhan berikutnya beralih ke mode *append*.
+- **Auto-Redistribution on Delete:** Ketika kasir mematikan/menghapus baris tender:
+  - Jika tersisa 1 baris, baris tersebut otomatis memperluas alokasinya kembali ke nilai tagihan penuh.
+  - Jika tersisa beberapa baris, sisa nominal yang bebas otomatis didistribusikan ke baris aktif.
+
+### 16.6 Dedicated Receipt Modal (`isReceiptDetailsOpen`)
+- Tombol `🧾 Rincian Pesanan (X)` diletakkan di navbar atas.
+- Mengklik tombol ini membuka modal pop-up dialog berlatar blur yang menampilkan seluruh menu, varian, dan harga secara terpisah. Jika daftar belanjaan sangat panjang, daftar dapat di-scroll di dalam pop-up tanpa merusak tata letak layar utama pembayaran kasir.
+
+### 16.7 Headless Global Keyboard Shortcuts
+- Numpad 0–9 memasukkan digit angka.
+- Backspace menghapus digit terakhir; Delete / C mereset ke 0; Escape menutup modal (jika nilai 0).
+- Enter atau Spasi mengeksekusi validasi transaksi.
+- Pintasan `Alt + 1..n` mengoperasikan saklar Toggle metode pembayaran secara instan tanpa menggunakan mouse.
 

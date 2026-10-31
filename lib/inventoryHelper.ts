@@ -6,6 +6,8 @@ const productCacheBySku: Record<string, Record<string, any>> = {}
 const productCacheByName: Record<string, Record<string, any>> = {}
 const productCacheById: Record<string, Record<string, any>> = {}
 
+const isUuid = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val)
+
 export async function resolveOrderProducts(
   items: any[],
   businessId: string,
@@ -25,8 +27,7 @@ export async function resolveOrderProducts(
   const unCachedNames: string[] = []
 
   for (const item of items) {
-    const rawId = item.id || item.product_id
-    const id = (rawId && !String(rawId).startsWith('custom-')) ? String(rawId) : ''
+    const id = isUuid(item.product_id) ? item.product_id : (isUuid(item.id) ? item.id : '')
     const sku = item.sku ? String(item.sku).trim() : ''
     const name = item.name ? String(item.name).trim() : ''
 
@@ -96,8 +97,7 @@ export async function resolveOrderProducts(
 
   // 3. Match items with DB products
   for (const item of items) {
-    const rawId = item.id || item.product_id
-    const id = (rawId && !String(rawId).startsWith('custom-')) ? String(rawId) : ''
+    const id = isUuid(item.product_id) ? item.product_id : (isUuid(item.id) ? item.id : '')
     const sku = item.sku ? String(item.sku).trim() : ''
     const name = item.name ? String(item.name).trim() : ''
 
@@ -232,7 +232,8 @@ export async function applyStockMovement(
     if (!moveInfo || moveInfo.qty <= 0) continue
 
     const isOrderReturn = direction === 'restore' && sourceType === 'order'
-    const assignedBucket = isOrderReturn ? 'quarantine' : 'main'
+    const isPosOrder = reference.includes('POS') || reference.includes('Kasir')
+    const assignedBucket = (isOrderReturn && !isPosOrder) ? 'quarantine' : 'main'
     const assignedStatus = isOrderReturn ? 'done' : status
 
     stockMoveInputs.push({

@@ -10,7 +10,8 @@ export async function POST(req: Request) {
     // 1. Auth + Business ID using standard getApiContext()
     const ctx = await getApiContext()
     if (ctx.error) return ctx.error
-    const { user, businessId, supabase } = ctx
+    const { user, businessId, supabase, supabaseAdmin } = ctx
+    const dbClient = supabaseAdmin || supabase
 
     const body = await req.json().catch(() => null)
     if (!body || !body.order_id) {
@@ -23,7 +24,7 @@ export async function POST(req: Request) {
     }
 
     // 2. Fetch the existing order
-    const { data: order, error: orderErr } = await supabase
+    const { data: order, error: orderErr } = await dbClient
       .from('orders')
       .select('*')
       .eq('id', order_id)
@@ -39,7 +40,7 @@ export async function POST(req: Request) {
     }
 
     // 3. Resolve Current Active Shift (for Cross-Shift Drawer Cash Deduction)
-    const { data: activeShift } = await supabase
+    const { data: activeShift } = await dbClient
       .from('pos_shifts')
       .select('id, cashier_name')
       .eq('business_id', businessId)
@@ -49,7 +50,7 @@ export async function POST(req: Request) {
       .maybeSingle()
 
     // 4. Update order status to cancelled and payment_status to unpaid
-    const { error: updErr } = await supabase
+    const { error: updErr } = await dbClient
       .from('orders')
       .update({
         status: 'cancelled',
@@ -73,7 +74,7 @@ export async function POST(req: Request) {
       refund_reason: refund_reason || 'Refund Pesanan POS'
     }
 
-    const syncRes = await syncOrderToLedger(order_id, supabase, preloadedOrder)
+    const syncRes = await syncOrderToLedger(order_id, dbClient, preloadedOrder)
     
     if (!syncRes.success) {
       return NextResponse.json({ error: 'Gagal melakukan sinkronisasi pembalikan ledger: ' + syncRes.message }, { status: 500 })

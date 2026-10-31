@@ -496,15 +496,50 @@ export async function syncOrderToLedger(
           businessId, orderId, new Date().toISOString(), `Pembatalan Penjualan ${platform} #${orderNumber}`, reversalLines, supabase
         )
       }
-      if (paymentTx && !reversalPaymentTx) {
-        const reversalLines = paymentTx.journal_lines.map((line: any) => ({
-          account_id: line.account_id,
-          debit: line.credit,
-          credit: line.debit
-        }))
-        await postJournalTransaction(
-          businessId, orderId, new Date().toISOString(), `Pembatalan Pembayaran ${platform} #${orderNumber}`, reversalLines, supabase
-        )
+      if (!reversalPaymentTx) {
+        let reversalLines: any[] = []
+        if (paymentTx && paymentTx.journal_lines && paymentTx.journal_lines.length > 0) {
+          reversalLines = paymentTx.journal_lines.map((line: any) => ({
+            account_id: line.account_id,
+            debit: line.credit,
+            credit: line.debit
+          }))
+        } else {
+          // Fallback: If paymentTx wasn't previously generated, reverse active payments from order_payments
+          const { data: paysToReverse } = await supabase
+            .from('order_payments')
+            .select('*')
+            .eq('order_id', orderId)
+            .eq('payment_kind', 'payment')
+
+          if (paysToReverse && paysToReverse.length > 0) {
+            let totalRevAmt = 0
+            for (const p of paysToReverse) {
+              const pAmt = Number(p.amount) || 0
+              if (pAmt <= 0) continue
+              const accId = p.payment_method_account_id || (p.payment_method === 'cash' ? accountMap['101000'] : accountMap['101200'])
+              reversalLines.push({
+                account_id: accId,
+                debit: 0,
+                credit: pAmt
+              })
+              totalRevAmt += pAmt
+            }
+            if (totalRevAmt > 0) {
+              reversalLines.unshift({
+                account_id: accountMap['103000'],
+                debit: totalRevAmt,
+                credit: 0
+              })
+            }
+          }
+        }
+
+        if (reversalLines.length > 0) {
+          await postJournalTransaction(
+            businessId, orderId, new Date().toISOString(), `Pembatalan Pembayaran ${platform} #${orderNumber}`, reversalLines, supabase
+          )
+        }
       }
     }
 
@@ -522,15 +557,50 @@ export async function syncOrderToLedger(
           businessId, orderId, new Date().toISOString(), `Refund Penjualan ${platform} #${orderNumber}`, reversalLines, supabase
         )
       }
-      if (paymentTx && !reversalPaymentTx) {
-        const reversalLines = paymentTx.journal_lines.map((line: any) => ({
-          account_id: line.account_id,
-          debit: line.credit,
-          credit: line.debit
-        }))
-        await postJournalTransaction(
-          businessId, orderId, new Date().toISOString(), `Refund Pembayaran ${platform} #${orderNumber}`, reversalLines, supabase
-        )
+      if (!reversalPaymentTx) {
+        let reversalLines: any[] = []
+        if (paymentTx && paymentTx.journal_lines && paymentTx.journal_lines.length > 0) {
+          reversalLines = paymentTx.journal_lines.map((line: any) => ({
+            account_id: line.account_id,
+            debit: line.credit,
+            credit: line.debit
+          }))
+        } else {
+          // Fallback: If paymentTx wasn't previously generated, reverse active payments from order_payments
+          const { data: paysToReverse } = await supabase
+            .from('order_payments')
+            .select('*')
+            .eq('order_id', orderId)
+            .eq('payment_kind', 'payment')
+
+          if (paysToReverse && paysToReverse.length > 0) {
+            let totalRevAmt = 0
+            for (const p of paysToReverse) {
+              const pAmt = Number(p.amount) || 0
+              if (pAmt <= 0) continue
+              const accId = p.payment_method_account_id || (p.payment_method === 'cash' ? accountMap['101000'] : accountMap['101200'])
+              reversalLines.push({
+                account_id: accId,
+                debit: 0,
+                credit: pAmt
+              })
+              totalRevAmt += pAmt
+            }
+            if (totalRevAmt > 0) {
+              reversalLines.unshift({
+                account_id: accountMap['103000'],
+                debit: totalRevAmt,
+                credit: 0
+              })
+            }
+          }
+        }
+
+        if (reversalLines.length > 0) {
+          await postJournalTransaction(
+            businessId, orderId, new Date().toISOString(), `Refund Pembayaran ${platform} #${orderNumber}`, reversalLines, supabase
+          )
+        }
       }
     }
 
@@ -546,15 +616,50 @@ export async function syncOrderToLedger(
           businessId, orderId, new Date().toISOString(), `Retur Penjualan ${platform} #${orderNumber}`, reversalLines, supabase
         )
       }
-      if (paymentTx && !reversalPaymentTx) {
-        const reversalLines = paymentTx.journal_lines.map((line: any) => ({
-          account_id: line.account_id,
-          debit: line.credit,
-          credit: line.debit
-        }))
-        await postJournalTransaction(
-          businessId, orderId, new Date().toISOString(), `Retur Pembayaran ${platform} #${orderNumber}`, reversalLines, supabase
-        )
+      if (!reversalPaymentTx) {
+        let reversalLines: any[] = []
+        if (paymentTx && paymentTx.journal_lines && paymentTx.journal_lines.length > 0) {
+          reversalLines = paymentTx.journal_lines.map((line: any) => ({
+            account_id: line.account_id,
+            debit: line.credit,
+            credit: line.debit
+          }))
+        } else {
+          // Fallback: If paymentTx wasn't previously generated, reverse active payments from order_payments
+          const { data: paysToReverse } = await supabase
+            .from('order_payments')
+            .select('*')
+            .eq('order_id', orderId)
+            .eq('payment_kind', 'payment')
+
+          if (paysToReverse && paysToReverse.length > 0) {
+            let totalRevAmt = 0
+            for (const p of paysToReverse) {
+              const pAmt = Number(p.amount) || 0
+              if (pAmt <= 0) continue
+              const accId = p.payment_method_account_id || (p.payment_method === 'cash' ? accountMap['101000'] : accountMap['101200'])
+              reversalLines.push({
+                account_id: accId,
+                debit: 0,
+                credit: pAmt
+              })
+              totalRevAmt += pAmt
+            }
+            if (totalRevAmt > 0) {
+              reversalLines.unshift({
+                account_id: accountMap['103000'],
+                debit: totalRevAmt,
+                credit: 0
+              })
+            }
+          }
+        }
+
+        if (reversalLines.length > 0) {
+          await postJournalTransaction(
+            businessId, orderId, new Date().toISOString(), `Retur Pembayaran ${platform} #${orderNumber}`, reversalLines, supabase
+          )
+        }
       }
     }
 
@@ -580,7 +685,8 @@ export async function syncOrderToLedger(
         const paymentsToRefund = allPayments.filter((p: any) => !alreadyReversedIds.has(p.id))
 
         if (paymentsToRefund.length > 0) {
-          const activeRefundShiftId = preloadedOrder?.current_shift_id || order.shift_id || null
+          const rawActiveShiftId = preloadedOrder?.current_shift_id || order.shift_id || null
+          const activeRefundShiftId = typeof rawActiveShiftId === 'string' && rawActiveShiftId.trim() ? rawActiveShiftId : null
 
           const refundInserts = paymentsToRefund.map((orig: any) => {
             const isCash = String(orig.payment_method || '').toLowerCase() === 'cash'
@@ -600,7 +706,10 @@ export async function syncOrderToLedger(
           })
 
           const { error: refErr } = await supabase.from('order_payments').insert(refundInserts)
-          if (refErr) console.warn('[orderLedger] order_payments refund insert error:', refErr.message)
+          if (refErr) {
+            console.error('[orderLedger] order_payments refund insert error:', refErr.message)
+            throw new Error(`Gagal mencatat rincian refund pembayaran: ${refErr.message}`)
+          }
         }
 
         // Update orders table payment status to unpaid and amount_paid to 0
@@ -611,8 +720,9 @@ export async function syncOrderToLedger(
             amount_paid: 0
           })
           .eq('id', orderId)
-      } catch (refundErr) {
-        console.warn('[orderLedger] Failed to record refund event (non-fatal):', refundErr)
+      } catch (refundErr: any) {
+        console.error('[orderLedger] Failed to record refund event:', refundErr)
+        throw refundErr
       }
     }
 

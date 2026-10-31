@@ -126,6 +126,11 @@
    - **Bypass 1.000 PostgREST Limit:** Tampilan katalog produk (`/products`) wajib memuat seluruh data secara bertahap menggunakan chunked `.range()` untuk menjamin katalog besar (> 4.000 produk) tampil utuh tanpa terpotong batas bawaan server Supabase.
    - **Fault-Isolated Batch Processing & Audit Trail:** Proses impor wajib memproses chunk terisolasi (100 baris/batch) dan menyediakan fitur unduh data gagal (.xlsx) berisikan nomor baris dan alasan kegagalan spesifik.
 
+9. **UUID-Safe Product Resolution & POS Shelf Restock vs Quarantine Returns:**
+   - **UUID-Safe Resolution:** ID baris item pesanan (*line item IDs*) pada platform integrasi (WooCommerce, POS cart counters) seringkali berupa nomor urut integer (`1, 2, 3...`) atau string kustom (`custom-...`), bukan UUID produk. Sistem **WAJIB** menyaring dengan `isUuid(item.product_id) ? item.product_id : (isUuid(item.id) ? item.id : '')` sebelum dimasukkan ke klausa `.in('id', unCachedIds)` pada tabel `products` di Supabase untuk mencegah crash fatal PostgreSQL `invalid input syntax for type uuid: "1"`.
+   - **POS Shelf Restock vs Quarantine:** Mutasi pengembalian barang atas pesanan POS yang dibatalkan/direfund langsung di meja kasir (`reference.includes('POS')` atau berasal dari kasir) secara semantik langsung kembali ke rak pajangan fisik toko. Mutasi pengembalian stoknya **WAJIB** dialokasikan ke `bucket: 'main'` dengan `status: 'done'`, sehingga trigger basis data `trg_sync_product_stock_from_moves` langsung memperbarui `products.stock_quantity`. Retur pesanan online/ekspedisi tetap dialokasikan ke `bucket: 'quarantine'` untuk proses karantina & inspeksi mutu.
+   - **Lacak Stok vs Non-Lacak Stok:** Mutasi stok fisik di buku besar gudang hanya dieksekusi untuk produk bertipe `stock_type = 'tracked'`. Produk dengan `stock_type = 'available'` adalah produk non-lacak stok sehingga tidak memicu pemotongan/penambahan kuantitas fisik.
+
 
 ## Research & Planning
 
@@ -262,5 +267,11 @@
    - **Zero-Tolerance N+1 & Double-Layer Resiliency:**
      - Proyeksi utama dilakukan langsung di SQL RPC `public.get_order_list` via `LEFT JOIN profiles u ON o.user_id = u.id` dan `LEFT JOIN pos_shifts ps ON o.shift_id = ps.id`.
      - Endpoint `/api/orders/export` dan modul `orderExportService.ts` menerapkan fallback bertingkat (*graceful degradation*) agar data atribut pembuat transaksi selalu terisi utuh baik saat diekspor bertahap (*chunked streaming*) maupun dari state halaman aktif (*scope = 'page'*).
+
+19. **POS Order Cancellation, Full Refund & Ledger Resilience Standards (Zero Silent Drop & Fallback Reversal):**
+   - **Service Role / Admin DB Client on Refund & Background Hooks:** Endpoint pembatalan pesanan (`/api/pos/refund`) dan background hooks (`after()`) pada checkout **WAJIB** menggunakan `dbClient = supabaseAdmin || supabase` saat memanggil `syncOrderToLedger()` dan saat mencatat mutasi pengembalian dana kasir. Hal ini mencegah kegagalan RLS parsial (*partial commit*) di mana status pesanan berubah menjadi `cancelled`, namun penulisan `order_payments` bertipe `payment_kind = 'refund'` terblokir.
+   - **Fatal Error on Payment Ledger Refund (`throw refErr`):** Operasi pencatatan baris refund di `order_payments` **DILARANG KERAS** diperlakukan sebagai kegagalan non-fatal (`console.warn`). Jika penulisan baris refund gagal, sistem **WAJIB MENOLAK / MELEMPAR EXCEPTION** agar kas laci dan buku besar tidak mengalami desinkronisasi.
+   - **Resilient Fallback for Missing Initial Payment Transaction:** Pada pembatalan/refund (`syncOrderToLedger`), jika transaksi header pembayaran awal (`paymentTx`) tidak ditemukan di tabel `transactions` (akibat kegagalan background checkout sebelumnya), sistem **WAJIB** memiliki fallback otomatis membaca baris pembayaran aktif dari `order_payments` bertipe `payment_kind = 'payment'` untuk menerbitkan jurnal pembalikan kas/bank secara akurat.
+   - **Defensive PostgREST Self-Healing in `postJournalTransaction()`:** Saat memeriksa apakah suatu transaksi sudah memiliki baris jurnal atau mengalami *partial commit* (`select('id, journal_lines(id)')`), jika relasi nested `journal_lines` menghasilkan array kosong (yang bisa terjadi karena izin seleksi view/RLS), fungsi **WAJIB** memvalidasi ulang dengan query hitungan langsung `supabase.from('journal_lines').select('id', { count: 'exact', head: true }).eq('transaction_id', tx.id)` sebelum menyisipkan ulang baris jurnal baru. Hal ini mencegah baris jurnal menduplikasi (2x, 3x, 9x) pada setiap percobaan ulang (*retry*).
 
 
