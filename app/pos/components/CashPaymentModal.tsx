@@ -110,10 +110,9 @@ export default function CashPaymentModal({
   const [splitCount, setSplitCount] = useState<number>(2)
   const [partialAmountInput, setPartialAmountInput] = useState<string>('')
 
-  // 2. Dialog Pop-Up Terpisah untuk Split Bill & Rincian Menu
+  // 2. Dialog Pop-Up Terpisah untuk Split Bill & Rincian Pesanan
   const [isSplitBillOpen, setIsSplitBillOpen] = useState(false)
   const [isReceiptDetailsOpen, setIsReceiptDetailsOpen] = useState(false)
-  const [showItemAccordion, setShowItemAccordion] = useState(false)
 
   // 3. Akun Kas & Bank dan Metode Tender dari Pengaturan
   const [fetchedAccounts, setFetchedAccounts] = useState<CashBankAccount[]>([])
@@ -454,29 +453,45 @@ export default function CashPaymentModal({
     setIsFirstTouch(nextFirstTouch)
 
     setTenderLines((prev) => {
-      // Jika mode 2 baris (split 2 metode): pengetikan pada 1 baris otomatis menyeimbangkan baris lainnya
+      // Jika mode 2 baris (split 2 metode)
       if (prev.length === 2) {
         const otherIndex = prev.findIndex((l) => l.id !== activeLine.id)
         const otherLine = prev[otherIndex]
 
         if (isCash) {
           // Kasir mengetik uang tunai pada baris tunai
-          const newAllocated = Math.min(nextValue, activeBillTarget)
-          const otherAmount = Math.max(0, activeBillTarget - newAllocated)
+          const otherAmount = Number(otherLine.amount) || 0
+          const neededCash = Math.max(0, activeBillTarget - otherAmount)
 
-          return prev.map((l, idx) => {
-            if (l.id === activeLine.id) {
-              return { ...l, amount: newAllocated, cashReceived: nextValue }
-            }
-            if (idx === otherIndex) {
-              return {
-                ...otherLine,
-                amount: otherAmount,
-                cashReceived: otherLine.category === 'cash' ? Math.max(otherLine.cashReceived, otherAmount) : otherAmount
+          if (nextValue >= neededCash) {
+            // Kasir memasukkan tunai cukup atau lebih (misal butuh 50rb, kasir ketik 100rb atau 50rb)
+            // Baris metode lain TIDAK DIUBAH!
+            // Baris tunai mengalokasikan neededCash untuk tagihan, dan mencatat cashReceived = nextValue
+            return prev.map((l) => {
+              if (l.id === activeLine.id) {
+                return { ...l, amount: neededCash, cashReceived: nextValue }
               }
-            }
-            return l
-          })
+              return l
+            })
+          } else {
+            // Kasir mengetik tunai kurang dari neededCash (misal kasir ketik 20rb padahal butuh 50rb)
+            // Alokasi tunai diubah menjadi 20rb, dan sisanya dialihkan ke baris lainnya
+            const newCashAllocated = nextValue
+            const newOtherAmount = Math.max(0, activeBillTarget - newCashAllocated)
+            return prev.map((l, idx) => {
+              if (l.id === activeLine.id) {
+                return { ...l, amount: newCashAllocated, cashReceived: nextValue }
+              }
+              if (idx === otherIndex) {
+                return {
+                  ...otherLine,
+                  amount: newOtherAmount,
+                  cashReceived: otherLine.category === 'cash' ? Math.max(otherLine.cashReceived, newOtherAmount) : newOtherAmount
+                }
+              }
+              return l
+            })
+          }
         } else {
           // Kasir mengetik nominal pada baris non-tunai (QRIS / EDC / Bank)
           const cappedVal = Math.min(nextValue, activeBillTarget)
@@ -711,7 +726,7 @@ export default function CashPaymentModal({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Tombol Lihat Menu Rincian (Mudah Diakses di Header) */}
+            {/* Tombol Lihat Rincian Pesanan (Mudah Diakses di Header) */}
             <button
               type="button"
               onClick={() => setIsReceiptDetailsOpen(true)}
@@ -719,7 +734,7 @@ export default function CashPaymentModal({
               title="Buka rincian pesanan"
             >
               <span>🧾</span>
-              <span>Rincian Menu ({cartItems.length})</span>
+              <span>Rincian Pesanan ({cartItems.length})</span>
             </button>
 
             {/* Tombol Split Tagihan di Header */}
@@ -808,7 +823,7 @@ export default function CashPaymentModal({
                             </span>
                           ) : lineEntry ? (
                             <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-800 font-mono">
-                              ✓ {formatIDR(lineEntry.amount)}
+                              ✓ {formatIDR(lineEntry.category === 'cash' ? (lineEntry.cashReceived || lineEntry.amount) : lineEntry.amount)}
                             </span>
                           ) : (
                             <span className="text-[9px] text-slate-400 font-semibold">
@@ -1063,49 +1078,11 @@ export default function CashPaymentModal({
               </div>
             )}
 
-            {/* KARTU RINCIAN PESANAN (SANGAT MUDAH DILIHAT & DIAKSES DI KOLOM KANAN) */}
-            <div className="shrink-0 my-1 bg-slate-50 border border-slate-200 rounded-2xl p-2.5 px-3.5 flex items-center justify-between">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <span className="text-xl shrink-0">🧾</span>
-                <div className="truncate">
-                  <span className="text-xs font-black text-slate-900 block truncate">
-                    Rincian Pesanan ({cartItems.length} Menu) • Pelanggan: <b className="text-emerald-700">{customerName}</b>
-                  </span>
-                  <span className="text-[10px] text-slate-500 font-mono">
-                    Total Keranjang: {formatIDR(grandTotal)}
-                  </span>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setShowItemAccordion(!showItemAccordion)}
-                className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 text-xs font-bold transition cursor-pointer shadow-2xs flex items-center gap-1 shrink-0"
-              >
-                <span>{showItemAccordion ? 'Tutup ▲' : 'Lihat Menu ▼'}</span>
-              </button>
-            </div>
-
-            {/* ACCORDION DAFTAR ITEM (JIKA DIBUKA) */}
-            {showItemAccordion && (
-              <div className="shrink-0 mb-2 p-2.5 bg-slate-50 rounded-2xl border border-slate-200 max-h-44 overflow-y-auto space-y-1 divide-y divide-slate-100 text-xs">
-                {cartItems.map((item) => (
-                  <div key={item.id} className="pt-1 first:pt-0 flex justify-between items-center">
-                    <div>
-                      <span className="font-bold text-slate-800">{item.quantity}x {item.name}</span>
-                      {item.variantName && <span className="text-[10px] text-slate-500 ml-1">({item.variantName})</span>}
-                    </div>
-                    <span className="font-mono font-bold text-slate-900">{formatIDR(item.price * item.quantity)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* AREA STATUS DUA ARAH & BARIS MULTI-TENDER (KOTAK MERAH ODOO) */}
-            <div className="flex-1 min-h-0 flex flex-col justify-start py-2 space-y-2.5 max-w-xl mx-auto w-full">
+            {/* AREA STATUS DUA ARAH & BARIS MULTI-TENDER (SEAMLESS CLEAN LIST MENYATU DENGAN BOX UTAMA) */}
+            <div className="flex-1 min-h-0 flex flex-col justify-start py-2 space-y-3 max-w-xl mx-auto w-full">
               
               {/* KOTAK STATUS DUA ARAH (REMAINING ATAU KEMBALIAN) */}
-              <div className={`p-3 rounded-2xl border flex items-center justify-between text-sm sm:text-base font-black transition shadow-2xs ${
+              <div className={`p-3.5 rounded-2xl border flex items-center justify-between text-sm sm:text-base font-black transition shadow-2xs ${
                 calculation.totalChange > 0
                   ? 'bg-emerald-500 border-emerald-600 text-white'
                   : calculation.remainingBill > 0
@@ -1122,48 +1099,61 @@ export default function CashPaymentModal({
                 </span>
               </div>
 
-              {/* DAFTAR BARIS PEMBAYARAN AKTIF MULTI-TENDER */}
-              <div className="space-y-2 overflow-y-auto max-h-60 pr-1">
+              {/* DAFTAR BARIS PEMBAYARAN AKTIF MULTI-TENDER (FLAT SEAMLESS TANPA BOX BERLAPIS) */}
+              <div className="divide-y divide-slate-100 overflow-y-auto max-h-72 my-1">
                 {tenderLines.map((line) => {
                   const isFocused = line.id === activeLineId
                   const glyph = CATEGORY_GLYPHS[line.category] || '💳'
                   const isCash = line.category === 'cash'
+                  const displayAmount = isCash ? (line.cashReceived || line.amount) : line.amount
 
                   return (
-                    <div key={line.id} className="space-y-1">
+                    <div key={line.id} className="py-1">
                       <div
                         onClick={() => {
                           setActiveLineId(line.id)
                           setIsFirstTouch(true)
                         }}
-                        className={`p-3 sm:p-3.5 rounded-2xl border-2 transition flex items-center justify-between cursor-pointer ${
+                        className={`p-3 sm:py-3.5 sm:px-3 rounded-xl transition flex items-center justify-between cursor-pointer ${
                           isFocused
-                            ? 'bg-emerald-50/60 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs'
-                            : 'bg-slate-50 hover:bg-slate-100 border-slate-200'
+                            ? 'bg-emerald-50/90 text-emerald-950 font-medium'
+                            : 'hover:bg-slate-50 text-slate-700'
                         }`}
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <span className="text-2xl">{glyph}</span>
                           <div>
-                            <span className="font-extrabold text-sm sm:text-base text-slate-900 block leading-tight">
-                              {line.tenderName}
-                            </span>
-                            <span className="text-[10px] text-slate-500 font-mono">
-                              {line.accountCode || 'COA'} {isCash ? `• Uang Tunai Diterima: ${formatIDR(line.cashReceived)}` : ''}
+                            <div className="flex items-center gap-2">
+                              <span className="font-extrabold text-sm sm:text-base text-slate-900 block leading-tight">
+                                {line.tenderName}
+                              </span>
+                              {isFocused && (
+                                <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-600 text-white">
+                                  Aktif
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
+                              {line.accountCode || 'COA'}
+                              {isCash && line.cashReceived > line.amount ? (
+                                <span className="text-emerald-700 font-semibold ml-1.5">
+                                  (Alokasi Tagihan: {formatIDR(line.amount)})
+                                </span>
+                              ) : null}
                             </span>
                           </div>
                         </div>
 
                         <div className="flex items-center gap-3">
-                          <span className="font-mono font-black text-base sm:text-xl text-slate-900">
-                            {formatIDR(line.amount)}
+                          <span className="font-mono font-black text-base sm:text-2xl text-slate-900">
+                            {formatIDR(displayAmount)}
                           </span>
 
                           {tenderLines.length > 1 && (
                             <button
                               type="button"
                               onClick={(e) => handleDeleteLine(line.id, e)}
-                              className="w-7 h-7 rounded-xl bg-white hover:bg-rose-50 text-rose-500 hover:text-rose-700 border border-slate-200 hover:border-rose-300 flex items-center justify-center font-black text-sm transition cursor-pointer"
+                              className="w-7 h-7 rounded-lg hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center font-bold text-sm transition cursor-pointer"
                               title="Hapus metode ini"
                             >
                               ✕
@@ -1174,16 +1164,16 @@ export default function CashPaymentModal({
 
                       {/* Input Referensi jika Baris Non-Tunai Sedang Terfokus */}
                       {isFocused && line.category !== 'cash' && (
-                        <div className="flex items-center gap-2 p-1.5 px-3 rounded-xl bg-slate-50 border border-slate-200 animate-in fade-in">
+                        <div className="flex items-center gap-2 px-3 py-1.5 mt-1 bg-slate-50 rounded-lg animate-in fade-in">
                           <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0">
-                            No. Referensi / Approval:
+                            No. Ref / Approval:
                           </span>
                           <input
                             type="text"
                             value={line.referenceNumber}
                             onChange={(e) => handleUpdateReference(e.target.value)}
                             placeholder="Contoh: REF-123456..."
-                            className="flex-1 bg-white border border-slate-300 rounded-lg px-2 py-0.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-900"
+                            className="flex-1 bg-white border border-slate-300 rounded px-2 py-0.5 text-xs font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-slate-900"
                           />
                         </div>
                       )}
@@ -1358,7 +1348,7 @@ export default function CashPaymentModal({
             <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
               <h3 className="font-extrabold text-sm sm:text-base text-slate-900 flex items-center gap-2">
                 <span>🧾</span>
-                <span>Rincian Menu Pesanan</span>
+                <span>Rincian Pesanan</span>
               </h3>
               <button
                 type="button"
