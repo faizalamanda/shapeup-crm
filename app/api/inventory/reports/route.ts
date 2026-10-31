@@ -477,11 +477,28 @@ export async function GET(req: Request) {
 
     let prodsQuery = supabase
       .from('products')
-      .select('id, name, sku, unit, cost_price, price, description, hpp_type, stock_quantity, category_id, categories(id, name)', { count: 'exact' })
+      .select('id, name, sku, unit, cost_price, price, description, hpp_type, stock_quantity, category_id, categories(id, name), product_variants(*)', { count: 'exact' })
       .eq('business_id', businessId)
 
     if (search) {
-      prodsQuery = prodsQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%`)
+      // Also match products if their variants have the search keyword (e.g. searching "Hitam" or "28")
+      let variantProdIds: string[] = []
+      try {
+        const { data: vProds } = await supabase
+          .from('product_variants')
+          .select('product_id')
+          .eq('business_id', businessId)
+          .or(`name.ilike.%${search}%,sku.ilike.%${search}%`)
+        if (vProds) variantProdIds = vProds.map(v => v.product_id).filter(Boolean)
+      } catch (vErr) {
+        // ignore
+      }
+
+      if (variantProdIds.length > 0) {
+        prodsQuery = prodsQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%,id.in.(${variantProdIds.join(',')})`)
+      } else {
+        prodsQuery = prodsQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%`)
+      }
     }
 
     if (categoryFilter) {
@@ -504,16 +521,61 @@ export async function GET(req: Request) {
       prodsQuery = prodsQuery.range(offset, offset + limit - 1)
     }
 
-    const [metrics, categoriesRes, prodsRes, locationsRes] = await Promise.all([
+    let [metrics, categoriesRes, prodsRes, locationsRes] = await Promise.all([
       metricsPromise,
       categoriesPromise,
       prodsQuery,
       supabase.from('inventory_locations').select('id, name, code, type, is_default').eq('business_id', businessId)
     ])
 
+    // Fallback if nested product_variants query fails due to schema cache
+    if (prodsRes.error && prodsRes.error.message?.includes('product_variants')) {
+      let fallbackProdsQuery = supabase
+        .from('products')
+        .select('id, name, sku, unit, cost_price, price, description, hpp_type, stock_quantity, category_id, categories(id, name)', { count: 'exact' })
+        .eq('business_id', businessId)
+
+      if (search) fallbackProdsQuery = fallbackProdsQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%`)
+      if (categoryFilter) fallbackProdsQuery = fallbackProdsQuery.eq('categories.name', categoryFilter)
+      if (sortField === 'productName') fallbackProdsQuery = fallbackProdsQuery.order('name', { ascending: isAsc })
+      else if (sortField === 'onHandQty') fallbackProdsQuery = fallbackProdsQuery.order('stock_quantity', { ascending: isAsc })
+      else if (sortField === 'unitCost') fallbackProdsQuery = fallbackProdsQuery.order('cost_price', { ascending: isAsc })
+      else fallbackProdsQuery = fallbackProdsQuery.order('created_at', { ascending: false })
+
+      if (!requiresJsSort) fallbackProdsQuery = fallbackProdsQuery.range(offset, offset + limit - 1)
+      prodsRes = await fallbackProdsQuery as any
+    }
+
     const totalItems = prodsRes.count || 0
     const totalPages = Math.ceil(totalItems / limit) || 1
     let paginatedProducts = prodsRes.data || []
+
+    // Ensure variants are populated for each product
+    const needVariantFetchIds = paginatedProducts.filter((p: any) => !p.product_variants || !Array.isArray(p.product_variants)).map((p: any) => p.id)
+    if (needVariantFetchIds.length > 0) {
+      try {
+        const { data: variantsData } = await supabase
+          .from('product_variants')
+          .select('id, product_id, name, sku, price, cost_price, stock_quantity')
+          .in('product_id', needVariantFetchIds)
+          .order('name', { ascending: true })
+
+        if (variantsData) {
+          const vMap = new Map<string, any[]>()
+          for (const v of variantsData) {
+            if (!vMap.has(v.product_id)) vMap.set(v.product_id, [])
+            vMap.get(v.product_id)!.push(v)
+          }
+          for (const p of paginatedProducts) {
+            if (!p.product_variants || !Array.isArray(p.product_variants)) {
+              p.product_variants = vMap.get(p.id) || []
+            }
+          }
+        }
+      } catch (vFetchErr) {
+        console.warn('Note: variants fetch fallback:', vFetchErr)
+      }
+    }
 
     if (requiresJsSort) {
       paginatedProducts.sort((a: any, b: any) => {

@@ -301,5 +301,53 @@ CREATE POLICY "Users can manage their own business categories" ON public.categor
       OR business_id = (SELECT active_business_id FROM public.profiles WHERE id = auth.uid())
     );
 
+-- Modernize RLS on public.stock_moves
+ALTER TABLE public.stock_moves ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can view stock_moves for their business" ON public.stock_moves;
+DROP POLICY IF EXISTS "Users can insert stock_moves for their business" ON public.stock_moves;
+DROP POLICY IF EXISTS "Users can manage stock_moves for their business" ON public.stock_moves;
+CREATE POLICY "Users can manage stock_moves for their business" ON public.stock_moves
+    FOR ALL
+    TO authenticated
+    USING (
+      business_id IN (
+        SELECT id FROM public.businesses WHERE owner_id = auth.uid()
+        UNION
+        SELECT business_id FROM public.business_staff WHERE profile_id = auth.uid()
+      )
+      OR business_id = (SELECT active_business_id FROM public.profiles WHERE id = auth.uid())
+    )
+    WITH CHECK (
+      business_id IN (
+        SELECT id FROM public.businesses WHERE owner_id = auth.uid()
+        UNION
+        SELECT business_id FROM public.business_staff WHERE profile_id = auth.uid()
+      )
+      OR business_id = (SELECT active_business_id FROM public.profiles WHERE id = auth.uid())
+    );
+
+-- Modernize RLS on public.stock_opname
+ALTER TABLE public.stock_opname ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can manage their own business stock_opname" ON public.stock_opname;
+CREATE POLICY "Users can manage their own business stock_opname" ON public.stock_opname
+    FOR ALL
+    TO authenticated
+    USING (
+      business_id IN (
+        SELECT id FROM public.businesses WHERE owner_id = auth.uid()
+        UNION
+        SELECT business_id FROM public.business_staff WHERE profile_id = auth.uid()
+      )
+      OR business_id = (SELECT active_business_id FROM public.profiles WHERE id = auth.uid())
+    )
+    WITH CHECK (
+      business_id IN (
+        SELECT id FROM public.businesses WHERE owner_id = auth.uid()
+        UNION
+        SELECT business_id FROM public.business_staff WHERE profile_id = auth.uid()
+      )
+      OR business_id = (SELECT active_business_id FROM public.profiles WHERE id = auth.uid())
+    );
+
 NOTIFY pgrst, 'reload schema';
 

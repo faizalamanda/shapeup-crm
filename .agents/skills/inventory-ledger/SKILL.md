@@ -316,4 +316,45 @@ When importing or updating large catalogs (> 4,000 items) via Excel / CSV:
    - If a batch fails, isolate that batch without terminating the loop so subsequent batches proceed to completion.
    - Collect failed rows with exact original row indices and error reasons, providing an automated **Download Baris Gagal (.xlsx)** export.
 
+---
+
+## 7. Multi-Variant Stock Opname, Composite Partition Ledger & Flat Discrete Listing
+
+Di sistem ritel kelas dunia (Shopify Admin & Odoo ERP), pelaporan stok dan stok opname **WAJIB** beroperasi pada unit fisik diskret (*Discrete Physical SKU*):
+
+1. **Mandatory SKU-Level Counting in Stock Opname (`/stock-opname`):**
+   - **Masalah Parent-Only Counting:** Jika produk "Kaos Polos" memiliki varian S (hilang 2 pcs) dan M (lebih 2 pcs), opname di tingkat induk akan menghasilkan selisih 0 (NOL), sehingga kehilangan stok tidak pernah tercatat dan variasi rak toko menjadi kacau.
+   - **Solusi:** Stok Opname membentangkan (*unfold*) seluruh variasi menjadi baris diskret mandiri (`${product.name} - ${variant.name}`) dengan SKU masing-masing.
+   - Kunci unik komposit di formulir: `getOpnameKey = (item) => item.variant_id ? `${item.product_id}_${item.variant_id}` : item.product_id`.
+
+2. **Event-Sourced Opname Ledger Integration:**
+   - Saat disimpan, API `/api/stock-opname` mengecek saldo berjalan dari view `v_stock_moves_ledger` dengan memfilter `variant_id`.
+   - Mutasi penyesuaian dicatat via `recordStockMovements()` dengan tipe `adjustment`, menyertakan `variantId: item.variant_id || null`, dan HPP modal `unitCost: variant.cost_price || product.cost_price`.
+   - Jika `diff < 0` (Susut/Shrinkage): diset dummy `originLocationId: '00000000-0000-0000-0000-000000000000'`.
+   - Trigger database `trg_sync_product_stock_from_moves` otomatis memperbarui `product_variants.stock_quantity` untuk varian terkait dan mengagregasi totalnya ke parent `products.stock_quantity`.
+   - Jurnal Akuntansi mencatat Beban Penyesuaian Persediaan (502000) vs Persediaan (102000) secara presisi berdasarkan `cost_price` varian.
+
+3. **Flat Discrete Listing in Inventory Reports (`/inventory/reports`):**
+   - Tidak menggunakan tombol *accordion/expand/collapse* yang memperlambat audit visual staf.
+   - Setiap varian fisik langsung ditampilkan sebagai baris tabel independen:
+     - Nama: `${item.productName} - ${v.name}`
+     - SKU: `v.sku || item.sku`
+     - On-Hand: `v.stockQuantity`
+     - Modal: `v.costPrice`
+     - Total Nilai: `v.stockQuantity * v.costPrice`
+   - Klik pada baris membuka modal rincian valuasi produk induk dan kartu stok pergerakan barang.
+
+4. **Modernized Multi-Tenant RLS for Ledger & Opname (Rule 14 & 15):**
+   - Tabel `public.stock_moves` dan `public.stock_opname` wajib dilindungi RLS dengan klausul union:
+     ```sql
+     business_id IN (
+       SELECT id FROM public.businesses WHERE owner_id = auth.uid()
+       UNION
+       SELECT business_id FROM public.business_staff WHERE profile_id = auth.uid()
+     )
+     OR business_id = (SELECT active_business_id FROM public.profiles WHERE id = auth.uid())
+     ```
+   - Menjamin bahwa staf kasir atau staf gudang tidak pernah mengalami kegagalan izin (403 atau data kosong) saat menginput opname atau memutasi stok.
+
+
 

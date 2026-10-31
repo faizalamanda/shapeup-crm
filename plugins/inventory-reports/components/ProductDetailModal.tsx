@@ -384,6 +384,48 @@ export default function ProductDetailModal({
                 </div>
               </div>
 
+              {/* Rincian Stok Tiap Variasi (SKU) */}
+              {initialStockItem.variants && initialStockItem.variants.length > 0 && (
+                <div className="bg-indigo-50/50 border border-indigo-200/90 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>🏷️</span> Rincian Stok Tiap Variasi ({initialStockItem.variants.length} Varian)
+                    </h4>
+                    <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">
+                      SKU-Level Ledger
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-white/80 text-indigo-900 border-b border-indigo-200 text-[10px] font-bold uppercase">
+                        <tr>
+                          <th className="py-2 px-3">Nama Varian</th>
+                          <th className="py-2 px-3">SKU</th>
+                          <th className="py-2 px-3 text-right">Harga Jual</th>
+                          <th className="py-2 px-3 text-right">Modal HPP</th>
+                          <th className="py-2 px-3 text-right">Stok Fisik</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-indigo-100 bg-white">
+                        {initialStockItem.variants.map((v) => (
+                          <tr key={v.id} className="hover:bg-indigo-50/40">
+                            <td className="py-2 px-3 font-bold text-slate-800">{v.name}</td>
+                            <td className="py-2 px-3 font-mono text-slate-600 text-[11px]">{v.sku || '-'}</td>
+                            <td className="py-2 px-3 text-right font-mono text-slate-800">{formatCurrency(v.price)}</td>
+                            <td className="py-2 px-3 text-right font-mono text-indigo-700 font-semibold">{formatCurrency(v.costPrice)}</td>
+                            <td className="py-2 px-3 text-right font-bold">
+                              <span className={v.stockQuantity <= 0 ? 'text-rose-600 font-extrabold' : v.stockQuantity <= 5 ? 'text-amber-600 font-extrabold' : 'text-slate-800'}>
+                                {v.stockQuantity} {unit}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {/* Description */}
               <div className="bg-[#F7F7F5] border border-[#E2E2DC] rounded-xl p-4">
                 <h4 className="text-xs font-bold text-[#1C1C1A] uppercase tracking-wider mb-2">

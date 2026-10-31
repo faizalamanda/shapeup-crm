@@ -1,7 +1,22 @@
 "use client"
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { StockReportItem, InventoryReportMetrics, PaginationMeta } from '../types'
 import ProductDetailModal from './ProductDetailModal'
+
+interface FlatRowItem {
+  id: string
+  productId: string
+  variantId?: string
+  displayName: string
+  sku: string | null
+  categoryName: string
+  unit: string
+  onHandQty: number
+  unitCost: number
+  totalValue: number
+  isVariant: boolean
+  parentItem: StockReportItem
+}
 
 interface StockReportTabProps {
   items: StockReportItem[]
@@ -45,6 +60,47 @@ export default function StockReportTab({
 
   // Items are already sorted from server
   const sortedItems = items
+
+  // Flat Discrete SKU transformation (Shopify & Odoo standard: Zero buttons, all physical SKUs visible)
+  const flatRows = useMemo<FlatRowItem[]>(() => {
+    const rows: FlatRowItem[] = []
+
+    for (const item of sortedItems) {
+      if (Array.isArray(item.variants) && item.variants.length > 0) {
+        for (const v of item.variants) {
+          rows.push({
+            id: `${item.productId}_${v.id}`,
+            productId: item.productId,
+            variantId: v.id,
+            displayName: `${item.productName} - ${v.name}`,
+            sku: v.sku || item.sku,
+            categoryName: item.categoryName,
+            unit: item.unit,
+            onHandQty: v.stockQuantity,
+            unitCost: v.costPrice || item.unitCost,
+            totalValue: v.stockQuantity * (v.costPrice || item.unitCost),
+            isVariant: true,
+            parentItem: item
+          })
+        }
+      } else {
+        rows.push({
+          id: item.productId,
+          productId: item.productId,
+          displayName: item.productName,
+          sku: item.sku,
+          categoryName: item.categoryName,
+          unit: item.unit,
+          onHandQty: item.onHandQty,
+          unitCost: item.unitCost,
+          totalValue: item.totalValue,
+          isVariant: false,
+          parentItem: item
+        })
+      }
+    }
+    return rows
+  }, [sortedItems])
 
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val)
@@ -202,48 +258,60 @@ export default function StockReportTab({
                     </div>
                   </td>
                 </tr>
-              ) : sortedItems.length === 0 ? (
+              ) : flatRows.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-8 text-center text-[#82827A]">
                     Tidak ada data produk yang sesuai dengan filter pencarian.
                   </td>
                 </tr>
               ) : (
-                sortedItems.map(item => (
-                  <tr key={item.productId} className="hover:bg-[#F9F9F8] transition-colors">
-                    <td className="py-2.5 px-3 sm:px-4">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedProduct(item)}
-                        className="text-left group cursor-pointer focus:outline-none"
-                        title="Klik untuk melihat detail, valuation & move history produk ini"
-                      >
-                        <div className="font-bold text-blue-600 group-hover:text-blue-800 group-hover:underline text-xs sm:text-sm transition-colors flex items-center gap-1.5">
-                          <span>{item.productName}</span>
-                          <span className="opacity-0 group-hover:opacity-100 text-[10px] text-blue-500 transition-opacity">
-                            🔍
-                          </span>
-                        </div>
-                        {item.sku && (
-                          <div className="text-[10px] text-[#6B6B63] font-mono">SKU: {item.sku}</div>
-                        )}
-                      </button>
-                    </td>
-                    <td className="py-2.5 px-3 sm:px-4 text-[#6B6B63] text-[11px]">{item.categoryName}</td>
-                    <td className="py-2.5 px-3 sm:px-4 text-right font-bold text-[#1C1C1A]">
-                      <span className={item.onHandQty <= 0 ? 'text-rose-600 font-extrabold' : item.onHandQty <= 5 ? 'text-amber-600 font-extrabold' : ''}>
-                        {item.onHandQty}
-                      </span>{' '}
-                      <span className="text-[10px] text-[#82827A] font-normal">{item.unit}</span>
-                    </td>
-                    <td className="py-2.5 px-3 sm:px-4 text-right text-[#2D2D2A] font-mono text-[11px]">
-                      {formatCurrency(item.unitCost)}
-                    </td>
-                    <td className="py-2.5 px-3 sm:px-4 text-right text-blue-700 font-extrabold font-mono text-[11px]">
-                      {formatCurrency(item.totalValue)}
-                    </td>
-                  </tr>
-                ))
+                flatRows.map(row => {
+                  return (
+                    <tr
+                      key={row.id}
+                      className={`hover:bg-[#F9F9F8] transition-colors border-b border-[#E2E2DC] ${
+                        row.isVariant ? 'bg-indigo-50/15' : ''
+                      }`}
+                    >
+                      <td className="py-2.5 px-3 sm:px-4">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProduct(row.parentItem)}
+                          className="text-left group cursor-pointer focus:outline-none"
+                          title="Klik untuk melihat detail, valuation & move history produk ini"
+                        >
+                          <div className="font-bold text-blue-600 group-hover:text-blue-800 group-hover:underline text-xs sm:text-sm transition-colors flex items-center gap-1.5 flex-wrap">
+                            <span>{row.displayName}</span>
+                            {row.isVariant && (
+                              <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100/70 px-1.5 py-0.2 rounded">
+                                Varian
+                              </span>
+                            )}
+                            <span className="opacity-0 group-hover:opacity-100 text-[10px] text-blue-500 transition-opacity">
+                              🔍
+                            </span>
+                          </div>
+                          {row.sku && (
+                            <div className="text-[10px] text-[#6B6B63] font-mono">SKU: {row.sku}</div>
+                          )}
+                        </button>
+                      </td>
+                      <td className="py-2.5 px-3 sm:px-4 text-[#6B6B63] text-[11px]">{row.categoryName}</td>
+                      <td className="py-2.5 px-3 sm:px-4 text-right font-bold text-[#1C1C1A]">
+                        <span className={row.onHandQty <= 0 ? 'text-rose-600 font-extrabold' : row.onHandQty <= 5 ? 'text-amber-600 font-extrabold' : ''}>
+                          {row.onHandQty}
+                        </span>{' '}
+                        <span className="text-[10px] text-[#82827A] font-normal">{row.unit}</span>
+                      </td>
+                      <td className="py-2.5 px-3 sm:px-4 text-right text-[#2D2D2A] font-mono text-[11px]">
+                        {formatCurrency(row.unitCost)}
+                      </td>
+                      <td className="py-2.5 px-3 sm:px-4 text-right text-blue-700 font-extrabold font-mono text-[11px]">
+                        {formatCurrency(row.totalValue)}
+                      </td>
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>

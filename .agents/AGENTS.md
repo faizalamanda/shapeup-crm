@@ -131,12 +131,14 @@
    - **POS Shelf Restock vs Quarantine:** Mutasi pengembalian barang atas pesanan POS yang dibatalkan/direfund langsung di meja kasir (`reference.includes('POS')` atau berasal dari kasir) secara semantik langsung kembali ke rak pajangan fisik toko. Mutasi pengembalian stoknya **WAJIB** dialokasikan ke `bucket: 'main'` dengan `status: 'done'`, sehingga trigger basis data `trg_sync_product_stock_from_moves` langsung memperbarui `products.stock_quantity`. Retur pesanan online/ekspedisi tetap dialokasikan ke `bucket: 'quarantine'` untuk proses karantina & inspeksi mutu.
    - **Lacak Stok vs Non-Lacak Stok:** Mutasi stok fisik di buku besar gudang hanya dieksekusi untuk produk bertipe `stock_type = 'tracked'`. Produk dengan `stock_type = 'available'` adalah produk non-lacak stok sehingga tidak memicu pemotongan/penambahan kuantitas fisik.
 
-10. **Multi-Variant Stock Ledger & Flat Composite POS Presentation Standard:**
+10. **Multi-Variant Stock Ledger, Flat Discrete Presentation & Discrete Stock Opname Standard:**
    - **SPU vs SKU Decoupled Architecture:** Produk induk tersimpan di `products`, sedangkan variasi fisik diskret tersimpan di `product_variants`.
    - **Variant-Aware Stock Ledger:** Mutasi `stock_moves` menyertakan `variant_id UUID REFERENCES product_variants(id)`. Saldo berjalan dihitung via PostgreSQL View `v_stock_moves_ledger` dengan partisi komposit `PARTITION BY sm.product_id, COALESCE(sm.variant_id, '00000000-0000-0000-0000-000000000000'::uuid)`. Hal ini menjamin bahwa kartu stok setiap varian (misal: Kaos Ukuran S vs XL) terisolasi 100%, sementara produk non-varian tetap berjalan normal dengan fallback komposit identik.
    - **Intelligently Synchronized Trigger:** Trigger `sync_product_stock_from_moves` memperbarui saldo varian `product_variants.stock_quantity` DAN mengakumulasi total saldo varian ke produk induk `products.stock_quantity`.
    - **Flat Inline POS Presentation:** Nama item variasi ditampilkan secara linier sebaris (`${rawName} - ${variantStr}`) di keranjang belanja kasir dan struk termal (tanpa bullet bertingkat) guna memaksimalkan keterbacaan cepat dan menghemat kertas termal kasir 30%–50%.
-   - **Modernized Multi-Tenant RLS for Variants:** RLS pada `product_variants` dan `product_modifiers` wajib menggunakan klausul union (`businesses.owner_id UNION business_staff.profile_id OR profiles.active_business_id`) untuk mencegah kegagalan akses kasir dan staf.
+   - **Flat Discrete SKU Listing in Inventory Reports (`/inventory/reports`):** Mengadopsi standar Shopify Admin & Odoo ERP. Seluruh varian fisik ditampilkan langsung sebagai baris mandiri tanpa tombol accordion/expand yang memperlambat audit visual staf.
+   - **Mandatory SKU-Level Counting in Stock Opname (`/stock-opname`):** Penghitungan fisik opname **WAJIB** dilakukan per-SKU varian (bukan tingkat induk) untuk mencegah hilangnya selisih susut/lebih akibat saling meniadakan menjadi 0. Mutasi penyesuaian dicatat dengan `variant_id` dan HPP varian spesifik.
+   - **Modernized Multi-Tenant RLS for Variants, Ledger & Opname:** RLS pada `product_variants`, `product_modifiers`, `stock_moves`, dan `stock_opname` wajib menggunakan klausul union (`businesses.owner_id UNION business_staff.profile_id OR profiles.active_business_id`) untuk mencegah kegagalan akses kasir dan staf.
 
 
 ## Research & Planning

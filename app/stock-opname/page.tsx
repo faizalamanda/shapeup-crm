@@ -7,7 +7,7 @@ import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { formatDisplayDate } from '@/lib/timeUtils'
 import { Pagination } from '../components/Pagination'
 
-type Product = {
+type ProductVariant = {
   id: string
   name: string
   sku: string | null
@@ -15,11 +15,23 @@ type Product = {
   cost_price: number
 }
 
+type Product = {
+  id: string
+  name: string
+  sku: string | null
+  stock_quantity: number
+  cost_price: number
+  product_variants?: ProductVariant[]
+}
+
 type OpnameItem = {
   product_id: string
+  variant_id?: string | null
   name: string
+  sku?: string | null
   recorded_quantity: number
   actual_quantity: number
+  cost_price?: number
 }
 
 type JournalLine = {
@@ -39,6 +51,7 @@ type StockMove = {
   id: string
   created_at: string
   product_id: string
+  variant_id?: string | null
   type: string
   qty: number
   unit_cost: number | null
@@ -49,6 +62,20 @@ type StockMove = {
   source_id: string | null
   system_stock: number
 }
+
+type DiscreteProduct = {
+  uniqueKey: string
+  productId: string
+  variantId?: string | null
+  name: string
+  sku: string | null
+  stockQuantity: number
+  costPrice: number
+  isVariant: boolean
+}
+
+const getOpnameKey = (item: { product_id: string; variant_id?: string | null }) =>
+  item.variant_id ? `${item.product_id}_${item.variant_id}` : item.product_id
 
 type StockOpname = {
   id: string
@@ -251,15 +278,27 @@ export default function StockOpnamePage() {
     let mounted = true
     const fetchProducts = async () => {
       try {
-        const { data } = await supabase
+        let { data, error } = await supabase
           .from('products')
-          .select('id, name, sku, stock_quantity, cost_price')
+          .select('id, name, sku, stock_quantity, cost_price, product_variants(id, name, sku, stock_quantity, cost_price)')
           .eq('business_id', activeBizId)
           .eq('type', 'physical')
           .eq('stock_type', 'tracked')
           .order('name', { ascending: true })
+
+        if (error) {
+          const fallbackRes = await supabase
+            .from('products')
+            .select('id, name, sku, stock_quantity, cost_price')
+            .eq('business_id', activeBizId)
+            .eq('type', 'physical')
+            .eq('stock_type', 'tracked')
+            .order('name', { ascending: true })
+          data = fallbackRes.data as any
+        }
+
         if (mounted && data) {
-          setProducts(data)
+          setProducts(data as Product[])
           try {
             localStorage.setItem(`su_stock_products_${activeBizId}`, JSON.stringify(data))
           } catch (e) {
@@ -324,20 +363,53 @@ export default function StockOpnamePage() {
     setDraftLastSavedTime(null)
   }, [activeBizId])
 
+  // Unfold products into discrete countable items (Variants or non-variant products)
+  const discreteProducts = useMemo<DiscreteProduct[]>(() => {
+    const list: DiscreteProduct[] = []
+    for (const p of products) {
+      if (Array.isArray(p.product_variants) && p.product_variants.length > 0) {
+        for (const v of p.product_variants) {
+          list.push({
+            uniqueKey: `${p.id}_${v.id}`,
+            productId: p.id,
+            variantId: v.id,
+            name: `${p.name} - ${v.name}`,
+            sku: v.sku || p.sku,
+            stockQuantity: v.stock_quantity ?? 0,
+            costPrice: v.cost_price || p.cost_price || 0,
+            isVariant: true
+          })
+        }
+      } else {
+        list.push({
+          uniqueKey: p.id,
+          productId: p.id,
+          variantId: null,
+          name: p.name,
+          sku: p.sku,
+          stockQuantity: p.stock_quantity ?? 0,
+          costPrice: p.cost_price || 0,
+          isVariant: false
+        })
+      }
+    }
+    return list
+  }, [products])
+
   // Products available to be added (not already in formItems)
   const availableProducts = useMemo(() => {
-    const selectedIds = new Set(formItems.map(i => i.product_id))
-    return products.filter(p => !selectedIds.has(p.id))
-  }, [products, formItems])
+    const selectedKeys = new Set(formItems.map(getOpnameKey))
+    return discreteProducts.filter(p => !selectedKeys.has(p.uniqueKey))
+  }, [discreteProducts, formItems])
 
   // Products filtered inside the Sub-Modal Selector
   const selectorFilteredProducts = useMemo(() => {
-    if (!selectorSearch.trim()) return products
+    if (!selectorSearch.trim()) return discreteProducts
     const q = selectorSearch.toLowerCase().trim()
-    return products.filter(
+    return discreteProducts.filter(
       p => p.name.toLowerCase().includes(q) || (p.sku && p.sku.toLowerCase().includes(q))
     )
-  }, [products, selectorSearch])
+  }, [discreteProducts, selectorSearch])
 
   // Open creation modal
   const openAddModal = () => {
@@ -353,71 +425,78 @@ export default function StockOpnamePage() {
 
   // Open Sub-Modal Product Selector
   const openSelectorModal = () => {
-    setTempSelectedIds(formItems.map(i => i.product_id))
+    setTempSelectedIds(formItems.map(getOpnameKey))
     setSelectorSearch('')
     setIsSelectorOpen(true)
   }
 
   // Toggle selection in Sub-Modal Selector
-  const toggleTempSelect = (productId: string) => {
+  const toggleTempSelect = (key: string) => {
     setTempSelectedIds(prev =>
-      prev.includes(productId)
-        ? prev.filter(id => id !== productId)
-        : [...prev, productId]
+      prev.includes(key)
+        ? prev.filter(k => k !== key)
+        : [...prev, key]
     )
   }
 
   const selectAllFiltered = () => {
-    const idsToAdd = selectorFilteredProducts.map(p => p.id)
-    setTempSelectedIds(prev => Array.from(new Set([...prev, ...idsToAdd])))
+    const keysToAdd = selectorFilteredProducts.map(p => p.uniqueKey)
+    setTempSelectedIds(prev => Array.from(new Set([...prev, ...keysToAdd])))
   }
 
   const deselectAllFiltered = () => {
-    const idsToRemove = new Set(selectorFilteredProducts.map(p => p.id))
-    setTempSelectedIds(prev => prev.filter(id => !idsToRemove.has(id)))
+    const keysToRemove = new Set(selectorFilteredProducts.map(p => p.uniqueKey))
+    setTempSelectedIds(prev => prev.filter(k => !keysToRemove.has(k)))
   }
 
   // Confirm selection from Sub-Modal Selector
   const confirmSelector = () => {
-    const newFormItems: OpnameItem[] = tempSelectedIds.map(id => {
-      const existing = formItems.find(i => i.product_id === id)
+    const newFormItems: OpnameItem[] = tempSelectedIds.map(key => {
+      const existing = formItems.find(i => getOpnameKey(i) === key)
       if (existing) return existing
-      const prod = products.find(p => p.id === id)!
+      const p = discreteProducts.find(item => item.uniqueKey === key)
+      if (!p) return null
       return {
-        product_id: prod.id,
-        name: prod.name,
-        recorded_quantity: prod.stock_quantity || 0,
-        actual_quantity: prod.stock_quantity || 0
+        product_id: p.productId,
+        variant_id: p.variantId || null,
+        name: p.name,
+        sku: p.sku,
+        recorded_quantity: p.stockQuantity || 0,
+        actual_quantity: p.stockQuantity || 0,
+        cost_price: p.costPrice || 0
       }
-    }).filter(Boolean)
+    }).filter((i): i is OpnameItem => Boolean(i))
 
     setFormItems(newFormItems)
     setIsSelectorOpen(false)
   }
 
   // Remove product from form items
-  const handleRemoveProduct = (productId: string) => {
-    setFormItems(prev => prev.filter(item => item.product_id !== productId))
+  const handleRemoveProduct = (itemKey: string) => {
+    setFormItems(prev => prev.filter(item => getOpnameKey(item) !== itemKey))
   }
 
   // Load all remaining products at once
   const handleLoadAllProducts = () => {
-    const existingIds = new Set(formItems.map(i => i.product_id))
-    const remaining = products.filter(p => !existingIds.has(p.id))
-    const newItems = remaining.map(p => ({
-      product_id: p.id,
+    const existingKeys = new Set(formItems.map(getOpnameKey))
+    const remaining = discreteProducts.filter(p => !existingKeys.has(p.uniqueKey))
+    const newItems: OpnameItem[] = remaining.map(p => ({
+      product_id: p.productId,
+      variant_id: p.variantId || null,
       name: p.name,
-      recorded_quantity: p.stock_quantity || 0,
-      actual_quantity: p.stock_quantity || 0
+      sku: p.sku,
+      recorded_quantity: p.stockQuantity || 0,
+      actual_quantity: p.stockQuantity || 0,
+      cost_price: p.costPrice || 0
     }))
     setFormItems(prev => [...prev, ...newItems])
   }
 
   // Handle actual quantity change
-  const handleActualQtyChange = (product_id: string, val: string) => {
+  const handleActualQtyChange = (itemKey: string, val: string) => {
     const qty = parseInt(val, 10)
     const updated = formItems.map(item => {
-      if (item.product_id === product_id) {
+      if (getOpnameKey(item) === itemKey) {
         return { ...item, actual_quantity: isNaN(qty) ? 0 : Math.max(0, qty) }
       }
       return item
@@ -426,18 +505,18 @@ export default function StockOpnamePage() {
   }
 
   // Stepper increment / decrement
-  const incrementQty = (product_id: string) => {
+  const incrementQty = (itemKey: string) => {
     setFormItems(prev => prev.map(item => {
-      if (item.product_id === product_id) {
+      if (getOpnameKey(item) === itemKey) {
         return { ...item, actual_quantity: (item.actual_quantity || 0) + 1 }
       }
       return item
     }))
   }
 
-  const decrementQty = (product_id: string) => {
+  const decrementQty = (itemKey: string) => {
     setFormItems(prev => prev.map(item => {
-      if (item.product_id === product_id) {
+      if (getOpnameKey(item) === itemKey) {
         return { ...item, actual_quantity: Math.max(0, (item.actual_quantity || 0) - 1) }
       }
       return item
@@ -1021,16 +1100,23 @@ export default function StockOpnamePage() {
                           <th className="p-3">Nama Produk</th>
                           <th className="p-3 text-center">Stok Sistem</th>
                           <th className="p-3 text-center w-36">Stok Fisik Aktual</th>
-                          <th className="p-3 text-right">Selisih</th>
                           <th className="p-3 text-center w-12">Aksi</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 font-semibold text-gray-700">
                         {formItems.map(item => {
                           const diff = item.actual_quantity - item.recorded_quantity
+                          const itemKey = getOpnameKey(item)
                           return (
-                            <tr key={item.product_id} className="hover:bg-gray-50/50">
-                              <td className="p-3 text-gray-900 font-bold">{item.name}</td>
+                            <tr key={itemKey} className="hover:bg-gray-50/50">
+                              <td className="p-3 text-gray-900 font-bold">
+                                <span>{item.name}</span>
+                                {item.variant_id && (
+                                  <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100/70 px-1.5 py-0.2 rounded ml-1.5">
+                                    Varian
+                                  </span>
+                                )}
+                              </td>
                               <td className="p-3 text-center text-gray-500 font-medium">
                                 {item.recorded_quantity}
                               </td>
@@ -1038,7 +1124,7 @@ export default function StockOpnamePage() {
                                 <div className="flex items-center justify-center gap-1">
                                   <button
                                     type="button"
-                                    onClick={() => decrementQty(item.product_id)}
+                                    onClick={() => decrementQty(itemKey)}
                                     className="w-7 h-7 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded cursor-pointer flex items-center justify-center"
                                   >
                                     -
@@ -1050,11 +1136,11 @@ export default function StockOpnamePage() {
                                     required
                                     className="w-16 p-1 border border-gray-300 rounded text-center font-bold text-gray-900 bg-white"
                                     value={item.actual_quantity}
-                                    onChange={e => handleActualQtyChange(item.product_id, e.target.value)}
+                                    onChange={e => handleActualQtyChange(itemKey, e.target.value)}
                                   />
                                   <button
                                     type="button"
-                                    onClick={() => incrementQty(item.product_id)}
+                                    onClick={() => incrementQty(itemKey)}
                                     className="w-7 h-7 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded cursor-pointer flex items-center justify-center"
                                   >
                                     +
@@ -1069,7 +1155,7 @@ export default function StockOpnamePage() {
                               <td className="p-3 text-center">
                                 <button
                                   type="button"
-                                  onClick={() => handleRemoveProduct(item.product_id)}
+                                  onClick={() => handleRemoveProduct(itemKey)}
                                   className="text-gray-400 hover:text-rose-600 p-1 transition-colors cursor-pointer"
                                   title="Hapus dari daftar opname"
                                 >
@@ -1087,15 +1173,21 @@ export default function StockOpnamePage() {
                   <div className="grid grid-cols-1 gap-2.5 md:hidden">
                     {formItems.map(item => {
                       const diff = item.actual_quantity - item.recorded_quantity
+                      const itemKey = getOpnameKey(item)
                       return (
                         <div 
-                          key={item.product_id}
+                          key={itemKey}
                           className="bg-white border border-gray-200 rounded-xl p-3.5 shadow-2xs space-y-3"
                         >
                           <div className="flex justify-between items-start gap-2">
                             <div>
-                              <h5 className="font-extrabold text-xs text-gray-900 leading-snug">
-                                {item.name}
+                              <h5 className="font-extrabold text-xs text-gray-900 leading-snug flex items-center gap-1.5 flex-wrap">
+                                <span>{item.name}</span>
+                                {item.variant_id && (
+                                  <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100/70 px-1.5 py-0.2 rounded">
+                                    Varian
+                                  </span>
+                                )}
                               </h5>
                               <div className="text-[10px] text-gray-500 mt-0.5">
                                 Stok Sistem: <strong>{item.recorded_quantity} pcs</strong>
@@ -1103,7 +1195,7 @@ export default function StockOpnamePage() {
                             </div>
                             <button
                               type="button"
-                              onClick={() => handleRemoveProduct(item.product_id)}
+                              onClick={() => handleRemoveProduct(itemKey)}
                               className="w-8 h-8 rounded-lg bg-gray-50 text-gray-400 hover:text-rose-600 border border-gray-200 flex items-center justify-center text-sm cursor-pointer"
                               title="Hapus item"
                             >
@@ -1116,7 +1208,7 @@ export default function StockOpnamePage() {
                             <div className="flex items-center gap-1.5">
                               <button
                                 type="button"
-                                onClick={() => decrementQty(item.product_id)}
+                                onClick={() => decrementQty(itemKey)}
                                 className="w-10 h-10 bg-slate-100 active:bg-slate-200 text-slate-800 font-extrabold text-lg rounded-lg border border-slate-200 flex items-center justify-center cursor-pointer select-none"
                               >
                                 -
@@ -1129,11 +1221,11 @@ export default function StockOpnamePage() {
                                 required
                                 className="w-16 h-10 border border-gray-300 rounded-lg text-center font-black text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-blue-500/20"
                                 value={item.actual_quantity}
-                                onChange={e => handleActualQtyChange(item.product_id, e.target.value)}
+                                onChange={e => handleActualQtyChange(itemKey, e.target.value)}
                               />
                               <button
                                 type="button"
-                                onClick={() => incrementQty(item.product_id)}
+                                onClick={() => incrementQty(itemKey)}
                                 className="w-10 h-10 bg-blue-50 active:bg-blue-100 text-blue-700 font-extrabold text-lg rounded-lg border border-blue-200 flex items-center justify-center cursor-pointer select-none"
                               >
                                 +
@@ -1152,7 +1244,7 @@ export default function StockOpnamePage() {
                                 </span>
                               )}
                               {diff < 0 && (
-                                <span className="inline-block text-[10px] font-extrabold px-2 py-1 rounded bg-rose-50 text-rose-700 border border-rose-200">
+                                <span className="inline-block text-[10px] font-extrabold px-2 py-1 rounded bg-rose-50 text-rose-600 border border-rose-200">
                                   ▼ {diff} (Susut)
                                 </span>
                               )}
@@ -1241,7 +1333,7 @@ export default function StockOpnamePage() {
                 </button>
               </div>
               <span className="text-[11px] font-bold text-gray-500">
-                {tempSelectedIds.length} / {products.length}
+                {tempSelectedIds.length} / {discreteProducts.length}
               </span>
             </div>
 
@@ -1252,11 +1344,11 @@ export default function StockOpnamePage() {
                 </div>
               ) : (
                 selectorFilteredProducts.map(p => {
-                  const isChecked = tempSelectedIds.includes(p.id)
+                  const isChecked = tempSelectedIds.includes(p.uniqueKey)
                   return (
                     <div
-                      key={p.id}
-                      onClick={() => toggleTempSelect(p.id)}
+                      key={p.uniqueKey}
+                      onClick={() => toggleTempSelect(p.uniqueKey)}
                       className={`p-3 rounded-lg transition-all cursor-pointer flex justify-between items-center my-1 border select-none ${
                         isChecked
                           ? 'bg-blue-50/90 border-blue-200 text-blue-900 shadow-2xs'
@@ -1271,8 +1363,13 @@ export default function StockOpnamePage() {
                           className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer pointer-events-none"
                         />
                         <div>
-                          <div className="font-bold text-xs">
-                            {p.name}
+                          <div className="font-bold text-xs flex items-center gap-1.5 flex-wrap">
+                            <span>{p.name}</span>
+                            {p.isVariant && (
+                              <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100/70 px-1.5 py-0.2 rounded">
+                                Varian
+                              </span>
+                            )}
                           </div>
                           {p.sku && (
                             <div className="text-[10px] text-gray-400 font-mono mt-0.5">
@@ -1287,7 +1384,7 @@ export default function StockOpnamePage() {
                             ? 'bg-blue-100 text-blue-800 border-blue-200'
                             : 'bg-slate-100 text-slate-600 border-slate-200'
                         }`}>
-                          Stok: {p.stock_quantity || 0}
+                          Stok: {p.stockQuantity}
                         </span>
                       </div>
                     </div>
@@ -1465,14 +1562,23 @@ export default function StockOpnamePage() {
                           </thead>
                           <tbody className="divide-y divide-gray-100 font-medium text-gray-700">
                             {selectedOpnameMoves.map(move => {
-                              const prodName = products.find(p => p.id === move.product_id)?.name || 'Produk'
+                              const p = products.find(prod => prod.id === move.product_id)
+                              const v = move.variant_id ? p?.product_variants?.find(varItem => varItem.id === move.variant_id) : null
+                              const prodName = v && p ? `${p.name} - ${v.name}` : (p?.name || 'Produk')
                               const isNegative = move.origin_location_id !== null
                               const qtyDisplay = isNegative ? `-${move.qty}` : `+${move.qty}`
                               const qtyColor = isNegative ? 'text-rose-500' : 'text-emerald-600'
                               
                               return (
                                 <tr key={move.id} className="hover:bg-gray-50/50">
-                                  <td className="p-3 font-bold text-gray-900">{prodName}</td>
+                                  <td className="p-3 font-bold text-gray-900">
+                                    <span>{prodName}</span>
+                                    {move.variant_id && (
+                                      <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100/70 px-1.5 py-0.2 rounded ml-1.5">
+                                        Varian
+                                      </span>
+                                    )}
+                                  </td>
                                   <td className="p-3 text-center">
                                     <span className="text-[9px] font-extrabold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full uppercase">
                                       {move.type}
@@ -1494,7 +1600,9 @@ export default function StockOpnamePage() {
                       {/* Mobile Cards View */}
                       <div className="grid grid-cols-1 gap-2.5 md:hidden">
                         {selectedOpnameMoves.map(move => {
-                          const prodName = products.find(p => p.id === move.product_id)?.name || 'Produk'
+                          const p = products.find(prod => prod.id === move.product_id)
+                          const v = move.variant_id ? p?.product_variants?.find(varItem => varItem.id === move.variant_id) : null
+                          const prodName = v && p ? `${p.name} - ${v.name}` : (p?.name || 'Produk')
                           const isNegative = move.origin_location_id !== null
                           const qtyDisplay = isNegative ? `-${move.qty}` : `+${move.qty}`
                           const qtyColor = isNegative ? 'text-rose-600 bg-rose-50 border-rose-100' : 'text-emerald-700 bg-emerald-50 border-emerald-100'
@@ -1502,7 +1610,14 @@ export default function StockOpnamePage() {
                           return (
                             <div key={move.id} className="bg-white border border-gray-200 rounded-lg p-3 space-y-2">
                               <div className="flex justify-between items-start gap-2">
-                                <div className="font-bold text-xs text-gray-900">{prodName}</div>
+                                <div className="font-bold text-xs text-gray-900 flex items-center gap-1.5 flex-wrap">
+                                  <span>{prodName}</span>
+                                  {move.variant_id && (
+                                    <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100/70 px-1.5 py-0.2 rounded">
+                                      Varian
+                                    </span>
+                                  )}
+                                </div>
                                 <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${qtyColor}`}>
                                   {qtyDisplay}
                                 </span>

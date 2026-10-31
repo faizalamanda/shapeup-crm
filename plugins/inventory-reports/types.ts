@@ -39,6 +39,15 @@ export interface StockMove {
   created_at: string
 }
 
+export interface ProductVariantItem {
+  id: string
+  name: string
+  sku: string | null
+  price: number
+  costPrice: number
+  stockQuantity: number
+}
+
 export interface StockReportItem {
   productId: string
   productName: string
@@ -57,6 +66,7 @@ export interface StockReportItem {
   outgoingItems: number
   quarantineQty?: number
   inTransitQty?: number
+  variants?: ProductVariantItem[]
   locationBreakdown: Record<string, { locationName: string; qty: number; reserved: number }>
 }
 

@@ -344,6 +344,17 @@ export function buildStockReport(products: any[], moves: StockMove[], locations:
       }
     }
 
+    const variants = Array.isArray(prod.product_variants) && prod.product_variants.length > 0
+      ? prod.product_variants.map((v: any) => ({
+          id: v.id,
+          name: v.name,
+          sku: v.sku || null,
+          price: Number(v.price || 0),
+          costPrice: Number(v.cost_price || 0),
+          stockQuantity: Number(v.stock_quantity || 0)
+        }))
+      : undefined
+
     return {
       productId: prod.id,
       productName: prod.name,
@@ -362,6 +373,7 @@ export function buildStockReport(products: any[], moves: StockMove[], locations:
       totalValue,
       incomingShipments,
       outgoingItems,
+      variants,
       locationBreakdown,
     }
   })

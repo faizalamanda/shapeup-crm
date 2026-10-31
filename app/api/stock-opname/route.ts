@@ -5,9 +5,12 @@ import { getApiContext } from '@/lib/apiContext'
 
 interface RequestOpnameItem {
   product_id: string
+  variant_id?: string | null
   name?: string
+  sku?: string | null
   recorded_quantity?: number
   actual_quantity: number | string
+  cost_price?: number
 }
 
 interface NewJournalLine {
@@ -147,8 +150,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Required accounting accounts could not be resolved' }, { status: 500 })
     }
 
-    // Fetch all products in batch for cost price and initial stock fallback
-    const productIds = items.map((i: RequestOpnameItem) => i.product_id)
+    // Fetch all products and variants in batch for cost price and initial stock fallback
+    const productIds = Array.from(new Set(items.map((i: RequestOpnameItem) => i.product_id).filter(Boolean)))
+    const variantIds = Array.from(new Set(items.map((i: RequestOpnameItem) => i.variant_id).filter(Boolean))) as string[]
+
     const { data: products, error: prodErr } = await supabase
       .from('products')
       .select('id, cost_price, stock_quantity')
@@ -159,8 +164,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Failed to fetch products: ${prodErr.message}` }, { status: 500 })
     }
 
+    let variantsData: { id: string; cost_price: number | null; stock_quantity: number | null }[] = []
+    if (variantIds.length > 0) {
+      const { data: vars, error: varErr } = await supabase
+        .from('product_variants')
+        .select('id, cost_price, stock_quantity')
+        .in('id', variantIds)
+      if (!varErr && vars) {
+        variantsData = vars
+      }
+    }
+
     const productMap = new Map(products?.map(p => [p.id, p.cost_price || 0]) || [])
     const productStockMap = new Map(products?.map(p => [p.id, p.stock_quantity || 0]) || [])
+    const variantCostMap = new Map(variantsData.map(v => [v.id, v.cost_price || 0]))
+    const variantStockMap = new Map(variantsData.map(v => [v.id, v.stock_quantity || 0]))
 
     // 1. Create Stock Opname Transaction in Ledger
     const { data: tx, error: txErr } = await supabase
@@ -179,45 +197,60 @@ export async function POST(req: Request) {
 
     const journalLines: NewJournalLine[] = []
 
-    // Fetch true system stock directly from ledger to prevent out-of-sync discrepancies
-    // Using Promise.all per product to bypass Supabase 1,000 row limit and ensure absolute latest row
-    const balancePromises = productIds.map(async (pid: string) => {
-      const { data } = await supabase
+    // Fetch true system stock directly from ledger per discrete item (Variant or Non-Variant)
+    const balancePromises = items.map(async (item: RequestOpnameItem) => {
+      const itemKey = item.variant_id ? `${item.product_id}_${item.variant_id}` : item.product_id
+
+      let query = supabase
         .from('v_stock_moves_ledger')
-        .select('product_id, system_stock')
-        .eq('product_id', pid)
+        .select('product_id, variant_id, system_stock')
+        .eq('product_id', item.product_id)
+
+      if (item.variant_id) {
+        query = query.eq('variant_id', item.variant_id)
+      } else {
+        query = query.is('variant_id', null)
+      }
+
+      const { data } = await query
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
-      
+
+      const fallbackStock = item.variant_id
+        ? (variantStockMap.get(item.variant_id) ?? 0)
+        : (productStockMap.get(item.product_id) ?? 0)
+
       const resolvedSystemStock = data?.system_stock !== undefined && data?.system_stock !== null
         ? data.system_stock
-        : (productStockMap.get(pid) || 0)
-      
-      return { product_id: pid, system_stock: resolvedSystemStock }
+        : fallbackStock
+
+      return { itemKey, system_stock: resolvedSystemStock }
     })
 
     const resolvedBalances = await Promise.all(balancePromises)
 
-    const balanceMap = new Map()
+    const balanceMap = new Map<string, number>()
     for (const row of resolvedBalances) {
-      balanceMap.set(row.product_id, row.system_stock)
+      balanceMap.set(row.itemKey, row.system_stock)
     }
 
     // 2. Loop items to update quantities and construct journal lines
     for (const item of items) {
-      const { product_id, actual_quantity } = item
+      const itemKey = item.variant_id ? `${item.product_id}_${item.variant_id}` : item.product_id
       
       // Override client's recorded_quantity with the Absolute Truth from Ledger
-      const recQty = balanceMap.get(product_id) || 0
+      const recQty = balanceMap.get(itemKey) ?? 0
       item.recorded_quantity = recQty // Mutate item so it gets saved correctly in items_json
       
-      const actQty = parseFloat(actual_quantity) || 0
+      const actQty = parseFloat(String(item.actual_quantity)) || 0
       const diff = actQty - recQty
 
       if (diff === 0) continue
 
-      const costPrice = productMap.get(product_id) || 0
+      const costPrice = item.variant_id
+        ? (variantCostMap.get(item.variant_id) || productMap.get(item.product_id) || 0)
+        : (productMap.get(item.product_id) || 0)
       const adjValue = Math.abs(diff) * costPrice
 
       if (adjValue > 0) {
@@ -303,12 +336,17 @@ export async function POST(req: Request) {
     const stockMoveInputs: StockMoveInput[] = items
       .map((item: RequestOpnameItem) => {
         const diff = (parseFloat(String(item.actual_quantity)) || 0) - (parseFloat(String(item.recorded_quantity)) || 0)
+        const costPrice = item.variant_id
+          ? (variantCostMap.get(item.variant_id) || productMap.get(item.product_id) || 0)
+          : (productMap.get(item.product_id) || 0)
+
         return {
           businessId,
           productId: item.product_id,
+          variantId: item.variant_id || null,
           reference: opname_number || `OPN-${stockOpname.id.slice(0, 6)}`,
           qty: Math.abs(diff),
-          unitCost: productMap.get(item.product_id) || 0,
+          unitCost: costPrice,
           type: 'adjustment' as const,
           sourceType: 'stock_opname' as const,
           sourceId: stockOpname.id,
