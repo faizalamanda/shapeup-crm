@@ -38,8 +38,21 @@ export default function POSSettingsPage() {
   const [selectedApproverIds, setSelectedApproverIds] = useState<Set<string>>(new Set())
   const [resettingUserId, setResettingUserId] = useState<string | null>(null)
 
-  // Active Tab: 'tenders' | 'protection'
-  const [activeTab, setActiveTab] = useState<'tenders' | 'protection'>('tenders')
+  // Active Tab: 'tenders' | 'protection' | 'returns'
+  const [activeTab, setActiveTab] = useState<'tenders' | 'protection' | 'returns'>('tenders')
+
+  // Return Policy State
+  const [returnWindowDays, setReturnWindowDays] = useState(0)
+  const [requireReturnReason, setRequireReturnReason] = useState(true)
+  const [approvalMode, setApprovalMode] = useState<'off' | 'always' | 'above_amount' | 'non_admin'>('off')
+  const [approvalThreshold, setApprovalThreshold] = useState(0)
+  const [restockingFeePct, setRestockingFeePct] = useState(0)
+  const [allowStoreCredit, setAllowStoreCredit] = useState(true)
+  const [defaultDisposition, setDefaultDisposition] = useState<'restock' | 'quarantine' | 'writeoff'>('restock')
+  const [loadingPolicy, setLoadingPolicy] = useState(false)
+  const [savingPolicy, setSavingPolicy] = useState(false)
+  const [policySuccess, setPolicySuccess] = useState(false)
+  const [policyError, setPolicyError] = useState<string | null>(null)
 
   // Tenders State
   const [tenders, setTenders] = useState<any[]>([])
@@ -116,12 +129,67 @@ export default function POSSettingsPage() {
     }
   }, [activeBusinessId])
 
+  const fetchReturnPolicy = useCallback(async () => {
+    if (!activeBusinessId) return
+    setLoadingPolicy(true)
+    setPolicyError(null)
+    try {
+      const res = await fetch('/api/pos/returns/policy')
+      const json = await res.json()
+      if (res.ok && json.policy) {
+        setReturnWindowDays(json.policy.return_window_days || 0)
+        setRequireReturnReason(json.policy.require_reason !== false)
+        setApprovalMode(json.policy.approval_mode || 'off')
+        setApprovalThreshold(Number(json.policy.approval_threshold || 0))
+        setRestockingFeePct(Number(json.policy.restocking_fee_pct || 0))
+        setAllowStoreCredit(json.policy.allow_store_credit !== false)
+        setDefaultDisposition(json.policy.default_disposition || 'restock')
+      }
+    } catch (err: any) {
+      console.error('Fetch return policy error:', err)
+      setPolicyError(err.message || 'Gagal memuat kebijakan retur')
+    } finally {
+      setLoadingPolicy(false)
+    }
+  }, [activeBusinessId])
+
   useEffect(() => {
     if (activeBusinessId) {
       fetchSettings()
       fetchTenders()
+      fetchReturnPolicy()
     }
-  }, [activeBusinessId, fetchSettings, fetchTenders])
+  }, [activeBusinessId, fetchSettings, fetchTenders, fetchReturnPolicy])
+
+  const handleSaveReturnPolicy = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSavingPolicy(true)
+    setPolicySuccess(false)
+    setPolicyError(null)
+    try {
+      const res = await fetch('/api/pos/returns/policy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          return_window_days: Number(returnWindowDays || 0),
+          require_reason: requireReturnReason,
+          approval_mode: approvalMode,
+          approval_threshold: Number(approvalThreshold || 0),
+          restocking_fee_pct: Number(restockingFeePct || 0),
+          allow_store_credit: allowStoreCredit,
+          default_disposition: defaultDisposition
+        })
+      })
+      const json = await res.json()
+      if (!res.ok || !json.success) throw new Error(json.error || 'Gagal menyimpan kebijakan retur')
+      setPolicySuccess(true)
+      setTimeout(() => setPolicySuccess(false), 3500)
+    } catch (err: any) {
+      setPolicyError(err.message || 'Terjadi kesalahan saat menyimpan')
+    } finally {
+      setSavingPolicy(false)
+    }
+  }
 
   const handleToggleApprover = (userId: string, isOwnerUser: boolean) => {
     if (isOwnerUser) return // Owner is always approver
@@ -328,6 +396,18 @@ export default function POSSettingsPage() {
           >
             <span>🛡️</span>
             <span>Proteksi Margin & HPP</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('returns')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+              activeTab === 'returns'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-100 border border-[#E2E2DC]'
+            }`}
+          >
+            <span>↩️</span>
+            <span>Kebijakan Retur & Refund</span>
           </button>
         </div>
 
@@ -761,6 +841,181 @@ export default function POSSettingsPage() {
         </div>
         )}
 
+        {/* ── TAB 3: KEBIJAKAN RETUR & REFUND ── */}
+        {activeTab === 'returns' && (
+          <div className="bg-white border border-[#E2E2DC] rounded-2xl shadow-xs p-6 md:p-8 space-y-6">
+            <div className="flex items-center gap-3 border-b border-[#E2E2DC] pb-5">
+              <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-600 font-extrabold flex items-center justify-center text-2xl">
+                ↩️
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-[#1C1C1A]">Kebijakan Retur & Penukaran Barang POS</h2>
+                <p className="text-xs text-[#6B6B63]">
+                  Atur batas hari pengembalian, otorisasi persetujuan manajer (PIN), biaya restocking, dan saldo kredit toko.
+                </p>
+              </div>
+            </div>
+
+            {policySuccess && (
+              <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-2">
+                <span>✓</span>
+                <span>Kebijakan retur POS berhasil disimpan!</span>
+              </div>
+            )}
+
+            {policyError && (
+              <div className="p-4 bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold rounded-xl flex items-center gap-2">
+                <span>⚠️</span>
+                <span>{policyError}</span>
+              </div>
+            )}
+
+            {loadingPolicy ? (
+              <div className="py-12 text-center text-xs text-slate-400">Memuat kebijakan retur...</div>
+            ) : (
+              <form onSubmit={handleSaveReturnPolicy} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Return Window */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2">
+                    <label className="text-xs font-bold text-slate-800 block">
+                      Batas Masa Retur (Hari)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={returnWindowDays}
+                      onChange={(e) => setReturnWindowDays(Math.max(0, parseInt(e.target.value) || 0))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    />
+                    <p className="text-[11px] text-slate-500">
+                      Masukkan <strong>0</strong> jika retur diperbolehkan kapan saja tanpa batas hari.
+                    </p>
+                  </div>
+
+                  {/* Restocking Fee */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2">
+                    <label className="text-xs font-bold text-slate-800 block">
+                      Biaya Penanganan / Restocking Fee (%)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step="0.5"
+                        value={restockingFeePct}
+                        onChange={(e) => setRestockingFeePct(Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)))}
+                        className="w-full px-3 py-2 pr-8 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                        %
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Potongan otomatis dibebaskan (0%) jika alasan retur adalah cacat produk atau kesalahan toko.
+                    </p>
+                  </div>
+
+                  {/* Approval Mode */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2 md:col-span-2">
+                    <label className="text-xs font-bold text-slate-800 block">
+                      Otorisasi Persetujuan Manajer (PIN Approver)
+                    </label>
+                    <select
+                      value={approvalMode}
+                      onChange={(e) => setApprovalMode(e.target.value as any)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    >
+                      <option value="off">Nonaktif (Kasir dapat memproses retur tanpa PIN Manajer)</option>
+                      <option value="above_amount">Hanya jika nilai retur melebihi batas nominal tertentu</option>
+                      <option value="non_admin">Wajib untuk Staf Kasir biasa (Owner & Admin bebas)</option>
+                      <option value="always">Selalu wajib PIN Manajer untuk setiap transaksi retur</option>
+                    </select>
+
+                    {approvalMode === 'above_amount' && (
+                      <div className="pt-2">
+                        <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                          Batas Nominal Retur (Rp) yang Memerlukan Otorisasi:
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={10000}
+                          value={approvalThreshold}
+                          onChange={(e) => setApprovalThreshold(Math.max(0, parseInt(e.target.value) || 0))}
+                          className="w-full sm:w-64 px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Default Physical Disposition */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2">
+                    <label className="text-xs font-bold text-slate-800 block">
+                      Alokasi Fisik Barang Masuk Default
+                    </label>
+                    <select
+                      value={defaultDisposition}
+                      onChange={(e) => setDefaultDisposition(e.target.value as any)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    >
+                      <option value="restock">🟢 Kembali ke Rak Toko (Siap Jual Langsung)</option>
+                      <option value="quarantine">🟡 Karantina Retur (Perlu Inspeksi QC)</option>
+                      <option value="writeoff">🔴 Buang / Write-Off Langsung (Barang Rusak)</option>
+                    </select>
+                    <p className="text-[11px] text-slate-500">
+                      Dapat diubah per-item oleh kasir saat proses retur berlangsung.
+                    </p>
+                  </div>
+
+                  {/* Checkbox Toggles */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={requireReturnReason}
+                        onChange={(e) => setRequireReturnReason(e.target.checked)}
+                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-xs font-bold text-slate-800">
+                        Wajibkan Kasir Memilih Alasan Retur
+                      </span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={allowStoreCredit}
+                        onChange={(e) => setAllowStoreCredit(e.target.checked)}
+                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-xs font-bold text-slate-800">
+                        Izinkan Saldo Kredit Toko (Store Credit)
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-[#E2E2DC] flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={savingPolicy}
+                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-extrabold shadow-sm hover:shadow transition disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                  >
+                    {savingPolicy ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>Menyimpan Kebijakan...</span>
+                      </>
+                    ) : (
+                      <span>💾 Simpan Kebijakan Retur</span>
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Modal Tambah Metode Pembayaran POS */}

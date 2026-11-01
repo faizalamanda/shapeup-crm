@@ -1,30 +1,30 @@
 import { getApiContext } from '@/lib/apiContext'
+import { quoteReturnService, executeReturnService } from '@/lib/pos/returns/returnsService'
+import { isUuid } from '@/lib/pos/returns/engine'
+import { ReturnError, ReturnRequestItem } from '@/lib/pos/returns/types'
 import { NextResponse } from 'next/server'
-import { syncOrderToLedger } from '@/lib/orderLedger'
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v)
-
+// POST /api/pos/refund - Full Order Cancellation & Refund
+// Migrated onto the unified ShapeUp POS Returns Engine
 export async function POST(req: Request) {
   try {
-    // 1. Auth + Business ID using standard getApiContext()
     const ctx = await getApiContext()
     if (ctx.error) return ctx.error
     const { user, businessId, supabase, supabaseAdmin } = ctx
-    const dbClient = supabaseAdmin || supabase
+    const adminClient = supabaseAdmin || supabase
 
     const body = await req.json().catch(() => null)
     if (!body || !body.order_id) {
       return NextResponse.json({ error: 'Order ID wajib disertakan' }, { status: 400 })
     }
 
-    const { order_id, refund_reason = '' } = body
+    const { order_id, refund_reason = 'Refund Pesanan POS' } = body
     if (!isUuid(order_id)) {
       return NextResponse.json({ error: 'Order ID tidak valid' }, { status: 400 })
     }
 
-    // 2. Fetch the existing order
-    const { data: order, error: orderErr } = await dbClient
+    // 1. Fetch order
+    const { data: order, error: orderErr } = await adminClient
       .from('orders')
       .select('*')
       .eq('id', order_id)
@@ -39,54 +39,96 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Pesanan sudah dibatalkan sebelumnya' }, { status: 400 })
     }
 
-    // 3. Resolve Current Active Shift (for Cross-Shift Drawer Cash Deduction)
-    const { data: activeShift } = await dbClient
-      .from('pos_shifts')
-      .select('id, cashier_name')
+    // Resolve user role
+    const { data: staffRow } = await supabase
+      .from('business_staff')
+      .select('role')
       .eq('business_id', businessId)
-      .eq('user_id', user.id)
-      .eq('status', 'open')
-      .order('opened_at', { ascending: false })
+      .eq('profile_id', user.id)
       .maybeSingle()
 
-    // 4. Update order status to cancelled and payment_status to unpaid
-    const { error: updErr } = await dbClient
+    const role = staffRow?.role || 'owner'
+    const isStaff = Boolean(staffRow)
+
+    const cashierName =
+      user.user_metadata?.full_name ||
+      user.user_metadata?.name ||
+      user.email?.split('@')[0] ||
+      'Kasir'
+
+    // 2. Quote all returnable lines
+    const quoteRes = await quoteReturnService(
+      {
+        businessId,
+        orderId: order_id,
+        items: [], // empty items triggers line loading
+        returnMethod: 'original',
+        reasonCode: 'other',
+        isStaff,
+        role
+      },
+      supabase
+    ).catch(async () => {
+      // If no items provided or empty, load lines manually
+      return null
+    })
+
+    // Prepare full return items from all remaining returnable lines
+    let itemsToReturn: ReturnRequestItem[] = []
+    if (quoteRes && quoteRes.returnableLines.length > 0) {
+      itemsToReturn = quoteRes.returnableLines
+        .filter((l) => l.remainingQty > 0)
+        .map((l) => ({
+          ref: l.ref,
+          qty: l.remainingQty,
+          disposition: 'restock' as const
+        }))
+    }
+
+    // 3. Execute Return if items exist
+    let returnId: string | null = null
+    let returnNumber: string | null = null
+
+    if (itemsToReturn.length > 0) {
+      const execRes = await executeReturnService(
+        {
+          businessId,
+          orderId: order_id,
+          items: itemsToReturn,
+          returnMethod: 'original',
+          cashierId: user.id,
+          cashierName,
+          reasonCode: 'other',
+          reasonNote: refund_reason,
+          isStaff,
+          role
+        },
+        supabase,
+        adminClient
+      )
+      returnId = execRes.returnId
+      returnNumber = execRes.returnNumber
+    }
+
+    // Mark order status explicitly as cancelled
+    await adminClient
       .from('orders')
       .update({
         status: 'cancelled',
-        payment_status: 'unpaid',
-        amount_paid: 0
+        updated_at: new Date().toISOString()
       })
       .eq('id', order_id)
-
-    if (updErr) {
-      return NextResponse.json({ error: 'Gagal memperbarui status pesanan: ' + updErr.message }, { status: 500 })
-    }
-
-    // 5. Delegate Reversal to unified orderLedger service
-    // Pass current_shift_id to ensure physical cash refund is deducted from current active drawer
-    const preloadedOrder = {
-      ...order,
-      status: 'cancelled',
-      payment_status: 'unpaid',
-      amount_paid: 0,
-      current_shift_id: activeShift?.id || null,
-      refund_reason: refund_reason || 'Refund Pesanan POS'
-    }
-
-    const syncRes = await syncOrderToLedger(order_id, dbClient, preloadedOrder)
-    
-    if (!syncRes.success) {
-      return NextResponse.json({ error: 'Gagal melakukan sinkronisasi pembalikan ledger: ' + syncRes.message }, { status: 500 })
-    }
 
     return NextResponse.json({
       success: true,
       message: 'Pesanan berhasil dibatalkan dan direfund.',
-      refunded_shift_id: activeShift?.id || null
-    }, { status: 200 })
-
+      returnId,
+      returnNumber
+    })
   } catch (err: any) {
+    if (err instanceof ReturnError) {
+      return NextResponse.json({ error: err.message, code: err.code }, { status: err.status })
+    }
     console.error('POS Refund Error:', err)
     return NextResponse.json({ error: err.message || 'Internal server error' }, { status: 500 })
   }

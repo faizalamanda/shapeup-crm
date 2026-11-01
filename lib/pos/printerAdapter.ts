@@ -54,6 +54,11 @@ export interface ReceiptData {
   note?: string
   orderNote?: string
   paperSize?: PaperSize
+  receiptTitle?: string
+  returnNumber?: string
+  originalOrderNumber?: string
+  returnReason?: string
+  refundBreakdown?: Array<{ method: string; amount: number }>
 }
 
 export interface PrintResult {
@@ -277,11 +282,22 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
 
     <div class="divider"></div>
 
+    ${receipt.receiptTitle ? `
+    <div style="text-align: center; font-weight: bold; letter-spacing: 0.5px; margin: 4px 0; border: 1px dashed #000; padding: 3px 0;">
+      ${escapeHtml(receipt.receiptTitle)}
+    </div>
+    ` : ''}
+
     <!-- Metadata Transaksi -->
     <div style="margin: 4px 0; font-size: 0.95em;">
+      ${receipt.returnNumber ? `
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-        <span>No. Invoice:</span>
-        <span>${escapeHtml(receipt.orderNumber)}</span>
+        <span>No. Retur:</span>
+        <span>${escapeHtml(receipt.returnNumber)}</span>
+      </div>` : ''}
+      <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+        <span>${receipt.returnNumber ? 'Nota Asal:' : 'No. Invoice:'}</span>
+        <span>${escapeHtml(receipt.originalOrderNumber || receipt.orderNumber)}</span>
       </div>
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Tanggal:</span>
@@ -291,6 +307,11 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
         <span>Kasir:</span>
         <span>${escapeHtml(receipt.cashierName)}</span>
       </div>
+      ${receipt.returnReason ? `
+      <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+        <span>Alasan:</span>
+        <span>${escapeHtml(receipt.returnReason)}</span>
+      </div>` : ''}
       ${receipt.customerName ? `
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Pelanggan:</span>

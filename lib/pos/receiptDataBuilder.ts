@@ -207,3 +207,96 @@ export function buildSampleReceiptData(settings: ReceiptSettings): ReceiptData {
     paperSize: settings.paperSize || '58mm'
   }
 }
+
+/**
+ * Builds dedicated ReceiptData for a POS Sales Return / Exchange document (Credit Note).
+ */
+export function buildReturnReceiptData(
+  order: any,
+  returnDoc: any,
+  options: ReceiptBuildOptions = {}
+): ReceiptData {
+  const businessName = options.businessName || order.business_name || 'ShapeUp Store'
+  const settings = options.settings || getStoredReceiptSettings(businessName)
+  const timezone = options.timezone || DEFAULT_TIMEZONE
+
+  const isExchange = returnDoc.return_kind === 'exchange' || Boolean(returnDoc.exchange_total > 0)
+  const receiptTitle = isExchange ? 'NOTA PENUKARAN BARANG' : 'NOTA RETUR PENJUALAN'
+
+  // Items: returned items + exchange items
+  const receiptItems: ReceiptItem[] = []
+
+  const returnItems = returnDoc.items || returnDoc.pos_return_items || []
+  returnItems.forEach((item: any) => {
+    const rawName = item.name || 'Produk'
+    const variantStr = (item.variant_name || '').trim()
+    const displayName = variantStr && !rawName.toLowerCase().includes(variantStr.toLowerCase())
+      ? `[RETUR] ${rawName} - ${variantStr}`
+      : `[RETUR] ${rawName}`
+
+    receiptItems.push({
+      name: displayName,
+      quantity: Math.abs(Number(item.qty || 1)),
+      price: Number(item.unit_net_price || item.price || 0),
+      subtotal: -Math.abs(Number(item.line_refund || (Number(item.unit_net_price || 0) * Number(item.qty || 1)))),
+      note: item.disposition ? `Kondisi: ${item.disposition}` : undefined
+    })
+  })
+
+  const exchangeItems = returnDoc.exchange_items || []
+  exchangeItems.forEach((ex: any) => {
+    const rawName = ex.name || 'Produk Pengganti'
+    const variantStr = (ex.variantName || ex.variant_name || '').trim()
+    const displayName = variantStr && !rawName.toLowerCase().includes(variantStr.toLowerCase())
+      ? `[PENGGANTI] ${rawName} - ${variantStr}`
+      : `[PENGGANTI] ${rawName}`
+
+    receiptItems.push({
+      name: displayName,
+      quantity: Math.abs(Number(ex.quantity || 1)),
+      price: Number(ex.unitPrice || ex.price || 0),
+      subtotal: Math.abs(Number((ex.unitPrice || ex.price || 0) * (ex.quantity || 1)))
+    })
+  })
+
+  // Customer name
+  let customerName = 'Pelanggan Walk-in'
+  if (order.customer?.name) customerName = order.customer.name
+  else if (order.customer_name) customerName = order.customer_name
+
+  const settlement = returnDoc.settlement_json || {}
+  const refundLines = settlement.refund_lines || []
+  const refundBreakdown = refundLines.map((l: any) => ({
+    method: String(l.label || l.method || 'Refund').toUpperCase(),
+    amount: Number(l.amount || 0)
+  }))
+
+  const dateStr = formatDisplayDate(returnDoc.created_at || new Date(), 'receipt', timezone)
+
+  return {
+    businessName: settings.storeName || businessName,
+    businessAddress: settings.address || undefined,
+    businessPhone: settings.phone || undefined,
+    receiptTitle,
+    returnNumber: returnDoc.return_number,
+    originalOrderNumber: order.order_number || 'POS-ORDER',
+    orderNumber: returnDoc.return_number,
+    returnReason: returnDoc.reason_note
+      ? `${returnDoc.reason_code} (${returnDoc.reason_note})`
+      : returnDoc.reason_code,
+    date: dateStr,
+    cashierName: returnDoc.cashier_name || options.cashierName || 'Kasir',
+    customerName,
+    showItemNumbering: false,
+    items: receiptItems,
+    subtotal: Number(returnDoc.gross_refund || 0),
+    discountTotal: 0,
+    taxTotal: 0,
+    grandTotal: Number(returnDoc.refund_total || returnDoc.credit_value || 0),
+    paymentMethod: refundBreakdown.length > 0 ? refundBreakdown.map((r: any) => r.method).join(', ') : 'REFUND',
+    refundBreakdown,
+    note: settings.footerNote || 'Nota bukti retur / penukaran barang resmi.',
+    paperSize: options.paperSize || settings.paperSize || '58mm'
+  }
+}
+

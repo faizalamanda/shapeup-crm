@@ -8,7 +8,7 @@ import ReceiptPreviewModal from './ReceiptPreviewModal'
 import { getStoredReceiptSettings } from './ReceiptSettingsModal'
 import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
 import CashPaymentModal, { type PaymentResult } from './CashPaymentModal'
-import ExchangeModal from './ExchangeModal'
+import POSReturnModal from './POSReturnModal'
 import { supabase } from '@/lib/supabase'
 
 type Props = {
@@ -60,7 +60,7 @@ export default function POSOrderDetailModal({
 
   // Universal Payment Modal State for Paying Remaining Balance
   const [isPayModalOpen, setIsPayModalOpen] = useState(false)
-  const [isExchangeModalOpen, setIsExchangeModalOpen] = useState(false)
+  const [isReturnModalOpen, setIsReturnModalOpen] = useState(false)
 
   // Void Individual Payment State
   const [processingVoidId, setProcessingVoidId] = useState<string | null>(null)
@@ -69,7 +69,7 @@ export default function POSOrderDetailModal({
   useEffect(() => {
     setCurrentOrder(order)
     setIsPayModalOpen(false)
-    setIsExchangeModalOpen(false)
+    setIsReturnModalOpen(false)
     setRefundError(null)
   }, [order])
 
@@ -442,25 +442,14 @@ export default function POSOrderDetailModal({
           <div className="flex items-center justify-between w-full flex-wrap gap-2">
             <div className="flex items-center gap-2 flex-wrap">
               {isCompleted && !isCancelled && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setIsExchangeModalOpen(true)}
-                    className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-xs border border-indigo-200 transition flex items-center gap-1.5"
-                    title="Tukar ukuran atau model produk dengan nota ini"
-                  >
-                    <span>🔄 Tukar Barang</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={processingRefund}
-                    onClick={handleRefund}
-                    className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs border border-rose-200 transition disabled:opacity-50 flex items-center gap-1"
-                    title="Batalkan transaksi ini dan kembalikan uang riil yang sudah dibayar ke pelanggan"
-                  >
-                    <span>{processingRefund ? 'Memproses Refund...' : '↩️ Refund Pesanan'}</span>
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => setIsReturnModalOpen(true)}
+                  className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-xs border border-indigo-200 transition flex items-center gap-1.5 shadow-2xs"
+                  title="Retur pengembalian dana atau tukar barang untuk pesanan ini"
+                >
+                  <span>↩️ Retur / Tukar Barang</span>
+                </button>
               )}
             </div>
 
@@ -558,6 +547,18 @@ export default function POSOrderDetailModal({
                   <span className={outstanding > 0 ? 'text-rose-600 font-bold' : 'text-emerald-600 font-bold'}>
                     {outstanding > 0 ? `Sisa: ${formatIDR(outstanding)}` : 'Lunas'}
                   </span>
+                  {currentOrder?.return_status === 'partial' && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 font-bold text-[10px] ml-1">
+                      <span>↩️</span>
+                      <span>Sebagian Diretur</span>
+                    </span>
+                  )}
+                  {currentOrder?.return_status === 'full' && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 font-bold text-[10px] ml-1">
+                      <span>↩️</span>
+                      <span>Semua Diretur</span>
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -835,16 +836,17 @@ export default function POSOrderDetailModal({
         />
       )}
 
-      {/* Modal Tukar Barang (Exchange Ticket) */}
-      {isExchangeModalOpen && currentOrder && (
-        <ExchangeModal
-          isOpen={isExchangeModalOpen}
-          onClose={() => setIsExchangeModalOpen(false)}
+      {/* Modal Retur & Tukar Barang (Unified POS Returns Engine) */}
+      {isReturnModalOpen && currentOrder && (
+        <POSReturnModal
+          isOpen={isReturnModalOpen}
+          onClose={() => setIsReturnModalOpen(false)}
           order={currentOrder}
           businessId={currentOrder.business_id}
           timezone={timezone}
           cashierName={cashierName}
-          onExchangeSuccess={() => {
+          onSuccess={() => {
+            setIsReturnModalOpen(false)
             if (onOrderUpdated) onOrderUpdated()
             onClose()
           }}
