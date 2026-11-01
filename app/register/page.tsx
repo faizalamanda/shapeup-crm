@@ -49,10 +49,13 @@ export default function Register() {
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
+  const [requiresConfirmation, setRequiresConfirmation] = useState(false)
   const router = useRouter()
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -61,20 +64,41 @@ export default function Register() {
     setErrorMsg('')
     setSuccessMsg('')
 
+    if (password.length < 8) {
+      setErrorMsg('Password minimal harus 8 karakter.')
+      setLoading(false)
+      return
+    }
+
+    if (password !== confirmPassword) {
+      setErrorMsg('Konfirmasi password tidak cocok dengan password yang dimasukkan.')
+      setLoading(false)
+      return
+    }
+
     const formData = new FormData()
     formData.append('email', email)
     formData.append('password', password)
+    formData.append('confirmPassword', confirmPassword)
     formData.append('fullName', fullName)
 
     const res = await registerAction(formData)
 
     if (res?.error) {
       setErrorMsg(res.error)
+      setLoading(false)
     } else {
-      setSuccessMsg('Akun berhasil dibuat! Cek email Anda untuk konfirmasi, lalu masuk ke dashboard.')
-      setTimeout(() => router.push('/login'), 3000)
+      if (res?.requiresConfirmation) {
+        setRequiresConfirmation(true)
+        setSuccessMsg('Akun berhasil dibuat! Tautan verifikasi telah dikirim ke email Anda. Silakan cek kotak masuk atau folder spam Anda dan klik tautan konfirmasi sebelum masuk.')
+        // Give user 6 seconds to read confirmation instructions before redirect
+        setTimeout(() => router.push('/login'), 6000)
+      } else {
+        setSuccessMsg('Akun berhasil dibuat! Mengalihkan ke dashboard...')
+        setTimeout(() => router.push('/login'), 2000)
+      }
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (
@@ -356,6 +380,11 @@ export default function Register() {
               <input
                 type="email"
                 id="email"
+                name="email"
+                autoComplete="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 placeholder="nama@bisnis.com"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
@@ -391,6 +420,11 @@ export default function Register() {
                 <input
                   type={showPassword ? 'text' : 'password'}
                   id="password"
+                  name="password"
+                  autoComplete="new-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   placeholder="Minimal 8 karakter"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
@@ -461,6 +495,93 @@ export default function Register() {
               </div>
             )}
 
+            {/* Confirm Password */}
+            <div>
+              <label style={{
+                display: 'block', fontSize: 12, fontWeight: 700,
+                color: 'var(--su-text)', marginBottom: 6, letterSpacing: '0.02em',
+              }}>
+                Konfirmasi Password
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  autoComplete="new-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  placeholder="Ulangi password di atas"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  required
+                  style={{
+                    width: '100%', padding: '12px 48px 12px 16px',
+                    background: '#FAFAF8',
+                    border: `1.5px solid ${confirmPassword.length > 0 ? (confirmPassword === password ? 'var(--su-success, #16A34A)' : 'var(--su-danger, #DC2626)') : 'var(--su-border)'}`,
+                    borderRadius: 10, fontSize: 14, fontWeight: 500,
+                    color: 'var(--su-text)', outline: 'none',
+                    transition: 'border-color 0.15s, box-shadow 0.15s',
+                  }}
+                  onFocus={e => {
+                    e.target.style.borderColor = confirmPassword.length > 0 && confirmPassword === password ? '#16A34A' : 'var(--su-primary)'
+                    e.target.style.boxShadow = '0 0 0 3px rgba(37,99,235,0.08)'
+                  }}
+                  onBlur={e => {
+                    e.target.style.borderColor = confirmPassword.length > 0 ? (confirmPassword === password ? '#16A34A' : '#DC2626') : 'var(--su-border)'
+                    e.target.style.boxShadow = 'none'
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  style={{
+                    position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'var(--su-text-faint)', padding: 4,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                  tabIndex={-1}
+                  aria-label={showConfirmPassword ? 'Sembunyikan konfirmasi password' : 'Tampilkan konfirmasi password'}
+                >
+                  {showConfirmPassword ? (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                      <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+
+              {/* Real-time Match Indicator */}
+              {confirmPassword.length > 0 && (
+                <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600 }}>
+                  {confirmPassword === password ? (
+                    <span style={{ color: '#16A34A', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
+                      Password cocok
+                    </span>
+                  ) : (
+                    <span style={{ color: '#DC2626', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                      Konfirmasi password tidak cocok
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Error */}
             {errorMsg && (
               <div style={{
@@ -481,17 +602,45 @@ export default function Register() {
             {/* Success */}
             {successMsg && (
               <div style={{
-                padding: '12px 16px', borderRadius: 10,
-                background: 'var(--su-success-light)',
-                border: '1px solid rgba(22,163,74,0.15)',
-                display: 'flex', alignItems: 'flex-start', gap: 10,
+                padding: '16px', borderRadius: 12,
+                background: '#F0FDF4',
+                border: '1.5px solid #86EFAC',
+                display: 'flex', flexDirection: 'column', gap: 8,
               }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
-                  <polyline points="20 6 9 17 4 12"/>
-                </svg>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--su-success)', lineHeight: 1.5 }}>
-                  {successMsg}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 2 }}>
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                  </svg>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#166534', marginBottom: 4 }}>
+                      Pendaftaran Berhasil!
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 500, color: '#15803D', lineHeight: 1.5 }}>
+                      {successMsg}
+                    </span>
+                  </div>
+                </div>
+                {requiresConfirmation && (
+                  <button
+                    type="button"
+                    onClick={() => router.push('/login')}
+                    style={{
+                      marginTop: 6,
+                      padding: '8px 14px',
+                      background: '#16A34A',
+                      color: '#fff',
+                      borderRadius: 8,
+                      border: 'none',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      alignSelf: 'flex-start',
+                    }}
+                  >
+                    Ke Halaman Masuk Sekarang →
+                  </button>
+                )}
               </div>
             )}
 
