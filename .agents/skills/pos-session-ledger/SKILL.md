@@ -612,3 +612,126 @@ Untuk mentransformasi antarmuka pembayaran kasir dari form input statis menjadi 
 - Enter atau Spasi mengeksekusi validasi transaksi.
 - Pintasan `Alt + 1..n` mengoperasikan saklar Toggle metode pembayaran secara instan tanpa menggunakan mouse.
 
+---
+
+## 17. Enterprise POS Returns, Granular Exchanges & Contra-Revenue Accounting Engine
+
+Untuk menghadirkan alur retur, tukar guling (exchange), dan penerbitan nota kredit (*Credit Note*) kelas enterprise setara Square, Shopify POS, dan Lightspeed Retail, sistem menerapkan mesin retur terdesentralisasi berbasis event sourcing dengan integritas akuntansi *contra-revenue*:
+
+```
+                               ┌─────────────────────────────────────────────────────────────┐
+                               │                    PELANGGAN RETUR / TUKAR                  │
+                               └──────────────────────────────┬──────────────────────────────┘
+                                                              │
+                                            [ Validasi Kebijakan Toko & Sisa Qty ]
+                                            [ Manager PIN Gate jika Melebihi Batas ]
+                                                              ▼
+                               ┌─────────────────────────────────────────────────────────────┐
+                               │       Kalkulasi Kuotasi Retur Adil (Prorated Discount)      │
+                               │           Gross Price - Line Discount - Order Prorated      │
+                               └──────────────────────────────┬──────────────────────────────┘
+                                                              │
+                    ┌─────────────────────────────────────────┴─────────────────────────────────────────┐
+                    ▼                                                                                   ▼
+      [ DISPOSISI BARANG FISIK ]                                                          [ SETTLEMENT RESOLUTION ]
+  ┌───────────────────────────────────┐                                               ┌───────────────────────────────────┐
+  │ • Restock (Rak Display / Main)    │                                               │ • Refund Kas (Laci / Bank)        │
+  │ • Karantina (Inspeksi Mutu)       │                                               │ • Store Credit (Buku Besar Saldo) │
+  │ • Buang / Rusak (Beban Kerugian)  │                                               │ • Tukar Barang (Exchange Catalog) │
+  └─────────────────┬─────────────────┘                                               └─────────────────┬─────────────────┘
+                    │                                                                                   │
+                    ▼                                                                                   ▼
+      [ Mutasi Stok (stock_moves) ]                                                       [ Journal Entries (Contra-Rev) ]
+      - status: done, bucket sesuai                                                       - Dr. 401100 Potongan & Retur
+      - trigger perbarui rak/varian                                                       - Cr. 101xxx / 203xxx (Refund)
+                                                                                          - Dr. 104000 Persediaan / Cr. HPP
+```
+
+### 17.1 Granular Partial Returns & Single Source of Truth (`pos_returns`, `pos_return_items`)
+- **Pemisahan dari Void Nota Penuh:**
+  - Pembatalan nota penuh (*order void/refund*) membatalkan seluruh pesanan sekaligus.
+  - Retur granular memungkinkan pengembalian **sebagian item** ($1$ dari $5$ item), kuantitas parsial ($2$ dari $10$ pcs), serta alasan retur independen per baris.
+- **Append-Only Event Sourcing:**
+  - Setiap transaksi retur menghasilkan header `pos_returns` baru dengan penomoran unik format `RET-YYMMDD-XXXX` (atau Credit Note `CN-YYMMDD-XXXX`).
+  - Rincian item yang diretur dicatat dalam `pos_return_items` yang mengunci harga satuan asli, diskon prorata, nominal bersih yang dikembalikan, kuantitas retur, kondisi barang (*disposition*), dan alasan retur.
+  - Sisa kuantitas barang yang dapat diretur (`returnable_qty`) dihitung dinamis melalui view `v_pos_returnable_items` (`original_qty - SUM(returned_qty)`). Item yang kuantitas retur kumulatifnya sudah mencapai kuantitas beli awal otomatis terkunci (*disabled*).
+
+### 17.2 Triad Disposisi Fisik Barang (`restock`, `quarantine`, `discard`)
+Setiap baris barang yang diretur wajib ditentukan disposisi fisiknya:
+1. **Restock (`restock` $\rightarrow$ Rak Toko / Gudang Utama):**
+   - Barang dalam kondisi prima dan layak jual kembali.
+   - Menginsert mutasi `stock_moves` dengan `bucket = 'main'`, `type = 'receipt'`, `status = 'done'`.
+   - Trigger database `sync_product_stock_from_moves` otomatis menambah stok fisik rak pajangan (`products.stock_quantity` dan `product_variants.stock_quantity`).
+2. **Karantina (`quarantine` $\rightarrow$ Gudang Karantina & Mutu):**
+   - Barang membutuhkan inspeksi mutu lebih lanjut atau klaim garansi vendor.
+   - Menginsert mutasi `stock_moves` dengan `bucket = 'quarantine'`, `type = 'receipt'`, `status = 'done'`.
+   - Stok karantina dicatat terisolasi tanpa mencemari stok siap jual di rak toko utama.
+3. **Pemusnahan / Rusak Total (`discard` $\rightarrow$ Beban Kerusakan):**
+   - Barang rusak parah, kedaluwarsa, atau pecah dan tidak dapat dijual lagi.
+   - Tidak menambah stok rak display. Nilai HPP barang langsung diakui sebagai beban kerugian barang rusak/kedaluwarsa.
+
+### 17.3 Matematika Diskon Prorata Adil (*Fair Prorated Refund Mathematics*)
+Untuk mencegah pengembalian dana yang melebihi jumlah uang yang dibayarkan pelanggan saat pembelian awal dengan diskon global/kupon, harga bersih pengembalian per unit dihitung secara matematis via `lib/pos/returns/engine.ts`:
+
+$$\text{Line Gross} = \text{Unit Price} \times \text{Item Qty}$$
+$$\text{Line Discount} = \text{Item Discount}$$
+$$\text{Order Prorated Discount} = \text{Global Discount} \times \left( \frac{\text{Line Gross} - \text{Line Discount}}{\sum (\text{Line Gross} - \text{Line Discount})} \right)$$
+$$\text{Net Return Per Unit} = \frac{(\text{Line Gross} - \text{Line Discount}) - \text{Order Prorated Discount}}{\text{Item Qty}}$$
+
+Kasir dan pelanggan dijamin menerima nominal pengembalian yang 100% adil dan presisi hingga pembulatan rupiah terdekat tanpa risiko kebocoran kas toko.
+
+### 17.4 Biaya Restocking & Pengecualian Cacat (*Restocking Fee & Defective Waiver*)
+- Kebijakan toko (`pos_return_policies`) dapat menerapkan biaya penanganan (*restocking fee*) berupa persentase (misal $10\%$) atau nominal tetap.
+- **Defective Waiver:** Jika alasan retur pelanggan adalah barang rusak/cacat pabrik (`reason === 'defective'`), sistem secara otomatis **menghapuskan biaya restocking ($0\%$)** sebagai bentuk perlindungan hak konsumen.
+- Biaya restocking diakui sebagai pendapatan lain-lain toko (`403000 Pendapatan Lain-lain` atau `401100 Potongan Retur`).
+
+### 17.5 Tukar Guling (Granular Exchanges) & Anti-Unsecured Debt Standard
+- Pelanggan dapat menukar barang lama dengan barang pengganti dari katalog toko secara langsung dalam 1 sesi modal.
+- **Net Balance Formulation:**
+  $$\text{Net Balance} = \text{Total Replacement Items Value} - \text{Total Refund Value}$$
+- **Aturan Selisih:**
+  1. **Tukar Tambah / Nilai Naik ($\text{Net Balance} > 0$):**
+     Pelanggan wajib membayar selisih kekurangan di kasir saat itu juga. Transaksi mewajibkan input baris tender pembayaran tunai/non-tunai yang valid. **DILARANG KERAS** membiarkan nota tertutup dalam status piutang tanpa jaminan (*unsecured debt*).
+  2. **Tukar Turun / Nilai Turun ($\text{Net Balance} < 0$):**
+     Sisa kelebihan dana dikembalikan kepada pelanggan melalui pengembalian kas (Laci/Bank) atau diterbitkan sebagai Saldo Kredit Toko (*Store Credit*).
+  3. **Tukar Pas ($\text{Net Balance} = 0$):**
+     Transaksi selesai tanpa pertukaran dana. Mutasi stok barang lama masuk dan barang baru keluar dicatat secara berpasangan.
+
+### 17.6 Buku Besar Saldo Kredit Toko (*Store Credit Ledger*)
+- Jika pelanggan memilih pengembalian dana berupa Saldo Kredit Toko (*Store Credit* / Nota Kredit Gantung):
+  - Sistem membuatkan atau mengaitkan ke akun saldo pelanggan di `customer_store_credits` (`customer_id`, `balance`).
+  - Mutasi penambahan saldo dicatat di `store_credit_ledger` (`entry_type = 'credit'`, `amount`, `source_type = 'pos_return'`).
+  - Secara akuntansi, dicatat sebagai Liabilitas Deposit Pelanggan (`203000 Uang Muka / Deposit Pelanggan` Cr).
+- **Penebusan Saldo Aman:** Saat saldo kredit digunakan kembali pada transaksi belanja berikutnya, fungsi penebusan mengunci baris pelanggan dengan PostgreSQL `FOR UPDATE` untuk mencegah *race condition* dan pembelanjaan ganda (*double spending*).
+
+### 17.7 Standar Jurnal Akuntansi Kontra-Pendapatan (*Contra-Revenue Accounting Identity*)
+Pengembalian barang retur **DILARANG KERAS** membalikkan (*overwrite*) atau mengedit transaksi penjualan awal `401000`. Sesuai Standar Akuntansi Keuangan (SAK/GAAP):
+- **Jurnal Retur Penjualan (Header Retur):**
+  - **Debit:** `401100 Potongan & Retur Penjualan` (Akun Kontra-Pendapatan) $\rightarrow$ Sebesar nilai bersih barang yang diretur.
+  - **Debit/Kredit:** `103000 Piutang Usaha` $\rightarrow$ Menyeimbangkan pembalikan piutang jika pesanan awal belum lunas.
+  - **Kredit:** `101000 Kas Laci` / `101200 Bank` (jika refund kas) ATAU `203000 Deposit Pelanggan` (jika Store Credit).
+  - **Kredit:** `403000 Pendapatan Restocking Fee` (jika ada potongan biaya penanganan).
+- **Jurnal Pemulihan Persediaan & HPP (Stok Layak Jual):**
+  - Untuk barang yang direstock ke rak toko (`bucket = 'main'`):
+    - **Debit:** `104000 Persediaan Barang Dagang` $\rightarrow$ Sebesar HPP asli barang.
+    - **Kredit:** `500000 Beban Pokok Penjualan (HPP)` $\rightarrow$ Sebesar HPP asli barang.
+
+### 17.8 Otorisasi Manager PIN Gate (`pos_approver_pins`) & Policy Engine
+- Konfigurasi kebijakan toko (`pos_return_policies`) tersimpan per unit bisnis (`window_days`, `require_receipt`, `manager_pin_required_for_defective`, `restocking_fee_percent`, dll).
+- Jika transaksi retur melanggar batas (misal: melewati batas hari retur, retur item non-returnable, atau retur bernilai di atas plafon kasir), sistem memunculkan pop-up otorisasi manajer secara modular (`ManagerPinModal.tsx`).
+- Otorisasi divalidasi ke tabel `pos_approver_pins` yang terenkripsi dan terlindung dari serangan *brute force* (lockout otomatis setelah 5 kegagalan).
+
+### 17.9 Skema Varian PostgreSQL: Standar Kolom `name` (Anti-Crash 42703)
+- Pada tabel `product_variants` di Supabase/PostgreSQL, kolom nama varian adalah **`name`** (bukan `title`).
+- Memanggil `select('..., product_variants(id, title, ...)')` menyebabkan *fatal database error* `PostgreSQL 42703 (column product_variants_1.title does not exist)`.
+- **Standar Wajib:** Kueri relasi varian wajib memanggil `product_variants(id, name, price, stock_quantity)` dengan fallback JavaScript `v.name || v.title`.
+
+### 17.10 Zero-Latency UI Extraction & Seamless Stepper Experience
+- **Instant Client-Side Extraction:**
+  Saat modal retur dibuka (`POSReturnModal.tsx`), komponen **TIDAK MENUNGGU** roundtrip server untuk menampilkan daftar produk. Sistem mengekstrak `order.items_json` secara sinkronus pada saat *mount* (`computeReturnableLines`), sehingga antarmuka kasir terbuka dalam **0ms** tanpa blank screen.
+- **Whole-Row Click Target & Checkbox Integration:**
+  Setiap baris barang belanjaan dapat diklik di seluruh area baris untuk mengaktifkan/menonaktifkan seleksi retur, dilengkapi tombol stepper kuantitas yang intuitif.
+- **Thermal Credit Note Auto-Print:**
+  Setelah retur disetujui, kasir dapat langsung mencetak Nota Kredit (Credit Note) berformat ESC/POS atau HTML via printer thermal Bluetooth / Desktop.
+
+

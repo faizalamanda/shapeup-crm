@@ -10,6 +10,7 @@ import {
   RETURN_REASONS,
   ReturnReasonCode
 } from '@/lib/pos/returns/types'
+import { computeReturnableLines } from '@/lib/pos/returns/engine'
 import { getPrinterAdapter } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from '@/lib/pos/receiptSettings'
 import { buildReturnReceiptData } from '@/lib/pos/receiptDataBuilder'
@@ -79,6 +80,7 @@ export default function POSReturnModal({
 
   // Step 3 (Exchange): Replacement basket & catalog search
   const [catalog, setCatalog] = useState<any[]>([])
+  const [loadingCatalog, setLoadingCatalog] = useState(false)
   const [productSearch, setProductSearch] = useState('')
   const [exchangeBasket, setExchangeBasket] = useState<ExchangeItemState[]>([])
 
@@ -121,21 +123,12 @@ export default function POSReturnModal({
     setCompletedReturn(null)
     setApproverPin('')
 
-    // Load returnable lines from preview quote
-    setLoadingLines(true)
-    fetch('/api/pos/returns', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'quote',
-        order_id: order.id,
-        items: [] // empty to load initial returnables
-      })
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.returnableLines) {
-          const lines: ReturnLineState[] = data.returnableLines.map((l: any) => ({
+    // 1. Synchronously populate lines from order prop immediately (0ms latency)!
+    try {
+      const { lines: initialReturnables } = computeReturnableLines(order, [])
+      if (initialReturnables.length > 0) {
+        setReturnLines(
+          initialReturnables.map((l) => ({
             ref: l.ref,
             productId: l.productId,
             variantId: l.variantId,
@@ -148,13 +141,57 @@ export default function POSReturnModal({
             selectedQty: 0,
             disposition: 'restock'
           }))
-          setReturnLines(lines)
+        )
+        setLoadingLines(false)
+      } else {
+        setLoadingLines(true)
+      }
+    } catch (err) {
+      console.warn('Sync order parse error:', err)
+      setLoadingLines(true)
+    }
+
+    // 2. Fetch server-side preview quote to check previous returns & business policy
+    fetch('/api/pos/returns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'quote',
+        order_id: order.id,
+        items: [] // empty to load initial returnables
+      })
+    })
+      .then(async (res) => {
+        const data = await res.json()
+        if (!res.ok) {
+          console.warn('Quote preview warning:', data.error)
+          return
+        }
+        if (data.returnableLines && data.returnableLines.length > 0) {
+          setReturnLines((prev) => {
+            const prevMap = new Map(prev.map((p) => [p.ref, p]))
+            return data.returnableLines.map((l: any) => {
+              const existing = prevMap.get(l.ref)
+              return {
+                ref: l.ref,
+                productId: l.productId,
+                variantId: l.variantId,
+                name: l.name,
+                variantName: l.variantName,
+                quantity: l.quantity,
+                remainingQty: l.remainingQty,
+                lineNet: l.lineNet,
+                unitPrice: Math.round(l.remainingQty > 0 ? l.lineNet / l.remainingQty : l.lineNet / l.quantity),
+                selectedQty: existing ? Math.min(existing.selectedQty, l.remainingQty) : 0,
+                disposition: existing?.disposition || 'restock'
+              }
+            })
+          })
         }
         if (data.policy) setPolicy(data.policy)
       })
       .catch((err) => {
-        console.error('Failed to load returnable lines:', err)
-        setErrorMsg('Gagal memuat daftar produk yang dapat diretur.')
+        console.error('Failed to load returnable lines from server:', err)
       })
       .finally(() => setLoadingLines(false))
 
@@ -172,15 +209,37 @@ export default function POSReturnModal({
       .catch(() => {})
 
     // Load products catalog for exchange replacement
-    supabase
-      .from('products')
-      .select('id, name, price, stock_quantity, stock_type, product_variants(id, title, price, stock_quantity)')
-      .eq('business_id', businessId)
-      .order('name', { ascending: true })
-      .limit(200)
-      .then(({ data }) => {
-        if (data) setCatalog(data)
-      })
+    async function loadCatalog() {
+      setLoadingCatalog(true)
+      try {
+        const { data, error } = await supabase
+          .from('products')
+          .select('id, name, price, stock_quantity, stock_type, product_variants(id, name, price, stock_quantity)')
+          .eq('business_id', businessId)
+          .order('name', { ascending: true })
+          .limit(200)
+
+        if (!error && data) {
+          setCatalog(data)
+        } else {
+          console.warn('Query with product_variants failed, retrying standard products:', error?.message)
+          const { data: fallbackData } = await supabase
+            .from('products')
+            .select('id, name, price, stock_quantity, stock_type')
+            .eq('business_id', businessId)
+            .order('name', { ascending: true })
+            .limit(200)
+
+          if (fallbackData) setCatalog(fallbackData)
+        }
+      } catch (catErr) {
+        console.warn('Catalog load error:', catErr)
+      } finally {
+        setLoadingCatalog(false)
+      }
+    }
+
+    loadCatalog()
   }, [isOpen, order?.id, businessId])
 
   // Filtered return request items
@@ -283,7 +342,7 @@ export default function POSReturnModal({
   // Add replacement item
   const addExchangeItem = (prod: any, variant?: any) => {
     const vId = variant ? variant.id : null
-    const vName = variant ? variant.title : null
+    const vName = variant ? (variant.name || variant.title) : null
     const price = variant ? Number(variant.price || prod.price) : Number(prod.price)
 
     setExchangeBasket((prev) => {
@@ -570,23 +629,47 @@ export default function POSReturnModal({
                     return (
                       <div
                         key={line.ref}
-                        className={`py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
-                          isSelected ? 'bg-indigo-50/40 -mx-2 px-2 rounded-xl' : ''
+                        className={`py-3.5 px-3 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors border ${
+                          isSelected ? 'bg-indigo-50/50 border-indigo-200 shadow-2xs' : 'border-slate-100 hover:bg-slate-50/60'
                         }`}
                       >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-xs text-slate-800 truncate">{line.name}</span>
-                            {line.variantName && (
-                              <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
-                                {line.variantName}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-500">
-                            <span>Sisa: <strong className="text-slate-700">{line.remainingQty}</strong> unit</span>
-                            <span>•</span>
-                            <span>Net Unit: <strong>{formatIDR(line.unitPrice)}</strong></span>
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={line.remainingQty <= 0}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                updateQty(line.ref, line.selectedQty > 0 ? 0 : Math.min(1, line.remainingQty))
+                              } else {
+                                updateQty(line.ref, -line.selectedQty)
+                              }
+                            }}
+                            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer shrink-0"
+                          />
+                          <div
+                            className="flex-1 min-w-0 cursor-pointer select-none"
+                            onClick={() => {
+                              if (line.selectedQty === 0 && line.remainingQty > 0) {
+                                updateQty(line.ref, 1)
+                              } else if (line.selectedQty > 0) {
+                                updateQty(line.ref, -line.selectedQty)
+                              }
+                            }}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-xs text-slate-800 truncate">{line.name}</span>
+                              {line.variantName && (
+                                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-medium shrink-0">
+                                  {line.variantName}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-500">
+                              <span>Sisa: <strong className="text-slate-700">{line.remainingQty}</strong> unit</span>
+                              <span>•</span>
+                              <span>Net Unit: <strong>{formatIDR(line.unitPrice)}</strong></span>
+                            </div>
                           </div>
                         </div>
 
@@ -730,40 +813,48 @@ export default function POSReturnModal({
                     placeholder="🔍 Cari nama produk pengganti..."
                     className="w-full py-2 px-3 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
-                  <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-xl">
-                    {filteredCatalog.map((prod) => {
-                      const hasVariants = prod.product_variants && prod.product_variants.length > 0
-                      return (
-                        <div key={prod.id} className="p-2.5 flex items-center justify-between text-xs hover:bg-slate-50">
-                          <div>
-                            <span className="font-semibold text-slate-800 block">{prod.name}</span>
-                            <span className="text-[10px] text-slate-500">{formatIDR(prod.price)}</span>
-                          </div>
-                          {hasVariants ? (
-                            <div className="flex flex-wrap gap-1">
-                              {prod.product_variants.map((v: any) => (
-                                <button
-                                  key={v.id}
-                                  type="button"
-                                  onClick={() => addExchangeItem(prod, v)}
-                                  className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 font-bold rounded hover:bg-indigo-100"
-                                >
-                                  + {v.title}
-                                </button>
-                              ))}
+                  <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-xl">
+                    {loadingCatalog ? (
+                      <div className="p-4 text-center text-xs text-slate-400 font-medium">Memuat katalog produk...</div>
+                    ) : filteredCatalog.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-slate-400">
+                        Tidak ada produk yang cocok{productSearch ? ` dengan "${productSearch}"` : ''}
+                      </div>
+                    ) : (
+                      filteredCatalog.map((prod) => {
+                        const hasVariants = prod.product_variants && prod.product_variants.length > 0
+                        return (
+                          <div key={prod.id} className="p-2.5 flex items-center justify-between text-xs hover:bg-slate-50">
+                            <div>
+                              <span className="font-semibold text-slate-800 block">{prod.name}</span>
+                              <span className="text-[10px] text-slate-500">{formatIDR(prod.price)}</span>
                             </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => addExchangeItem(prod)}
-                              className="text-xs px-3 py-1 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 shadow-2xs"
-                            >
-                              + Pilih
-                            </button>
-                          )}
-                        </div>
-                      )
-                    })}
+                            {hasVariants ? (
+                              <div className="flex flex-wrap gap-1">
+                                {prod.product_variants.map((v: any) => (
+                                  <button
+                                    key={v.id}
+                                    type="button"
+                                    onClick={() => addExchangeItem(prod, v)}
+                                    className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 font-bold rounded hover:bg-indigo-100"
+                                  >
+                                    + {v.name || v.title || 'Varian'}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => addExchangeItem(prod)}
+                                className="text-xs px-3 py-1 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 shadow-2xs"
+                              >
+                                + Pilih
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })
+                    )}
                   </div>
                 </div>
               </div>

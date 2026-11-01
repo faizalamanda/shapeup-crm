@@ -57,7 +57,8 @@ export interface ParsedOrder {
   legacyReturned: Map<string, number>
 }
 
-function parseItemsJson(raw: unknown): any[] {
+function parseItemsJson(order: any): any[] {
+  const raw = order?.items_json ?? order?.raw_source_data?.line_items ?? order?.line_items
   if (Array.isArray(raw)) return raw
   if (typeof raw === 'string') {
     try {
@@ -70,8 +71,8 @@ function parseItemsJson(raw: unknown): any[] {
   return []
 }
 
-export function parseOrderLines(order: { items_json?: unknown }): ParsedOrder {
-  const raw = parseItemsJson(order?.items_json)
+export function parseOrderLines(order: { items_json?: unknown; raw_source_data?: unknown; line_items?: unknown }): ParsedOrder {
+  const raw = parseItemsJson(order)
   const lines: ParsedOrderLine[] = []
   const legacyReturned = new Map<string, number>()
   let hasLegacyMarkers = false

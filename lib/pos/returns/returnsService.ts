@@ -166,7 +166,7 @@ export async function quoteReturnService(
         ? supabase.from('products').select('id, name, stock_type, stock_quantity, cost_price').in('id', pIds)
         : { data: [] },
       vIds.length > 0
-        ? supabase.from('product_variants').select('id, product_id, title, stock_quantity').in('id', vIds)
+        ? supabase.from('product_variants').select('id, product_id, name, stock_quantity').in('id', vIds)
         : { data: [] }
     ])
 
@@ -188,7 +188,7 @@ export async function quoteReturnService(
           const v = vMap.get(ex.variantId)
           if (v.stock_quantity < qty) {
             throw new ReturnError(
-              `Stok varian "${v.title}" tidak mencukupi (Tersedia: ${v.stock_quantity}, Dibutuhkan: ${qty}).`,
+              `Stok varian "${v.name || v.title || 'Varian'}" tidak mencukupi (Tersedia: ${v.stock_quantity}, Dibutuhkan: ${qty}).`,
               'INSUFFICIENT_STOCK',
               400
             )
