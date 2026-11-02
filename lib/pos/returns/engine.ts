@@ -164,12 +164,24 @@ export function computeReturnableLines(
 
   const originalLines = parsed.lines.filter((l) => !l.isReplacement)
   const sumOriginalNet = originalLines.reduce((s, l) => s + l.lineNet, 0)
-  const originalGrand =
-    num(order.grand_total) + num(order.returned_total) - num(order.exchanged_in_total)
 
+  // Order-level global discount calculation:
+  // If the order has an explicit discount_amount > 0, prorate it across lines.
+  // NEVER use mutated grand_total to invent an artificial discount on already-refunded orders!
+  const orderDiscount = num((order as any)?.discount_amount ?? (order as any)?.discount_total)
   let ratio = 1
-  if (!parsed.hasLegacyMarkers && sumOriginalNet > 0 && originalGrand > 0) {
-    ratio = Math.min(1, Math.max(0, originalGrand / sumOriginalNet))
+  if (orderDiscount > 0 && sumOriginalNet > 0) {
+    ratio = Math.min(1, Math.max(0, (sumOriginalNet - orderDiscount) / sumOriginalNet))
+  } else if (!parsed.hasLegacyMarkers && sumOriginalNet > 0) {
+    const returnedTotal = num(order.returned_total)
+    const exchangedTotal = num(order.exchanged_in_total)
+    // Only adjust if order has explicit return tracking columns and actually had a coupon/discount initially
+    if (returnedTotal > 0 || exchangedTotal > 0) {
+      const reconstructedGrand = num(order.grand_total) + returnedTotal - exchangedTotal
+      if (reconstructedGrand > 0 && reconstructedGrand < sumOriginalNet - 1) {
+        ratio = Math.min(1, Math.max(0, reconstructedGrand / sumOriginalNet))
+      }
+    }
   }
 
   const lines: ReturnableLine[] = parsed.lines.map((l) => {

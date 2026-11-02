@@ -50,6 +50,19 @@ interface ApproverOption {
   has_pin: boolean
 }
 
+interface FlatCatalogItem {
+  id: string
+  productId: string
+  variantId?: string | null
+  product: any
+  variant?: any
+  displayName: string
+  sku?: string
+  price: number
+  stockQuantity: number | null
+  isVariant: boolean
+}
+
 type Props = {
   isOpen: boolean
   onClose: () => void
@@ -347,7 +360,7 @@ export default function POSReturnModal({
         isReplacement: false
       }))
 
-      const exchangeInputs: ExchangeItemInput[] = exchangeBasket.map((i) => ({
+      const exchangeInputs: ExchangeItemInput[] = (mode === 'exchange' ? exchangeBasket : []).map((i) => ({
         productId: i.productId,
         variantId: i.variantId || null,
         name: i.name,
@@ -381,9 +394,9 @@ export default function POSReturnModal({
     } catch {
       return null
     }
-  }, [order, returnLines, activeReturnItems, exchangeBasket, reasonCode, policy, effectiveBusinessId])
+  }, [order, returnLines, activeReturnItems, exchangeBasket, mode, reasonCode, policy, effectiveBusinessId])
 
-  const activeQuote = liveQuote || clientQuote
+  const activeQuote = clientQuote || liveQuote
 
   // Recalculate Live Quote when selections change (items, basket, mode, reason)
   const triggerLiveQuote = useCallback(async () => {
@@ -464,24 +477,67 @@ export default function POSReturnModal({
     setReturnLines((prev) => prev.map((line) => ({ ...line, selectedQty: 0 })))
   }
 
-  // Exchange catalog search with multi-token & variant support (Only shows when user types)
-  const filteredCatalog = useMemo(() => {
+  // Flat Discrete Catalog Search (Shopify & Inventory Reports standard: all variants are individual rows)
+  const flatCatalog = useMemo<FlatCatalogItem[]>(() => {
     if (!productSearch.trim()) return []
 
     const rawQ = productSearch.trim().toLowerCase()
     const tokens = rawQ.split(/\s+/).filter(Boolean)
+    const rows: FlatCatalogItem[] = []
 
-    return catalog.filter((p) => {
-      const prodName = String(p.name || '').toLowerCase()
-      const prodSku = String(p.sku || '').toLowerCase()
-      const variants = Array.isArray(p.product_variants) ? p.product_variants : []
-      const variantNames = variants.map((v: any) => String(v.name || v.title || '').toLowerCase()).join(' ')
-      const variantSkus = variants.map((v: any) => String(v.sku || '').toLowerCase()).join(' ')
+    for (const prod of catalog) {
+      const hasVariants = Array.isArray(prod.product_variants) && prod.product_variants.length > 0
+      if (hasVariants) {
+        for (const v of prod.product_variants) {
+          const vName = v.name || v.title || ''
+          const displayName = `${prod.name} - ${vName}`
+          const sku = v.sku || prod.sku || ''
+          const price = Number(v.price || prod.price || 0)
+          const stock = v.stock_quantity ?? 0
 
-      const compoundString = `${prodName} ${prodSku} ${variantNames} ${variantSkus}`
+          const searchTarget = `${displayName} ${sku}`.toLowerCase()
+          const isMatch = tokens.every((tok) => searchTarget.includes(tok))
+          if (isMatch) {
+            rows.push({
+              id: `${prod.id}_${v.id}`,
+              productId: prod.id,
+              variantId: v.id,
+              product: prod,
+              variant: v,
+              displayName,
+              sku,
+              price,
+              stockQuantity: stock,
+              isVariant: true
+            })
+          }
+        }
+      } else {
+        const displayName = prod.name
+        const sku = prod.sku || ''
+        const price = Number(prod.price || 0)
+        const stock = prod.stock_quantity ?? null
 
-      return tokens.every((tok) => compoundString.includes(tok))
-    })
+        const searchTarget = `${displayName} ${sku}`.toLowerCase()
+        const isMatch = tokens.every((tok) => searchTarget.includes(tok))
+        if (isMatch) {
+          rows.push({
+            id: prod.id,
+            productId: prod.id,
+            variantId: null,
+            product: prod,
+            variant: null,
+            displayName,
+            sku,
+            price,
+            stockQuantity: stock,
+            isVariant: false
+          })
+        }
+      }
+    }
+
+    return rows
   }, [catalog, productSearch])
 
   // Add replacement item
@@ -510,6 +566,8 @@ export default function POSReturnModal({
         }
       ]
     })
+    // Automatically close search list upon selection
+    setProductSearch('')
   }
 
   const removeExchangeItem = (index: number) => {
@@ -980,7 +1038,7 @@ export default function POSReturnModal({
                         <div className="p-5 text-center text-xs text-slate-400 font-medium flex items-center justify-center gap-2">
                           <span className="animate-spin text-sm">⏳</span> Mencari produk...
                         </div>
-                      ) : filteredCatalog.length === 0 ? (
+                      ) : flatCatalog.length === 0 ? (
                         <div className="p-6 text-center text-xs text-slate-500 space-y-1">
                           <p className="font-bold text-slate-700">Tidak ada produk ditemukan</p>
                           <p className="text-[11px] text-slate-400">
@@ -988,91 +1046,53 @@ export default function POSReturnModal({
                           </p>
                         </div>
                       ) : (
-                        filteredCatalog.map((prod) => {
-                          const hasVariants = Array.isArray(prod.product_variants) && prod.product_variants.length > 0
-                          const q = productSearch.trim().toLowerCase()
-                          const sortedVariants = hasVariants ? [...prod.product_variants].sort((a: any, b: any) => {
-                            if (!q) return 0
-                            const aMatch = String(a.name || '').toLowerCase().includes(q) || String(a.sku || '').toLowerCase().includes(q)
-                            const bMatch = String(b.name || '').toLowerCase().includes(q) || String(b.sku || '').toLowerCase().includes(q)
-                            if (aMatch && !bMatch) return -1
-                            if (!aMatch && bMatch) return 1
-                            return 0
-                          }) : []
-
-                          return (
-                            <div key={prod.id} className="p-3 hover:bg-slate-50/80 transition-colors">
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex-1 min-w-0">
-                                  <span className="font-extrabold text-slate-900 text-xs block truncate">
-                                    {prod.name}
+                        flatCatalog.map((item) => (
+                          <div
+                            key={item.id}
+                            className="p-3 hover:bg-slate-50/80 transition-colors flex items-center justify-between gap-3"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <span className="font-extrabold text-slate-900 text-xs block truncate">
+                                {item.displayName}
+                              </span>
+                              <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-500">
+                                {item.sku && (
+                                  <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
+                                    {item.sku}
                                   </span>
-                                  <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-500">
-                                    {prod.sku && (
-                                      <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
-                                        {prod.sku}
-                                      </span>
-                                    )}
-                                    <span>Harga: <strong className="text-slate-700">{formatIDR(prod.price)}</strong></span>
-                                    {!hasVariants && (
-                                      <span>• Stok: <strong className={prod.stock_quantity <= 0 ? 'text-rose-600' : 'text-slate-700'}>{prod.stock_quantity ?? '∞'}</strong></span>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {!hasVariants && (
-                                  <button
-                                    type="button"
-                                    onClick={() => addExchangeItem(prod)}
-                                    className="shrink-0 text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black rounded-xl shadow-2xs transition-all flex items-center gap-1"
+                                )}
+                                <span>
+                                  Harga: <strong className="text-slate-700">{formatIDR(item.price)}</strong>
+                                </span>
+                                <span>
+                                  • Stok:{' '}
+                                  <strong
+                                    className={
+                                      item.stockQuantity !== null && item.stockQuantity <= 0
+                                        ? 'text-rose-600'
+                                        : 'text-slate-700'
+                                    }
                                   >
-                                    + Pilih
-                                  </button>
+                                    {item.stockQuantity ?? '∞'}
+                                  </strong>
+                                </span>
+                                {item.stockQuantity !== null && item.stockQuantity <= 0 && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 font-bold border border-rose-200/60">
+                                    Habis
+                                  </span>
                                 )}
                               </div>
-
-                              {hasVariants && (
-                                <div className="mt-2.5 pt-2 border-t border-slate-100">
-                                  <div className="flex items-center justify-between mb-1.5">
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                                      Varian Tersedia ({sortedVariants.length}):
-                                    </span>
-                                  </div>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {sortedVariants.map((v: any) => {
-                                      const isMatch = q && (String(v.name || '').toLowerCase().includes(q) || String(v.sku || '').toLowerCase().includes(q))
-                                      const vPrice = Number(v.price || prod.price)
-                                      const vStock = v.stock_quantity ?? 0
-                                      return (
-                                        <button
-                                          key={v.id}
-                                          type="button"
-                                          onClick={() => addExchangeItem(prod, v)}
-                                          className={`text-[11px] px-2.5 py-1.5 rounded-xl font-bold border transition-all flex items-center gap-1.5 active:scale-95 ${
-                                            isMatch
-                                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs ring-2 ring-indigo-200'
-                                              : 'bg-indigo-50/70 hover:bg-indigo-100 text-indigo-700 border-indigo-200/70'
-                                          }`}
-                                          title={`Stok: ${vStock} • Harga: ${formatIDR(vPrice)}`}
-                                        >
-                                          <span>+ {v.name || v.title || 'Varian'}</span>
-                                          <span className={`text-[10px] opacity-80 ${isMatch ? 'text-indigo-100' : 'text-indigo-500'}`}>
-                                            ({formatIDR(vPrice)})
-                                          </span>
-                                          {vStock <= 0 && (
-                                            <span className={`text-[9px] px-1 rounded ${isMatch ? 'bg-indigo-700 text-indigo-200' : 'bg-rose-100 text-rose-600 font-bold'}`}>
-                                              Habis
-                                            </span>
-                                          )}
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                </div>
-                              )}
                             </div>
-                          )
-                        })
+
+                            <button
+                              type="button"
+                              onClick={() => addExchangeItem(item.product, item.variant)}
+                              className="shrink-0 text-xs px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black rounded-xl shadow-2xs transition-all flex items-center gap-1"
+                            >
+                              + Pilih
+                            </button>
+                          </div>
+                        ))
                       )}
                     </div>
                   )}

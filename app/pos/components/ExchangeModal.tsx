@@ -91,15 +91,59 @@ export default function ExchangeModal({
 
   const currentReturnItem = returnableItems[selectedReturnIndex] || returnableItems[0]
 
-  // Filtered catalog by multi-token search
-  const filteredCatalog = useMemo(() => {
+  // Flat Discrete Catalog Search (Shopify & Inventory Reports standard: all variants are individual rows)
+  const flatCatalog = useMemo<any[]>(() => {
     if (!productSearch.trim()) return []
     const rawQ = productSearch.trim().toLowerCase()
     const tokens = rawQ.split(/\s+/).filter(Boolean)
-    return catalog.filter((p) => {
-      const pStr = `${p.name || ''} ${p.sku || ''}`.toLowerCase()
-      return tokens.every((t) => pStr.includes(t))
-    })
+    const rows: any[] = []
+
+    for (const prod of catalog) {
+      const hasVariants = Array.isArray(prod.product_variants) && prod.product_variants.length > 0
+      if (hasVariants) {
+        for (const v of prod.product_variants) {
+          const vName = v.name || v.title || ''
+          const displayName = `${prod.name} - ${vName}`
+          const sku = v.sku || prod.sku || ''
+          const price = Number(v.price || prod.price || 0)
+          const stock = v.stock_quantity ?? 0
+
+          const searchTarget = `${displayName} ${sku}`.toLowerCase()
+          if (tokens.every((t) => searchTarget.includes(t))) {
+            rows.push({
+              id: prod.id,
+              variantId: v.id,
+              key: `${prod.id}_${v.id}`,
+              name: displayName,
+              price,
+              stock_quantity: stock,
+              sku,
+              isVariant: true
+            })
+          }
+        }
+      } else {
+        const displayName = prod.name
+        const sku = prod.sku || ''
+        const price = Number(prod.price || 0)
+        const stock = prod.stock_quantity ?? null
+
+        const searchTarget = `${displayName} ${sku}`.toLowerCase()
+        if (tokens.every((t) => searchTarget.includes(t))) {
+          rows.push({
+            id: prod.id,
+            variantId: null,
+            key: prod.id,
+            name: displayName,
+            price,
+            stock_quantity: stock,
+            sku,
+            isVariant: false
+          })
+        }
+      }
+    }
+    return rows
   }, [catalog, productSearch])
 
   // Currency Formatter
@@ -170,6 +214,7 @@ export default function ExchangeModal({
           new_items: [
             {
               id: selectedNewProduct.id,
+              variantId: selectedNewProduct.variantId || null,
               name: selectedNewProduct.name,
               quantity: 1,
               price: newPrice
@@ -332,14 +377,14 @@ export default function ExchangeModal({
             <div className="max-h-48 overflow-y-auto space-y-1.5 border border-slate-200 rounded-2xl p-2 bg-slate-50/50">
               {loadingCatalog ? (
                 <p className="text-center py-4 text-slate-400">Memuat katalog produk...</p>
-              ) : filteredCatalog.length === 0 ? (
+              ) : flatCatalog.length === 0 ? (
                 <p className="text-center py-4 text-slate-400">Tidak ada produk ditemukan.</p>
               ) : (
-                filteredCatalog.map((prod) => {
-                  const isSelected = selectedNewProduct?.id === prod.id
+                flatCatalog.map((prod) => {
+                  const isSelected = selectedNewProduct?.key === prod.key || (!prod.variantId && selectedNewProduct?.id === prod.id)
                   return (
                     <div
-                      key={prod.id}
+                      key={prod.key}
                       onClick={() => setSelectedNewProduct(prod)}
                       className={`p-2.5 rounded-xl border transition cursor-pointer flex items-center justify-between ${
                         isSelected
@@ -349,9 +394,25 @@ export default function ExchangeModal({
                     >
                       <div>
                         <span className="font-bold text-slate-900 block">{prod.name}</span>
-                        <span className="text-[10px] text-slate-400">
-                          Stok: {prod.stock_quantity ?? '∞'} • Harga: {formatIDR(prod.price)}
-                        </span>
+                        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-500">
+                          {prod.sku && (
+                            <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
+                              {prod.sku}
+                            </span>
+                          )}
+                          <span>Harga: <strong className="text-slate-700">{formatIDR(prod.price)}</strong></span>
+                          <span>
+                            • Stok:{' '}
+                            <strong className={prod.stock_quantity !== null && prod.stock_quantity <= 0 ? 'text-rose-600' : 'text-slate-700'}>
+                              {prod.stock_quantity ?? '∞'}
+                            </strong>
+                          </span>
+                          {prod.stock_quantity !== null && prod.stock_quantity <= 0 && (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-rose-50 text-rose-600 font-bold border border-rose-200/60">
+                              Habis
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${
                         isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
