@@ -122,9 +122,13 @@ export default function CashPaymentModal({
   const [splitCount, setSplitCount] = useState<number>(2)
   const [partialAmountInput, setPartialAmountInput] = useState<string>('')
 
-  // 2. Dialog Pop-Up Terpisah untuk Split Bill & Rincian Pesanan
+  // 2. Dialog Pop-Up Terpisah untuk Split Bill, Rincian Pesanan & Keypad Modal Odoo (New Amount)
   const [isSplitBillOpen, setIsSplitBillOpen] = useState(false)
   const [isReceiptDetailsOpen, setIsReceiptDetailsOpen] = useState(false)
+  const [isAmountModalOpen, setIsAmountModalOpen] = useState(false)
+  const [modalTargetLine, setModalTargetLine] = useState<KeypadTenderLine | null>(null)
+  const [modalInputValue, setModalInputValue] = useState<number>(0)
+  const [isModalFirstTouch, setIsModalFirstTouch] = useState<boolean>(true)
 
   // 3. Akun Kas & Bank dan Metode Tender dari Pengaturan
   const [fetchedAccounts, setFetchedAccounts] = useState<CashBankAccount[]>([])
@@ -478,51 +482,35 @@ export default function CashPaymentModal({
     })
   }
 
-  // Eksekusi Numpad Action pada Baris Terfokus dengan Auto-Balance Dinamis
-  const handleNumpadInput = useCallback((action: string) => {
-    if (!activeLine) return
-    setErrorMsg(null)
-
-    const isCash = activeLine.category === 'cash'
-    const currentVal = isCash ? activeLine.cashReceived : activeLine.amount
-
-    const { nextValue, nextFirstTouch } = processNumpadAction({
-      currentValue: currentVal,
-      action,
-      isFirstTouch,
-      maxLimit: isCash ? 2_000_000_000 : activeBillTarget
-    })
-
-    setIsFirstTouch(nextFirstTouch)
-
+  // Fungsi terpusat mengaplikasikan nilai nominal ke baris pembayaran tertentu
+  const applyLineAmount = useCallback((targetLineId: string, nextValue: number) => {
     setTenderLines((prev) => {
+      const targetLine = prev.find((l) => l.id === targetLineId)
+      if (!targetLine) return prev
+
+      const isCash = targetLine.category === 'cash'
+
       // Jika mode 2 baris (split 2 metode)
       if (prev.length === 2) {
-        const otherIndex = prev.findIndex((l) => l.id !== activeLine.id)
+        const otherIndex = prev.findIndex((l) => l.id !== targetLineId)
         const otherLine = prev[otherIndex]
 
         if (isCash) {
-          // Kasir mengetik uang tunai pada baris tunai
           const otherAmount = Number(otherLine.amount) || 0
           const neededCash = Math.max(0, activeBillTarget - otherAmount)
 
           if (nextValue >= neededCash) {
-            // Kasir memasukkan tunai cukup atau lebih (misal butuh 50rb, kasir ketik 100rb atau 50rb)
-            // Baris metode lain TIDAK DIUBAH!
-            // Baris tunai mengalokasikan neededCash untuk tagihan, dan mencatat cashReceived = nextValue
             return prev.map((l) => {
-              if (l.id === activeLine.id) {
+              if (l.id === targetLineId) {
                 return { ...l, amount: neededCash, cashReceived: nextValue }
               }
               return l
             })
           } else {
-            // Kasir mengetik tunai kurang dari neededCash (misal kasir ketik 20rb padahal butuh 50rb)
-            // Alokasi tunai diubah menjadi 20rb, dan sisanya dialihkan ke baris lainnya
             const newCashAllocated = nextValue
             const newOtherAmount = Math.max(0, activeBillTarget - newCashAllocated)
             return prev.map((l, idx) => {
-              if (l.id === activeLine.id) {
+              if (l.id === targetLineId) {
                 return { ...l, amount: newCashAllocated, cashReceived: nextValue }
               }
               if (idx === otherIndex) {
@@ -536,12 +524,11 @@ export default function CashPaymentModal({
             })
           }
         } else {
-          // Kasir mengetik nominal pada baris non-tunai (QRIS / EDC / Bank)
           const cappedVal = Math.min(nextValue, activeBillTarget)
           const otherAmount = Math.max(0, activeBillTarget - cappedVal)
 
           return prev.map((l, idx) => {
-            if (l.id === activeLine.id) {
+            if (l.id === targetLineId) {
               return { ...l, amount: cappedVal, cashReceived: cappedVal }
             }
             if (idx === otherIndex) {
@@ -558,7 +545,7 @@ export default function CashPaymentModal({
 
       // Jika baris tunggal atau lebih dari 2 baris
       return prev.map((line) => {
-        if (line.id !== activeLine.id) return line
+        if (line.id !== targetLineId) return line
 
         if (line.category === 'cash') {
           const otherTotal = prev
@@ -584,7 +571,50 @@ export default function CashPaymentModal({
         }
       })
     })
-  }, [activeLine, isFirstTouch, activeBillTarget])
+  }, [activeBillTarget])
+
+  // Buka Modal Pop-up Odoo "New amount"
+  const handleOpenAmountModal = useCallback((line?: KeypadTenderLine, initialDigit?: string) => {
+    const target = line || activeLine || tenderLines[0]
+    if (!target) return
+    setActiveLineId(target.id)
+    setModalTargetLine(target)
+
+    if (initialDigit !== undefined) {
+      const parsed = parseInt(initialDigit, 10)
+      setModalInputValue(isNaN(parsed) ? 0 : parsed)
+      setIsModalFirstTouch(false)
+    } else {
+      const isCash = target.category === 'cash'
+      const curVal = isCash ? (target.cashReceived || target.amount) : target.amount
+      setModalInputValue(curVal || 0)
+      setIsModalFirstTouch(true)
+    }
+
+    setIsAmountModalOpen(true)
+  }, [activeLine, tenderLines])
+
+  // Aksi Tombol Keypad di Dalam Modal Pop-up Odoo "New amount"
+  const handleModalNumpadInput = useCallback((action: string) => {
+    const isCash = modalTargetLine?.category === 'cash'
+    const { nextValue, nextFirstTouch } = processNumpadAction({
+      currentValue: modalInputValue,
+      action,
+      isFirstTouch: isModalFirstTouch,
+      maxLimit: isCash ? 2_000_000_000 : activeBillTarget
+    })
+    setModalInputValue(nextValue)
+    setIsModalFirstTouch(nextFirstTouch)
+  }, [modalTargetLine, modalInputValue, isModalFirstTouch, activeBillTarget])
+
+  // Konfirmasi Nilai dari Modal Pop-up Odoo "New amount"
+  const handleConfirmAmountModal = useCallback(() => {
+    if (modalTargetLine) {
+      applyLineAmount(modalTargetLine.id, modalInputValue)
+    }
+    setIsAmountModalOpen(false)
+    setModalTargetLine(null)
+  }, [modalTargetLine, modalInputValue, applyLineAmount])
 
   // Pemilihan Saran Uang Tunai Cepat (1-Tap Quick Cash)
   const handleSelectQuickCash = useCallback((amount: number) => {
@@ -661,6 +691,29 @@ export default function CashPaymentModal({
 
       const key = e.key
 
+      // Jika modal Odoo "New amount" sedang terbuka
+      if (isAmountModalOpen) {
+        if (key >= '0' && key <= '9') {
+          e.preventDefault()
+          handleModalNumpadInput(key)
+        } else if (key === 'Backspace') {
+          e.preventDefault()
+          handleModalNumpadInput('BACKSPACE')
+        } else if (key === 'Delete' || key === 'c' || key === 'C') {
+          e.preventDefault()
+          handleModalNumpadInput('CLEAR')
+        } else if (key === 'Escape') {
+          e.preventDefault()
+          setIsAmountModalOpen(false)
+          setModalTargetLine(null)
+        } else if (key === 'Enter') {
+          e.preventDefault()
+          handleConfirmAmountModal()
+        }
+        return
+      }
+
+      // Hotkey saat modal utama aktif (New amount belum terbuka)
       if (e.altKey && key >= '1' && key <= '9') {
         const tenderIndex = parseInt(key, 10) - 1
         if (tenderOptions[tenderIndex]) {
@@ -674,21 +727,13 @@ export default function CashPaymentModal({
 
       if (key >= '0' && key <= '9') {
         e.preventDefault()
-        handleNumpadInput(key)
-      } else if (key === 'Backspace') {
+        handleOpenAmountModal(activeLine, key)
+      } else if (key === 'Backspace' || key === 'Delete' || key === 'c' || key === 'C') {
         e.preventDefault()
-        handleNumpadInput('BACKSPACE')
-      } else if (key === 'Delete' || key === 'c' || key === 'C') {
-        e.preventDefault()
-        handleNumpadInput('CLEAR')
+        handleOpenAmountModal(activeLine)
       } else if (key === 'Escape') {
         e.preventDefault()
-        const currentVal = activeLine?.category === 'cash' ? activeLine.cashReceived : activeLine?.amount
-        if (currentVal && currentVal > 0) {
-          handleNumpadInput('CLEAR')
-        } else {
-          onClose()
-        }
+        onClose()
       } else if (key === 'Enter') {
         e.preventDefault()
         handleConfirm()
@@ -700,7 +745,21 @@ export default function CashPaymentModal({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, isSplitBillOpen, isReceiptDetailsOpen, handleNumpadInput, tenderOptions, activeLine]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    isOpen,
+    isSplitBillOpen,
+    isReceiptDetailsOpen,
+    isAmountModalOpen,
+    modalInputValue,
+    modalTargetLine,
+    isModalFirstTouch,
+    handleModalNumpadInput,
+    handleConfirmAmountModal,
+    handleOpenAmountModal,
+    tenderOptions,
+    activeLine,
+    onClose
+  ]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Konfirmasi Transaksi Selesai
   const handleConfirm = async () => {
@@ -869,20 +928,20 @@ export default function CashPaymentModal({
         <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-12 sm:landscape:grid-cols-12 gap-2 sm:gap-2.5 overflow-y-auto md:overflow-hidden sm:landscape:overflow-hidden">
           
           {/* ========================================================= */}
-          {/* KOLOM KIRI (38%): ACTION & CONTROL PAD (OPTION 1 REDESIGN)*/}
+          {/* KOLOM KIRI (38%): METODE BAYAR, PECAHAN CEPAT & TRIGGER KEYPAD ODOO */}
           {/* ========================================================= */}
-          <aside className="col-span-1 md:col-span-5 sm:landscape:col-span-5 lg:col-span-5 xl:col-span-5 flex flex-col bg-white border border-slate-200/90 rounded-2xl p-2.5 sm:p-3 shadow-2xs overflow-hidden">
+          <aside className="col-span-1 md:col-span-5 sm:landscape:col-span-5 lg:col-span-5 xl:col-span-5 flex flex-col justify-between bg-white border border-slate-200/90 rounded-2xl p-3 sm:p-3.5 shadow-2xs overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             
-            <div className="space-y-1.5 shrink-0">
+            <div className="space-y-3 shrink-0">
               
-              {/* 1. METODE PEMBAYARAN: TOMBOL BERSIH & TERBACA UTUH TANPA TERPOTONG */}
+              {/* 1. METODE PEMBAYARAN: TOMBOL LEGA & TERBACA UTUH TANPA TERPOTONG */}
               <div>
-                <div className="flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                <div className="flex items-center justify-between text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1.5">
                   <span>METODE PEMBAYARAN ({tenderLines.length} Nyala):</span>
                   <span className="text-emerald-700 font-bold lowercase">pilih / kombinasi</span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-1.5 max-h-[120px] sm:max-h-[135px] overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden pr-0.5">
+                <div className="grid grid-cols-2 gap-2">
                   {tenderOptions.map((t) => {
                     const lineEntry = tenderLines.find((l) => l.tenderId === t.id || l.accountId === t.account_id)
                     const isTurnedOn = Boolean(lineEntry)
@@ -894,19 +953,19 @@ export default function CashPaymentModal({
                         type="button"
                         onClick={() => handleToggleTender(t)}
                         title={isTurnedOn ? 'Klik untuk mematikan metode ini' : 'Klik untuk mengaktifkan metode ini'}
-                        className={`p-2 rounded-xl border text-left transition cursor-pointer flex items-center justify-between min-h-[46px] ${
+                        className={`p-2.5 rounded-xl sm:rounded-2xl border text-left transition cursor-pointer flex items-center justify-between min-h-[52px] ${
                           isTurnedOn
                             ? 'bg-emerald-600 border-emerald-700 text-white shadow-2xs ring-2 ring-emerald-500/20'
-                            : 'bg-slate-50 hover:bg-slate-100 border-slate-200/90 text-slate-700'
+                            : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
                         }`}
                       >
-                        <div className="flex items-center gap-2 min-w-0 flex-1 truncate">
-                          <span className="text-lg shrink-0">{glyph}</span>
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1 truncate">
+                          <span className="text-xl shrink-0">{glyph}</span>
                           <div className="min-w-0 flex-1 truncate">
-                            <span className={`font-black text-xs block truncate leading-tight ${isTurnedOn ? 'text-white' : 'text-slate-800'}`}>
+                            <span className={`font-black text-xs sm:text-sm block truncate leading-tight ${isTurnedOn ? 'text-white' : 'text-slate-800'}`}>
                               {t.name}
                             </span>
-                            <span className={`text-[10px] block truncate leading-none mt-0.5 ${isTurnedOn ? 'text-emerald-100 font-mono font-bold' : 'text-slate-400 font-mono'}`}>
+                            <span className={`text-[10px] sm:text-[11px] block truncate leading-none mt-1 ${isTurnedOn ? 'text-emerald-100 font-mono font-bold' : 'text-slate-400 font-mono'}`}>
                               {lineEntry
                                 ? formatIDR(lineEntry.category === 'cash' ? (lineEntry.cashReceived || lineEntry.amount) : lineEntry.amount)
                                 : (t.category === 'cash' ? 'Laci Kasir' : (t.category === 'qris' ? 'QRIS POS' : 'Bank'))}
@@ -915,7 +974,7 @@ export default function CashPaymentModal({
                         </div>
 
                         {isTurnedOn && (
-                          <span className="w-5 h-5 rounded-full bg-white text-emerald-700 flex items-center justify-center text-xs font-black shrink-0 ml-1 shadow-2xs">
+                          <span className="w-5 h-5 rounded-full bg-white text-emerald-700 flex items-center justify-center text-xs font-black shrink-0 ml-1.5 shadow-2xs">
                             ✓
                           </span>
                         )}
@@ -927,7 +986,7 @@ export default function CashPaymentModal({
 
               {/* 2. SMART QUICK-CASH PILLS (SARAN PECAHAN TUNAI INSTAN - 1 TAP) */}
               <div>
-                <div className="flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                <div className="flex items-center justify-between text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1.5">
                   <span>PECAHAN CEPAT:</span>
                   <span className="text-emerald-700 font-bold lowercase">1-tap uang pas / pecahan</span>
                 </div>
@@ -939,14 +998,14 @@ export default function CashPaymentModal({
                         key={idx}
                         type="button"
                         onClick={() => handleSelectQuickCash(sug)}
-                        className={`py-1.5 px-1 rounded-xl border text-center transition cursor-pointer font-mono font-black active:scale-95 ${
+                        className={`py-2 px-1 rounded-xl sm:rounded-2xl border text-center transition cursor-pointer font-mono font-black active:scale-95 ${
                           isExact
                             ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-950 border-emerald-300 shadow-2xs'
                             : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
                         }`}
                         title={isExact ? `Bayar Uang Pas ${formatIDR(sug)}` : `Bayar Pecahan ${formatIDR(sug)}`}
                       >
-                        <span className="block text-xs font-black leading-tight">
+                        <span className="block text-xs sm:text-sm font-black leading-tight">
                           {formatCompactIDR(sug)}
                         </span>
                         <span className="block text-[9px] text-slate-500 font-sans font-semibold leading-none mt-0.5">
@@ -958,137 +1017,55 @@ export default function CashPaymentModal({
                 </div>
               </div>
 
+              {/* 3. TOMBOL SHORTCUT: INPUT NOMINAL KUSTOM (MODAL POP-UP ODOO) */}
+              <div>
+                <div className="flex items-center justify-between text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1.5">
+                  <span>KEYPAD NOMINAL:</span>
+                  <span className="text-purple-700 font-bold lowercase">pop-up gaya odoo</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleOpenAmountModal(activeLine)}
+                  className="w-full p-2.5 sm:p-3 rounded-xl sm:rounded-2xl bg-purple-50/70 hover:bg-purple-100/80 active:bg-purple-200/90 border border-purple-200/90 text-purple-950 transition flex items-center justify-between cursor-pointer group shadow-2xs"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="w-8 h-8 rounded-xl bg-[#714B67] text-white flex items-center justify-center text-sm font-bold shadow-2xs group-hover:scale-105 transition shrink-0">
+                      ⌨️
+                    </span>
+                    <div className="text-left truncate">
+                      <span className="block text-xs sm:text-sm font-black text-slate-900 leading-tight">
+                        Ketik Nominal Kustom...
+                      </span>
+                      <span className="block text-[10px] text-purple-700/80 truncate mt-0.5">
+                        Buka Keypad Odoo ({activeLine?.tenderName || 'Metode Aktif'})
+                      </span>
+                    </div>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-lg bg-white border border-purple-200 text-xs font-mono font-black text-purple-900 shadow-2xs shrink-0 ml-2">
+                    {formatIDR(activeLine?.category === 'cash' ? (activeLine.cashReceived || activeLine.amount) : (activeLine?.amount || 0))} ↗
+                  </span>
+                </button>
+              </div>
+
+              {/* 4. PETUNJUK CEPAT SHORTCUT KEYBOARD KASIR */}
+              <div className="p-2 sm:p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 text-[10px] sm:text-[11px] text-slate-500 space-y-1">
+                <div className="flex items-center justify-between font-bold text-slate-600">
+                  <span>💡 Shortcut Kasir:</span>
+                  <span className="font-mono text-emerald-700 font-extrabold">Enter = Validate</span>
+                </div>
+                <p className="text-[10px] leading-tight text-slate-500">
+                  Tekan angka <b>0-9</b> pada keyboard fisik untuk membuka kalkulator nominal secara instan.
+                </p>
+              </div>
+
             </div>
 
-            {/* 3. KEYPAD NUMERIK 4-KOLOM (STRICT 4x4 GRID, ANTI OVERFLOW & ANTI TABRAKAN) */}
-            <div className="flex-1 min-h-0 grid grid-cols-4 grid-rows-4 gap-1 sm:gap-1.5 my-1.5">
-              {/* Baris 1: 1, 2, 3, +10.000 */}
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('1')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
-              >
-                1
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('2')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
-              >
-                2
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('3')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
-              >
-                3
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('+10000')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
-              >
-                +10k
-              </button>
-
-              {/* Baris 2: 4, 5, 6, +20.000 */}
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('4')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
-              >
-                4
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('5')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
-              >
-                5
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('6')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
-              >
-                6
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('+20000')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
-              >
-                +20k
-              </button>
-
-              {/* Baris 3: 7, 8, 9, +50.000 */}
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('7')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
-              >
-                7
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('8')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
-              >
-                8
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('9')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
-              >
-                9
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('+50000')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
-              >
-                +50k
-              </button>
-
-              {/* Baris 4: C, 0, 000, Backspace Merah */}
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('CLEAR')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-xs sm:text-sm font-black text-rose-700 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-200 shadow-2xs"
-              >
-                C
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('0')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
-              >
-                0
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('000')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-sm sm:text-base font-black text-slate-900 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
-              >
-                000
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNumpadInput('BACKSPACE')}
-                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-rose-100 hover:bg-rose-200 active:bg-rose-300 text-lg sm:text-xl font-black text-rose-800 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-300 shadow-2xs"
-              >
-                ⌫
-              </button>
-            </div>
-
-            {/* 4. FOOTER AKSI: BATAL & VALIDATE (TERKUNCI DI DASAR KARTU) */}
-            <div className="shrink-0 pt-1 grid grid-cols-5 gap-2">
+            {/* 5. FOOTER AKSI: BATAL & VALIDATE (TERKUNCI DI DASAR KARTU) */}
+            <div className="shrink-0 pt-3 mt-2 border-t border-slate-100 grid grid-cols-5 gap-2">
               <button
                 type="button"
                 onClick={onClose}
-                className="col-span-2 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs sm:text-sm tracking-wide transition cursor-pointer border border-slate-200"
+                className="col-span-2 py-3 rounded-xl sm:rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs sm:text-sm tracking-wide transition cursor-pointer border border-slate-200"
               >
                 Batal
               </button>
@@ -1097,7 +1074,7 @@ export default function CashPaymentModal({
                 type="button"
                 onClick={handleConfirm}
                 disabled={isSubmitting || calculation.totalAllocated <= 0}
-                className={`col-span-3 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm tracking-wider uppercase transition shadow-md flex items-center justify-center gap-1.5 cursor-pointer ${
+                className={`col-span-3 py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm tracking-wider uppercase transition shadow-md flex items-center justify-center gap-1.5 cursor-pointer ${
                   isSubmitting || calculation.totalAllocated <= 0
                     ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
                     : 'bg-[#714B67] hover:bg-[#5e3e56] active:bg-[#4d3246] text-white shadow-purple-900/20'
@@ -1229,16 +1206,25 @@ export default function CashPaymentModal({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 sm:gap-3">
-                          <span className="font-mono font-black text-sm sm:text-xl text-slate-900">
-                            {formatIDR(displayAmount)}
-                          </span>
+                        <div className="flex items-center gap-1.5 sm:gap-2.5">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleOpenAmountModal(line)
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 active:bg-purple-200 border border-purple-200 text-purple-950 font-mono font-black text-sm sm:text-base flex items-center gap-1.5 transition shadow-2xs group cursor-pointer"
+                            title="Klik untuk mengubah nominal dengan keypad pop-up Odoo"
+                          >
+                            <span>{formatIDR(displayAmount)}</span>
+                            <span className="text-[11px] text-purple-600 group-hover:scale-110 transition">✏️</span>
+                          </button>
 
                           {tenderLines.length > 1 && (
                             <button
                               type="button"
                               onClick={(e) => handleDeleteLine(line.id, e)}
-                              className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center font-bold text-xs sm:text-sm transition cursor-pointer"
+                              className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center font-bold text-xs sm:text-sm transition cursor-pointer"
                               title="Hapus metode ini"
                             >
                               ✕
@@ -1492,6 +1478,200 @@ export default function CashPaymentModal({
                 className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs cursor-pointer"
               >
                 Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. POP-UP MODAL NUMPAD ODOO (NEW AMOUNT POPUP DIALOG) */}
+      {isAmountModalOpen && (
+        <div className="fixed inset-0 z-[1400] flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-4 animate-in fade-in">
+          <div className="w-full max-w-sm sm:max-w-md bg-white border border-slate-200/90 rounded-3xl p-4 sm:p-5 shadow-2xl space-y-3.5 text-slate-900 animate-in zoom-in-95">
+            {/* Header: Judul New amount & Tombol Silang */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div>
+                <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight flex items-center gap-1.5">
+                  <span>New amount</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  {modalTargetLine?.tenderName || 'Metode Pembayaran'}
+                  {modalTargetLine?.category === 'cash' ? ' (Uang Diterima)' : ' (Alokasi Tagihan)'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAmountModalOpen(false)
+                  setModalTargetLine(null)
+                }}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 flex items-center justify-center font-bold text-sm transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Display Input Nominal Besar (Odoo Style dengan Tombol Clear ✕) */}
+            <div className="relative flex items-center">
+              <div className="w-full bg-slate-50 border-2 border-purple-200 focus-within:border-[#714B67] rounded-2xl p-2.5 sm:p-3 pr-10 flex items-center justify-between transition shadow-inner">
+                <span className="text-xs sm:text-sm font-bold text-slate-400 font-mono">Rp</span>
+                <span className="text-2xl sm:text-3xl font-black font-mono text-slate-900 tracking-tight">
+                  {modalInputValue.toLocaleString('id-ID')}
+                </span>
+              </div>
+              {modalInputValue > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleModalNumpadInput('CLEAR')}
+                  className="absolute right-3 w-6 h-6 rounded-full bg-slate-200 hover:bg-rose-100 hover:text-rose-700 text-slate-600 flex items-center justify-center text-xs font-bold transition cursor-pointer"
+                  title="Hapus Nilai (Clear)"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Keypad Numpad 4x4 Grid Odoo */}
+            <div className="grid grid-cols-4 grid-rows-4 gap-1.5 sm:gap-2">
+              {/* Row 1: 1, 2, 3, +10k */}
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('1')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+              >
+                1
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('2')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+              >
+                2
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('3')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+              >
+                3
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('+10000')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
+              >
+                +10k
+              </button>
+
+              {/* Row 2: 4, 5, 6, +20k */}
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('4')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+              >
+                4
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('5')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+              >
+                5
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('6')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+              >
+                6
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('+20000')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
+              >
+                +20k
+              </button>
+
+              {/* Row 3: 7, 8, 9, +50k */}
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('7')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+              >
+                7
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('8')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+              >
+                8
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('9')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+              >
+                9
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('+50000')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
+              >
+                +50k
+              </button>
+
+              {/* Row 4: C, 0, 000, ⌫ */}
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('CLEAR')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-xs sm:text-sm font-black text-rose-700 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-200 shadow-2xs"
+              >
+                C
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('0')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+              >
+                0
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('000')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-sm sm:text-base font-black text-slate-900 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+              >
+                000
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModalNumpadInput('BACKSPACE')}
+                className="h-12 sm:h-14 rounded-xl sm:rounded-2xl bg-rose-100 hover:bg-rose-200 active:bg-rose-300 text-lg sm:text-xl font-black text-rose-800 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-300 shadow-2xs"
+              >
+                ⌫
+              </button>
+            </div>
+
+            {/* Footer Aksi Odoo: Confirm & Discard */}
+            <div className="pt-2 border-t border-slate-100 grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={handleConfirmAmountModal}
+                className="w-full py-3 rounded-2xl bg-[#714B67] hover:bg-[#5e3e56] active:bg-[#4d3246] text-white font-extrabold text-sm tracking-wide shadow-md shadow-purple-950/20 transition cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                Confirm
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAmountModalOpen(false)
+                  setModalTargetLine(null)
+                }}
+                className="w-full py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-sm tracking-wide transition cursor-pointer"
+              >
+                Discard
               </button>
             </div>
           </div>
