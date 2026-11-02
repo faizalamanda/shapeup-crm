@@ -1730,6 +1730,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           isOpen={Boolean(selectedOrderForDetail)}
           onClose={() => setSelectedOrderForDetail(null)}
           order={selectedOrderForDetail}
+          businessId={activeBusiness?.id}
           timezone={activeBusiness?.timezone}
           businessName={activeBusiness?.name || 'ShapeUp Store'}
           cashierName={activeShift?.cashier_name || userProfile?.full_name || 'Kasir'}

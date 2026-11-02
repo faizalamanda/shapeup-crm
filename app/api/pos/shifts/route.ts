@@ -221,6 +221,7 @@ export async function GET(req: Request) {
           .from('orders')
           .select(`
             id,
+            business_id,
             order_number,
             created_at,
             grand_total,
@@ -265,6 +266,7 @@ export async function GET(req: Request) {
           .from('orders')
           .select(`
             id,
+            business_id,
             order_number,
             created_at,
             grand_total,

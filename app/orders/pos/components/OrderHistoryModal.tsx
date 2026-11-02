@@ -57,6 +57,7 @@ export default function OrderHistoryModal({
         .from('orders')
         .select(`
           id, 
+          business_id,
           order_number, 
           order_date,
           created_at, 

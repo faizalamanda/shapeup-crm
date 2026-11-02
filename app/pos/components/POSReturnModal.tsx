@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { supabase } from '@/lib/supabase'
+import { useUserContext } from '@/components/UserContext'
 import {
   DISPOSITION_LABELS,
   RefundMethod,
@@ -50,7 +51,7 @@ type Props = {
   isOpen: boolean
   onClose: () => void
   order: any
-  businessId: string
+  businessId?: string
   timezone?: string
   cashierName?: string
   currentShiftId?: string | null
@@ -67,6 +68,9 @@ export default function POSReturnModal({
   currentShiftId,
   onSuccess
 }: Props) {
+  const { activeBusiness } = useUserContext()
+  const effectiveBusinessId = businessId || order?.business_id || activeBusiness?.id
+
   // Modes: 'return' (Retur Saja) | 'exchange' (Tukar Tambah)
   const [mode, setMode] = useState<'return' | 'exchange'>('return')
 
@@ -81,6 +85,7 @@ export default function POSReturnModal({
   // Step 3 (Exchange): Replacement basket & catalog search
   const [catalog, setCatalog] = useState<any[]>([])
   const [loadingCatalog, setLoadingCatalog] = useState(false)
+  const [searchingServer, setSearchingServer] = useState(false)
   const [productSearch, setProductSearch] = useState('')
   const [exchangeBasket, setExchangeBasket] = useState<ExchangeItemState[]>([])
 
@@ -210,14 +215,18 @@ export default function POSReturnModal({
 
     // Load products catalog for exchange replacement
     async function loadCatalog() {
+      if (!effectiveBusinessId) {
+        setLoadingCatalog(false)
+        return
+      }
       setLoadingCatalog(true)
       try {
         const { data, error } = await supabase
           .from('products')
-          .select('id, name, price, stock_quantity, stock_type, product_variants(id, name, price, stock_quantity)')
-          .eq('business_id', businessId)
+          .select('id, name, sku, price, stock_quantity, stock_type, product_variants(id, name, sku, price, stock_quantity)')
+          .eq('business_id', effectiveBusinessId)
           .order('name', { ascending: true })
-          .limit(200)
+          .limit(300)
 
         if (!error && data) {
           setCatalog(data)
@@ -225,10 +234,10 @@ export default function POSReturnModal({
           console.warn('Query with product_variants failed, retrying standard products:', error?.message)
           const { data: fallbackData } = await supabase
             .from('products')
-            .select('id, name, price, stock_quantity, stock_type')
-            .eq('business_id', businessId)
+            .select('id, name, sku, price, stock_quantity, stock_type')
+            .eq('business_id', effectiveBusinessId)
             .order('name', { ascending: true })
-            .limit(200)
+            .limit(300)
 
           if (fallbackData) setCatalog(fallbackData)
         }
@@ -240,7 +249,69 @@ export default function POSReturnModal({
     }
 
     loadCatalog()
-  }, [isOpen, order?.id, businessId])
+  }, [isOpen, order?.id, effectiveBusinessId])
+
+  // Live server search for exchange catalog
+  useEffect(() => {
+    if (!productSearch.trim() || !effectiveBusinessId || !isOpen) return
+
+    const cleanQ = productSearch.trim().replace(/[,()]/g, '')
+    if (!cleanQ) return
+
+    const timer = setTimeout(async () => {
+      setSearchingServer(true)
+      try {
+        // 1. Search products by name or sku
+        const { data: matchedProds } = await supabase
+          .from('products')
+          .select('id, name, sku, price, stock_quantity, stock_type, product_variants(id, name, sku, price, stock_quantity)')
+          .eq('business_id', effectiveBusinessId)
+          .or(`name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`)
+          .limit(50)
+
+        // 2. Also search product_variants by name or sku
+        const { data: matchedVars } = await supabase
+          .from('product_variants')
+          .select('product_id')
+          .eq('business_id', effectiveBusinessId)
+          .or(`name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`)
+          .limit(50)
+
+        const variantParentIds = (matchedVars || [])
+          .map((v: any) => v.product_id)
+          .filter((id: string) => !matchedProds?.some((p: any) => p.id === id))
+
+        let extraProds: any[] = []
+        if (variantParentIds.length > 0) {
+          const { data: fetchedParents } = await supabase
+            .from('products')
+            .select('id, name, sku, price, stock_quantity, stock_type, product_variants(id, name, sku, price, stock_quantity)')
+            .eq('business_id', effectiveBusinessId)
+            .in('id', variantParentIds)
+
+          if (fetchedParents) extraProds = fetchedParents
+        }
+
+        const combinedFound = [...(matchedProds || []), ...extraProds]
+
+        if (combinedFound.length > 0) {
+          setCatalog((prev) => {
+            const map = new Map(prev.map((p) => [p.id, p]))
+            for (const item of combinedFound) {
+              map.set(item.id, item)
+            }
+            return Array.from(map.values())
+          })
+        }
+      } catch (err) {
+        console.warn('Server live search error:', err)
+      } finally {
+        setSearchingServer(false)
+      }
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [productSearch, effectiveBusinessId, isOpen])
 
   // Filtered return request items
   const activeReturnItems = useMemo(() => {
@@ -332,11 +403,24 @@ export default function POSReturnModal({
     setReturnLines((prev) => prev.map((line) => ({ ...line, selectedQty: 0 })))
   }
 
-  // Exchange catalog search
+  // Exchange catalog search with multi-token & variant support
   const filteredCatalog = useMemo(() => {
-    if (!productSearch.trim()) return catalog.slice(0, 25)
-    const q = productSearch.toLowerCase()
-    return catalog.filter((p) => p.name?.toLowerCase().includes(q))
+    if (!productSearch.trim()) return catalog.slice(0, 30)
+
+    const rawQ = productSearch.trim().toLowerCase()
+    const tokens = rawQ.split(/\s+/).filter(Boolean)
+
+    return catalog.filter((p) => {
+      const prodName = String(p.name || '').toLowerCase()
+      const prodSku = String(p.sku || '').toLowerCase()
+      const variants = Array.isArray(p.product_variants) ? p.product_variants : []
+      const variantNames = variants.map((v: any) => String(v.name || v.title || '').toLowerCase()).join(' ')
+      const variantSkus = variants.map((v: any) => String(v.sku || '').toLowerCase()).join(' ')
+
+      const compoundString = `${prodName} ${prodSku} ${variantNames} ${variantSkus}`
+
+      return tokens.every((tok) => compoundString.includes(tok))
+    })
   }, [catalog, productSearch])
 
   // Add replacement item
@@ -806,50 +890,123 @@ export default function POSReturnModal({
 
                 {/* Catalog Search */}
                 <div className="space-y-2">
-                  <input
-                    type="text"
-                    value={productSearch}
-                    onChange={(e) => setProductSearch(e.target.value)}
-                    placeholder="🔍 Cari nama produk pengganti..."
-                    className="w-full py-2 px-3 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-xl">
-                    {loadingCatalog ? (
-                      <div className="p-4 text-center text-xs text-slate-400 font-medium">Memuat katalog produk...</div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={productSearch}
+                      onChange={(e) => setProductSearch(e.target.value)}
+                      placeholder="🔍 Cari nama produk, varian, atau SKU..."
+                      className="w-full py-2.5 pl-3.5 pr-10 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
+                    />
+                    {searchingServer ? (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-indigo-600 font-bold animate-pulse">
+                        Mencari...
+                      </span>
+                    ) : productSearch ? (
+                      <button
+                        type="button"
+                        onClick={() => setProductSearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 font-bold text-xs"
+                      >
+                        ✕
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white shadow-2xs">
+                    {loadingCatalog && catalog.length === 0 ? (
+                      <div className="p-5 text-center text-xs text-slate-400 font-medium flex items-center justify-center gap-2">
+                        <span className="animate-spin text-sm">⏳</span> Memuat katalog produk...
+                      </div>
                     ) : filteredCatalog.length === 0 ? (
-                      <div className="p-4 text-center text-xs text-slate-400">
-                        Tidak ada produk yang cocok{productSearch ? ` dengan "${productSearch}"` : ''}
+                      <div className="p-6 text-center text-xs text-slate-500 space-y-1">
+                        <p className="font-bold text-slate-700">Tidak ada produk ditemukan</p>
+                        <p className="text-[11px] text-slate-400">
+                          {productSearch ? `Tidak ada produk atau varian yang cocok dengan "${productSearch}".` : 'Belum ada produk aktif di katalog unit bisnis ini.'}
+                        </p>
                       </div>
                     ) : (
                       filteredCatalog.map((prod) => {
-                        const hasVariants = prod.product_variants && prod.product_variants.length > 0
+                        const hasVariants = Array.isArray(prod.product_variants) && prod.product_variants.length > 0
+                        const q = productSearch.trim().toLowerCase()
+                        const sortedVariants = hasVariants ? [...prod.product_variants].sort((a: any, b: any) => {
+                          if (!q) return 0
+                          const aMatch = String(a.name || '').toLowerCase().includes(q) || String(a.sku || '').toLowerCase().includes(q)
+                          const bMatch = String(b.name || '').toLowerCase().includes(q) || String(b.sku || '').toLowerCase().includes(q)
+                          if (aMatch && !bMatch) return -1
+                          if (!aMatch && bMatch) return 1
+                          return 0
+                        }) : []
+
                         return (
-                          <div key={prod.id} className="p-2.5 flex items-center justify-between text-xs hover:bg-slate-50">
-                            <div>
-                              <span className="font-semibold text-slate-800 block">{prod.name}</span>
-                              <span className="text-[10px] text-slate-500">{formatIDR(prod.price)}</span>
-                            </div>
-                            {hasVariants ? (
-                              <div className="flex flex-wrap gap-1">
-                                {prod.product_variants.map((v: any) => (
-                                  <button
-                                    key={v.id}
-                                    type="button"
-                                    onClick={() => addExchangeItem(prod, v)}
-                                    className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 font-bold rounded hover:bg-indigo-100"
-                                  >
-                                    + {v.name || v.title || 'Varian'}
-                                  </button>
-                                ))}
+                          <div key={prod.id} className="p-3 hover:bg-slate-50/80 transition-colors">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <span className="font-extrabold text-slate-900 text-xs block truncate">
+                                  {prod.name}
+                                </span>
+                                <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-500">
+                                  {prod.sku && (
+                                    <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
+                                      {prod.sku}
+                                    </span>
+                                  )}
+                                  <span>Harga: <strong className="text-slate-700">{formatIDR(prod.price)}</strong></span>
+                                  {!hasVariants && (
+                                    <span>• Stok: <strong className={prod.stock_quantity <= 0 ? 'text-rose-600' : 'text-slate-700'}>{prod.stock_quantity ?? '∞'}</strong></span>
+                                  )}
+                                </div>
                               </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => addExchangeItem(prod)}
-                                className="text-xs px-3 py-1 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 shadow-2xs"
-                              >
-                                + Pilih
-                              </button>
+
+                              {!hasVariants && (
+                                <button
+                                  type="button"
+                                  onClick={() => addExchangeItem(prod)}
+                                  className="shrink-0 text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black rounded-xl shadow-2xs transition-all flex items-center gap-1"
+                                >
+                                  + Pilih
+                                </button>
+                              )}
+                            </div>
+
+                            {hasVariants && (
+                              <div className="mt-2.5 pt-2 border-t border-slate-100">
+                                <div className="flex items-center justify-between mb-1.5">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                    Varian Tersedia ({sortedVariants.length}):
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {sortedVariants.map((v: any) => {
+                                    const isMatch = q && (String(v.name || '').toLowerCase().includes(q) || String(v.sku || '').toLowerCase().includes(q))
+                                    const vPrice = Number(v.price || prod.price)
+                                    const vStock = v.stock_quantity ?? 0
+                                    return (
+                                      <button
+                                        key={v.id}
+                                        type="button"
+                                        onClick={() => addExchangeItem(prod, v)}
+                                        className={`text-[11px] px-2.5 py-1.5 rounded-xl font-bold border transition-all flex items-center gap-1.5 active:scale-95 ${
+                                          isMatch
+                                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs ring-2 ring-indigo-200'
+                                            : 'bg-indigo-50/70 hover:bg-indigo-100 text-indigo-700 border-indigo-200/70'
+                                        }`}
+                                        title={`Stok: ${vStock} • Harga: ${formatIDR(vPrice)}`}
+                                      >
+                                        <span>+ {v.name || v.title || 'Varian'}</span>
+                                        <span className={`text-[10px] opacity-80 ${isMatch ? 'text-indigo-100' : 'text-indigo-500'}`}>
+                                          ({formatIDR(vPrice)})
+                                        </span>
+                                        {vStock <= 0 && (
+                                          <span className={`text-[9px] px-1 rounded ${isMatch ? 'bg-indigo-700 text-indigo-200' : 'bg-rose-100 text-rose-600 font-bold'}`}>
+                                            Habis
+                                          </span>
+                                        )}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              </div>
                             )}
                           </div>
                         )

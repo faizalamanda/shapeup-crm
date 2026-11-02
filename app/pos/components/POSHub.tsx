@@ -1024,6 +1024,7 @@ export default function POSHub({ onOpenWorkspace }: Props) {
             setSelectedOrder(null)
           }}
           order={selectedOrder}
+          businessId={activeBusiness?.id}
           timezone={timezone}
           businessName={activeBusiness?.name || 'ShapeUp Store'}
           cashierName={cashierName}

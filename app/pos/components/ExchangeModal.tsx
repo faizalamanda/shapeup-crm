@@ -3,12 +3,13 @@
 import { useState, useEffect, useMemo } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { supabase } from '@/lib/supabase'
+import { useUserContext } from '@/components/UserContext'
 
 type Props = {
   isOpen: boolean
   onClose: () => void
   order: any
-  businessId: string
+  businessId?: string
   timezone?: string
   cashierName?: string
   onExchangeSuccess?: () => void
@@ -23,6 +24,9 @@ export default function ExchangeModal({
   cashierName = 'Kasir',
   onExchangeSuccess
 }: Props) {
+  const { activeBusiness } = useUserContext()
+  const effectiveBusinessId = businessId || order?.business_id || activeBusiness?.id
+
   const [mounted, setMounted] = useState(false)
   const [catalog, setCatalog] = useState<any[]>([])
   const [loadingCatalog, setLoadingCatalog] = useState(false)
@@ -48,12 +52,12 @@ export default function ExchangeModal({
 
   // Load product catalog for replacement selection
   useEffect(() => {
-    if (isOpen && businessId) {
+    if (isOpen && effectiveBusinessId) {
       setLoadingCatalog(true)
       supabase
         .from('products')
-        .select('id, name, price, stock_quantity, stock_type')
-        .eq('business_id', businessId)
+        .select('id, name, sku, price, stock_quantity, stock_type')
+        .eq('business_id', effectiveBusinessId)
         .order('name', { ascending: true })
         .limit(200)
         .then(({ data, error }) => {
@@ -63,7 +67,7 @@ export default function ExchangeModal({
           setLoadingCatalog(false)
         })
     }
-  }, [isOpen, businessId])
+  }, [isOpen, effectiveBusinessId])
 
   // Parse original order items
   const originalItems = useMemo(() => {
@@ -87,11 +91,15 @@ export default function ExchangeModal({
 
   const currentReturnItem = returnableItems[selectedReturnIndex] || returnableItems[0]
 
-  // Filtered catalog by search
+  // Filtered catalog by multi-token search
   const filteredCatalog = useMemo(() => {
     if (!productSearch.trim()) return catalog.slice(0, 30)
-    const q = productSearch.toLowerCase()
-    return catalog.filter((p) => p.name?.toLowerCase().includes(q))
+    const rawQ = productSearch.trim().toLowerCase()
+    const tokens = rawQ.split(/\s+/).filter(Boolean)
+    return catalog.filter((p) => {
+      const pStr = `${p.name || ''} ${p.sku || ''}`.toLowerCase()
+      return tokens.every((t) => pStr.includes(t))
+    })
   }, [catalog, productSearch])
 
   // Currency Formatter

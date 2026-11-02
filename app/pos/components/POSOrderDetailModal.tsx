@@ -10,11 +10,13 @@ import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
 import CashPaymentModal, { type PaymentResult } from './CashPaymentModal'
 import POSReturnModal from './POSReturnModal'
 import { supabase } from '@/lib/supabase'
+import { useUserContext } from '@/components/UserContext'
 
 type Props = {
   isOpen: boolean
   onClose: () => void
   order: any | null
+  businessId?: string
   timezone?: string
   businessName?: string
   cashierName?: string
@@ -40,6 +42,7 @@ export default function POSOrderDetailModal({
   isOpen,
   onClose,
   order,
+  businessId,
   timezone,
   businessName = 'ShapeUp Store',
   cashierName = 'Kasir',
@@ -47,7 +50,9 @@ export default function POSOrderDetailModal({
   onOrderUpdated
 }: Props) {
   // ─── 1. ALL HOOKS UNCONDITIONALLY AT TOP (ZERO REACT HOOKS VIOLATIONS) ──────
+  const { activeBusiness } = useUserContext()
   const [currentOrder, setCurrentOrder] = useState<any | null>(order)
+  const effectiveBusinessId = businessId || currentOrder?.business_id || activeBusiness?.id
   const [payments, setPayments] = useState<PaymentRecord[]>([])
   const [loadingPayments, setLoadingPayments] = useState(false)
   const [paymentError, setPaymentError] = useState<string | null>(null)
@@ -842,7 +847,7 @@ export default function POSOrderDetailModal({
           isOpen={isReturnModalOpen}
           onClose={() => setIsReturnModalOpen(false)}
           order={currentOrder}
-          businessId={currentOrder.business_id}
+          businessId={effectiveBusinessId}
           timezone={timezone}
           cashierName={cashierName}
           onSuccess={() => {
