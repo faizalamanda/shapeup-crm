@@ -762,15 +762,15 @@ export default function CashPaymentModal({
 
         {/* 
           WORKSPACE UTAMA (ODOO-STYLE LAYOUT)
-          KOLOM KIRI: ACTION & KEYPAD (38% - lg:col-span-5)
-          KOLOM KANAN: DISPLAY CANVAS (62% - lg:col-span-7)
+          KOLOM KIRI: ACTION & KEYPAD (38% - md:col-span-5)
+          KOLOM KANAN: DISPLAY CANVAS (62% - md:col-span-7)
         */}
-        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-2 sm:gap-2.5 overflow-hidden">
+        <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-12 sm:landscape:grid-cols-12 gap-2 sm:gap-2.5 overflow-y-auto md:overflow-hidden sm:landscape:overflow-hidden">
           
           {/* ========================================================= */}
           {/* KOLOM KIRI (38%): ACTION & CONTROL PAD (ODOO STYLE)       */}
           {/* ========================================================= */}
-          <aside className="col-span-1 lg:col-span-5 xl:col-span-5 flex flex-col bg-white border border-slate-200/90 rounded-2xl p-2.5 sm:p-3 shadow-2xs overflow-hidden justify-between">
+          <aside className="col-span-1 md:col-span-5 sm:landscape:col-span-5 lg:col-span-5 xl:col-span-5 flex flex-col bg-white border border-slate-200/90 rounded-2xl p-2.5 sm:p-3 shadow-2xs overflow-hidden justify-between">
             
             <div className="space-y-1.5 shrink-0">
               
@@ -781,7 +781,7 @@ export default function CashPaymentModal({
                   <span className="text-emerald-700 font-bold lowercase">klik untuk nyala / matikan</span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-1.5">
+                <div className="grid grid-cols-2 gap-1.5 max-h-[120px] sm:max-h-[135px] overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden pr-0.5">
                   {tenderOptions.map((t) => {
                     const lineEntry = tenderLines.find((l) => l.tenderId === t.id || l.accountId === t.account_id)
                     const isTurnedOn = Boolean(lineEntry)
@@ -794,14 +794,14 @@ export default function CashPaymentModal({
                         type="button"
                         onClick={() => handleToggleTender(t)}
                         title={isTurnedOn ? 'Klik untuk mematikan / menghapus metode ini' : 'Klik untuk menyalakan metode ini'}
-                        className={`relative p-2 rounded-xl border-2 text-left transition cursor-pointer flex items-center justify-between min-h-[52px] ${
+                        className={`relative p-1.5 sm:p-2 rounded-xl border-2 text-left transition cursor-pointer flex items-center justify-between min-h-[46px] sm:min-h-[50px] ${
                           isTurnedOn
                             ? 'bg-emerald-50/80 border-emerald-500 text-emerald-950 shadow-2xs'
                             : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
                         }`}
                       >
-                        <div className="flex items-center gap-2 min-w-0 truncate">
-                          <span className="text-xl shrink-0">{glyph}</span>
+                        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 truncate">
+                          <span className="text-lg sm:text-xl shrink-0">{glyph}</span>
                           <div className="truncate">
                             <div className="font-extrabold text-xs truncate leading-tight flex items-center gap-1">
                               <span>{t.name}</span>
@@ -839,7 +839,7 @@ export default function CashPaymentModal({
               {/* BARIS INFO PELANGGAN & TOMBOL SPLIT BILL */}
               <div className="grid grid-cols-2 gap-1.5 pt-0.5">
                 <div className="p-1.5 px-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-1.5 text-xs">
-                  <span className="text-base">👤</span>
+                  <span className="text-base shrink-0">👤</span>
                   <div className="truncate">
                     <span className="text-[9px] uppercase font-bold text-slate-400 block leading-none">Pelanggan:</span>
                     <span className="font-extrabold text-[11px] text-slate-900 truncate block">
@@ -869,40 +869,40 @@ export default function CashPaymentModal({
                         : 'Split Tagihan'}
                     </span>
                   </div>
-                  <span className="text-[10px] opacity-80">⚙</span>
+                  <span className="text-[10px] opacity-80 shrink-0">⚙</span>
                 </button>
               </div>
 
             </div>
 
             {/* KEYPAD NUMERIK 4-KOLOM ODOO STYLE */}
-            <div className="flex-1 min-h-0 grid grid-cols-4 gap-1.5 my-1.5">
+            <div className="flex-1 min-h-0 grid grid-cols-4 gap-1.5 my-1 sm:my-1.5">
               {/* Baris 1: 1, 2, 3, +10.000 */}
               <button
                 type="button"
                 onClick={() => handleNumpadInput('1')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 1
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('2')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 2
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('3')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 3
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('+10000')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
               >
                 +10k
               </button>
@@ -911,28 +911,28 @@ export default function CashPaymentModal({
               <button
                 type="button"
                 onClick={() => handleNumpadInput('4')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 4
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('5')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 5
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('6')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 6
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('+20000')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
               >
                 +20k
               </button>
@@ -941,28 +941,28 @@ export default function CashPaymentModal({
               <button
                 type="button"
                 onClick={() => handleNumpadInput('7')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 7
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('8')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 8
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('9')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 9
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('+50000')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
               >
                 +50k
               </button>
@@ -971,28 +971,28 @@ export default function CashPaymentModal({
               <button
                 type="button"
                 onClick={() => handleNumpadInput('CLEAR')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-sm font-black text-rose-700 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-200 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-xs sm:text-sm font-black text-rose-700 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-200 shadow-2xs"
               >
                 C
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('0')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 0
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('000')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-base font-black text-slate-900 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-sm sm:text-base font-black text-slate-900 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 000
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('BACKSPACE')}
-                className="min-h-[50px] sm:min-h-[54px] rounded-xl sm:rounded-2xl bg-rose-100 hover:bg-rose-200 active:bg-rose-300 text-xl font-black text-rose-800 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-300 shadow-2xs"
+                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-rose-100 hover:bg-rose-200 active:bg-rose-300 text-lg sm:text-xl font-black text-rose-800 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-300 shadow-2xs"
               >
                 ⌫
               </button>
@@ -1003,7 +1003,7 @@ export default function CashPaymentModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="col-span-2 py-3 sm:py-3.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs sm:text-sm tracking-wide transition cursor-pointer border border-slate-200"
+                className="col-span-2 py-2.5 sm:py-3 lg:py-3.5 rounded-xl sm:rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs sm:text-sm tracking-wide transition cursor-pointer border border-slate-200"
               >
                 Batal
               </button>
@@ -1012,7 +1012,7 @@ export default function CashPaymentModal({
                 type="button"
                 onClick={handleConfirm}
                 disabled={isSubmitting || calculation.totalAllocated <= 0}
-                className={`col-span-3 py-3 sm:py-3.5 rounded-2xl font-black text-xs sm:text-sm tracking-wider uppercase transition shadow-md flex items-center justify-center gap-1.5 cursor-pointer ${
+                className={`col-span-3 py-2.5 sm:py-3 lg:py-3.5 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm tracking-wider uppercase transition shadow-md flex items-center justify-center gap-1.5 cursor-pointer ${
                   isSubmitting || calculation.totalAllocated <= 0
                     ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
                     : 'bg-[#714B67] hover:bg-[#5e3e56] active:bg-[#4d3246] text-white shadow-purple-900/20'
@@ -1027,23 +1027,23 @@ export default function CashPaymentModal({
           {/* ========================================================= */}
           {/* KOLOM KANAN (62%): DISPLAY & PAYMENT LINES (ODOO CANVAS)  */}
           {/* ========================================================= */}
-          <main className="col-span-1 lg:col-span-7 xl:col-span-7 flex flex-col bg-white border border-slate-200/90 rounded-2xl p-3 sm:p-5 shadow-2xs overflow-hidden justify-between">
+          <main className="col-span-1 md:col-span-7 sm:landscape:col-span-7 lg:col-span-7 xl:col-span-7 flex flex-col bg-white border border-slate-200/90 rounded-2xl p-2.5 sm:p-3.5 lg:p-4 shadow-2xs overflow-hidden justify-between">
             
             {/* TOTAL TAGIHAN RAKSASA DI BAGIAN ATAS (HIJAU TEBAL SEPERTI ODOO) */}
-            <div className="text-center py-2 sm:py-3 border-b border-slate-100 shrink-0">
-              <span className="text-[11px] sm:text-xs font-black uppercase tracking-widest text-slate-400 block">
+            <div className="text-center py-1.5 sm:py-2.5 border-b border-slate-100 shrink-0">
+              <span className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-slate-400 block">
                 {billMode === 'full' ? 'TOTAL TAGIHAN' : 'TAGIHAN SUB-BILL'}
               </span>
-              <div className="text-4xl sm:text-5xl lg:text-6xl font-black font-mono text-emerald-600 tracking-tight mt-1">
+              <div className="text-3xl sm:text-4xl lg:text-5xl font-black font-mono text-emerald-600 tracking-tight mt-0.5 sm:mt-1">
                 {formatIDR(activeBillTarget)}
               </div>
             </div>
 
             {/* BANNER SPLIT BILL (JIKA SEDANG AKTIF) */}
             {billMode !== 'full' && (
-              <div className="shrink-0 my-2 p-2.5 px-3 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-950 flex items-center justify-between text-xs shadow-2xs">
+              <div className="shrink-0 my-1.5 p-2 sm:p-2.5 px-3 rounded-xl sm:rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-950 flex items-center justify-between text-xs shadow-2xs">
                 <div className="flex items-center gap-2">
-                  <span className="text-lg">📌</span>
+                  <span className="text-base sm:text-lg">📌</span>
                   <div>
                     <span className="font-extrabold text-xs block">
                       {billMode === 'split_equal'
@@ -1078,17 +1078,17 @@ export default function CashPaymentModal({
             )}
 
             {/* AREA STATUS DUA ARAH & BARIS MULTI-TENDER (SEAMLESS CLEAN LIST MENYATU DENGAN BOX UTAMA) */}
-            <div className="flex-1 min-h-0 flex flex-col justify-start py-2 space-y-3 max-w-xl mx-auto w-full">
+            <div className="flex-1 min-h-0 flex flex-col justify-start py-1.5 sm:py-2 space-y-2 sm:space-y-3 max-w-xl mx-auto w-full">
               
               {/* KOTAK STATUS DUA ARAH (REMAINING ATAU KEMBALIAN) */}
-              <div className={`p-3.5 rounded-2xl border flex items-center justify-between text-sm sm:text-base font-black transition shadow-2xs ${
+              <div className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border flex items-center justify-between text-xs sm:text-base font-black transition shadow-2xs ${
                 calculation.totalChange > 0
                   ? 'bg-emerald-500 border-emerald-600 text-white'
                   : calculation.remainingBill > 0
                   ? 'bg-amber-50/90 border-amber-300 text-amber-950'
                   : 'bg-emerald-100 border-emerald-400 text-emerald-900'
               }`}>
-                <span className="uppercase tracking-wider text-xs sm:text-sm font-extrabold">
+                <span className="uppercase tracking-wider text-[11px] sm:text-sm font-extrabold">
                   {calculation.totalChange > 0 ? 'Kembalian (Change):' : 'Sisa Tagihan (Remaining):'}
                 </span>
                 <span className="font-mono text-base sm:text-xl font-black">
@@ -1099,7 +1099,7 @@ export default function CashPaymentModal({
               </div>
 
               {/* DAFTAR BARIS PEMBAYARAN AKTIF MULTI-TENDER (FLAT SEAMLESS TANPA SCROLLBAR KAKU) */}
-              <div className="flex-1 divide-y divide-slate-100 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden my-1 pr-0.5">
+              <div className="flex-1 min-h-0 divide-y divide-slate-100 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden my-0.5 sm:my-1 pr-0.5">
                 {tenderLines.map((line) => {
                   const isFocused = line.id === activeLineId
                   const glyph = CATEGORY_GLYPHS[line.category] || '💳'
@@ -1113,17 +1113,17 @@ export default function CashPaymentModal({
                           setActiveLineId(line.id)
                           setIsFirstTouch(true)
                         }}
-                        className={`p-3 sm:py-3.5 sm:px-3 rounded-xl transition flex items-center justify-between cursor-pointer ${
+                        className={`p-2.5 sm:p-3 sm:px-3.5 rounded-xl transition flex items-center justify-between cursor-pointer ${
                           isFocused
                             ? 'bg-emerald-50/90 text-emerald-950 font-medium ring-2 ring-emerald-500/20 shadow-2xs'
                             : 'hover:bg-slate-50 text-slate-700'
                         }`}
                       >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span className="text-2xl">{glyph}</span>
+                        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                          <span className="text-xl sm:text-2xl">{glyph}</span>
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="font-extrabold text-sm sm:text-base text-slate-900 block leading-tight">
+                              <span className="font-extrabold text-xs sm:text-sm text-slate-900 block leading-tight">
                                 {line.tenderName}
                               </span>
                               {isFocused && (
@@ -1133,7 +1133,7 @@ export default function CashPaymentModal({
                                 </span>
                               )}
                             </div>
-                            <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
+                            <span className="text-[10px] sm:text-[11px] text-slate-500 font-mono block mt-0.5">
                               {line.accountCode || 'COA'}
                               {isCash && line.cashReceived > line.amount ? (
                                 <span className="text-emerald-700 font-semibold ml-1.5">
@@ -1144,8 +1144,8 @@ export default function CashPaymentModal({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-3">
-                          <span className="font-mono font-black text-base sm:text-2xl text-slate-900">
+                        <div className="flex items-center gap-2 sm:gap-3">
+                          <span className="font-mono font-black text-sm sm:text-xl text-slate-900">
                             {formatIDR(displayAmount)}
                           </span>
 
@@ -1153,7 +1153,7 @@ export default function CashPaymentModal({
                             <button
                               type="button"
                               onClick={(e) => handleDeleteLine(line.id, e)}
-                              className="w-7 h-7 rounded-lg hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center font-bold text-sm transition cursor-pointer"
+                              className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center font-bold text-xs sm:text-sm transition cursor-pointer"
                               title="Hapus metode ini"
                             >
                               ✕
@@ -1185,7 +1185,7 @@ export default function CashPaymentModal({
             </div>
 
             {/* FOOTER CANVAS KANAN */}
-            <div className="shrink-0 border-t border-slate-100 pt-2 flex items-center justify-between text-xs text-slate-500 font-medium">
+            <div className="shrink-0 border-t border-slate-100 pt-1.5 sm:pt-2 flex items-center justify-between text-[11px] sm:text-xs text-slate-500 font-medium">
               <span>Total Terbayar: <b className="font-mono text-slate-900">{formatIDR(calculation.totalAllocated)}</b></span>
               <span>Status: <b className={calculation.isFullyCovered ? 'text-emerald-700' : 'text-amber-700'}>{calculation.statusLabel}</b></span>
             </div>

@@ -117,17 +117,19 @@ export function FullScreenModal({
       tabIndex={-1}
       className={`su-modal-dialog flex h-[100dvh] w-screen flex-col bg-[var(--su-surface)] text-[var(--su-text)] outline-none sm:h-auto sm:max-h-[calc(100dvh-3rem)] sm:overflow-hidden sm:rounded-2xl sm:shadow-2xl ${desktopSizeClasses[desktopSize]} ${className}`}
     >
-      <header className="flex shrink-0 items-center gap-3 border-b border-[var(--su-border)] bg-[var(--su-surface)] px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:px-6">
-        <div className="min-w-0 flex-1">
-          <h2 id={titleId} className="truncate text-base font-extrabold tracking-tight">{title}</h2>
-          {description && <p id={descriptionId} className="mt-0.5 text-xs text-[var(--su-text-muted)]">{description}</p>}
-        </div>
-        {showCloseButton && (
-          <button type="button" onClick={onClose} className="flex size-10 shrink-0 items-center justify-center rounded-xl text-lg font-semibold text-[var(--su-text-muted)] transition-colors hover:bg-[var(--su-bg)] hover:text-[var(--su-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--su-primary)]" aria-label={closeLabel}>
-            <span aria-hidden="true">×</span>
-          </button>
-        )}
-      </header>
+      {(title || showCloseButton) && (
+        <header className="flex shrink-0 items-center gap-3 border-b border-[var(--su-border)] bg-[var(--su-surface)] px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:px-6">
+          <div className="min-w-0 flex-1">
+            {title && <h2 id={titleId} className="truncate text-base font-extrabold tracking-tight">{title}</h2>}
+            {description && <p id={descriptionId} className="mt-0.5 text-xs text-[var(--su-text-muted)]">{description}</p>}
+          </div>
+          {showCloseButton && (
+            <button type="button" onClick={onClose} className="flex size-10 shrink-0 items-center justify-center rounded-xl text-lg font-semibold text-[var(--su-text-muted)] transition-colors hover:bg-[var(--su-bg)] hover:text-[var(--su-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--su-primary)]" aria-label={closeLabel}>
+              <span aria-hidden="true">×</span>
+            </button>
+          )}
+        </header>
+      )}
 
       <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] sm:px-6 ${contentClassName}`}>
         {children}
