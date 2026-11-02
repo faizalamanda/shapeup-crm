@@ -303,5 +303,19 @@
    - **PostgreSQL Variant Schema Standard:** Relasi tabel `product_variants` menggunakan kolom **`name`** (bukan `title`). Dilarang memanggil `product_variants(..., title, ...)` guna mencegah crash fatal `PostgreSQL 42703 (column product_variants_1.title does not exist)`.
    - **Zero-Latency UI Extraction:** Antarmuka modal retur (`POSReturnModal.tsx`) **WAJIB** mengekstrak daftar item belanjaan secara sinkronus dari `order.items_json` pada saat *mount* (`computeReturnableLines`) untuk menjamin transisi 0ms tanpa menunggu panggilan server.
 
+21. **Enterprise Invoice Lifecycle, Decoupled Status, Down Payment & Omnichannel Attribution Standards:**
+   - **Pemisahan Dimensi Siklus Hidup (Decoupled Two-Dimensional Lifecycle):**
+     - Status dokumen logistik/operasional (`orders.status`: `pending` [Draft], `processing` [Terbit/Aktif], `completed` [Selesai], `cancelled` [Batal]) **TIDAK SAMA** dan terpisah secara ortogonal dari status keuangan piutang (`orders.payment_status`: `unpaid`, `partial`, `paid`).
+     - Dilarang keras mengasumsikan faktur yang berstatus `status === 'completed'` pasti berstatus lunas (`paid`), atau sebaliknya. Faktur tempo 30 hari dapat berstatus `completed` (barang telah dikirim/pekerjaan selesai) namun tetap berstatus `unpaid`.
+   - **Multi-Installment & Down Payment (DP) Ledger:**
+     - Uang muka (DP) dan termin pelunasan **WAJIB** dicatat melalui tabel `order_payments` sebagai *Single Source of Truth* arus kas, dan didelegasikan ke `recordOrderPayment()` dari `@/lib/paymentLedger.ts` (murni mutasi kas & piutang).
+     - Fungsi `syncOrderToLedger()` otomatis membaca `order_payments` yang belum terikat jurnal (`!p.transaction_id`) untuk menerbitkan transaksi jurnal pembayaran bertahap (Debit Kas/Bank, Kredit Piutang Usaha `103000`) tanpa menduplikasi transaksi penjualan `salesTx`.
+   - **Atribusi Omnichannel & UTM Attribution:**
+     - Metadata sumber penjualan disimpan dalam format terpadu di `orders.source_platform` dan `raw_source_data.source_order` (`channel`, `reference_no`, `utm_source`, `utm_campaign`).
+     - Format ini wajib kompatibel dengan modul ekspor multi-sheet (`/app/orders/services/orderExportService.ts`), webhooks e-commerce (WooCommerce), dan laporan penjualan per saluran.
+   - **Penerapan Penuh Modul Reusable CRM:**
+     - Seluruh endpoint API faktur (`/api/orders/invoices`, `/api/orders/invoices/[id]`, `/api/orders/invoices/[id]/payment`) wajib menggunakan `getApiContext()` dari `@/lib/apiContext.ts` (Rule 1) dan sanitasi UUID `isUuid()` dari `@/lib/utils.ts` (Rule 9).
+
+
 
 

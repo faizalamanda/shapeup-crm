@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 
 // Types matching the schema
@@ -11,6 +10,9 @@ type Invoice = {
   order_date: string
   grand_total: number
   status: 'pending' | 'processing' | 'completed' | 'cancelled'
+  payment_status?: 'unpaid' | 'partial' | 'paid'
+  amount_paid?: number
+  source_platform?: string
   payment_method: string | null
   raw_source_data: {
     due_date: string | null
@@ -19,6 +21,12 @@ type Invoice = {
     custom_title?: string
     accent_color?: string
     layout_style?: string
+    source_order?: {
+      channel?: string
+      reference_no?: string
+      utm_source?: string
+      utm_campaign?: string
+    }
   } | null
   customers: {
     id: string
@@ -42,19 +50,80 @@ const formatIDR = (value: number) => {
   }).format(value)
 }
 
-const getStatusBadge = (status: string) => {
+const getDocStatusBadge = (status: string) => {
   switch (status) {
-    case 'pending': // Draft
-      return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-200">Draft</span>
-    case 'processing': // Sent / Unpaid
-      return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-50 text-blue-700 border border-blue-200">Belum Bayar</span>
-    case 'completed': // Paid
-      return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Lunas</span>
-    case 'cancelled': // Cancelled
-      return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-50 text-rose-700 border border-rose-200">Batal</span>
+    case 'pending':
+      return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-200">📝 Draft</span>
+    case 'processing':
+      return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-blue-50 text-blue-700 border border-blue-200">🚀 Diterbitkan</span>
+    case 'completed':
+      return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-slate-100 text-slate-700 border border-slate-200">✅ Selesai</span>
+    case 'cancelled':
+      return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-rose-50 text-rose-700 border border-rose-200">❌ Batal</span>
     default:
-      return <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-gray-50 text-gray-700 border border-gray-200">{status}</span>
+      return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-gray-50 text-gray-700 border border-gray-200">{status}</span>
   }
+}
+
+const getPaymentStatusBadge = (paymentStatus?: string, amountPaid?: number, grandTotal?: number) => {
+  const status = paymentStatus || 'unpaid'
+  switch (status) {
+    case 'paid':
+      return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-bold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">🟢 Lunas</span>
+    case 'partial':
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-bold rounded-full bg-amber-50 text-amber-700 border border-amber-200" title={`Dibayar: ${formatIDR(Number(amountPaid || 0))}${grandTotal ? ` / ${formatIDR(Number(grandTotal))}` : ''}`}>
+          🟡 Sebagian (DP)
+        </span>
+      )
+    case 'unpaid':
+    default:
+      return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-bold rounded-full bg-rose-50 text-rose-700 border border-rose-200">🔴 Belum Bayar</span>
+  }
+}
+
+const getChannelBadge = (sourcePlatform?: string, sourceOrder?: { channel?: string; reference_no?: string }) => {
+  const channel = sourceOrder?.channel || sourcePlatform || 'Invoice'
+  const refNo = sourceOrder?.reference_no
+
+  let icon = '📄'
+  let color = 'bg-slate-100 text-slate-700 border-slate-200'
+
+  if (channel === 'WhatsApp') {
+    icon = '📱'
+    color = 'bg-emerald-50 text-emerald-700 border-emerald-200'
+  } else if (channel === 'Instagram') {
+    icon = '📸'
+    color = 'bg-pink-50 text-pink-700 border-pink-200'
+  } else if (channel === 'Shopee') {
+    icon = '🛍️'
+    color = 'bg-orange-50 text-orange-700 border-orange-200'
+  } else if (channel === 'Tokopedia') {
+    icon = '🟢'
+    color = 'bg-green-50 text-green-700 border-green-200'
+  } else if (channel === 'TikTok') {
+    icon = '🎵'
+    color = 'bg-purple-50 text-purple-700 border-purple-200'
+  } else if (channel === 'WooCommerce') {
+    icon = '🌐'
+    color = 'bg-indigo-50 text-indigo-700 border-indigo-200'
+  } else if (channel === 'Manual') {
+    icon = '💼'
+    color = 'bg-amber-50 text-amber-700 border-amber-200'
+  }
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold rounded-md border w-fit ${color}`}>
+        <span>{icon}</span> {channel}
+      </span>
+      {refNo && (
+        <span className="text-[10px] text-[#70706E] font-mono truncate max-w-[120px]" title={refNo}>
+          Ref: {refNo}
+        </span>
+      )}
+    </div>
+  )
 }
 
 export default function InvoicesPage() {
@@ -112,10 +181,12 @@ export default function InvoicesPage() {
     fetchInvoices()
   }, [fetchInvoices])
 
+  const [selectedChannel, setSelectedChannel] = useState<string>('all')
+
   // Reset pagination limit on filter changes
   useEffect(() => {
     setDisplayLimit(10)
-  }, [activeTab, searchQuery, selectedCreatorId])
+  }, [activeTab, searchQuery, selectedCreatorId, selectedChannel])
 
   // Setup intersection observer ref for load more detector
   const loadMoreRef = useCallback((node: HTMLDivElement | null) => {
@@ -143,23 +214,30 @@ export default function InvoicesPage() {
     const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000)
 
     invoices.forEach(inv => {
-      const total = Number(inv.grand_total || 0)
+      const grandTotal = Number(inv.grand_total || 0)
+      const amountPaid = Number(inv.amount_paid || 0)
+      const isPaid = inv.payment_status === 'paid' || inv.status === 'completed'
+      const remaining = isPaid ? 0 : Math.max(0, grandTotal - amountPaid)
+
       if (inv.status === 'pending') {
-        draft += total
-      } else if (inv.status === 'processing') {
-        outstanding += total
-        // Check if overdue
-        const dueDateStr = inv.raw_source_data?.due_date
-        if (dueDateStr) {
-          const dueDate = new Date(dueDateStr)
-          if (dueDate < today) {
-            overdue += total
+        draft += grandTotal
+      } else if (inv.status !== 'cancelled') {
+        if (remaining > 0) {
+          outstanding += remaining
+
+          // Check if overdue
+          const dueDateStr = inv.raw_source_data?.due_date
+          if (dueDateStr) {
+            const dueDate = new Date(dueDateStr)
+            if (dueDate < today) {
+              overdue += remaining
+            }
           }
         }
-      } else if (inv.status === 'completed') {
+
         const orderDate = new Date(inv.order_date)
         if (orderDate >= thirtyDaysAgo) {
-          paid30Days += total
+          paid30Days += isPaid ? grandTotal : amountPaid
         }
       }
     })
@@ -178,27 +256,51 @@ export default function InvoicesPage() {
     return Array.from(listMap.entries()).map(([id, name]) => ({ id, name }))
   }, [invoices])
 
+  // Extract unique list of channels from invoices data
+  const channelsList = useMemo(() => {
+    const set = new Set<string>()
+    invoices.forEach(inv => {
+      const ch = inv.raw_source_data?.source_order?.channel || inv.source_platform || 'Invoice'
+      if (ch) set.add(ch)
+    })
+    return Array.from(set).sort()
+  }, [invoices])
+
   // Filtered Invoices for Table
   const filteredInvoices = useMemo(() => {
     return invoices.filter(inv => {
       // 1. Status Filter
       if (activeTab === 'draft' && inv.status !== 'pending') return false
-      if (activeTab === 'unpaid' && inv.status !== 'processing') return false
-      if (activeTab === 'paid' && inv.status !== 'completed') return false
+      if (activeTab === 'unpaid') {
+        const isPaid = inv.payment_status === 'paid' || inv.status === 'completed'
+        if (isPaid || inv.status === 'pending' || inv.status === 'cancelled') return false
+      }
+      if (activeTab === 'partial' && inv.payment_status !== 'partial') return false
+      if (activeTab === 'paid') {
+        const isPaid = inv.payment_status === 'paid' || inv.status === 'completed'
+        if (!isPaid) return false
+      }
       if (activeTab === 'cancelled' && inv.status !== 'cancelled') return false
 
       // 2. Creator Dropdown Filter
       if (selectedCreatorId !== 'all' && inv.creator?.id !== selectedCreatorId) return false
 
-      // 3. Search Filter
+      // 3. Channel Filter
+      const invChannel = inv.raw_source_data?.source_order?.channel || inv.source_platform || 'Invoice'
+      if (selectedChannel !== 'all' && invChannel !== selectedChannel) return false
+
+      // 4. Search Filter
       if (searchQuery.trim() === '') return true
       const q = searchQuery.toLowerCase()
       const invNum = (inv.order_number || '').toLowerCase()
       const custName = (inv.customers?.name || '').toLowerCase()
+      const custPhone = (inv.customers?.phone || '').toLowerCase()
       const creatorName = (inv.creator?.full_name || '').toLowerCase()
-      return invNum.includes(q) || custName.includes(q) || creatorName.includes(q)
+      const refNo = (inv.raw_source_data?.source_order?.reference_no || '').toLowerCase()
+      const channelStr = invChannel.toLowerCase()
+      return invNum.includes(q) || custName.includes(q) || custPhone.includes(q) || creatorName.includes(q) || refNo.includes(q) || channelStr.includes(q)
     })
-  }, [invoices, activeTab, selectedCreatorId, searchQuery])
+  }, [invoices, activeTab, selectedCreatorId, selectedChannel, searchQuery])
 
   // Slice list for pagination-on-scroll (lazy load)
   const displayedInvoices = useMemo(() => {
@@ -217,7 +319,7 @@ export default function InvoicesPage() {
           href="/orders/invoices/new"
           className="inline-flex items-center justify-center px-4 py-2 text-sm font-bold text-white bg-[#1E40AF] hover:bg-[#1D4ED8] rounded-xl shadow-sm transition-all duration-200"
         >
-          Buat Invoice Baru
+          ➕ Buat Invoice Baru
         </Link>
       </div>
 
@@ -226,13 +328,13 @@ export default function InvoicesPage() {
         <div className="p-5 rounded-2xl bg-white border border-[#EBEBEA] shadow-sm hover:border-[#1E40AF]/30 transition-all">
           <p className="text-xs font-semibold uppercase tracking-wider text-rose-600">Jatuh Tempo (Overdue)</p>
           <p className="text-2xl font-black mt-2 text-rose-700">{formatIDR(metrics.overdue)}</p>
-          <p className="text-[10px] text-[#70706E] mt-1">Invoice unpaid melewati tenggat waktu</p>
+          <p className="text-[10px] text-[#70706E] mt-1">Sisa tagihan melewati tenggat waktu</p>
         </div>
 
         <div className="p-5 rounded-2xl bg-white border border-[#EBEBEA] shadow-sm hover:border-[#1E40AF]/30 transition-all">
           <p className="text-xs font-semibold uppercase tracking-wider text-blue-600">Belum Lunas (Outstanding)</p>
           <p className="text-2xl font-black mt-2 text-blue-800">{formatIDR(metrics.outstanding)}</p>
-          <p className="text-[10px] text-[#70706E] mt-1">Tagihan aktif terkirim ke customer</p>
+          <p className="text-[10px] text-[#70706E] mt-1">Total piutang tagihan aktif</p>
         </div>
 
         <div className="p-5 rounded-2xl bg-white border border-[#EBEBEA] shadow-sm hover:border-[#1E40AF]/30 transition-all">
@@ -242,9 +344,9 @@ export default function InvoicesPage() {
         </div>
 
         <div className="p-5 rounded-2xl bg-white border border-[#EBEBEA] shadow-sm hover:border-[#1E40AF]/30 transition-all">
-          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Lunas (30 Hari Terakhir)</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Terbayar (30 Hari Terakhir)</p>
           <p className="text-2xl font-black mt-2 text-emerald-800">{formatIDR(metrics.paid30Days)}</p>
-          <p className="text-[10px] text-[#70706E] mt-1">Pendapatan invoice tertagih</p>
+          <p className="text-[10px] text-[#70706E] mt-1">Uang masuk dari penagihan invoice</p>
         </div>
       </div>
 
@@ -255,9 +357,10 @@ export default function InvoicesPage() {
           <div className="flex flex-wrap gap-1 bg-[#F0F0EF] p-1 rounded-xl w-fit">
             {[
               { id: 'all', label: 'Semua' },
-              { id: 'draft', label: 'Draft' },
-              { id: 'unpaid', label: 'Belum Bayar' },
+              { id: 'unpaid', label: 'Belum Lunas' },
+              { id: 'partial', label: 'Sebagian / DP' },
               { id: 'paid', label: 'Lunas' },
+              { id: 'draft', label: 'Draft' },
               { id: 'cancelled', label: 'Batal' }
             ].map(tab => (
               <button
@@ -275,6 +378,20 @@ export default function InvoicesPage() {
           </div>
 
           <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+            {/* Filter Kanal Sumber Dropdown */}
+            <select
+              value={selectedChannel}
+              onChange={e => setSelectedChannel(e.target.value)}
+              className="px-3 py-1.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white text-[#1C1C1A] focus:outline-none focus:ring-2 focus:ring-[#1E40AF]/20 focus:border-[#1E40AF] transition-all"
+            >
+              <option value="all">Semua Kanal</option>
+              {channelsList.map(ch => (
+                <option key={ch} value={ch}>
+                  {ch}
+                </option>
+              ))}
+            </select>
+
             {/* Filter Dibuat Oleh Dropdown */}
             <select
               value={selectedCreatorId}
@@ -292,7 +409,7 @@ export default function InvoicesPage() {
             <div className="relative w-full md:w-72">
               <input
                 type="text"
-                placeholder="Cari nomor, pelanggan, atau pembuat..."
+                placeholder="Cari nomor, pelanggan, ref..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 className="w-full pl-9 pr-4 py-1.5 text-xs font-medium rounded-xl border border-[#EBEBEA] bg-white focus:outline-none focus:ring-2 focus:ring-[#1E40AF]/20 focus:border-[#1E40AF] transition-all placeholder:text-gray-400 placeholder:text-xs text-[#1C1C1A]"
@@ -322,11 +439,12 @@ export default function InvoicesPage() {
                   <tr className="border-b border-[#EBEBEA] text-xs font-bold uppercase tracking-wider text-[#70706E] bg-[#FAFAFA]">
                     <th className="p-4">No. Invoice</th>
                     <th className="p-4">Pelanggan</th>
+                    <th className="p-4">Sumber Pesanan</th>
                     <th className="p-4">Pembuat</th>
-                    <th className="p-4">Tanggal Faktur</th>
-                    <th className="p-4">Jatuh Tempo</th>
-                    <th className="p-4 text-right">Total</th>
-                    <th className="p-4">Status</th>
+                    <th className="p-4">Tgl & Jatuh Tempo</th>
+                    <th className="p-4 text-right">Total & Sisa</th>
+                    <th className="p-4">Status Dokumen</th>
+                    <th className="p-4">Pembayaran</th>
                     <th className="p-4 text-center">Aksi</th>
                   </tr>
                 </thead>
@@ -345,6 +463,11 @@ export default function InvoicesPage() {
                         })
                       : '-'
 
+                    const grandTotal = Number(inv.grand_total || 0)
+                    const amountPaid = Number(inv.amount_paid || 0)
+                    const isPaid = inv.payment_status === 'paid' || inv.status === 'completed'
+                    const remaining = isPaid ? 0 : Math.max(0, grandTotal - amountPaid)
+
                     return (
                       <tr key={inv.id} className="hover:bg-[#F9F9F9] transition-all">
                         <td className="p-4 font-bold text-[#1E40AF]">
@@ -356,6 +479,9 @@ export default function InvoicesPage() {
                           <div className="font-semibold">{inv.customers?.name || 'Customer Umum'}</div>
                           <div className="text-xs text-[#70706E]">{inv.customers?.phone || ''}</div>
                         </td>
+                        <td className="p-4">
+                          {getChannelBadge(inv.source_platform, inv.raw_source_data?.source_order)}
+                        </td>
                         <td className="p-4 text-slate-700">
                           {inv.creator ? (
                             <span className="font-bold text-xs">{inv.creator.full_name}</span>
@@ -363,12 +489,20 @@ export default function InvoicesPage() {
                             <span className="text-xs text-slate-400 italic">Sistem</span>
                           )}
                         </td>
-                        <td className="p-4 text-[#70706E]">{invDate}</td>
-                        <td className="p-4 text-[#70706E]">{dueDate}</td>
-                        <td className="p-4 text-right font-bold text-slate-800">
-                          {formatIDR(inv.grand_total)}
+                        <td className="p-4 text-xs">
+                          <div className="text-[#1C1C1A] font-semibold">{invDate}</div>
+                          <div className="text-[#70706E] text-[11px]">Due: {dueDate}</div>
                         </td>
-                        <td className="p-4">{getStatusBadge(inv.status)}</td>
+                        <td className="p-4 text-right">
+                          <div className="font-bold text-slate-800">{formatIDR(grandTotal)}</div>
+                          {remaining > 0 && inv.status !== 'pending' && inv.status !== 'cancelled' && (
+                            <div className={`text-[11px] font-bold ${amountPaid > 0 ? 'text-amber-700' : 'text-rose-600'}`}>
+                              Sisa: {formatIDR(remaining)}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-4">{getDocStatusBadge(inv.status)}</td>
+                        <td className="p-4">{getPaymentStatusBadge(inv.payment_status, inv.amount_paid, inv.grand_total)}</td>
                         <td className="p-4 text-center">
                           <Link
                             href={`/orders/invoices/${inv.id}`}

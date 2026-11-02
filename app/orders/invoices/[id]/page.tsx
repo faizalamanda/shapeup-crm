@@ -27,6 +27,14 @@ type InvoiceItem = {
   discount?: number
 }
 
+type PaymentRecord = {
+  id: string
+  amount: number
+  payment_method: string
+  payment_date: string
+  notes?: string
+}
+
 type Invoice = {
   id: string
   order_number: string
@@ -37,6 +45,9 @@ type Invoice = {
   shipping_cost: number
   other_fees: number
   status: 'pending' | 'processing' | 'completed' | 'cancelled'
+  payment_status?: 'unpaid' | 'partial' | 'paid'
+  amount_paid?: number
+  source_platform?: string
   payment_method: string | null
   items_json: InvoiceItem[] | null
   raw_source_data: {
@@ -54,6 +65,12 @@ type Invoice = {
     show_address?: boolean
     show_shipping?: boolean
     meta_data?: Array<{ key: string; value: any }>
+    source_order?: {
+      channel?: string
+      reference_no?: string
+      utm_source?: string
+      utm_campaign?: string
+    }
   } | null
   customers: Customer | null
   user_id?: string | null
@@ -62,6 +79,7 @@ type Invoice = {
     full_name: string
     email: string
   } | null
+  payments?: PaymentRecord[]
 }
 
 type JournalLine = {
@@ -191,6 +209,9 @@ export default function InvoiceDetailPage() {
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false)
   const [paymentMethod, setPaymentMethod] = useState<string>('Bank Transfer')
   const [paymentDate, setPaymentDate] = useState<string>('')
+  const [paymentAmountInput, setPaymentAmountInput] = useState<number>(0)
+  const [paymentNotesInput, setPaymentNotesInput] = useState<string>('')
+  const [isFullSettlement, setIsFullSettlement] = useState<boolean>(true)
 
   // Customize inputs (starts from invoice details)
   const [customTitle, setCustomTitle] = useState<string>('INVOICE')
@@ -222,7 +243,6 @@ export default function InvoiceDetailPage() {
   const [labelSenderPhone, setLabelSenderPhone] = useState<string>('')
   const [labelRecipientAddress, setLabelRecipientAddress] = useState<string>('')
   const [labelFooterBody, setLabelFooterBody] = useState<string>('')
-  const [isPrintingLabel, setIsPrintingLabel] = useState<boolean>(false)
 
   // Fetch Invoice Details
   const fetchInvoiceDetails = useCallback(async () => {
@@ -371,11 +391,17 @@ export default function InvoiceDetailPage() {
     }
   }, [activeTab, fetchLedger, fetchStockMoves])
 
-  // Set default payment date on mount/modal open
+  // Set default payment date and remaining balance on modal open
   useEffect(() => {
-    const today = new Date()
-    setPaymentDate(today.toISOString().split('T')[0])
-  }, [showPaymentModal])
+    if (showPaymentModal && invoice) {
+      const today = new Date()
+      setPaymentDate(today.toISOString().split('T')[0])
+      const remaining = Math.max(0, Number(invoice.grand_total || 0) - Number(invoice.amount_paid || 0))
+      setPaymentAmountInput(remaining)
+      setIsFullSettlement(true)
+      setPaymentNotesInput('')
+    }
+  }, [showPaymentModal, invoice])
 
   // Load persistent fields from localStorage on mount/when invoice changes
   useEffect(() => {
@@ -607,6 +633,15 @@ export default function InvoiceDetailPage() {
 
   // Record Payment
   const handleRecordPayment = async () => {
+    if (!invoice) return
+    const remaining = Math.max(0, Number(invoice.grand_total || 0) - Number(invoice.amount_paid || 0))
+    const amountToPay = isFullSettlement ? remaining : Math.min(remaining, Math.max(1, Number(paymentAmountInput)))
+
+    if (amountToPay <= 0) {
+      setErrorMessage('Nominal pembayaran harus lebih besar dari 0.')
+      return
+    }
+
     setSubmitting(true)
     setErrorMessage('')
     try {
@@ -614,8 +649,10 @@ export default function InvoiceDetailPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          amount: amountToPay,
           payment_method: paymentMethod,
-          payment_date: paymentDate ? new Date(paymentDate).toISOString() : new Date().toISOString()
+          payment_date: paymentDate ? new Date(paymentDate).toISOString() : new Date().toISOString(),
+          notes: paymentNotesInput.trim() || undefined
         })
       })
 
@@ -919,8 +956,30 @@ export default function InvoiceDetailPage() {
           {/* Invoice Document Box */}
           <div
             id="print-invoice-area"
-            className="p-8 sm:p-12 bg-white rounded-2xl border border-[#EBEBEA] shadow-md space-y-8 min-h-[842px] transition-all"
+            className="relative p-8 sm:p-12 bg-white rounded-2xl border border-[#EBEBEA] shadow-md space-y-8 min-h-[842px] transition-all overflow-hidden"
           >
+            {/* Watermark / Stamp */}
+            {(invoice.payment_status === 'paid' || invoice.status === 'completed') && (
+              <div className="absolute top-28 right-8 pointer-events-none opacity-25 transform rotate-[-12deg] border-4 border-emerald-600 text-emerald-700 font-black text-4xl px-6 py-2 rounded-2xl tracking-widest uppercase select-none">
+                LUNAS
+              </div>
+            )}
+            {invoice.payment_status === 'partial' && (
+              <div className="absolute top-28 right-8 pointer-events-none opacity-25 transform rotate-[-12deg] border-4 border-amber-600 text-amber-700 font-black text-3xl px-6 py-2 rounded-2xl tracking-widest uppercase select-none">
+                DP DITERIMA
+              </div>
+            )}
+            {invoice.status === 'cancelled' && (
+              <div className="absolute top-28 right-8 pointer-events-none opacity-25 transform rotate-[-12deg] border-4 border-rose-600 text-rose-700 font-black text-4xl px-6 py-2 rounded-2xl tracking-widest uppercase select-none">
+                BATAL
+              </div>
+            )}
+            {invoice.status === 'pending' && (
+              <div className="absolute top-28 right-8 pointer-events-none opacity-25 transform rotate-[-12deg] border-4 border-slate-400 text-slate-500 font-black text-4xl px-6 py-2 rounded-2xl tracking-widest uppercase select-none">
+                DRAFT
+              </div>
+            )}
+
             {/* Top Bar: Company Name & Logo, Invoice Title */}
             <div className="flex flex-col sm:flex-row justify-between items-start gap-4 pb-6 border-b border-gray-100">
               <div className="space-y-1">
@@ -943,6 +1002,16 @@ export default function InvoiceDetailPage() {
                 <div className="text-xs text-[#70706E] mt-2 font-mono">
                   # {invoice.order_number}
                 </div>
+                {invoice.raw_source_data?.source_order?.reference_no && (
+                  <div className="text-[11px] text-[#70706E] font-mono">
+                    Ref / PO: <span className="font-bold text-[#1C1C1A]">{invoice.raw_source_data.source_order.reference_no}</span>
+                  </div>
+                )}
+                {invoice.source_platform && invoice.source_platform !== 'Invoice' && (
+                  <div className="text-[11px] text-[#70706E]">
+                    Sumber: <span className="font-bold text-[#1C1C1A]">{invoice.source_platform}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1006,10 +1075,22 @@ export default function InvoiceDetailPage() {
                     </span>
                   </div>
                 )}
-                {invoice.status === 'completed' && (
+                <div className="flex justify-between sm:justify-end gap-4 text-[#70706E]">
+                  <span>Status Dokumen:</span>
+                  <span className="font-bold uppercase text-[#1C1C1A]">
+                    {invoice.status === 'pending' ? 'Draft' : invoice.status === 'processing' ? 'Diterbitkan' : invoice.status === 'completed' ? 'Selesai' : 'Batal'}
+                  </span>
+                </div>
+                <div className="flex justify-between sm:justify-end gap-4 text-[#70706E]">
+                  <span>Status Bayar:</span>
+                  <span className={`font-black uppercase ${invoice.payment_status === 'paid' ? 'text-emerald-700' : invoice.payment_status === 'partial' ? 'text-amber-700' : 'text-rose-700'}`}>
+                    {invoice.payment_status === 'paid' ? 'Lunas' : invoice.payment_status === 'partial' ? 'Bayar Sebagian (DP)' : 'Belum Bayar'}
+                  </span>
+                </div>
+                {invoice.status === 'completed' && invoice.payment_method && (
                   <div className="flex justify-between sm:justify-end gap-4 text-emerald-700">
-                    <span>Metode Pelunasan:</span>
-                    <span className="font-extrabold">{invoice.payment_method || 'Lunas'}</span>
+                    <span>Metode:</span>
+                    <span className="font-extrabold">{invoice.payment_method}</span>
                   </div>
                 )}
               </div>
@@ -1118,6 +1199,20 @@ export default function InvoiceDetailPage() {
                   <span>Total Tagihan</span>
                   <span className={`${activeTheme.text}`}>{formatIDR(invoice.grand_total)}</span>
                 </div>
+
+                {Number(invoice.amount_paid) > 0 && (
+                  <div className="py-2 flex justify-between text-xs font-bold text-emerald-700">
+                    <span>Telah Dibayar</span>
+                    <span>+{formatIDR(Number(invoice.amount_paid))}</span>
+                  </div>
+                )}
+
+                {invoice.payment_status !== 'paid' && invoice.status !== 'cancelled' && (
+                  <div className="py-2.5 flex justify-between text-sm font-black text-rose-700 border-t border-dashed border-gray-200">
+                    <span>Sisa Tagihan</span>
+                    <span>{formatIDR(Math.max(0, invoice.grand_total - Number(invoice.amount_paid || 0)))}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1137,20 +1232,76 @@ export default function InvoiceDetailPage() {
         <div className="space-y-6 no-print">
           {/* Status Badge header */}
           <div className="p-5 bg-white rounded-2xl border border-[#EBEBEA] shadow-sm space-y-4">
-            <div>
-              <span className="text-xs font-bold text-[#70706E] uppercase tracking-wider">Status Invoice</span>
-              <div className="flex items-center gap-3 mt-2">
+            {/* Dual Status: Dokumen & Pembayaran */}
+            <div className="space-y-3 pb-3 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[#70706E] uppercase tracking-wider">Status Dokumen</span>
                 {invoice.status === 'pending' && (
-                  <span className="px-3 py-1.5 text-xs font-black rounded-xl bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">DRAFT (Pending)</span>
+                  <span className="px-3 py-1 text-xs font-black rounded-xl bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">📝 DRAFT</span>
                 )}
                 {invoice.status === 'processing' && (
-                  <span className="px-3 py-1.5 text-xs font-black rounded-xl bg-blue-50 text-blue-700 border border-blue-200 shadow-sm">BELUM BAYAR (Processing)</span>
+                  <span className="px-3 py-1 text-xs font-black rounded-xl bg-blue-50 text-blue-700 border border-blue-200 shadow-sm">🚀 DITERBITKAN</span>
                 )}
                 {invoice.status === 'completed' && (
-                  <span className="px-3 py-1.5 text-xs font-black rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm">LUNAS (Completed)</span>
+                  <span className="px-3 py-1 text-xs font-black rounded-xl bg-slate-100 text-slate-800 border border-slate-200 shadow-sm">✅ SELESAI</span>
                 )}
                 {invoice.status === 'cancelled' && (
-                  <span className="px-3 py-1.5 text-xs font-black rounded-xl bg-rose-50 text-rose-700 border border-rose-200 shadow-sm">BATAL (Cancelled)</span>
+                  <span className="px-3 py-1 text-xs font-black rounded-xl bg-rose-50 text-rose-700 border border-rose-200 shadow-sm">❌ BATAL</span>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[#70706E] uppercase tracking-wider">Status Bayar</span>
+                {invoice.payment_status === 'paid' && (
+                  <span className="px-3 py-1 text-xs font-black rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm">🟢 LUNAS</span>
+                )}
+                {invoice.payment_status === 'partial' && (
+                  <span className="px-3 py-1 text-xs font-black rounded-xl bg-amber-50 text-amber-700 border border-amber-200 shadow-sm">🟡 SEBAGIAN (DP)</span>
+                )}
+                {(!invoice.payment_status || invoice.payment_status === 'unpaid') && (
+                  <span className="px-3 py-1 text-xs font-black rounded-xl bg-rose-50 text-rose-700 border border-rose-200 shadow-sm">🔴 BELUM BAYAR</span>
+                )}
+              </div>
+
+              {/* Financial Balance Summary */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-xs">
+                <div className="flex justify-between font-bold text-slate-600">
+                  <span>Grand Total:</span>
+                  <span className="text-slate-900 font-extrabold">{formatIDR(invoice.grand_total)}</span>
+                </div>
+                <div className="flex justify-between font-bold text-emerald-700">
+                  <span>Telah Dibayar:</span>
+                  <span>{formatIDR(Number(invoice.amount_paid || 0))}</span>
+                </div>
+                {invoice.payment_status !== 'paid' && invoice.status !== 'cancelled' && (
+                  <div className="flex justify-between font-extrabold text-rose-700 pt-1 border-t border-slate-200">
+                    <span>Sisa Tagihan:</span>
+                    <span>{formatIDR(Math.max(0, invoice.grand_total - Number(invoice.amount_paid || 0)))}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Source Order Attribution Card */}
+              <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl space-y-1 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-[#70706E] font-bold">Kanal Sumber:</span>
+                  <span className="font-extrabold text-blue-900">
+                    {invoice.raw_source_data?.source_order?.channel || invoice.source_platform || 'Invoice'}
+                  </span>
+                </div>
+                {invoice.raw_source_data?.source_order?.reference_no && (
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-[#70706E]">No. Ref / PO:</span>
+                    <span className="font-mono font-bold text-slate-800">
+                      {invoice.raw_source_data.source_order.reference_no}
+                    </span>
+                  </div>
+                )}
+                {(invoice.raw_source_data?.source_order?.utm_source || invoice.raw_source_data?.source_order?.utm_campaign) && (
+                  <div className="text-[10px] text-slate-500 pt-1 border-t border-blue-100/60">
+                    Attribution: {invoice.raw_source_data.source_order.utm_source && `utm_source=${invoice.raw_source_data.source_order.utm_source}`}
+                    {invoice.raw_source_data.source_order.utm_campaign && ` • utm_campaign=${invoice.raw_source_data.source_order.utm_campaign}`}
+                  </div>
                 )}
               </div>
             </div>
@@ -1219,6 +1370,17 @@ export default function InvoiceDetailPage() {
                   </div>
                 )}
 
+                {/* Record Payment button if not paid and not cancelled */}
+                {invoice.payment_status !== 'paid' && invoice.status !== 'cancelled' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPaymentModal(true)}
+                    className="w-full py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-all cursor-pointer"
+                  >
+                    💰 Catat Pembayaran / DP / Pelunasan
+                  </button>
+                )}
+
                 {invoice.status === 'pending' && (
                   <>
                     {canEdit && (
@@ -1256,14 +1418,6 @@ export default function InvoiceDetailPage() {
 
                 {invoice.status === 'processing' && (
                   <>
-                    <button
-                      type="button"
-                      onClick={() => setShowPaymentModal(true)}
-                      className="w-full py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all"
-                    >
-                      💰 Catat Pelunasan Pembayaran
-                    </button>
-
                     {canEdit && (
                       <Link
                         href={`/orders/invoices/${invoiceId}/edit`}
@@ -1297,7 +1451,7 @@ export default function InvoiceDetailPage() {
                         href={`/orders/invoices/${invoiceId}/edit`}
                         className="block w-full py-2.5 text-xs text-center font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all"
                       >
-                        ✏️ Edit Desain / Tampilan
+                        ✏️ Edit Invoice / Desain
                       </Link>
                     )}
 
@@ -1317,6 +1471,31 @@ export default function InvoiceDetailPage() {
                 {invoice.status === 'cancelled' && (
                   <div className="p-3 bg-rose-50 border border-rose-100 rounded-xl text-[11px] text-rose-800 font-semibold leading-relaxed">
                     Invoice ini dibatalkan secara resmi. Jurnal penyesuaian/pembalikan telah dicatat untuk meniadakan piutang & pendapatan.
+                  </div>
+                )}
+
+                {/* Payment History List */}
+                {invoice.payments && invoice.payments.length > 0 && (
+                  <div className="pt-3 border-t border-slate-200/80 space-y-2">
+                    <span className="text-[11px] font-bold text-[#70706E] uppercase tracking-wider">
+                      Riwayat Pembayaran ({invoice.payments.length}):
+                    </span>
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                      {invoice.payments.map((p, pIdx) => (
+                        <div key={p.id || pIdx} className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex justify-between items-center text-xs">
+                          <div>
+                            <div className="font-bold text-slate-800">{p.payment_method || 'Pembayaran'}</div>
+                            <div className="text-[10px] text-slate-500 font-mono">
+                              {p.payment_date ? new Date(p.payment_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                              {p.notes ? ` • ${p.notes}` : ''}
+                            </div>
+                          </div>
+                          <div className="font-extrabold text-emerald-700">
+                            {formatIDR(Number(p.amount || 0))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1533,7 +1712,7 @@ export default function InvoiceDetailPage() {
                   <p className="text-slate-400 font-semibold italic text-[11px]">Belum ada jurnal ledger untuk transaksi ini (Invoice Draft).</p>
                 ) : (
                   <div className="space-y-4 max-h-[300px] overflow-y-auto pr-1">
-                    {ledgerTransactions.map((tx, txIdx) => (
+                    {ledgerTransactions.map((tx) => (
                       <div key={tx.id} className="p-3 bg-gray-50 border border-gray-150 rounded-xl space-y-2">
                         <div className="flex justify-between items-start">
                           <span className="font-black text-[#1C1C1A] text-[11px]">{tx.description}</span>
@@ -1636,63 +1815,139 @@ export default function InvoiceDetailPage() {
       </div>
 
       {/* Record Payment popup */}
-      {showPaymentModal && (
-        <div className="fixed inset-0 bg-[#1C1C1A]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-[#EBEBEA] shadow-xl p-6 max-w-sm w-full space-y-4 animate-in fade-in zoom-in-95 duration-200">
-            <div>
-              <h3 className="text-sm font-black text-[#1C1C1A]">Catat Pelunasan Invoice</h3>
-              <p className="text-xs text-[#70706E] mt-1">Gunakan formulir ini jika Anda sudah menerima pembayaran dari pelanggan.</p>
-            </div>
+      {showPaymentModal && (() => {
+        const remainingBalance = Math.max(0, Number(invoice.grand_total || 0) - Number(invoice.amount_paid || 0))
+        const effectiveAmount = isFullSettlement ? remainingBalance : Math.min(remainingBalance, Math.max(1, Number(paymentAmountInput || 0)))
+        const nextRemaining = Math.max(0, remainingBalance - effectiveAmount)
 
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-[#70706E]">Metode Pembayaran</label>
-                <select
-                  value={paymentMethod}
-                  onChange={e => setPaymentMethod(e.target.value)}
-                  className="w-full p-2.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white focus:outline-none"
+        return (
+          <div className="fixed inset-0 bg-[#1C1C1A]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl border border-[#EBEBEA] shadow-xl p-6 max-w-sm w-full space-y-4 animate-in fade-in zoom-in-95 duration-200">
+              <div>
+                <h3 className="text-sm font-black text-[#1C1C1A]">Catat Pembayaran Invoice</h3>
+                <p className="text-xs text-[#70706E] mt-1">
+                  Sisa tagihan saat ini: <span className="font-bold text-rose-700">{formatIDR(remainingBalance)}</span>
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {/* Settlement Type Toggle */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-[#70706E]">Jenis Pembayaran</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsFullSettlement(true)
+                        setPaymentAmountInput(remainingBalance)
+                      }}
+                      className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${
+                        isFullSettlement
+                          ? 'bg-blue-50 text-[#1E40AF] border-blue-200 shadow-sm'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      Pelunasan Penuh
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsFullSettlement(false)
+                        if (paymentAmountInput >= remainingBalance) {
+                          setPaymentAmountInput(Math.round(remainingBalance / 2))
+                        }
+                      }}
+                      className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${
+                        !isFullSettlement
+                          ? 'bg-blue-50 text-[#1E40AF] border-blue-200 shadow-sm'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      Sebagian / DP
+                    </button>
+                  </div>
+                </div>
+
+                {/* Custom Amount if partial */}
+                {!isFullSettlement && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700">Nominal Pembayaran (Rp)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={remainingBalance}
+                      value={paymentAmountInput || ''}
+                      onChange={e => setPaymentAmountInput(Math.min(remainingBalance, Math.max(0, Number(e.target.value))))}
+                      placeholder="Masukkan nominal..."
+                      className="w-full p-2.5 text-xs font-bold rounded-xl border border-blue-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    />
+                    <p className="text-[10px] text-blue-700 font-bold">
+                      Sisa tagihan setelah ini: {formatIDR(nextRemaining)}
+                    </p>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-[#70706E]">Metode Pembayaran</label>
+                  <select
+                    value={paymentMethod}
+                    onChange={e => setPaymentMethod(e.target.value)}
+                    className="w-full p-2.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white focus:outline-none"
+                  >
+                    <option value="Bank Transfer">Bank Transfer (Default)</option>
+                    <option value="Cash">Cash (Tunai)</option>
+                    <option value="QRIS">QRIS</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-[#70706E]">Tanggal Pembayaran</label>
+                  <input
+                    type="date"
+                    value={paymentDate}
+                    onChange={e => setPaymentDate(e.target.value)}
+                    className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-[#70706E]">Catatan / Keterangan (Opsional)</label>
+                  <input
+                    type="text"
+                    placeholder="Misal: DP 50%, Transfer via BCA..."
+                    value={paymentNotesInput}
+                    onChange={e => setPaymentNotesInput(e.target.value)}
+                    className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                </div>
+
+                <div className="pt-2 flex justify-between text-xs font-bold border-t border-gray-150">
+                  <span className="text-[#70706E]">Nominal Dicatat</span>
+                  <span className="text-blue-700 font-extrabold">{formatIDR(effectiveAmount)}</span>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setShowPaymentModal(false)}
+                  className="flex-1 py-2 font-bold text-[#70706E] hover:text-[#1C1C1A] transition-colors"
                 >
-                  <option value="Bank Transfer">Bank Transfer / QRIS (Default)</option>
-                  <option value="Cash">Cash (Tunai)</option>
-                </select>
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRecordPayment}
+                  disabled={submitting || effectiveAmount <= 0}
+                  className="flex-1 py-2 font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors disabled:opacity-50"
+                >
+                  {submitting ? 'Proses...' : (isFullSettlement || effectiveAmount >= remainingBalance ? 'Catat Pelunasan' : 'Catat DP')}
+                </button>
               </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-[#70706E]">Tanggal Pembayaran</label>
-                <input
-                  type="date"
-                  value={paymentDate}
-                  onChange={e => setPaymentDate(e.target.value)}
-                  className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
-                />
-              </div>
-
-              <div className="pt-2 flex justify-between text-xs font-bold border-t border-gray-150">
-                <span className="text-[#70706E]">Jumlah Pelunasan</span>
-                <span className="text-blue-700 font-extrabold">{formatIDR(invoice.grand_total)}</span>
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-2 text-xs">
-              <button
-                type="button"
-                onClick={() => setShowPaymentModal(false)}
-                className="flex-1 py-2 font-bold text-[#70706E] hover:text-[#1C1C1A] transition-colors"
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                onClick={handleRecordPayment}
-                disabled={submitting}
-                className="flex-1 py-2 font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors"
-              >
-                {submitting ? 'Proses...' : 'Catat Lunas'}
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* Hidden iframe for shipping label printing context */}
       <iframe

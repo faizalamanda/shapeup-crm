@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -83,8 +83,23 @@ export default function EditInvoicePage() {
     return creatorUserId === currentUserProfile.id
   }, [currentUserProfile, creatorUserId])
 
-  // Invoice status
+  // Decoupled Invoice status & Payment settlement
   const [invoiceStatus, setInvoiceStatus] = useState<string>('pending')
+  const [invoiceDocStatus, setInvoiceDocStatus] = useState<'pending' | 'processing' | 'completed' | 'cancelled'>('pending')
+  const [paymentSettlementStatus, setPaymentSettlementStatus] = useState<'unpaid' | 'partial' | 'paid'>('unpaid')
+  const [inputAmountPaid, setInputAmountPaid] = useState<number>(0)
+  const [paymentDate, setPaymentDate] = useState<string>(() => {
+    const today = new Date()
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  })
+
+  // Advanced Source Attribution
+  const [sourcePlatform, setSourcePlatform] = useState<string>('Invoice')
+  const [customSourcePlatform, setCustomSourcePlatform] = useState<string>('')
+  const [sourceOrderRef, setSourceOrderRef] = useState<string>('')
+  const [utmSource, setUtmSource] = useState<string>('')
+  const [utmCampaign, setUtmCampaign] = useState<string>('')
+  const [showAdvancedSource, setShowAdvancedSource] = useState<boolean>(false)
 
   // Customer selection
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
@@ -128,10 +143,6 @@ export default function EditInvoicePage() {
   const [courier, setCourier] = useState<string>('')
   const [customCourier, setCustomCourier] = useState<string>('')
   const [trackingNumber, setTrackingNumber] = useState<string>('')
-
-  // Autocomplete search states per row
-  const [productSearchQueries, setProductSearchQueries] = useState<Record<number, string>>({})
-  const [showProductDropdown, setShowProductDropdown] = useState<Record<number, boolean>>({})
 
   // Quick Add Product Modal States
   const [isQuickAddModalOpen, setIsQuickAddModalOpen] = useState(false)
@@ -246,6 +257,38 @@ export default function EditInvoicePage() {
         if (json.success && json.invoice) {
           const inv = json.invoice
           setInvoiceStatus(inv.status)
+          setInvoiceDocStatus(inv.status || 'pending')
+
+          const raw = inv.raw_source_data || {}
+
+          // Payment Settlement Status
+          const payStatus = (inv.payment_status || (inv.status === 'completed' ? 'paid' : 'unpaid')) as 'unpaid' | 'partial' | 'paid'
+          setPaymentSettlementStatus(payStatus)
+          const paidNum = Number(inv.amount_paid || (payStatus === 'paid' ? inv.grand_total : 0))
+          setInputAmountPaid(paidNum)
+          if (inv.payment_method) setPaymentMethod(inv.payment_method)
+
+          // Source Attribution
+          const srcChannel = raw.source_order?.channel || inv.source_platform || 'Invoice'
+          const standardChannels = ['Invoice', 'WhatsApp', 'Instagram', 'Manual', 'Shopee', 'Tokopedia', 'TikTok', 'WooCommerce']
+          if (standardChannels.includes(srcChannel)) {
+            setSourcePlatform(srcChannel)
+            setCustomSourcePlatform('')
+          } else {
+            setSourcePlatform('Lainnya')
+            setCustomSourcePlatform(srcChannel)
+          }
+
+          const refNo = raw.source_order?.reference_no || ''
+          const uSource = raw.source_order?.utm_source || ''
+          const uCampaign = raw.source_order?.utm_campaign || ''
+          setSourceOrderRef(refNo)
+          setUtmSource(uSource)
+          setUtmCampaign(uCampaign)
+          if (refNo || uSource || uCampaign || (srcChannel !== 'Invoice')) {
+            setShowAdvancedSource(true)
+          }
+
           setSelectedCustomerId(inv.customer_id || '')
           setLoadedCustomerAddress(inv.customers?.address_data || null)
           setInvoiceNumber(inv.order_number || '')
@@ -266,7 +309,6 @@ export default function EditInvoicePage() {
           setDueDate(fmtDate(inv.due_date))
 
           // Raw source data customization
-          const raw = inv.raw_source_data || {}
           setPaymentTerms(raw.payment_terms || 'custom')
           setNotes(raw.notes || '')
           setCustomTitle(raw.custom_title || 'INVOICE')
@@ -418,7 +460,9 @@ export default function EditInvoicePage() {
   }, [subtotal, discountAmount, shippingCost, otherFees])
 
   // Submit Handler
-  const handleSubmit = async (submitStatus: 'pending' | 'processing' | 'completed') => {
+  const handleSubmit = async (submitStatus?: 'pending' | 'processing' | 'completed' | 'cancelled') => {
+    const finalDocStatus = submitStatus || invoiceDocStatus
+
     if (!isFinancialsLocked) {
       if (isNewCustomer && (!newCustForm.name || !newCustForm.phone)) {
         setErrorMessage('Nama dan Nomor HP Customer baru wajib diisi.')
@@ -442,6 +486,14 @@ export default function EditInvoicePage() {
     setErrorMessage('')
 
     try {
+      const resolvedSourcePlatform = sourcePlatform === 'Lainnya' ? (customSourcePlatform.trim() || 'Lainnya') : sourcePlatform
+      let finalAmountPaid = 0
+      if (paymentSettlementStatus === 'paid') {
+        finalAmountPaid = grandTotal
+      } else if (paymentSettlementStatus === 'partial') {
+        finalAmountPaid = Math.min(grandTotal, Math.max(0, inputAmountPaid))
+      }
+
       const payload: Record<string, any> = {
         customer_id: isNewCustomer ? null : selectedCustomerId,
         customer_name: isNewCustomer ? newCustForm.name : null,
@@ -457,8 +509,15 @@ export default function EditInvoicePage() {
         shipping_cost: Number(shippingCost),
         other_fees: Number(otherFees),
         grand_total: grandTotal,
-        status: submitStatus,
-        payment_method: submitStatus === 'completed' ? paymentMethod : null,
+        status: finalDocStatus,
+        payment_status: paymentSettlementStatus,
+        amount_paid: finalAmountPaid,
+        payment_method: paymentSettlementStatus !== 'unpaid' ? paymentMethod : null,
+        payment_date: paymentSettlementStatus !== 'unpaid' ? paymentDate : null,
+        source_platform: resolvedSourcePlatform,
+        source_order_ref: sourceOrderRef.trim() || null,
+        utm_source: utmSource.trim() || null,
+        utm_campaign: utmCampaign.trim() || null,
         notes: notes,
         custom_title: customTitle,
         custom_subtitle: customSubtitle,
@@ -716,6 +775,123 @@ export default function EditInvoicePage() {
             </div>
           </div>
 
+          {/* Section 2.2: Status Faktur & Pembayaran (Decoupled Flow) */}
+          <div className="p-5 bg-white rounded-2xl border border-[#EBEBEA] shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-[#70706E]">
+                Status Faktur & Pembayaran
+              </h2>
+              <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-full">
+                Decoupled Lifecycle
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Status Dokumen Invoice */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#70706E]">Status Dokumen Invoice</label>
+                <select
+                  value={invoiceDocStatus}
+                  onChange={e => setInvoiceDocStatus(e.target.value as any)}
+                  className="w-full p-2.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+                >
+                  <option value="pending">📝 DRAFT (Rancangan Internal)</option>
+                  <option value="processing">🚀 DITERBITKAN (Resmi / Open)</option>
+                  <option value="completed">✅ SELESAI (Pesanan Ditutup)</option>
+                  <option value="cancelled">❌ DIBATALKAN (Void)</option>
+                </select>
+                <p className="text-[10px] text-[#70706E]">
+                  {invoiceDocStatus === 'pending' && 'Faktur belum mengikat piutang atau mutasi stok.'}
+                  {invoiceDocStatus === 'processing' && 'Faktur resmi diterbitkan, piutang dicatat di buku besar.'}
+                  {invoiceDocStatus === 'completed' && 'Faktur dan penyerahan barang/layanan tuntas penuh.'}
+                  {invoiceDocStatus === 'cancelled' && 'Faktur dibatalkan dan jurnal pembalikan diposting.'}
+                </p>
+              </div>
+
+              {/* Status Pembayaran */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#70706E]">Status Pembayaran</label>
+                <select
+                  value={paymentSettlementStatus}
+                  onChange={e => {
+                    const val = e.target.value as any
+                    setPaymentSettlementStatus(val)
+                    if (val === 'paid') {
+                      setInputAmountPaid(grandTotal)
+                    } else if (val === 'unpaid') {
+                      setInputAmountPaid(0)
+                    } else if (val === 'partial' && inputAmountPaid === 0) {
+                      setInputAmountPaid(Math.round(grandTotal / 2))
+                    }
+                  }}
+                  className="w-full p-2.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+                >
+                  <option value="unpaid">🔴 Belum Bayar (Unpaid)</option>
+                  <option value="partial">🟡 Bayar Sebagian / DP (Partial)</option>
+                  <option value="paid">🟢 Lunas (Paid)</option>
+                </select>
+                <p className="text-[10px] text-[#70706E]">
+                  {paymentSettlementStatus === 'unpaid' && 'Pelanggan belum membayar (Piutang 100%).'}
+                  {paymentSettlementStatus === 'partial' && 'Pelanggan membayar uang muka / sebagian tagihan.'}
+                  {paymentSettlementStatus === 'paid' && 'Tagihan dibayar lunas seketika.'}
+                </p>
+              </div>
+            </div>
+
+            {/* Conditional Sub-panel if partial or paid */}
+            {paymentSettlementStatus !== 'unpaid' && (
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl grid grid-cols-1 md:grid-cols-3 gap-3 animate-in fade-in duration-200">
+                {paymentSettlementStatus === 'partial' ? (
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700">Nominal DP / Uang Muka (Rp)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={grandTotal}
+                      value={inputAmountPaid || ''}
+                      onChange={e => setInputAmountPaid(Math.min(grandTotal, Math.max(0, Number(e.target.value))))}
+                      placeholder="Masukkan nominal DP..."
+                      className="w-full p-2 text-xs font-bold rounded-lg border border-slate-200 bg-white focus:ring-2 focus:ring-blue-200 focus:outline-none"
+                    />
+                    <p className="text-[10px] text-blue-700 font-bold">
+                      Sisa Tagihan: {formatIDR(Math.max(0, grandTotal - inputAmountPaid))}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700">Total Dibayar (Lunas)</label>
+                    <div className="p-2 text-xs font-extrabold text-emerald-700 bg-white border border-emerald-200 rounded-lg">
+                      {formatIDR(grandTotal)}
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700">Metode Pembayaran</label>
+                  <select
+                    value={paymentMethod}
+                    onChange={e => setPaymentMethod(e.target.value)}
+                    className="w-full p-2 text-xs font-bold rounded-lg border border-slate-200 bg-white focus:outline-none"
+                  >
+                    <option value="Bank Transfer">Bank Transfer (Default)</option>
+                    <option value="Cash">Cash (Tunai)</option>
+                    <option value="QRIS">QRIS</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-700">Tanggal Bayar</label>
+                  <input
+                    type="date"
+                    value={paymentDate}
+                    onChange={e => setPaymentDate(e.target.value)}
+                    className="w-full p-2 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Section 2.5: Shipping Details (Courier & Resi) */}
           <div className="p-5 bg-white rounded-2xl border border-[#EBEBEA] shadow-sm grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1">
@@ -755,6 +931,101 @@ export default function EditInvoicePage() {
                 className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all uppercase font-mono"
               />
             </div>
+          </div>
+
+          {/* Section 2.7: Opsi Lanjutan & Sumber Pesanan (Attribution) */}
+          <div className="p-5 bg-white rounded-2xl border border-[#EBEBEA] shadow-sm space-y-4">
+            <div
+              className="flex items-center justify-between cursor-pointer select-none"
+              onClick={() => setShowAdvancedSource(!showAdvancedSource)}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-base">🎯</span>
+                <div>
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-[#70706E]">
+                    Sumber Pesanan & Opsi Lanjutan (Attribution)
+                  </h2>
+                  <p className="text-[10px] text-[#70706E]">
+                    Kanal penjualan: <span className="font-bold text-[#1C1C1A]">{sourcePlatform}</span> {sourceOrderRef && `• Ref: ${sourceOrderRef}`}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="text-xs font-bold text-[#1E40AF] hover:underline"
+              >
+                {showAdvancedSource ? 'Sembunyikan ▲' : 'Buka Opsi Lanjutan ▼'}
+              </button>
+            </div>
+
+            {showAdvancedSource && (
+              <div className="pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-200">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-[#70706E]">Kanal Sumber Pesanan (Sales Channel)</label>
+                  <select
+                    value={sourcePlatform}
+                    onChange={e => setSourcePlatform(e.target.value)}
+                    className="w-full p-2.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+                  >
+                    <option value="Invoice">📄 Invoice (Faktur Langsung - Default)</option>
+                    <option value="WhatsApp">📱 WhatsApp / Chat CS</option>
+                    <option value="Instagram">📸 Instagram Direct Message</option>
+                    <option value="Manual">💼 Manual (Sales Lapangan / B2B)</option>
+                    <option value="Shopee">🛍️ Shopee</option>
+                    <option value="Tokopedia">🟢 Tokopedia</option>
+                    <option value="TikTok">🎵 TikTok Shop</option>
+                    <option value="WooCommerce">🌐 WooCommerce / Website</option>
+                    <option value="Lainnya">✏️ Lainnya (Kustom)</option>
+                  </select>
+                  {sourcePlatform === 'Lainnya' && (
+                    <input
+                      type="text"
+                      placeholder="Masukkan nama kanal kustom..."
+                      value={customSourcePlatform}
+                      onChange={e => setCustomSourcePlatform(e.target.value)}
+                      className="w-full mt-2 p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+                    />
+                  )}
+                  <p className="text-[10px] text-[#70706E]">Data ini akan diagregasi pada Laporan Sumber Penjualan.</p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-[#70706E]">No. Referensi / PO Asal (Opsional)</label>
+                  <input
+                    type="text"
+                    placeholder="Misal: PO-CLIENT-001, ID Order Marketplace..."
+                    value={sourceOrderRef}
+                    onChange={e => setSourceOrderRef(e.target.value)}
+                    className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all font-mono"
+                  />
+                  <p className="text-[10px] text-[#70706E]">Nomor referensi ini dicantumkan pada dokumen cetak faktur.</p>
+                </div>
+
+                {/* UTM Source */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-[#70706E]">Sumber Iklan / Traffic (UTM Source - Opsional)</label>
+                  <input
+                    type="text"
+                    placeholder="Misal: meta_ads, google, tiktok_ads, influencer..."
+                    value={utmSource}
+                    onChange={e => setUtmSource(e.target.value)}
+                    className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+                  />
+                </div>
+
+                {/* UTM Campaign */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-[#70706E]">Nama Kampanye (UTM Campaign - Opsional)</label>
+                  <input
+                    type="text"
+                    placeholder="Misal: promo_11_11, launching_b2b..."
+                    value={utmCampaign}
+                    onChange={e => setUtmCampaign(e.target.value)}
+                    className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Section 3: Line Items */}
@@ -1063,65 +1334,68 @@ export default function EditInvoicePage() {
         <div className="space-y-6">
           {/* Action Panel */}
           <div className="p-4 bg-slate-50 border border-[#EBEBEA] rounded-2xl space-y-2.5">
-            {isFinancialsLocked ? (
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={() => {
-                  setSubmittingType('completed');
-                  handleSubmit('completed');
-                }}
-                className="w-full flex justify-center items-center gap-2 py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {submitting && submittingType === 'completed' ? (
-                  <><svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Menyimpan...</>
-                ) : (
-                  <>💾 Simpan Perubahan Desain</>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => {
+                setSubmittingType('save')
+                handleSubmit()
+              }}
+              className="w-full flex justify-center items-center gap-2 py-3 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-500/20 rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submitting && submittingType === 'save' ? (
+                <><svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Menyimpan...</>
+              ) : (
+                <>💾 Simpan Perubahan Faktur</>
+              )}
+            </button>
+
+            {!isFinancialsLocked && (
+              <div className="pt-2 border-t border-slate-200/80 space-y-2">
+                <p className="text-[10px] font-bold text-slate-700 uppercase tracking-wider">Aksi Cepat Status:</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => {
+                      setInvoiceDocStatus('processing')
+                      setSubmittingType('processing')
+                      handleSubmit('processing')
+                    }}
+                    className="py-2 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-all"
+                  >
+                    🚀 Terbitkan
+                  </button>
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => {
+                      setInvoiceDocStatus('pending')
+                      setSubmittingType('pending')
+                      handleSubmit('pending')
+                    }}
+                    className="py-2 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-all"
+                  >
+                    📝 Draft
+                  </button>
+                </div>
+                {paymentSettlementStatus !== 'paid' && (
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => {
+                      setInvoiceDocStatus('completed')
+                      setPaymentSettlementStatus('paid')
+                      setInputAmountPaid(grandTotal)
+                      setSubmittingType('paid')
+                      handleSubmit('completed')
+                    }}
+                    className="w-full py-2 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-all"
+                  >
+                    💰 Tandai Lunas Seketika
+                  </button>
                 )}
-              </button>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  disabled={submitting}
-                  onClick={() => {
-                    setSubmittingType('pending');
-                    handleSubmit('pending');
-                  }}
-                  className="w-full flex justify-center items-center gap-2 py-2.5 text-xs font-bold text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {submitting && submittingType === 'pending' ? (
-                    <><svg className="animate-spin h-4 w-4 text-slate-800" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Menyimpan...</>
-                  ) : (
-                    <>💾 Simpan sebagai Draft</>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  disabled={submitting}
-                  onClick={() => {
-                    setSubmittingType('processing');
-                    handleSubmit('processing');
-                  }}
-                  className="w-full flex justify-center items-center gap-2 py-2.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {submitting && submittingType === 'processing' ? (
-                    <><svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Memproses...</>
-                  ) : (
-                    <>🚀 Terbitkan (Outstanding)</>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  disabled={submitting}
-                  onClick={() => setShowPaymentModal(true)}
-                  className="w-full flex justify-center items-center gap-2 py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  💰 Simpan & Tandai Lunas
-                </button>
-              </>
+              </div>
             )}
 
             <Link

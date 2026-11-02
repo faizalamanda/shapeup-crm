@@ -1,7 +1,7 @@
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { NextResponse } from 'next/server'
+import { getApiContext } from '@/lib/apiContext'
 import { syncOrderToLedger } from '@/lib/orderLedger'
+import { isUuid } from '@/lib/utils'
+import { NextResponse } from 'next/server'
 
 // Global in-memory cache for invoices
 const globalCache = (global as any).invoicesCache || new Map<string, { data: any, timestamp: number }>();
@@ -38,55 +38,37 @@ function formatDDMMYYYY(date: Date): string {
 }
 
 export async function GET(req: Request) {
-  const supabase = await createClient()
-
   try {
-    // 1. Get logged-in user and active business ID
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { businessId, supabaseAdmin } = ctx
 
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
     const { searchParams } = new URL(req.url)
     const status = searchParams.get('status')
+    const paymentStatus = searchParams.get('payment_status')
 
     // Check Server-Side Cache
-    const cacheKey = `${businessId}:${status || 'all'}`
+    const cacheKey = `${businessId}:${status || 'all'}:${paymentStatus || 'all'}`
     const cachedData = getInvoicesCache(cacheKey)
     if (cachedData) {
       return NextResponse.json({ success: true, invoices: cachedData })
     }
 
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
-      return NextResponse.json({ error: 'Admin service key not found' }, { status: 500 })
-    }
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey
-    )
-
     // 2. Query invoices using supabaseAdmin to bypass RLS for customers
+    // Resilient filter: source_platform = 'Invoice' OR raw_source_data->>is_invoice = 'true' OR order_number starts with INV-
     let query = supabaseAdmin
       .from('orders')
       .select('*, customers(id, name, phone, email)')
       .eq('business_id', businessId)
-      .eq('source_platform', 'Invoice')
+      .or('source_platform.eq.Invoice,raw_source_data->>is_invoice.eq.true,order_number.ilike.INV-%')
       .order('created_at', { ascending: false })
 
     if (status && status !== 'all') {
       query = query.eq('status', status)
+    }
+
+    if (paymentStatus && paymentStatus !== 'all') {
+      query = query.eq('payment_status', paymentStatus)
     }
 
     const { data: invoices, error: queryErr } = await query
@@ -122,27 +104,12 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const supabase = await createClient()
-
   try {
-    // 1. Get logged-in user and active business ID
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId, supabaseAdmin } = ctx
 
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
-    const body = await req.json()
+    const body = await req.json().catch(() => ({}))
     const {
       customer_id,
       customer_name,
@@ -158,8 +125,14 @@ export async function POST(req: Request) {
       shipping_cost = 0,
       other_fees = 0,
       grand_total,
-      status, // 'pending' = draft, 'processing' = unpaid/sent, 'completed' = paid
-      payment_method, // 'Cash' or 'Bank/QRIS' (required if status is 'completed')
+      status = 'processing', // 'pending' = draft, 'processing' = issued/unpaid, 'completed' = completed, 'cancelled' = cancelled
+      payment_status, // 'unpaid', 'partial', 'paid'
+      amount_paid = 0,
+      payment_method, // 'Cash', 'Bank Transfer', 'QRIS', etc.
+      source_platform = 'Invoice', // Channel: 'Invoice', 'WhatsApp', 'Instagram', 'Shopee', 'Tokopedia', 'TikTok', 'Manual', etc.
+      source_order_ref, // Reference / PO number
+      utm_source,
+      utm_campaign,
       notes,
       // Customization settings
       custom_title,
@@ -180,21 +153,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invoice harus memiliki minimal 1 item' }, { status: 400 })
     }
 
-    if (!status || !['pending', 'processing', 'completed'].includes(status)) {
+    if (!status || !['pending', 'processing', 'completed', 'cancelled'].includes(status)) {
       return NextResponse.json({ error: 'Status invoice tidak valid' }, { status: 400 })
     }
 
     // 2. Resolve Customer ID
-    let resolvedCustomerId = customer_id
-
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
-      return NextResponse.json({ error: 'Admin service key not found' }, { status: 500 })
-    }
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey
-    )
+    let resolvedCustomerId = isUuid(customer_id) ? customer_id : null
 
     if (!resolvedCustomerId && customer_name && customer_phone) {
       // Clean phone number
@@ -251,7 +215,7 @@ export async function POST(req: Request) {
         .from('orders')
         .select('order_number')
         .eq('business_id', businessId)
-        .eq('source_platform', 'Invoice')
+        .or('source_platform.eq.Invoice,raw_source_data->>is_invoice.eq.true,order_number.ilike.INV-%')
         .like('order_number', `${prefix}%`)
 
       let maxCounter = 0
@@ -285,9 +249,37 @@ export async function POST(req: Request) {
     const totalQty = items.reduce((sum: number, item: any) => sum + Number(item.quantity || 1), 0)
     const subtotal = items.reduce((sum: number, item: any) => sum + (Number(item.price || 0) * Number(item.quantity || 1)), 0)
     const calculatedDiscountAmount = items.reduce((sum: number, item: any) => sum + (Number(item.discount || 0) * Number(item.quantity || 1)), 0)
+    const numGrandTotal = Number(grand_total) || 0
+
+    // Resolve payment status and amount paid
+    let finalPaymentStatus: 'unpaid' | 'partial' | 'paid' = 'unpaid'
+    let finalAmountPaid = 0
+
+    if (payment_status) {
+      if (payment_status === 'paid') {
+        finalPaymentStatus = 'paid'
+        finalAmountPaid = numGrandTotal
+      } else if (payment_status === 'partial') {
+        finalAmountPaid = Math.min(numGrandTotal, Math.max(0, Number(amount_paid) || 0))
+        finalPaymentStatus = finalAmountPaid >= numGrandTotal - 0.01 ? 'paid' : (finalAmountPaid > 0 ? 'partial' : 'unpaid')
+      } else {
+        finalPaymentStatus = 'unpaid'
+        finalAmountPaid = 0
+      }
+    } else {
+      // Legacy fallback
+      if (status === 'completed') {
+        finalPaymentStatus = 'paid'
+        finalAmountPaid = numGrandTotal
+      } else {
+        finalPaymentStatus = 'unpaid'
+        finalAmountPaid = 0
+      }
+    }
 
     // 4. Save Invoice in orders table
     const rawSourceData = {
+      is_invoice: true,
       due_date: due_date || null,
       payment_terms: payment_terms || 'due-on-receipt',
       notes: notes || '',
@@ -301,6 +293,12 @@ export async function POST(req: Request) {
       show_notes,
       show_address,
       show_shipping,
+      source_order: {
+        channel: source_platform || 'Invoice',
+        reference_no: source_order_ref || '',
+        utm_source: utm_source || '',
+        utm_campaign: utm_campaign || ''
+      },
       meta_data: [
         { key: 'shapeup_kurir_awb', value: courier || '' },
         { key: 'shapeup_resi_awb', value: tracking_number || '' }
@@ -334,7 +332,7 @@ export async function POST(req: Request) {
         user_id: user.id, // Save creator ID!
         customer_id: resolvedCustomerId,
         order_number: finalInvoiceNumber,
-        source_platform: 'Invoice',
+        source_platform: source_platform || 'Invoice',
         order_date: dateObj.toISOString(),
         order_date_utc: dateObj.toISOString(),
         total_qty: totalQty,
@@ -342,11 +340,11 @@ export async function POST(req: Request) {
         shipping_cost: Number(shipping_cost),
         discount_amount: calculatedDiscountAmount,
         other_fees: Number(other_fees),
-        grand_total: Number(grand_total),
-        payment_method: status === 'completed' ? (payment_method || 'Bank Transfer') : null,
+        grand_total: numGrandTotal,
+        payment_method: finalAmountPaid > 0 ? (payment_method || 'Bank Transfer') : null,
         status: status,
-        payment_status: status === 'completed' ? 'paid' : 'unpaid',
-        amount_paid: status === 'completed' ? Number(grand_total) : 0,
+        payment_status: finalPaymentStatus,
+        amount_paid: finalAmountPaid,
         items_json: lineItems,
         raw_source_data: rawSourceData
       })
@@ -354,6 +352,24 @@ export async function POST(req: Request) {
       .single()
 
     if (insertErr) throw insertErr
+
+    // If there is an upfront payment (Lunas or DP), record unified order_payments entry
+    if (finalAmountPaid > 0) {
+      try {
+        await supabaseAdmin.from('order_payments').insert({
+          payment_kind: 'payment',
+          business_id: businessId,
+          order_id: order.id,
+          date: dateObj.toISOString().split('T')[0],
+          amount: finalAmountPaid,
+          payment_method: payment_method || 'Bank Transfer',
+          notes: `Pembayaran ${source_platform || 'Invoice'} #${finalInvoiceNumber}`,
+          created_at: dateObj.toISOString()
+        })
+      } catch (payErr) {
+        console.warn('Failed to insert initial payment to order_payments:', payErr)
+      }
+    }
 
     // 5. Accounting Ledger Integration & Stock Reduction
     const syncRes = await syncOrderToLedger(order.id, supabaseAdmin)

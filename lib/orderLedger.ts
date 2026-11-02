@@ -330,8 +330,10 @@ export async function syncOrderToLedger(
       const hasDatePaid = !!rawOrderData.date_paid
       const isWooNonCodPaid = platform === 'WooCommerce' && !isCod && (hasDatePaid || ['processing', 'shipped', 'completed'].includes(status))
       const isExplicitPaid = order.payment_status === 'paid' || (order.amount_paid !== undefined && Number(order.amount_paid) >= numGrandTotal - 0.01 && numGrandTotal > 0)
-      const isCompletedPaid = status === 'completed'
-      const isOrderPaid = isExplicitPaid || isCompletedPaid || isWooNonCodPaid
+      const isPartialPaid = order.payment_status === 'partial' || (Number(order.amount_paid) > 0 && Number(order.amount_paid) < numGrandTotal)
+      // Decoupled protection: do not treat invoice as auto-paid on status: 'completed' if explicitly marked unpaid
+      const isCompletedPaid = status === 'completed' && order.payment_status !== 'unpaid' && (order.payment_status !== 'partial' || Number(order.amount_paid || 0) >= numGrandTotal)
+      const isOrderPaid = isExplicitPaid || isWooNonCodPaid || isPartialPaid || (isCompletedPaid && order.payment_status !== 'unpaid')
 
       if (isOrderPaid) {
         // Check if order_payments already has entries
@@ -351,7 +353,7 @@ export async function syncOrderToLedger(
             for (const p of existingOrderPays) {
               const pAmt = Number(p.amount) || 0
               if (pAmt <= 0) continue
-              const accId = p.payment_method_account_id || (p.payment_method === 'cash' ? accountMap['101000'] : accountMap['101200'])
+              const accId = p.payment_method_account_id || (String(p.payment_method).toLowerCase() === 'cash' ? accountMap['101000'] : accountMap['101200'])
               paymentLines.push({
                 account_id: accId,
                 debit: pAmt,
@@ -369,7 +371,7 @@ export async function syncOrderToLedger(
           } else {
             // Single-payment fallback (e.g. WooCommerce or legacy orders)
             const payAccountCode = isCod ? '101000' : '101200'
-            const effectivePayAmount = numGrandTotal
+            const effectivePayAmount = isPartialPaid ? Number(order.amount_paid) : numGrandTotal
             if (effectivePayAmount > 0) {
               paymentLines = [
                 { account_id: accountMap[payAccountCode], debit: effectivePayAmount, credit: 0 },
@@ -406,23 +408,41 @@ export async function syncOrderToLedger(
             }
           }
         } else if (paymentTx && existingOrderPays && existingOrderPays.length > 0) {
-          // Align transaction_id and created_at if paymentTx exists
-          const unlinkedIds = existingOrderPays.filter((p: any) => !p.transaction_id).map((p: any) => p.id)
-          if (unlinkedIds.length > 0) {
-            await supabase
-              .from('order_payments')
-              .update({ 
-                transaction_id: paymentTx.id,
-                created_at: paymentTx.date || paymentDate,
-                date: (paymentTx.date || paymentDate).split('T')[0]
-              })
-              .in('id', unlinkedIds)
+          // If paymentTx already exists but there are new unlinked installment payments in order_payments
+          const unlinkedPays = existingOrderPays.filter((p: any) => !p.transaction_id && Number(p.amount) > 0)
+          for (const p of unlinkedPays) {
+            const pAmt = Number(p.amount) || 0
+            if (pAmt <= 0) continue
+            const accId = p.payment_method_account_id || (String(p.payment_method).toLowerCase() === 'cash' ? accountMap['101000'] : accountMap['101200'])
+            const pDate = p.created_at || (p.date ? `${p.date}T12:00:00Z` : paymentDate)
+            const pLines = [
+              { account_id: accId, debit: pAmt, credit: 0 },
+              { account_id: accountMap['103000'], debit: 0, credit: pAmt }
+            ]
+            const installmentTx = await postJournalTransaction(
+              businessId,
+              orderId,
+              pDate,
+              `Pembayaran ${platform} #${orderNumber} (${p.notes || `Ref ${String(p.id).slice(0, 8)}`})`,
+              pLines,
+              supabase,
+              false
+            )
+            if (installmentTx?.transactionId) {
+              await supabase
+                .from('order_payments')
+                .update({ 
+                  transaction_id: installmentTx.transactionId,
+                  payment_method_account_id: accId
+                })
+                .eq('id', p.id)
+            }
           }
         }
 
         // 6.3 RECORD UNIFIED ORDER PAYMENT ENTRY (Single Source of Truth)
         // If order_payments has 0 rows, ensure a line is inserted so Payment History is never blank
-        let finalAmountPaid = numGrandTotal
+        let finalAmountPaid = isPartialPaid ? Number(order.amount_paid) : numGrandTotal
         if (!existingOrderPays || existingOrderPays.length === 0) {
           try {
             const txId = effectivePostResult?.transactionId || paymentTx?.id || null
@@ -430,7 +450,7 @@ export async function syncOrderToLedger(
             const changeAmount = Number(order.change_amount || rawOrderData.change_amount || 0)
             const isCashMethod = String(order.payment_method || '').toLowerCase() === 'cash'
             const payAccountCode = isCod ? '101000' : '101200'
-            const effectivePayAmount = totalPaymentAmount > 0 ? totalPaymentAmount : numGrandTotal
+            const effectivePayAmount = totalPaymentAmount > 0 ? totalPaymentAmount : (isPartialPaid ? Number(order.amount_paid) : numGrandTotal)
 
             await supabase.from('order_payments').insert({
               payment_kind: 'payment',

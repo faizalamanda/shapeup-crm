@@ -1,52 +1,42 @@
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { NextResponse } from 'next/server'
-import { invalidateInvoicesCache } from '../route'
+import { getApiContext } from '@/lib/apiContext'
 import { syncOrderToLedger } from '@/lib/orderLedger'
+import { isUuid } from '@/lib/utils'
+import { invalidateInvoicesCache } from '../route'
+import { NextResponse } from 'next/server'
 
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params
-  const supabase = await createClient()
-
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { id } = await params
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: 'ID invoice tidak valid' }, { status: 400 })
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
-      return NextResponse.json({ error: 'Admin service key not found' }, { status: 500 })
-    }
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey
-    )
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { businessId, supabaseAdmin } = ctx
 
     const { data: invoice, error: fetchErr } = await supabaseAdmin
       .from('orders')
       .select('*, customers(*)')
       .eq('id', id)
-      .eq('business_id', profile.active_business_id)
-      .eq('source_platform', 'Invoice')
+      .eq('business_id', businessId)
+      .or('source_platform.eq.Invoice,raw_source_data->>is_invoice.eq.true,order_number.ilike.INV-%')
       .single()
 
     if (fetchErr || !invoice) {
       return NextResponse.json({ error: 'Invoice tidak ditemukan' }, { status: 404 })
     }
+
+    // Fetch payments history for this invoice
+    const { data: payments } = await supabaseAdmin
+      .from('order_payments')
+      .select('*')
+      .eq('order_id', id)
+      .eq('payment_kind', 'payment')
+      .order('created_at', { ascending: true })
 
     let creator = null
     if (invoice.user_id) {
@@ -64,7 +54,8 @@ export async function GET(
       success: true,
       invoice: {
         ...invoice,
-        creator
+        creator,
+        payments: payments || []
       }
     })
   } catch (err: any) {
@@ -77,35 +68,22 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params
-  const supabase = await createClient()
-
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { id } = await params
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: 'ID invoice tidak valid' }, { status: 400 })
     }
 
-    const { data: profile } = await supabase
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId, supabaseAdmin } = ctx
+
+    // Fetch user profile role
+    const { data: profile } = await supabaseAdmin
       .from('profiles')
-      .select('active_business_id, role')
+      .select('role')
       .eq('id', user.id)
-      .single()
-
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
-
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
-      return NextResponse.json({ error: 'Admin service key not found' }, { status: 500 })
-    }
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey
-    )
+      .maybeSingle()
 
     // Fetch existing invoice
     const { data: existing, error: existErr } = await supabaseAdmin
@@ -113,7 +91,7 @@ export async function PUT(
       .select('*')
       .eq('id', id)
       .eq('business_id', businessId)
-      .eq('source_platform', 'Invoice')
+      .or('source_platform.eq.Invoice,raw_source_data->>is_invoice.eq.true,order_number.ilike.INV-%')
       .single()
 
     if (existErr || !existing) {
@@ -143,6 +121,12 @@ export async function PUT(
       other_fees,
       grand_total,
       status, // 'pending', 'processing', 'completed', 'cancelled'
+      payment_status, // 'unpaid', 'partial', 'paid'
+      amount_paid,
+      source_platform, // 'Invoice', 'WhatsApp', 'Instagram', 'Shopee', 'Tokopedia', 'TikTok', 'Manual', etc.
+      source_order_ref, // Reference / PO number
+      utm_source,
+      utm_campaign,
       payment_method,
       notes,
       // Customization settings
@@ -180,10 +164,11 @@ export async function PUT(
 
     // Lock financials if already Paid (completed)
     if (existing.status === 'completed') {
-      // Paid invoices can only update customization/appearance, courier, and resi
+      // Paid invoices can update customization/appearance, courier, resi, and source_order attribution
       const currentRaw = (existing.raw_source_data || {}) as Record<string, any>
       const updatedRaw = {
         ...currentRaw,
+        is_invoice: true,
         custom_title: custom_title !== undefined ? custom_title : currentRaw.custom_title,
         custom_subtitle: custom_subtitle !== undefined ? custom_subtitle : currentRaw.custom_subtitle,
         custom_notes: custom_notes !== undefined ? custom_notes : currentRaw.custom_notes,
@@ -194,22 +179,33 @@ export async function PUT(
         show_notes: show_notes !== undefined ? show_notes : currentRaw.show_notes,
         show_address: show_address !== undefined ? show_address : (currentRaw.show_address !== undefined ? currentRaw.show_address : true),
         show_shipping: show_shipping !== undefined ? show_shipping : (currentRaw.show_shipping !== undefined ? currentRaw.show_shipping : true),
+        source_order: {
+          channel: source_platform !== undefined ? source_platform : (currentRaw.source_order?.channel || existing.source_platform || 'Invoice'),
+          reference_no: source_order_ref !== undefined ? source_order_ref : (currentRaw.source_order?.reference_no || ''),
+          utm_source: utm_source !== undefined ? utm_source : (currentRaw.source_order?.utm_source || ''),
+          utm_campaign: utm_campaign !== undefined ? utm_campaign : (currentRaw.source_order?.utm_campaign || '')
+        },
         meta_data: [
           { key: 'shapeup_kurir_awb', value: courier !== undefined ? courier : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_kurir_awb')?.value || '') },
           { key: 'shapeup_resi_awb', value: tracking_number !== undefined ? tracking_number : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_resi_awb')?.value || '') }
         ]
       }
 
+      const updateData: Record<string, any> = { raw_source_data: updatedRaw }
+      if (source_platform !== undefined) {
+        updateData.source_platform = source_platform
+      }
+
       const { data: updated, error: updErr } = await supabaseAdmin
         .from('orders')
-        .update({ raw_source_data: updatedRaw })
+        .update(updateData)
         .eq('id', id)
         .select('*')
         .single()
 
       if (updErr) throw updErr
       invalidateInvoicesCache(businessId)
-      return NextResponse.json({ success: true, message: 'Desain & Pengiriman Invoice diperbarui', order: updated })
+      return NextResponse.json({ success: true, message: 'Desain, Pengiriman, & Sumber Invoice diperbarui', order: updated })
     }
 
     // For Draft or Unpaid (pending/processing), we can edit details
@@ -255,6 +251,7 @@ export async function PUT(
     const currentRaw = (existing.raw_source_data || {}) as Record<string, any>
     const nextRaw = {
       ...currentRaw,
+      is_invoice: true,
       due_date: due_date !== undefined ? due_date : currentRaw.due_date,
       payment_terms: payment_terms !== undefined ? payment_terms : currentRaw.payment_terms,
       notes: notes !== undefined ? notes : currentRaw.notes,
@@ -268,6 +265,12 @@ export async function PUT(
       show_notes: show_notes !== undefined ? show_notes : currentRaw.show_notes,
       show_address: show_address !== undefined ? show_address : (currentRaw.show_address !== undefined ? currentRaw.show_address : true),
       show_shipping: show_shipping !== undefined ? show_shipping : (currentRaw.show_shipping !== undefined ? currentRaw.show_shipping : true),
+      source_order: {
+        channel: source_platform !== undefined ? source_platform : (currentRaw.source_order?.channel || existing.source_platform || 'Invoice'),
+        reference_no: source_order_ref !== undefined ? source_order_ref : (currentRaw.source_order?.reference_no || ''),
+        utm_source: utm_source !== undefined ? utm_source : (currentRaw.source_order?.utm_source || ''),
+        utm_campaign: utm_campaign !== undefined ? utm_campaign : (currentRaw.source_order?.utm_campaign || '')
+      },
       meta_data: [
         { key: 'shapeup_kurir_awb', value: courier !== undefined ? courier : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_kurir_awb')?.value || '') },
         { key: 'shapeup_resi_awb', value: tracking_number !== undefined ? tracking_number : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_resi_awb')?.value || '') }
@@ -317,6 +320,7 @@ export async function PUT(
 
     const updatePayload: Record<string, any> = {
       customer_id: resolvedCustomerId,
+      source_platform: source_platform !== undefined ? source_platform : existing.source_platform,
       order_date: order_date ? new Date(order_date).toISOString() : existing.order_date,
       order_date_utc: order_date ? new Date(order_date).toISOString() : existing.order_date_utc,
       total_qty: totalQty,
@@ -328,6 +332,21 @@ export async function PUT(
       status: nextStatus,
       items_json: finalItems,
       raw_source_data: nextRaw
+    }
+
+    if (payment_status !== undefined) {
+      updatePayload.payment_status = payment_status
+      if (payment_status === 'paid') {
+        updatePayload.amount_paid = finalGrandTotal
+      } else if (payment_status === 'unpaid') {
+        updatePayload.amount_paid = 0
+      } else if (payment_status === 'partial' && amount_paid !== undefined) {
+        updatePayload.amount_paid = Math.min(finalGrandTotal, Math.max(0, Number(amount_paid)))
+      }
+    } else if (amount_paid !== undefined) {
+      const numPaid = Math.min(finalGrandTotal, Math.max(0, Number(amount_paid)))
+      updatePayload.amount_paid = numPaid
+      updatePayload.payment_status = numPaid >= finalGrandTotal - 0.01 ? 'paid' : (numPaid > 0 ? 'partial' : 'unpaid')
     }
 
     if (nextStatus === 'completed' && payment_method) {
@@ -370,34 +389,29 @@ export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params
-  const supabase = await createClient()
-
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { id } = await params
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: 'ID invoice tidak valid' }, { status: 400 })
     }
 
-    const { data: profile } = await supabase
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId, supabaseAdmin } = ctx
+
+    const { data: profile } = await supabaseAdmin
       .from('profiles')
-      .select('active_business_id, role')
+      .select('role')
       .eq('id', user.id)
-      .single()
-
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
+      .maybeSingle()
 
     // Fetch existing
-    const { data: existing, error: existErr } = await supabase
+    const { data: existing, error: existErr } = await supabaseAdmin
       .from('orders')
       .select('id, status, user_id')
       .eq('id', id)
       .eq('business_id', businessId)
-      .eq('source_platform', 'Invoice')
+      .or('source_platform.eq.Invoice,raw_source_data->>is_invoice.eq.true,order_number.ilike.INV-%')
       .single()
 
     if (existErr || !existing) {
@@ -418,7 +432,7 @@ export async function DELETE(
       }, { status: 400 })
     }
 
-    const { error: delErr } = await supabase
+    const { error: delErr } = await supabaseAdmin
       .from('orders')
       .delete()
       .eq('id', id)

@@ -1,102 +1,100 @@
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { NextResponse } from 'next/server'
-import { invalidateInvoicesCache } from '../../route'
+import { getApiContext } from '@/lib/apiContext'
+import { recordOrderPayment } from '@/lib/paymentLedger'
 import { syncOrderToLedger } from '@/lib/orderLedger'
+import { isUuid } from '@/lib/utils'
+import { invalidateInvoicesCache } from '../../route'
+import { NextResponse } from 'next/server'
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params
-  const supabase = await createClient()
-
   try {
-    // 1. Get logged-in user and active business ID
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { id } = await params
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: 'ID invoice tidak valid' }, { status: 400 })
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId, supabaseAdmin } = ctx
 
-    if (!profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
-    const body = await req.json()
-    const { payment_method, payment_date = new Date().toISOString() } = body
+    const body = await req.json().catch(() => ({}))
+    const { payment_method, notes, amount } = body
 
     if (!payment_method || !['Cash', 'Bank/QRIS', 'Bank Transfer', 'QRIS'].includes(payment_method)) {
-      return NextResponse.json({ error: 'Metode pembayaran wajib disertakan dan harus valid (Cash atau Bank/QRIS)' }, { status: 400 })
+      return NextResponse.json({ 
+        error: 'Metode pembayaran wajib disertakan dan harus valid (Cash, Bank Transfer, atau QRIS)' 
+      }, { status: 400 })
     }
 
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
-      return NextResponse.json({ error: 'Admin service key not found' }, { status: 500 })
-    }
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey
-    )
-
-    // 2. Fetch the outstanding invoice
+    // 1. Fetch invoice to verify remaining balance
     const { data: invoice, error: fetchErr } = await supabaseAdmin
       .from('orders')
-      .select('*')
+      .select('id, order_number, grand_total, amount_paid, payment_status, status')
       .eq('id', id)
       .eq('business_id', businessId)
-      .eq('source_platform', 'Invoice')
+      .or('source_platform.eq.Invoice,raw_source_data->>is_invoice.eq.true,order_number.ilike.INV-%')
       .single()
 
     if (fetchErr || !invoice) {
       return NextResponse.json({ error: 'Invoice tidak ditemukan' }, { status: 404 })
     }
 
-    if (invoice.status === 'completed') {
-      return NextResponse.json({ error: 'Invoice sudah lunas' }, { status: 400 })
+    if (invoice.status === 'cancelled') {
+      return NextResponse.json({ error: 'Tidak dapat mencatat pembayaran untuk invoice yang telah dibatalkan' }, { status: 400 })
     }
 
-    if (invoice.status !== 'processing') {
-      return NextResponse.json({ error: 'Pembayaran hanya dapat dicatat untuk Invoice yang sudah diterbitkan (Sent/Unpaid)' }, { status: 400 })
+    const grandTotal = Number(invoice.grand_total) || 0
+    const currentPaid = Number(invoice.amount_paid) || 0
+    const remainingBalance = Math.max(0, grandTotal - currentPaid)
+
+    if (remainingBalance <= 0 || invoice.payment_status === 'paid') {
+      return NextResponse.json({ error: 'Invoice ini sudah lunas' }, { status: 400 })
     }
 
-    // Normalized payment method for ledger mapping
-    const normalizedMethod = (payment_method === 'Cash') ? 'Cash' : 'Bank/QRIS'
-
-    // 3. Update invoice status to completed
-    const { error: updErr } = await supabaseAdmin
-      .from('orders')
-      .update({
-        status: 'completed',
-        payment_method: payment_method,
-        payment_status: 'paid',
-        amount_paid: Number(invoice.grand_total),
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-
-    if (updErr) throw updErr
-
-    // 4. Record Payment Ledger Jurnal using unified service
-    const syncRes = await syncOrderToLedger(invoice.id, supabaseAdmin)
-    if (!syncRes.success) {
-      throw new Error(syncRes.message)
+    const paymentAmount = amount !== undefined ? Math.min(remainingBalance, Math.max(0, Number(amount))) : remainingBalance
+    if (paymentAmount <= 0) {
+      return NextResponse.json({ error: 'Nominal pembayaran harus lebih besar dari 0' }, { status: 400 })
     }
+
+    // 2. Delegate to Universal payment recording engine (Single Source of Truth)
+    const result = await recordOrderPayment({
+      businessId,
+      orderId: id,
+      amount: paymentAmount,
+      paymentMethod: payment_method === 'Cash' ? 'cash' : 'bank',
+      notes: notes || `Pembayaran Invoice #${invoice.order_number}`,
+      cashierName: user.user_metadata?.full_name || 'Staff',
+      supabase: supabaseAdmin
+    })
+
+    // 3. If fully paid and currently processing, update order status to completed
+    let finalStatus = invoice.status
+    if (result.payment_status === 'paid' && invoice.status === 'processing') {
+      finalStatus = 'completed'
+      await supabaseAdmin
+        .from('orders')
+        .update({ status: finalStatus, updated_at: new Date().toISOString() })
+        .eq('id', id)
+    }
+
+    // 4. Ensure stock and any remaining triggers are synchronized
+    await syncOrderToLedger(id, supabaseAdmin)
 
     invalidateInvoicesCache(businessId)
 
     return NextResponse.json({
       success: true,
-      message: 'Pembayaran berhasil dicatat',
-      status: 'completed'
+      message: result.payment_status === 'paid'
+        ? 'Pembayaran lunas berhasil dicatat'
+        : `Pembayaran sebagian sebesar Rp ${paymentAmount.toLocaleString('id-ID')} berhasil dicatat`,
+      payment_status: result.payment_status,
+      status: finalStatus,
+      amount_paid: result.amount_paid,
+      remaining_balance: result.outstanding,
+      payment: result.payment
     })
-
   } catch (err: any) {
     console.error('Record Invoice Payment Error:', err)
     return NextResponse.json({ error: err.message || 'Internal server error' }, { status: 500 })

@@ -165,7 +165,7 @@ export async function recordOrderPayment(params: RecordPaymentParams): Promise<P
         businessId,
         order.id,
         new Date().toISOString(),
-        `Pembayaran POS #${order.order_number} - ${cashierName}`,
+        notes || `Pembayaran #${order.order_number} - ${cashierName}`,
         [
           { account_id: payAccId, debit: numAmount, credit: 0 },
           { account_id: accPiutang, debit: 0, credit: numAmount }
