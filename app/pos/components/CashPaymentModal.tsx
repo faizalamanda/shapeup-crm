@@ -79,6 +79,18 @@ type Props = {
 const formatIDR = (val: number) =>
   new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Math.round(val || 0))
 
+const formatCompactIDR = (val: number) => {
+  if (val >= 1_000_000) {
+    const jt = val / 1_000_000
+    return `${Number.isInteger(jt) ? jt : jt.toFixed(1)}jt`
+  }
+  if (val >= 1_000) {
+    const k = val / 1_000
+    return `${Number.isInteger(k) ? k : k.toFixed(1)}k`
+  }
+  return String(val)
+}
+
 const CATEGORY_GLYPHS: Record<string, string> = {
   cash: '💵',
   qris: '📱',
@@ -225,6 +237,38 @@ export default function CashPaymentModal({
   const unpaidOutsideBill = useMemo(() => {
     return Math.max(0, grandTotal - activeBillTarget)
   }, [grandTotal, activeBillTarget])
+
+  // Saran pecahan uang tunai cerdas (Smart Quick-Cash Suggestions)
+  const smartCashSuggestions = useMemo(() => {
+    if (activeBillTarget <= 0) return [10000, 20000, 50000, 100000]
+    const list: number[] = []
+
+    // 1. Uang Pas (Exact)
+    list.push(activeBillTarget)
+
+    // 2. Pembulatan 10k ke atas berikutnya
+    const next10k = Math.ceil(activeBillTarget / 10000) * 10000
+    if (next10k > activeBillTarget) list.push(next10k)
+
+    // 3. Pembulatan 50k ke atas berikutnya
+    const next50k = Math.ceil(activeBillTarget / 50000) * 50000
+    if (next50k > activeBillTarget && !list.includes(next50k)) list.push(next50k)
+
+    // 4. Pembulatan 100k ke atas berikutnya
+    const next100k = Math.ceil(activeBillTarget / 100000) * 100000
+    if (next100k > activeBillTarget && !list.includes(next100k)) list.push(next100k)
+
+    // Jika belum 4 item, tambahkan pecahan umum Indonesia yang lebih besar
+    const candidates = [20000, 50000, 100000, 200000, 500000]
+    for (const c of candidates) {
+      if (c > activeBillTarget && !list.includes(c)) {
+        list.push(c)
+        if (list.length >= 4) break
+      }
+    }
+
+    return list.slice(0, 4)
+  }, [activeBillTarget])
 
   // Inisialisasi awal saat modal dibuka
   useEffect(() => {
@@ -542,6 +586,63 @@ export default function CashPaymentModal({
     })
   }, [activeLine, isFirstTouch, activeBillTarget])
 
+  // Pemilihan Saran Uang Tunai Cepat (1-Tap Quick Cash)
+  const handleSelectQuickCash = useCallback((amount: number) => {
+    setErrorMsg(null)
+    setIsFirstTouch(false)
+
+    setTenderLines((prev) => {
+      // Temukan baris tunai jika ada, atau gunakan baris aktif
+      let cashIndex = prev.findIndex((l) => l.category === 'cash')
+
+      // Jika belum ada baris tunai sama sekali, buat atau alihkan baris aktif menjadi tunai
+      if (cashIndex < 0) {
+        const cashTender = tenderOptions.find((t) => t.category === 'cash')
+        const acc = cashTender ? cashBankAccounts.find((a) => a.id === cashTender.account_id) : cashBankAccounts[0]
+        const newLineId = 'line-' + Date.now()
+        const newLine: KeypadTenderLine = {
+          id: newLineId,
+          tenderId: cashTender?.id,
+          accountId: cashTender?.account_id || acc?.id || 'default-pos-cash',
+          accountCode: acc?.code,
+          accountName: acc?.name,
+          tenderName: cashTender?.name || 'Tunai (Laci Kasir)',
+          category: 'cash',
+          amount: Math.min(activeBillTarget, amount),
+          cashReceived: amount,
+          referenceNumber: ''
+        }
+        setActiveLineId(newLineId)
+        return [newLine]
+      }
+
+      const targetLine = prev[cashIndex]
+      const updated = [...prev]
+
+      if (prev.length === 1) {
+        updated[0] = {
+          ...targetLine,
+          amount: activeBillTarget,
+          cashReceived: amount
+        }
+      } else {
+        const otherAllocated = prev
+          .filter((_, idx) => idx !== cashIndex)
+          .reduce((sum, l) => sum + (Number(l.amount) || 0), 0)
+        const needed = Math.max(0, activeBillTarget - otherAllocated)
+
+        updated[cashIndex] = {
+          ...targetLine,
+          amount: needed,
+          cashReceived: amount
+        }
+      }
+
+      setActiveLineId(targetLine.id)
+      return updated
+    })
+  }, [tenderOptions, cashBankAccounts, activeBillTarget])
+
   // Update Nomor Referensi untuk Baris Non-Tunai
   const handleUpdateReference = (refNo: string) => {
     if (!activeLine) return
@@ -768,24 +869,23 @@ export default function CashPaymentModal({
         <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-12 sm:landscape:grid-cols-12 gap-2 sm:gap-2.5 overflow-y-auto md:overflow-hidden sm:landscape:overflow-hidden">
           
           {/* ========================================================= */}
-          {/* KOLOM KIRI (38%): ACTION & CONTROL PAD (ODOO STYLE)       */}
+          {/* KOLOM KIRI (38%): ACTION & CONTROL PAD (OPTION 1 REDESIGN)*/}
           {/* ========================================================= */}
-          <aside className="col-span-1 md:col-span-5 sm:landscape:col-span-5 lg:col-span-5 xl:col-span-5 flex flex-col bg-white border border-slate-200/90 rounded-2xl p-2.5 sm:p-3 shadow-2xs overflow-hidden justify-between">
+          <aside className="col-span-1 md:col-span-5 sm:landscape:col-span-5 lg:col-span-5 xl:col-span-5 flex flex-col bg-white border border-slate-200/90 rounded-2xl p-2.5 sm:p-3 shadow-2xs overflow-hidden">
             
             <div className="space-y-1.5 shrink-0">
               
-              {/* METODE PEMBAYARAN: TOGGLE NYALAKAN / MATIKAN DENGAN STATUS YANG SANGAT JELAS */}
+              {/* 1. METODE PEMBAYARAN: TOMBOL BERSIH & TERBACA UTUH TANPA TERPOTONG */}
               <div>
                 <div className="flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
                   <span>METODE PEMBAYARAN ({tenderLines.length} Nyala):</span>
-                  <span className="text-emerald-700 font-bold lowercase">klik untuk nyala / matikan</span>
+                  <span className="text-emerald-700 font-bold lowercase">pilih / kombinasi</span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-1.5 max-h-[120px] sm:max-h-[135px] overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden pr-0.5">
                   {tenderOptions.map((t) => {
                     const lineEntry = tenderLines.find((l) => l.tenderId === t.id || l.accountId === t.account_id)
                     const isTurnedOn = Boolean(lineEntry)
-                    const isFocusedAndEditing = activeLine?.tenderId === t.id || (!activeLine?.tenderId && activeLine?.accountId === t.account_id)
                     const glyph = CATEGORY_GLYPHS[t.category] || '💳'
 
                     return (
@@ -793,116 +893,101 @@ export default function CashPaymentModal({
                         key={t.id}
                         type="button"
                         onClick={() => handleToggleTender(t)}
-                        title={isTurnedOn ? 'Klik untuk mematikan / menghapus metode ini' : 'Klik untuk menyalakan metode ini'}
-                        className={`relative p-1.5 sm:p-2 rounded-xl border-2 text-left transition cursor-pointer flex items-center justify-between min-h-[46px] sm:min-h-[50px] ${
+                        title={isTurnedOn ? 'Klik untuk mematikan metode ini' : 'Klik untuk mengaktifkan metode ini'}
+                        className={`p-2 rounded-xl border text-left transition cursor-pointer flex items-center justify-between min-h-[46px] ${
                           isTurnedOn
-                            ? 'bg-emerald-50/80 border-emerald-500 text-emerald-950 shadow-2xs'
-                            : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'
+                            ? 'bg-emerald-600 border-emerald-700 text-white shadow-2xs ring-2 ring-emerald-500/20'
+                            : 'bg-slate-50 hover:bg-slate-100 border-slate-200/90 text-slate-700'
                         }`}
                       >
-                        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 truncate">
-                          <span className="text-lg sm:text-xl shrink-0">{glyph}</span>
-                          <div className="truncate">
-                            <div className="font-extrabold text-xs truncate leading-tight flex items-center gap-1">
-                              <span>{t.name}</span>
-                            </div>
-                            <div className="text-[10px] text-slate-400 truncate">
-                              {t.category === 'cash' ? 'Laci Kasir' : (t.category === 'qris' ? 'QRIS' : 'Bank')}
-                            </div>
+                        <div className="flex items-center gap-2 min-w-0 flex-1 truncate">
+                          <span className="text-lg shrink-0">{glyph}</span>
+                          <div className="min-w-0 flex-1 truncate">
+                            <span className={`font-black text-xs block truncate leading-tight ${isTurnedOn ? 'text-white' : 'text-slate-800'}`}>
+                              {t.name}
+                            </span>
+                            <span className={`text-[10px] block truncate leading-none mt-0.5 ${isTurnedOn ? 'text-emerald-100 font-mono font-bold' : 'text-slate-400 font-mono'}`}>
+                              {lineEntry
+                                ? formatIDR(lineEntry.category === 'cash' ? (lineEntry.cashReceived || lineEntry.amount) : lineEntry.amount)
+                                : (t.category === 'cash' ? 'Laci Kasir' : (t.category === 'qris' ? 'QRIS POS' : 'Bank'))}
+                            </span>
                           </div>
                         </div>
 
-                        {/* TOGGLE INDIKATOR: NYALA (KLIK UNTUK MATIKAN) ATAU MATI (KLIK UNTUK NYALAKAN) */}
-                        <div className="shrink-0 flex flex-col items-end pl-1">
-                          {lineEntry ? (
-                            <>
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-600 text-white shadow-2xs">
-                                <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
-                                <span>Nyala</span>
-                              </span>
-                              <span className="text-[9px] text-emerald-900 font-mono font-bold mt-0.5">
-                                {formatIDR(lineEntry.category === 'cash' ? (lineEntry.cashReceived || lineEntry.amount) : lineEntry.amount)}
-                              </span>
-                            </>
-                          ) : (
-                            <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-100 text-slate-400 border border-slate-200">
-                              + Nyalakan
-                            </span>
-                          )}
-                        </div>
+                        {isTurnedOn && (
+                          <span className="w-5 h-5 rounded-full bg-white text-emerald-700 flex items-center justify-center text-xs font-black shrink-0 ml-1 shadow-2xs">
+                            ✓
+                          </span>
+                        )}
                       </button>
                     )
                   })}
                 </div>
               </div>
 
-              {/* BARIS INFO PELANGGAN & TOMBOL SPLIT BILL */}
-              <div className="grid grid-cols-2 gap-1.5 pt-0.5">
-                <div className="p-1.5 px-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center gap-1.5 text-xs">
-                  <span className="text-base shrink-0">👤</span>
-                  <div className="truncate">
-                    <span className="text-[9px] uppercase font-bold text-slate-400 block leading-none">Pelanggan:</span>
-                    <span className="font-extrabold text-[11px] text-slate-900 truncate block">
-                      {customerName}
-                    </span>
-                  </div>
+              {/* 2. SMART QUICK-CASH PILLS (SARAN PECAHAN TUNAI INSTAN - 1 TAP) */}
+              <div>
+                <div className="flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">
+                  <span>PECAHAN CEPAT:</span>
+                  <span className="text-emerald-700 font-bold lowercase">1-tap uang pas / pecahan</span>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setIsSplitBillOpen(true)}
-                  className={`p-1.5 px-2 rounded-xl border flex items-center justify-between text-xs font-bold transition cursor-pointer ${
-                    billMode !== 'full'
-                      ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs'
-                      : 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-900'
-                  }`}
-                >
-                  <div className="flex items-center gap-1 truncate">
-                    <span>✂</span>
-                    <span className="truncate">
-                      {billMode === 'split_equal'
-                        ? `Bagi ${splitCount}`
-                        : billMode === 'split_item'
-                        ? `Pecah (${selectedItemIds.size})`
-                        : billMode === 'partial'
-                        ? 'Cicilan'
-                        : 'Split Tagihan'}
-                    </span>
-                  </div>
-                  <span className="text-[10px] opacity-80 shrink-0">⚙</span>
-                </button>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {smartCashSuggestions.map((sug, idx) => {
+                    const isExact = sug === activeBillTarget
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleSelectQuickCash(sug)}
+                        className={`py-1.5 px-1 rounded-xl border text-center transition cursor-pointer font-mono font-black active:scale-95 ${
+                          isExact
+                            ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-950 border-emerald-300 shadow-2xs'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
+                        }`}
+                        title={isExact ? `Bayar Uang Pas ${formatIDR(sug)}` : `Bayar Pecahan ${formatIDR(sug)}`}
+                      >
+                        <span className="block text-xs font-black leading-tight">
+                          {formatCompactIDR(sug)}
+                        </span>
+                        <span className="block text-[9px] text-slate-500 font-sans font-semibold leading-none mt-0.5">
+                          {isExact ? 'Uang Pas' : 'Pecahan'}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
 
             </div>
 
-            {/* KEYPAD NUMERIK 4-KOLOM ODOO STYLE */}
-            <div className="flex-1 min-h-0 grid grid-cols-4 gap-1.5 my-1 sm:my-1.5">
+            {/* 3. KEYPAD NUMERIK 4-KOLOM (STRICT 4x4 GRID, ANTI OVERFLOW & ANTI TABRAKAN) */}
+            <div className="flex-1 min-h-0 grid grid-cols-4 grid-rows-4 gap-1 sm:gap-1.5 my-1.5">
               {/* Baris 1: 1, 2, 3, +10.000 */}
               <button
                 type="button"
                 onClick={() => handleNumpadInput('1')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 1
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('2')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 2
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('3')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 3
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('+10000')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
               >
                 +10k
               </button>
@@ -911,28 +996,28 @@ export default function CashPaymentModal({
               <button
                 type="button"
                 onClick={() => handleNumpadInput('4')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 4
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('5')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 5
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('6')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 6
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('+20000')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
               >
                 +20k
               </button>
@@ -941,28 +1026,28 @@ export default function CashPaymentModal({
               <button
                 type="button"
                 onClick={() => handleNumpadInput('7')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 7
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('8')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 8
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('9')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 9
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('+50000')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-xs sm:text-sm font-extrabold text-emerald-950 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-emerald-300 shadow-2xs"
               >
                 +50k
               </button>
@@ -971,39 +1056,39 @@ export default function CashPaymentModal({
               <button
                 type="button"
                 onClick={() => handleNumpadInput('CLEAR')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-xs sm:text-sm font-black text-rose-700 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-200 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-xs sm:text-sm font-black text-rose-700 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-200 shadow-2xs"
               >
                 C
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('0')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-xl sm:text-2xl font-black text-slate-900 flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 0
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('000')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-sm sm:text-base font-black text-slate-900 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-slate-50 hover:bg-white active:bg-slate-200 text-sm sm:text-base font-black text-slate-900 font-mono flex items-center justify-center transition active:scale-95 cursor-pointer border border-slate-200 shadow-2xs"
               >
                 000
               </button>
               <button
                 type="button"
                 onClick={() => handleNumpadInput('BACKSPACE')}
-                className="h-full min-h-[38px] sm:min-h-[44px] lg:min-h-[48px] rounded-xl sm:rounded-2xl bg-rose-100 hover:bg-rose-200 active:bg-rose-300 text-lg sm:text-xl font-black text-rose-800 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-300 shadow-2xs"
+                className="h-full w-full min-h-0 rounded-xl sm:rounded-2xl bg-rose-100 hover:bg-rose-200 active:bg-rose-300 text-lg sm:text-xl font-black text-rose-800 flex items-center justify-center transition active:scale-95 cursor-pointer border border-rose-300 shadow-2xs"
               >
                 ⌫
               </button>
             </div>
 
-            {/* FOOTER AKSI: BATAL & VALIDATE (ODOO BUTTONS) */}
+            {/* 4. FOOTER AKSI: BATAL & VALIDATE (TERKUNCI DI DASAR KARTU) */}
             <div className="shrink-0 pt-1 grid grid-cols-5 gap-2">
               <button
                 type="button"
                 onClick={onClose}
-                className="col-span-2 py-2.5 sm:py-3 lg:py-3.5 rounded-xl sm:rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs sm:text-sm tracking-wide transition cursor-pointer border border-slate-200"
+                className="col-span-2 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs sm:text-sm tracking-wide transition cursor-pointer border border-slate-200"
               >
                 Batal
               </button>
@@ -1012,7 +1097,7 @@ export default function CashPaymentModal({
                 type="button"
                 onClick={handleConfirm}
                 disabled={isSubmitting || calculation.totalAllocated <= 0}
-                className={`col-span-3 py-2.5 sm:py-3 lg:py-3.5 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm tracking-wider uppercase transition shadow-md flex items-center justify-center gap-1.5 cursor-pointer ${
+                className={`col-span-3 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm tracking-wider uppercase transition shadow-md flex items-center justify-center gap-1.5 cursor-pointer ${
                   isSubmitting || calculation.totalAllocated <= 0
                     ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
                     : 'bg-[#714B67] hover:bg-[#5e3e56] active:bg-[#4d3246] text-white shadow-purple-900/20'
