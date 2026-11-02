@@ -1017,71 +1017,40 @@ export default function CashPaymentModal({
                 </div>
               </div>
 
-              {/* 3. TOMBOL SHORTCUT: INPUT NOMINAL KUSTOM (MODAL POP-UP ODOO) */}
-              <div>
-                <div className="flex items-center justify-between text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-1.5">
-                  <span>KEYPAD NOMINAL:</span>
-                  <span className="text-purple-700 font-bold lowercase">pop-up gaya odoo</span>
-                </div>
+            </div>
+
+            {/* 3. FOOTER AKSI: BATAL & VALIDATE (TERKUNCI DI DASAR KARTU) */}
+            <div className="shrink-0 pt-3 mt-2 border-t border-slate-100">
+              <div className="grid grid-cols-5 gap-2">
                 <button
                   type="button"
-                  onClick={() => handleOpenAmountModal(activeLine)}
-                  className="w-full p-2.5 sm:p-3 rounded-xl sm:rounded-2xl bg-purple-50/70 hover:bg-purple-100/80 active:bg-purple-200/90 border border-purple-200/90 text-purple-950 transition flex items-center justify-between cursor-pointer group shadow-2xs"
+                  onClick={onClose}
+                  className="col-span-2 py-3 rounded-xl sm:rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs sm:text-sm tracking-wide transition cursor-pointer border border-slate-200"
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="w-8 h-8 rounded-xl bg-[#714B67] text-white flex items-center justify-center text-sm font-bold shadow-2xs group-hover:scale-105 transition shrink-0">
-                      ⌨️
-                    </span>
-                    <div className="text-left truncate">
-                      <span className="block text-xs sm:text-sm font-black text-slate-900 leading-tight">
-                        Ketik Nominal Kustom...
-                      </span>
-                      <span className="block text-[10px] text-purple-700/80 truncate mt-0.5">
-                        Buka Keypad Odoo ({activeLine?.tenderName || 'Metode Aktif'})
-                      </span>
-                    </div>
-                  </div>
-                  <span className="px-2 py-0.5 rounded-lg bg-white border border-purple-200 text-xs font-mono font-black text-purple-900 shadow-2xs shrink-0 ml-2">
-                    {formatIDR(activeLine?.category === 'cash' ? (activeLine.cashReceived || activeLine.amount) : (activeLine?.amount || 0))} ↗
-                  </span>
+                  Batal
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleConfirm}
+                  disabled={isSubmitting || calculation.totalAllocated <= 0}
+                  className={`col-span-3 py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm tracking-wider uppercase transition shadow-md flex items-center justify-center gap-1.5 cursor-pointer ${
+                    isSubmitting || calculation.totalAllocated <= 0
+                      ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                      : 'bg-[#714B67] hover:bg-[#5e3e56] active:bg-[#4d3246] text-white shadow-purple-900/20'
+                  }`}
+                >
+                  {isSubmitting ? 'Memproses...' : 'Validate'}
                 </button>
               </div>
 
-              {/* 4. PETUNJUK CEPAT SHORTCUT KEYBOARD KASIR */}
-              <div className="p-2 sm:p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 text-[10px] sm:text-[11px] text-slate-500 space-y-1">
-                <div className="flex items-center justify-between font-bold text-slate-600">
-                  <span>💡 Shortcut Kasir:</span>
-                  <span className="font-mono text-emerald-700 font-extrabold">Enter = Validate</span>
-                </div>
-                <p className="text-[10px] leading-tight text-slate-500">
-                  Tekan angka <b>0-9</b> pada keyboard fisik untuk membuka kalkulator nominal secara instan.
-                </p>
+              <div className="mt-2 text-center text-[10px] text-slate-400 font-medium">
+                <span>Shortcut: </span>
+                <span className="font-mono font-bold text-slate-600">Enter</span>
+                <span> = Validate • </span>
+                <span className="font-mono font-bold text-slate-600">0-9</span>
+                <span> = Keypad</span>
               </div>
-
-            </div>
-
-            {/* 5. FOOTER AKSI: BATAL & VALIDATE (TERKUNCI DI DASAR KARTU) */}
-            <div className="shrink-0 pt-3 mt-2 border-t border-slate-100 grid grid-cols-5 gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="col-span-2 py-3 rounded-xl sm:rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs sm:text-sm tracking-wide transition cursor-pointer border border-slate-200"
-              >
-                Batal
-              </button>
-
-              <button
-                type="button"
-                onClick={handleConfirm}
-                disabled={isSubmitting || calculation.totalAllocated <= 0}
-                className={`col-span-3 py-3 rounded-xl sm:rounded-2xl font-black text-xs sm:text-sm tracking-wider uppercase transition shadow-md flex items-center justify-center gap-1.5 cursor-pointer ${
-                  isSubmitting || calculation.totalAllocated <= 0
-                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                    : 'bg-[#714B67] hover:bg-[#5e3e56] active:bg-[#4d3246] text-white shadow-purple-900/20'
-                }`}
-              >
-                {isSubmitting ? 'Memproses...' : 'Validate'}
-              </button>
             </div>
 
           </aside>
@@ -1511,24 +1480,12 @@ export default function CashPaymentModal({
               </button>
             </div>
 
-            {/* Display Input Nominal Besar (Odoo Style dengan Tombol Clear ✕) */}
-            <div className="relative flex items-center">
-              <div className="w-full bg-slate-50 border-2 border-purple-200 focus-within:border-[#714B67] rounded-2xl p-2.5 sm:p-3 pr-10 flex items-center justify-between transition shadow-inner">
-                <span className="text-xs sm:text-sm font-bold text-slate-400 font-mono">Rp</span>
-                <span className="text-2xl sm:text-3xl font-black font-mono text-slate-900 tracking-tight">
-                  {modalInputValue.toLocaleString('id-ID')}
-                </span>
-              </div>
-              {modalInputValue > 0 && (
-                <button
-                  type="button"
-                  onClick={() => handleModalNumpadInput('CLEAR')}
-                  className="absolute right-3 w-6 h-6 rounded-full bg-slate-200 hover:bg-rose-100 hover:text-rose-700 text-slate-600 flex items-center justify-center text-xs font-bold transition cursor-pointer"
-                  title="Hapus Nilai (Clear)"
-                >
-                  ✕
-                </button>
-              )}
+            {/* Display Input Nominal Besar (Odoo POS Style Bersih & Terbaca Utuh) */}
+            <div className="w-full bg-slate-50 border-2 border-purple-200 focus-within:border-[#714B67] rounded-2xl p-2.5 sm:p-3 px-3 sm:px-4 flex items-center justify-between transition shadow-inner">
+              <span className="text-xs sm:text-sm font-bold text-slate-400 font-mono">Rp</span>
+              <span className="text-2xl sm:text-3xl font-black font-mono text-slate-900 tracking-tight">
+                {modalInputValue.toLocaleString('id-ID')}
+              </span>
             </div>
 
             {/* Keypad Numpad 4x4 Grid Odoo */}

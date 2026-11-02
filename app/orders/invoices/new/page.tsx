@@ -68,6 +68,7 @@ export default function NewInvoicePage() {
   const [businessName, setBusinessName] = useState<string>('')
   const [businessId, setBusinessId] = useState<string>('')
   const [staffName, setStaffName] = useState<string>('')
+  const [loadingData, setLoadingData] = useState<boolean>(true)
 
   // Customer selection
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
@@ -271,7 +272,6 @@ export default function NewInvoicePage() {
         price: newProduct.price,
         sku: newProduct.sku || ''
       })
-      setProductSearchQueries(prev => ({ ...prev, [quickAddRowIndex]: '' }))
     }
   }
 

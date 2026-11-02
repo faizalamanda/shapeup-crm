@@ -441,7 +441,6 @@ export default function EditInvoicePage() {
         price: newProduct.price,
         sku: newProduct.sku || ''
       })
-      setProductSearchQueries(prev => ({ ...prev, [quickAddRowIndex]: '' }))
     }
   }
 
