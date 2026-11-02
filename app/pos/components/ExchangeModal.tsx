@@ -93,7 +93,7 @@ export default function ExchangeModal({
 
   // Filtered catalog by multi-token search
   const filteredCatalog = useMemo(() => {
-    if (!productSearch.trim()) return catalog.slice(0, 30)
+    if (!productSearch.trim()) return []
     const rawQ = productSearch.trim().toLowerCase()
     const tokens = rawQ.split(/\s+/).filter(Boolean)
     return catalog.filter((p) => {

@@ -9,9 +9,12 @@ import {
   RefundMethod,
   ReturnDisposition,
   RETURN_REASONS,
-  ReturnReasonCode
+  ReturnReasonCode,
+  ReturnPolicy,
+  ReturnableLine,
+  ExchangeItemInput
 } from '@/lib/pos/returns/types'
-import { computeReturnableLines } from '@/lib/pos/returns/engine'
+import { computeReturnableLines, quoteReturn } from '@/lib/pos/returns/engine'
 import { getPrinterAdapter } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from '@/lib/pos/receiptSettings'
 import { buildReturnReceiptData } from '@/lib/pos/receiptDataBuilder'
@@ -324,7 +327,65 @@ export default function POSReturnModal({
       }))
   }, [returnLines])
 
-  // Recalculate Live Quote when selections change
+  // Instant Client-Side Math Preview (0ms Latency for Cashier)
+  const clientQuote = useMemo(() => {
+    if (!order?.id || activeReturnItems.length === 0) return null
+    try {
+      const mockLines: ReturnableLine[] = returnLines.map((l) => ({
+        ref: l.ref,
+        productId: l.productId,
+        variantId: l.variantId,
+        name: l.name,
+        variantName: l.variantName,
+        quantity: l.quantity,
+        returnedQty: Math.max(0, l.quantity - l.remainingQty),
+        remainingQty: l.remainingQty,
+        lineNet: l.lineNet,
+        refundedAmount: 0,
+        unitCost: 0,
+        isCustom: false,
+        isReplacement: false
+      }))
+
+      const exchangeInputs: ExchangeItemInput[] = exchangeBasket.map((i) => ({
+        productId: i.productId,
+        variantId: i.variantId || null,
+        name: i.name,
+        variantName: i.variantName || null,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice
+      }))
+
+      const activePolicy: ReturnPolicy = policy || {
+        business_id: effectiveBusinessId || '',
+        return_window_days: 0,
+        require_reason: false,
+        approval_mode: 'off',
+        approval_threshold: 0,
+        restocking_fee_pct: 0,
+        allow_store_credit: true,
+        default_disposition: 'restock'
+      }
+
+      return quoteReturn({
+        lines: mockLines,
+        request: activeReturnItems,
+        reasonCode,
+        policy: activePolicy,
+        order: {
+          grand_total: Number(order.grand_total || 0),
+          amount_paid: Number(order.amount_paid || 0)
+        },
+        exchange: exchangeInputs
+      })
+    } catch {
+      return null
+    }
+  }, [order, returnLines, activeReturnItems, exchangeBasket, reasonCode, policy, effectiveBusinessId])
+
+  const activeQuote = liveQuote || clientQuote
+
+  // Recalculate Live Quote when selections change (items, basket, mode, reason)
   const triggerLiveQuote = useCallback(async () => {
     if (!order?.id || activeReturnItems.length === 0) {
       setLiveQuote(null)
@@ -363,7 +424,7 @@ export default function POSReturnModal({
     } finally {
       setQuoting(false)
     }
-  }, [order?.id, activeReturnItems, mode, exchangeBasket, returnMethod, reasonCode])
+  }, [order?.id, activeReturnItems, mode, exchangeBasket, reasonCode]) // returnMethod excluded to prevent button freeze on payment switch
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -403,9 +464,9 @@ export default function POSReturnModal({
     setReturnLines((prev) => prev.map((line) => ({ ...line, selectedQty: 0 })))
   }
 
-  // Exchange catalog search with multi-token & variant support
+  // Exchange catalog search with multi-token & variant support (Only shows when user types)
   const filteredCatalog = useMemo(() => {
-    if (!productSearch.trim()) return catalog.slice(0, 30)
+    if (!productSearch.trim()) return []
 
     const rawQ = productSearch.trim().toLowerCase()
     const tokens = rawQ.split(/\s+/).filter(Boolean)
@@ -502,14 +563,14 @@ export default function POSReturnModal({
         approver_id: requireApproval ? selectedApproverId : null,
         approver_pin: requireApproval ? approverPin : null,
         payment_in:
-          liveQuote && liveQuote.shortfall > 0
+          activeQuote && activeQuote.shortfall > 0
             ? {
                 method: shortfallMethod,
-                amount: liveQuote.shortfall,
-                cashReceived: shortfallMethod === 'cash' ? cashReceived || liveQuote.shortfall : liveQuote.shortfall,
+                amount: activeQuote.shortfall,
+                cashReceived: shortfallMethod === 'cash' ? cashReceived || activeQuote.shortfall : activeQuote.shortfall,
                 changeAmount:
-                  shortfallMethod === 'cash' && cashReceived > liveQuote.shortfall
-                    ? cashReceived - liveQuote.shortfall
+                  shortfallMethod === 'cash' && cashReceived > activeQuote.shortfall
+                    ? cashReceived - activeQuote.shortfall
                     : 0
               }
             : undefined
@@ -549,11 +610,11 @@ export default function POSReturnModal({
           reason_code: reasonCode,
           reason_note: reasonNote,
           cashier_name: cashierName,
-          gross_refund: liveQuote?.grossRefund,
-          refund_total: liveQuote?.refundOut,
-          credit_value: liveQuote?.creditValue,
-          exchange_total: liveQuote?.exchangeTotal,
-          items: liveQuote?.items || [],
+          gross_refund: activeQuote?.grossRefund,
+          refund_total: activeQuote?.refundOut,
+          credit_value: activeQuote?.creditValue,
+          exchange_total: activeQuote?.exchangeTotal,
+          items: activeQuote?.items || [],
           exchange_items: exchangeBasket,
           settlement_json: { refund_lines: completedReturn.refundLines || [] }
         },
@@ -599,18 +660,18 @@ export default function POSReturnModal({
             <div className="bg-slate-50 rounded-2xl p-4 text-left text-xs space-y-2 border border-slate-100">
               <div className="flex justify-between text-slate-600">
                 <span>Nilai Retur Bersih:</span>
-                <span className="font-bold text-slate-800">{formatIDR(liveQuote?.creditValue || 0)}</span>
+                <span className="font-bold text-slate-800">{formatIDR(activeQuote?.creditValue || 0)}</span>
               </div>
-              {liveQuote?.refundOut > 0 && (
+              {activeQuote?.refundOut > 0 && (
                 <div className="flex justify-between text-emerald-600 font-bold border-t border-slate-200 pt-2">
                   <span>Dana Dikembalikan (Refund):</span>
-                  <span>{formatIDR(liveQuote.refundOut)}</span>
+                  <span>{formatIDR(activeQuote.refundOut)}</span>
                 </div>
               )}
-              {liveQuote?.shortfall > 0 && (
+              {activeQuote?.shortfall > 0 && (
                 <div className="flex justify-between text-indigo-600 font-bold border-t border-slate-200 pt-2">
                   <span>Selisih Diterima Kasir:</span>
-                  <span>{formatIDR(liveQuote.shortfall)}</span>
+                  <span>{formatIDR(activeQuote.shortfall)}</span>
                 </div>
               )}
             </div>
@@ -913,112 +974,114 @@ export default function POSReturnModal({
                     ) : null}
                   </div>
 
-                  <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white shadow-2xs">
-                    {loadingCatalog && catalog.length === 0 ? (
-                      <div className="p-5 text-center text-xs text-slate-400 font-medium flex items-center justify-center gap-2">
-                        <span className="animate-spin text-sm">⏳</span> Memuat katalog produk...
-                      </div>
-                    ) : filteredCatalog.length === 0 ? (
-                      <div className="p-6 text-center text-xs text-slate-500 space-y-1">
-                        <p className="font-bold text-slate-700">Tidak ada produk ditemukan</p>
-                        <p className="text-[11px] text-slate-400">
-                          {productSearch ? `Tidak ada produk atau varian yang cocok dengan "${productSearch}".` : 'Belum ada produk aktif di katalog unit bisnis ini.'}
-                        </p>
-                      </div>
-                    ) : (
-                      filteredCatalog.map((prod) => {
-                        const hasVariants = Array.isArray(prod.product_variants) && prod.product_variants.length > 0
-                        const q = productSearch.trim().toLowerCase()
-                        const sortedVariants = hasVariants ? [...prod.product_variants].sort((a: any, b: any) => {
-                          if (!q) return 0
-                          const aMatch = String(a.name || '').toLowerCase().includes(q) || String(a.sku || '').toLowerCase().includes(q)
-                          const bMatch = String(b.name || '').toLowerCase().includes(q) || String(b.sku || '').toLowerCase().includes(q)
-                          if (aMatch && !bMatch) return -1
-                          if (!aMatch && bMatch) return 1
-                          return 0
-                        }) : []
+                  {productSearch.trim().length > 0 && (
+                    <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 border border-slate-200/80 rounded-2xl bg-white shadow-2xs animate-in fade-in duration-150">
+                      {searchingServer && catalog.length === 0 ? (
+                        <div className="p-5 text-center text-xs text-slate-400 font-medium flex items-center justify-center gap-2">
+                          <span className="animate-spin text-sm">⏳</span> Mencari produk...
+                        </div>
+                      ) : filteredCatalog.length === 0 ? (
+                        <div className="p-6 text-center text-xs text-slate-500 space-y-1">
+                          <p className="font-bold text-slate-700">Tidak ada produk ditemukan</p>
+                          <p className="text-[11px] text-slate-400">
+                            Tidak ada produk atau varian yang cocok dengan &quot;{productSearch}&quot;.
+                          </p>
+                        </div>
+                      ) : (
+                        filteredCatalog.map((prod) => {
+                          const hasVariants = Array.isArray(prod.product_variants) && prod.product_variants.length > 0
+                          const q = productSearch.trim().toLowerCase()
+                          const sortedVariants = hasVariants ? [...prod.product_variants].sort((a: any, b: any) => {
+                            if (!q) return 0
+                            const aMatch = String(a.name || '').toLowerCase().includes(q) || String(a.sku || '').toLowerCase().includes(q)
+                            const bMatch = String(b.name || '').toLowerCase().includes(q) || String(b.sku || '').toLowerCase().includes(q)
+                            if (aMatch && !bMatch) return -1
+                            if (!aMatch && bMatch) return 1
+                            return 0
+                          }) : []
 
-                        return (
-                          <div key={prod.id} className="p-3 hover:bg-slate-50/80 transition-colors">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="flex-1 min-w-0">
-                                <span className="font-extrabold text-slate-900 text-xs block truncate">
-                                  {prod.name}
-                                </span>
-                                <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-500">
-                                  {prod.sku && (
-                                    <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
-                                      {prod.sku}
-                                    </span>
-                                  )}
-                                  <span>Harga: <strong className="text-slate-700">{formatIDR(prod.price)}</strong></span>
-                                  {!hasVariants && (
-                                    <span>• Stok: <strong className={prod.stock_quantity <= 0 ? 'text-rose-600' : 'text-slate-700'}>{prod.stock_quantity ?? '∞'}</strong></span>
-                                  )}
+                          return (
+                            <div key={prod.id} className="p-3 hover:bg-slate-50/80 transition-colors">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <span className="font-extrabold text-slate-900 text-xs block truncate">
+                                    {prod.name}
+                                  </span>
+                                  <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-500">
+                                    {prod.sku && (
+                                      <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
+                                        {prod.sku}
+                                      </span>
+                                    )}
+                                    <span>Harga: <strong className="text-slate-700">{formatIDR(prod.price)}</strong></span>
+                                    {!hasVariants && (
+                                      <span>• Stok: <strong className={prod.stock_quantity <= 0 ? 'text-rose-600' : 'text-slate-700'}>{prod.stock_quantity ?? '∞'}</strong></span>
+                                    )}
+                                  </div>
                                 </div>
+
+                                {!hasVariants && (
+                                  <button
+                                    type="button"
+                                    onClick={() => addExchangeItem(prod)}
+                                    className="shrink-0 text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black rounded-xl shadow-2xs transition-all flex items-center gap-1"
+                                  >
+                                    + Pilih
+                                  </button>
+                                )}
                               </div>
 
-                              {!hasVariants && (
-                                <button
-                                  type="button"
-                                  onClick={() => addExchangeItem(prod)}
-                                  className="shrink-0 text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black rounded-xl shadow-2xs transition-all flex items-center gap-1"
-                                >
-                                  + Pilih
-                                </button>
+                              {hasVariants && (
+                                <div className="mt-2.5 pt-2 border-t border-slate-100">
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                      Varian Tersedia ({sortedVariants.length}):
+                                    </span>
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {sortedVariants.map((v: any) => {
+                                      const isMatch = q && (String(v.name || '').toLowerCase().includes(q) || String(v.sku || '').toLowerCase().includes(q))
+                                      const vPrice = Number(v.price || prod.price)
+                                      const vStock = v.stock_quantity ?? 0
+                                      return (
+                                        <button
+                                          key={v.id}
+                                          type="button"
+                                          onClick={() => addExchangeItem(prod, v)}
+                                          className={`text-[11px] px-2.5 py-1.5 rounded-xl font-bold border transition-all flex items-center gap-1.5 active:scale-95 ${
+                                            isMatch
+                                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs ring-2 ring-indigo-200'
+                                              : 'bg-indigo-50/70 hover:bg-indigo-100 text-indigo-700 border-indigo-200/70'
+                                          }`}
+                                          title={`Stok: ${vStock} • Harga: ${formatIDR(vPrice)}`}
+                                        >
+                                          <span>+ {v.name || v.title || 'Varian'}</span>
+                                          <span className={`text-[10px] opacity-80 ${isMatch ? 'text-indigo-100' : 'text-indigo-500'}`}>
+                                            ({formatIDR(vPrice)})
+                                          </span>
+                                          {vStock <= 0 && (
+                                            <span className={`text-[9px] px-1 rounded ${isMatch ? 'bg-indigo-700 text-indigo-200' : 'bg-rose-100 text-rose-600 font-bold'}`}>
+                                              Habis
+                                            </span>
+                                          )}
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
                               )}
                             </div>
-
-                            {hasVariants && (
-                              <div className="mt-2.5 pt-2 border-t border-slate-100">
-                                <div className="flex items-center justify-between mb-1.5">
-                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                                    Varian Tersedia ({sortedVariants.length}):
-                                  </span>
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {sortedVariants.map((v: any) => {
-                                    const isMatch = q && (String(v.name || '').toLowerCase().includes(q) || String(v.sku || '').toLowerCase().includes(q))
-                                    const vPrice = Number(v.price || prod.price)
-                                    const vStock = v.stock_quantity ?? 0
-                                    return (
-                                      <button
-                                        key={v.id}
-                                        type="button"
-                                        onClick={() => addExchangeItem(prod, v)}
-                                        className={`text-[11px] px-2.5 py-1.5 rounded-xl font-bold border transition-all flex items-center gap-1.5 active:scale-95 ${
-                                          isMatch
-                                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs ring-2 ring-indigo-200'
-                                            : 'bg-indigo-50/70 hover:bg-indigo-100 text-indigo-700 border-indigo-200/70'
-                                        }`}
-                                        title={`Stok: ${vStock} • Harga: ${formatIDR(vPrice)}`}
-                                      >
-                                        <span>+ {v.name || v.title || 'Varian'}</span>
-                                        <span className={`text-[10px] opacity-80 ${isMatch ? 'text-indigo-100' : 'text-indigo-500'}`}>
-                                          ({formatIDR(vPrice)})
-                                        </span>
-                                        {vStock <= 0 && (
-                                          <span className={`text-[9px] px-1 rounded ${isMatch ? 'bg-indigo-700 text-indigo-200' : 'bg-rose-100 text-rose-600 font-bold'}`}>
-                                            Habis
-                                          </span>
-                                        )}
-                                      </button>
-                                    )
-                                  })}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })
-                    )}
-                  </div>
+                          )
+                        })
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
             {/* STEP 4: RINGKASAN SETTLEMENT & PEMBAYARAN */}
-            {liveQuote && (
+            {activeQuote && (
               <div className="bg-slate-900 text-white rounded-3xl p-5 sm:p-6 space-y-4 shadow-xl">
                 <span className="text-[10px] font-black uppercase tracking-widest text-indigo-300 block">
                   Kalkulasi Bersih & Rekonsiliasi
@@ -1027,21 +1090,21 @@ export default function POSReturnModal({
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs border-b border-slate-800 pb-4">
                   <div>
                     <span className="text-slate-400 block text-[10px]">Nilai Retur Kotor:</span>
-                    <span className="font-bold text-slate-200">{formatIDR(liveQuote.grossRefund)}</span>
+                    <span className="font-bold text-slate-200">{formatIDR(activeQuote.grossRefund)}</span>
                   </div>
                   <div>
                     <span className="text-slate-400 block text-[10px]">Biaya Restocking:</span>
                     <span className="font-bold text-amber-300">
-                      {liveQuote.restockingFee > 0 ? `-${formatIDR(liveQuote.restockingFee)}` : 'Rp 0'}
+                      {activeQuote.restockingFee > 0 ? `-${formatIDR(activeQuote.restockingFee)}` : 'Rp 0'}
                     </span>
                   </div>
                   <div>
                     <span className="text-slate-400 block text-[10px]">Nilai Kredit Bersih:</span>
-                    <span className="font-bold text-emerald-400">{formatIDR(liveQuote.creditValue)}</span>
+                    <span className="font-bold text-emerald-400">{formatIDR(activeQuote.creditValue)}</span>
                   </div>
                   <div>
                     <span className="text-slate-400 block text-[10px]">Belanja Pengganti:</span>
-                    <span className="font-bold text-indigo-300">{formatIDR(liveQuote.exchangeTotal)}</span>
+                    <span className="font-bold text-indigo-300">{formatIDR(activeQuote.exchangeTotal)}</span>
                   </div>
                 </div>
 
@@ -1049,19 +1112,19 @@ export default function POSReturnModal({
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
                   <div>
                     <span className="text-xs text-indigo-200 block">
-                      {liveQuote.refundOut > 0
+                      {activeQuote.refundOut > 0
                         ? 'Pengembalian Dana ke Pelanggan (Refund):'
-                        : liveQuote.shortfall > 0
+                        : activeQuote.shortfall > 0
                         ? 'Pelanggan Bayar Selisih (Tukar Tambah):'
                         : 'Even Exchange (Tanpa Selisih Nilai)'}
                     </span>
                     <span className="text-2xl font-black text-white tabular-nums">
-                      {formatIDR(liveQuote.refundOut > 0 ? liveQuote.refundOut : liveQuote.shortfall)}
+                      {formatIDR(activeQuote.refundOut > 0 ? activeQuote.refundOut : activeQuote.shortfall)}
                     </span>
                   </div>
 
                   {/* Refund Method Selector (when money goes out) */}
-                  {liveQuote.refundOut > 0 && (
+                  {activeQuote.refundOut > 0 && (
                     <div className="flex items-center gap-1.5 bg-slate-800 p-1 rounded-xl">
                       <button
                         type="button"
@@ -1096,7 +1159,7 @@ export default function POSReturnModal({
                   )}
 
                   {/* Payment In Method Selector (when customer pays extra) */}
-                  {liveQuote.shortfall > 0 && (
+                  {activeQuote.shortfall > 0 && (
                     <div className="flex items-center gap-1.5 bg-slate-800 p-1 rounded-xl">
                       <button
                         type="button"
@@ -1130,7 +1193,7 @@ export default function POSReturnModal({
                 </div>
 
                 {/* Cash payment keypad input if shortfall is cash */}
-                {liveQuote.shortfall > 0 && shortfallMethod === 'cash' && (
+                {activeQuote.shortfall > 0 && shortfallMethod === 'cash' && (
                   <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs">
                     <span className="text-slate-400">Uang Tunai Diterima:</span>
                     <div className="flex items-center gap-2">
@@ -1138,12 +1201,12 @@ export default function POSReturnModal({
                         type="number"
                         value={cashReceived || ''}
                         onChange={(e) => setCashReceived(Number(e.target.value) || 0)}
-                        placeholder={String(liveQuote.shortfall)}
+                        placeholder={String(activeQuote.shortfall)}
                         className="w-32 py-1.5 px-3 bg-slate-800 border border-slate-700 rounded-xl text-right font-black text-white focus:outline-none focus:ring-1 focus:ring-emerald-400"
                       />
-                      {cashReceived > liveQuote.shortfall && (
+                      {cashReceived > activeQuote.shortfall && (
                         <span className="text-emerald-400 font-bold text-[11px]">
-                          Kembalian: {formatIDR(cashReceived - liveQuote.shortfall)}
+                          Kembalian: {formatIDR(cashReceived - activeQuote.shortfall)}
                         </span>
                       )}
                     </div>
@@ -1223,7 +1286,7 @@ export default function POSReturnModal({
               <button
                 type="button"
                 onClick={handleSubmitReturn}
-                disabled={submitting || quoting || activeReturnItems.length === 0}
+                disabled={submitting || !activeQuote || activeReturnItems.length === 0}
                 className="flex-2 py-3.5 px-6 rounded-xl bg-slate-900 text-white font-bold text-xs shadow-lg hover:bg-slate-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 <span>✓</span>
