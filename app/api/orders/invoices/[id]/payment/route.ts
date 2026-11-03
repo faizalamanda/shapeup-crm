@@ -1,4 +1,5 @@
 import { getApiContext } from '@/lib/apiContext'
+import { getActivePaymentAccounts, resolvePaymentAccountFromCOA } from '@/lib/accountHelper'
 import { recordOrderPayment } from '@/lib/paymentLedger'
 import { syncOrderToLedger } from '@/lib/orderLedger'
 import { isUuid } from '@/lib/utils'
@@ -20,13 +21,19 @@ export async function POST(
     const { user, businessId, supabaseAdmin } = ctx
 
     const body = await req.json().catch(() => ({}))
-    const { payment_method, notes, amount } = body
+    const { payment_method, payment_method_account_id, payment_date, notes, amount } = body
 
-    if (!payment_method || !['Cash', 'Bank/QRIS', 'Bank Transfer', 'QRIS'].includes(payment_method)) {
+    const validAccountId = isUuid(payment_method_account_id) ? payment_method_account_id : null
+    if (!payment_method && !validAccountId) {
       return NextResponse.json({ 
-        error: 'Metode pembayaran wajib disertakan dan harus valid (Cash, Bank Transfer, atau QRIS)' 
+        error: 'Metode pembayaran atau akun Kas/Bank COA wajib dipilih' 
       }, { status: 400 })
     }
+
+    const paymentAccounts = await getActivePaymentAccounts(businessId, supabaseAdmin)
+    const matchedAcc = resolvePaymentAccountFromCOA(paymentAccounts, payment_method, validAccountId)
+    const resolvedAccountId = matchedAcc?.id || validAccountId
+    const resolvedPaymentMethod = matchedAcc?.name || payment_method || 'Bank Transfer'
 
     // 1. Fetch invoice to verify remaining balance
     const { data: invoice, error: fetchErr } = await supabaseAdmin
@@ -63,7 +70,9 @@ export async function POST(
       businessId,
       orderId: id,
       amount: paymentAmount,
-      paymentMethod: payment_method === 'Cash' ? 'cash' : 'bank',
+      paymentMethod: resolvedPaymentMethod,
+      paymentMethodAccountId: resolvedAccountId,
+      paymentDate: payment_date || null,
       notes: notes || `Pembayaran Invoice #${invoice.order_number}`,
       cashierName: user.user_metadata?.full_name || 'Staff',
       supabase: supabaseAdmin

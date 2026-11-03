@@ -1,7 +1,63 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { getAdminSupabase } from '@/lib/supabaseServer'
+import { COAPaymentAccount, isCashBankAccount, resolvePaymentAccountFromCOA } from '@/lib/coa'
+
+export type { COAPaymentAccount }
+export { isCashBankAccount, resolvePaymentAccountFromCOA }
 
 const accountCache: Record<string, Record<string, string>> = {}
+
+/**
+ * Dynamically fetches all active Cash & Bank COA accounts for the given business.
+ * Uses select('*') so it works regardless of whether sub_type column exists.
+ * Only seeds default accounts if the business has zero Cash/Bank accounts in its COA.
+ */
+export async function getActivePaymentAccounts(
+  businessId: string,
+  supabase: SupabaseClient
+): Promise<COAPaymentAccount[]> {
+  const fetchAssetAccounts = async (): Promise<COAPaymentAccount[]> => {
+    let { data, error } = await supabase
+      .from('accounts')
+      .select('*')
+      .eq('business_id', businessId)
+      .eq('type', 'ASSET')
+      .order('code', { ascending: true })
+
+    if (error || !data || data.length === 0) {
+      try {
+        const admin = getAdminSupabase()
+        const adminRes = await admin
+          .from('accounts')
+          .select('*')
+          .eq('business_id', businessId)
+          .eq('type', 'ASSET')
+          .order('code', { ascending: true })
+        if (adminRes.data && adminRes.data.length > 0) {
+          data = adminRes.data
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    return ((data || []) as any[]).filter(isCashBankAccount).map(a => ({
+      id: a.id,
+      code: a.code,
+      name: a.name,
+      type: a.type || 'ASSET',
+      sub_type: a.sub_type || null
+    }))
+  }
+
+  let paymentAccounts = await fetchAssetAccounts()
+  if (paymentAccounts.length === 0) {
+    await getOrCreateDefaultAccounts(businessId, supabase)
+    paymentAccounts = await fetchAssetAccounts()
+  }
+
+  return paymentAccounts
+}
 
 export async function getOrCreateDefaultAccounts(
   businessId: string,

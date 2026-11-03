@@ -1,7 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { generateItemizedHppJournalLines } from './hppHelper'
 import { earnPointsForOrder, reversePointsForOrder } from '@/plugins/loyalty/helpers/loyaltyApi'
-import { getOrCreateDefaultAccounts } from './accountHelper'
+import { getOrCreateDefaultAccounts, getActivePaymentAccounts, resolvePaymentAccountFromCOA } from './accountHelper'
 import { resolveOrderProducts, applyStockMovement } from './inventoryHelper'
 import { postJournalTransaction } from './journalHelper'
 import { calculateProductsHppBatch } from './recipeHelper'
@@ -165,7 +165,7 @@ export async function syncOrderToLedger(
       reversalPaymentTx = txs?.find(isReversalPaymentTx)
 
     // Determine payment date
-    let paymentDate = new Date().toISOString()
+    let paymentDate = order.order_date_utc || order.order_date || new Date().toISOString()
     if (platform === 'WooCommerce') {
       const raw = order.raw_source_data || {}
       if (isCod) {
@@ -179,9 +179,12 @@ export async function syncOrderToLedger(
       }
     }
 
+    const isInvoiceOrder = platform === 'Invoice' || Boolean(order.raw_source_data?.is_invoice) || String(orderNumber || '').startsWith('INV-')
     const isSalesTriggered = stockReductionStatuses.includes(status) || 
                              journalHppStatuses.includes(status) ||
-                             status === 'completed'
+                             status === 'shipped' ||
+                             status === 'completed' ||
+                             (isInvoiceOrder && status === 'processing')
 
     const orderRef = `Order #${orderNumber}`
 
@@ -194,6 +197,20 @@ export async function syncOrderToLedger(
     else if (raw.date_completed) orderMoveDate = new Date(raw.date_completed).toISOString()
 
     // 6. State Machine for Transitions
+    const activePaymentAccounts = await getActivePaymentAccounts(businessId, supabase)
+    const resolveFallbackAccountId = (methodStr?: string | null, accountId?: string | null) => {
+      const matched = resolvePaymentAccountFromCOA(activePaymentAccounts, methodStr, accountId)
+      if (matched?.id) return matched.id
+      const m = String(methodStr || '').toLowerCase()
+      if (m === 'cash' || m.includes('tunai') || m.includes('kas pos')) {
+        return accountMap['101000']
+      }
+      if (m.includes('bank utama') || m.includes('rekening bank')) {
+        return accountMap['101100'] || accountMap['101200']
+      }
+      return accountMap['101200']
+    }
+
     if (isSalesTriggered) {
       // 6.1 SALES POSTING
       let sharedHppMap: Map<string, any> | undefined
@@ -336,12 +353,21 @@ export async function syncOrderToLedger(
       const isOrderPaid = isExplicitPaid || isWooNonCodPaid || isPartialPaid || (isCompletedPaid && order.payment_status !== 'unpaid')
 
       if (isOrderPaid) {
-        // Check if order_payments already has entries
-        const { data: existingOrderPays } = await supabase
+        // Check if order_payments already has entries (exclude voided/refunded payments)
+        const { data: allOrderPays } = await supabase
           .from('order_payments')
           .select('*')
           .eq('order_id', orderId)
-          .eq('payment_kind', 'payment')
+
+        const reversedIds = new Set(
+          (allOrderPays || [])
+            .filter((p: any) => p.payment_kind === 'void' || p.payment_kind === 'refund')
+            .map((p: any) => p.voided_payment_id)
+            .filter(Boolean)
+        )
+        const existingOrderPays = (allOrderPays || []).filter(
+          (p: any) => p.payment_kind === 'payment' && !reversedIds.has(p.id)
+        )
 
         let paymentLines: any[] = []
         let totalPaymentAmount = 0
@@ -349,11 +375,16 @@ export async function syncOrderToLedger(
 
         if (!paymentTx) {
           if (existingOrderPays && existingOrderPays.length > 0) {
+            if (existingOrderPays[0].created_at) {
+              paymentDate = existingOrderPays[0].created_at
+            } else if (existingOrderPays[0].date) {
+              paymentDate = `${existingOrderPays[0].date}T12:00:00Z`
+            }
             // Multi-tender / Split / Partial payment from order_payments
             for (const p of existingOrderPays) {
               const pAmt = Number(p.amount) || 0
               if (pAmt <= 0) continue
-              const accId = p.payment_method_account_id || (String(p.payment_method).toLowerCase() === 'cash' ? accountMap['101000'] : accountMap['101200'])
+              const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
               paymentLines.push({
                 account_id: accId,
                 debit: pAmt,
@@ -370,11 +401,11 @@ export async function syncOrderToLedger(
             }
           } else {
             // Single-payment fallback (e.g. WooCommerce or legacy orders)
-            const payAccountCode = isCod ? '101000' : '101200'
+            const payAccId = isCod ? accountMap['101000'] : resolveFallbackAccountId(order.payment_method)
             const effectivePayAmount = isPartialPaid ? Number(order.amount_paid) : numGrandTotal
             if (effectivePayAmount > 0) {
               paymentLines = [
-                { account_id: accountMap[payAccountCode], debit: effectivePayAmount, credit: 0 },
+                { account_id: payAccId, debit: effectivePayAmount, credit: 0 },
                 { account_id: accountMap['103000'], debit: 0, credit: effectivePayAmount }
               ]
               totalPaymentAmount = effectivePayAmount
@@ -399,9 +430,7 @@ export async function syncOrderToLedger(
                 await supabase
                   .from('order_payments')
                   .update({ 
-                    transaction_id: effectivePostResult.transactionId,
-                    created_at: paymentDate,
-                    date: paymentDate ? paymentDate.split('T')[0] : undefined
+                    transaction_id: effectivePostResult.transactionId
                   })
                   .in('id', allPayIds)
               }
@@ -413,7 +442,7 @@ export async function syncOrderToLedger(
           for (const p of unlinkedPays) {
             const pAmt = Number(p.amount) || 0
             if (pAmt <= 0) continue
-            const accId = p.payment_method_account_id || (String(p.payment_method).toLowerCase() === 'cash' ? accountMap['101000'] : accountMap['101200'])
+            const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
             const pDate = p.created_at || (p.date ? `${p.date}T12:00:00Z` : paymentDate)
             const pLines = [
               { account_id: accId, debit: pAmt, credit: 0 },
@@ -448,8 +477,8 @@ export async function syncOrderToLedger(
             const txId = effectivePostResult?.transactionId || paymentTx?.id || null
             const cashReceived = Number(order.cash_received || rawOrderData.cash_received || 0)
             const changeAmount = Number(order.change_amount || rawOrderData.change_amount || 0)
-            const isCashMethod = String(order.payment_method || '').toLowerCase() === 'cash'
-            const payAccountCode = isCod ? '101000' : '101200'
+            const isCashMethod = String(order.payment_method || '').toLowerCase() === 'cash' || String(order.payment_method || '').toLowerCase().includes('tunai')
+            const fallbackPayAccId = isCod ? accountMap['101000'] : resolveFallbackAccountId(order.payment_method)
             const effectivePayAmount = totalPaymentAmount > 0 ? totalPaymentAmount : (isPartialPaid ? Number(order.amount_paid) : numGrandTotal)
 
             await supabase.from('order_payments').insert({
@@ -461,7 +490,7 @@ export async function syncOrderToLedger(
               date: paymentDate ? paymentDate.split('T')[0] : new Date().toISOString().split('T')[0],
               amount: effectivePayAmount,
               payment_method: order.payment_method || (isCod ? 'Cash/COD' : 'Bank Transfer'),
-              payment_method_account_id: accountMap[payAccountCode],
+              payment_method_account_id: fallbackPayAccId,
               cash_received: cashReceived || (isCashMethod ? effectivePayAmount : 0),
               change_amount: changeAmount,
               notes: `Pembayaran ${platform} #${orderNumber}`,
@@ -537,7 +566,7 @@ export async function syncOrderToLedger(
             for (const p of paysToReverse) {
               const pAmt = Number(p.amount) || 0
               if (pAmt <= 0) continue
-              const accId = p.payment_method_account_id || (p.payment_method === 'cash' ? accountMap['101000'] : accountMap['101200'])
+              const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
               reversalLines.push({
                 account_id: accId,
                 debit: 0,
@@ -598,7 +627,7 @@ export async function syncOrderToLedger(
             for (const p of paysToReverse) {
               const pAmt = Number(p.amount) || 0
               if (pAmt <= 0) continue
-              const accId = p.payment_method_account_id || (p.payment_method === 'cash' ? accountMap['101000'] : accountMap['101200'])
+              const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
               reversalLines.push({
                 account_id: accId,
                 debit: 0,
@@ -657,7 +686,7 @@ export async function syncOrderToLedger(
             for (const p of paysToReverse) {
               const pAmt = Number(p.amount) || 0
               if (pAmt <= 0) continue
-              const accId = p.payment_method_account_id || (p.payment_method === 'cash' ? accountMap['101000'] : accountMap['101200'])
+              const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
               reversalLines.push({
                 account_id: accId,
                 debit: 0,

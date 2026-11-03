@@ -303,18 +303,23 @@
    - **PostgreSQL Variant Schema Standard:** Relasi tabel `product_variants` menggunakan kolom **`name`** (bukan `title`). Dilarang memanggil `product_variants(..., title, ...)` guna mencegah crash fatal `PostgreSQL 42703 (column product_variants_1.title does not exist)`.
    - **Zero-Latency UI Extraction:** Antarmuka modal retur (`POSReturnModal.tsx`) **WAJIB** mengekstrak daftar item belanjaan secara sinkronus dari `order.items_json` pada saat *mount* (`computeReturnableLines`) untuk menjamin transisi 0ms tanpa menunggu panggilan server.
 
-21. **Enterprise Invoice Lifecycle, Decoupled Status, Down Payment & Omnichannel Attribution Standards:**
-   - **Pemisahan Dimensi Siklus Hidup (Decoupled Two-Dimensional Lifecycle):**
-     - Status dokumen logistik/operasional (`orders.status`: `pending` [Draft], `processing` [Terbit/Aktif], `completed` [Selesai], `cancelled` [Batal]) **TIDAK SAMA** dan terpisah secara ortogonal dari status keuangan piutang (`orders.payment_status`: `unpaid`, `partial`, `paid`).
-     - Dilarang keras mengasumsikan faktur yang berstatus `status === 'completed'` pasti berstatus lunas (`paid`), atau sebaliknya. Faktur tempo 30 hari dapat berstatus `completed` (barang telah dikirim/pekerjaan selesai) namun tetap berstatus `unpaid`.
-   - **Multi-Installment & Down Payment (DP) Ledger:**
-     - Uang muka (DP) dan termin pelunasan **WAJIB** dicatat melalui tabel `order_payments` sebagai *Single Source of Truth* arus kas, dan didelegasikan ke `recordOrderPayment()` dari `@/lib/paymentLedger.ts` (murni mutasi kas & piutang).
-     - Fungsi `syncOrderToLedger()` otomatis membaca `order_payments` yang belum terikat jurnal (`!p.transaction_id`) untuk menerbitkan transaksi jurnal pembayaran bertahap (Debit Kas/Bank, Kredit Piutang Usaha `103000`) tanpa menduplikasi transaksi penjualan `salesTx`.
+21. **Enterprise Invoice Lifecycle, Decoupled Status, COA Payment Binding & Omnichannel Attribution Standards:**
+   - **Pemisahan Dimensi Siklus Hidup 5-Tahap (Decoupled Two-Dimensional Lifecycle):**
+     - Status dokumen logistik/operasional (`orders.status`: `pending` [Draft], `processing` [Terbit/Belum Selesai], `shipped` [Dikirim], `completed` [Selesai], `cancelled` [Batal]) **TIDAK SAMA** dan terpisah secara ortogonal dari status keuangan piutang (`orders.payment_status`: `unpaid`, `partial`, `paid`).
+     - **Two-Stage Ledger Trigger:** Saat faktur diterbitkan (`status === 'processing'`), `syncOrderToLedger()` mengakui penjualan & piutang (`salesTx`: Debit `103000`, Kredit `401000`). Pemotongan stok fisik gudang (`stock_moves`) dan penjurnalan HPP (`501000` / `102000`) terpicu saat status memasuki `stockReductionStatuses` / `journalHppStatuses` (default: `['shipped', 'completed']`).
+     - Dilarang keras mengasumsikan faktur yang berstatus `status === 'completed'` pasti berstatus lunas (`paid`), atau sebaliknya. Faktur tempo 30 hari dapat berstatus `shipped` atau `completed` namun tetap berstatus `unpaid`.
+   - **Direct Active COA Cash/Bank Account Binding & Dynamic Legacy Resolution:**
+     - Seluruh pilihan Metode Pembayaran pada Buat Invoice (`/orders/invoices/new`), Edit Invoice (`/orders/invoices/[id]/edit`), dan Catat Pembayaran (`/orders/invoices/[id]`) **WAJIB** memuat daftar akun Kas/Bank secara dinamis dari COA aktif milik bisnis (`getActivePaymentAccounts()` & `isCashBankAccount()` dari `@/lib/accountHelper.ts` / `@/lib/coa.ts`) tanpa meng-hardcode akun statis, serta menyimpan `payment_method_account_id` (disanitasi via `isUuid()`) dan `payment_method` (nama akun COA aktif) ke tabel `order_payments`.
+     - Uang muka (DP) dan termin pelunasan didelegasikan ke `recordOrderPayment()` dari `@/lib/paymentLedger.ts` dan `syncOrderToLedger()` dari `@/lib/orderLedger.ts` dengan mempertahankan tanggal pembayaran (`payment_date`) pilihan pengguna.
+     - **Kompatibilitas Data Lama (`resolvePaymentAccountFromCOA`):** Untuk faktur historis yang belum memiliki `payment_status` (bernilai `null` saat `status === 'completed'`) atau baris pembayaran lama tanpa `payment_method_account_id`, API dan `syncOrderToLedger()` wajib menormalisasi status lunas secara otomatis serta mencocokkan string metode bayar secara dinamis terhadap daftar akun Kas/Bank yang aktif di COA bisnis tersebut.
    - **Atribusi Omnichannel & UTM Attribution:**
      - Metadata sumber penjualan disimpan dalam format terpadu di `orders.source_platform` dan `raw_source_data.source_order` (`channel`, `reference_no`, `utm_source`, `utm_campaign`).
      - Format ini wajib kompatibel dengan modul ekspor multi-sheet (`/app/orders/services/orderExportService.ts`), webhooks e-commerce (WooCommerce), dan laporan penjualan per saluran.
    - **Penerapan Penuh Modul Reusable CRM:**
      - Seluruh endpoint API faktur (`/api/orders/invoices`, `/api/orders/invoices/[id]`, `/api/orders/invoices/[id]/payment`) wajib menggunakan `getApiContext()` dari `@/lib/apiContext.ts` (Rule 1) dan sanitasi UUID `isUuid()` dari `@/lib/utils.ts` (Rule 9).
+   - **Flat Discrete Product Variants in Invoices (`ProductSelectCombobox` & `items_json`):**
+     - Halaman pembuatan (`/orders/invoices/new`) dan pengeditan (`/orders/invoices/[id]/edit`) faktur **WAJIB** mengambil relasi `product_variants(id, name, sku, price, cost_price, stock_quantity)` dan meratakan (*unfold*) variasi menjadi baris pilihan mandiri (`${product.name} - ${variant.name}`) pada `ProductSelectCombobox`.
+     - State baris item dan payload API (`POST` & `PUT` invoice) wajib menyertakan `variant_id` (disanitasi dengan `isUuid()`) dan `cost_price` varian ke dalam `orders.items_json`, sehingga pemotongan stok (`applyStockMovement`), pencatatan HPP (`generateItemizedHppJournalLines`), serta tab **History Perpindahan Stok** di `/orders/invoices/[id]` terisolasi secara akurat per-SKU variasi.
 
 
 

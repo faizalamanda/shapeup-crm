@@ -9,7 +9,7 @@ type Invoice = {
   order_number: string
   order_date: string
   grand_total: number
-  status: 'pending' | 'processing' | 'completed' | 'cancelled'
+  status: 'pending' | 'processing' | 'shipped' | 'completed' | 'cancelled'
   payment_status?: 'unpaid' | 'partial' | 'paid'
   amount_paid?: number
   source_platform?: string
@@ -56,6 +56,8 @@ const getDocStatusBadge = (status: string) => {
       return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-200">📝 Draft</span>
     case 'processing':
       return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-blue-50 text-blue-700 border border-blue-200">🚀 Diterbitkan</span>
+    case 'shipped':
+      return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">📦 Dikirim</span>
     case 'completed':
       return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-semibold rounded-full bg-slate-100 text-slate-700 border border-slate-200">✅ Selesai</span>
     case 'cancelled':
@@ -271,6 +273,7 @@ export default function InvoicesPage() {
     return invoices.filter(inv => {
       // 1. Status Filter
       if (activeTab === 'draft' && inv.status !== 'pending') return false
+      if (activeTab === 'shipped' && inv.status !== 'shipped') return false
       if (activeTab === 'unpaid') {
         const isPaid = inv.payment_status === 'paid' || inv.status === 'completed'
         if (isPaid || inv.status === 'pending' || inv.status === 'cancelled') return false
@@ -360,6 +363,7 @@ export default function InvoicesPage() {
               { id: 'unpaid', label: 'Belum Lunas' },
               { id: 'partial', label: 'Sebagian / DP' },
               { id: 'paid', label: 'Lunas' },
+              { id: 'shipped', label: 'Dikirim' },
               { id: 'draft', label: 'Draft' },
               { id: 'cancelled', label: 'Batal' }
             ].map(tab => (

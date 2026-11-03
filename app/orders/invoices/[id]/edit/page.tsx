@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { isCashBankAccount, resolvePaymentAccountFromCOA } from '@/lib/coa'
 import QuickAddProductModal from '@/components/QuickAddProductModal'
 import { QuickAddCustomerForm, NewCustomerFormData, EMPTY_CUSTOMER_FORM } from '@/components/QuickAddCustomerForm'
 import { CustomerSelectCombobox } from '@/components/CustomerSelectCombobox'
@@ -35,6 +36,14 @@ type Product = {
   stock_quantity?: number | null
   stock_type?: string | null
   product_variants?: ProductVariant[]
+}
+
+type COAAccount = {
+  id: string
+  code: string
+  name: string
+  type: string
+  sub_type?: string | null
 }
 
 type InvoiceItemInput = {
@@ -80,6 +89,7 @@ export default function EditInvoicePage() {
   // Master Data States
   const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
+  const [paymentAccounts, setPaymentAccounts] = useState<COAAccount[]>([])
   const [businessName, setBusinessName] = useState<string>('')
   const [businessId, setBusinessId] = useState<string>('')
   const [loadingData, setLoadingData] = useState<boolean>(true)
@@ -99,9 +109,10 @@ export default function EditInvoicePage() {
 
   // Decoupled Invoice status & Payment settlement
   const [invoiceStatus, setInvoiceStatus] = useState<string>('pending')
-  const [invoiceDocStatus, setInvoiceDocStatus] = useState<'pending' | 'processing' | 'completed' | 'cancelled'>('pending')
+  const [invoiceDocStatus, setInvoiceDocStatus] = useState<'pending' | 'processing' | 'shipped' | 'completed' | 'cancelled'>('pending')
   const [paymentSettlementStatus, setPaymentSettlementStatus] = useState<'unpaid' | 'partial' | 'paid'>('unpaid')
   const [inputAmountPaid, setInputAmountPaid] = useState<number>(0)
+  const [paymentAccountId, setPaymentAccountId] = useState<string>('')
   const [paymentDate, setPaymentDate] = useState<string>(() => {
     const today = new Date()
     return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
@@ -319,12 +330,46 @@ export default function EditInvoicePage() {
 
           const raw = inv.raw_source_data || {}
 
-          // Payment Settlement Status
+          // Payment Settlement Status & COA Account
           const payStatus = (inv.payment_status || (inv.status === 'completed' ? 'paid' : 'unpaid')) as 'unpaid' | 'partial' | 'paid'
           setPaymentSettlementStatus(payStatus)
           const paidNum = Number(inv.amount_paid || (payStatus === 'paid' ? inv.grand_total : 0))
           setInputAmountPaid(paidNum)
           if (inv.payment_method) setPaymentMethod(inv.payment_method)
+
+          let accList: COAAccount[] = Array.isArray(json.payment_accounts) ? json.payment_accounts : []
+          if (inv.business_id) {
+            const { data: directAccs } = await supabase
+              .from('accounts')
+              .select('*')
+              .eq('business_id', inv.business_id)
+              .eq('type', 'ASSET')
+              .order('code', { ascending: true })
+            const filteredDirect = ((directAccs || []) as COAAccount[]).filter(isCashBankAccount)
+            if (filteredDirect.length > 0) {
+              accList = filteredDirect
+            }
+          }
+          setPaymentAccounts(accList)
+
+          const firstPay = Array.isArray(inv.payments) && inv.payments.length > 0 ? inv.payments[0] : null
+          if (firstPay?.date) {
+            setPaymentDate(String(firstPay.date).split('T')[0])
+          }
+
+          if (accList.length > 0) {
+            const matchedAcc = resolvePaymentAccountFromCOA(
+              accList,
+              firstPay?.payment_method || inv.payment_method,
+              firstPay?.payment_method_account_id
+            )
+            if (matchedAcc) {
+              setPaymentAccountId(matchedAcc.id)
+              setPaymentMethod(matchedAcc.name)
+            }
+          } else if (firstPay?.payment_method_account_id) {
+            setPaymentAccountId(firstPay.payment_method_account_id)
+          }
 
           // Source Attribution
           const srcChannel = raw.source_order?.channel || inv.source_platform || 'Invoice'
@@ -521,7 +566,7 @@ export default function EditInvoicePage() {
   }, [subtotal, discountAmount, shippingCost, otherFees])
 
   // Submit Handler
-  const handleSubmit = async (submitStatus?: 'pending' | 'processing' | 'completed' | 'cancelled') => {
+  const handleSubmit = async (submitStatus?: 'pending' | 'processing' | 'shipped' | 'completed' | 'cancelled') => {
     const finalDocStatus = submitStatus || invoiceDocStatus
 
     if (!isFinancialsLocked) {
@@ -574,6 +619,7 @@ export default function EditInvoicePage() {
         payment_status: paymentSettlementStatus,
         amount_paid: finalAmountPaid,
         payment_method: paymentSettlementStatus !== 'unpaid' ? paymentMethod : null,
+        payment_method_account_id: paymentSettlementStatus !== 'unpaid' ? (paymentAccountId || null) : null,
         payment_date: paymentSettlementStatus !== 'unpaid' ? paymentDate : null,
         source_platform: resolvedSourcePlatform,
         source_order_ref: sourceOrderRef.trim() || null,
@@ -858,12 +904,14 @@ export default function EditInvoicePage() {
                 >
                   <option value="pending">📝 DRAFT (Rancangan Internal)</option>
                   <option value="processing">🚀 DITERBITKAN (Resmi / Open)</option>
+                  <option value="shipped">📦 DIKIRIM (Dalam Pengiriman)</option>
                   <option value="completed">✅ SELESAI (Pesanan Ditutup)</option>
                   <option value="cancelled">❌ DIBATALKAN (Void)</option>
                 </select>
                 <p className="text-[10px] text-[#70706E]">
                   {invoiceDocStatus === 'pending' && 'Faktur belum mengikat piutang atau mutasi stok.'}
                   {invoiceDocStatus === 'processing' && 'Faktur resmi diterbitkan, piutang dicatat di buku besar.'}
+                  {invoiceDocStatus === 'shipped' && 'Barang dikirim ke pelanggan, stok fisik & HPP dipotong.'}
                   {invoiceDocStatus === 'completed' && 'Faktur dan penyerahan barang/layanan tuntas penuh.'}
                   {invoiceDocStatus === 'cancelled' && 'Faktur dibatalkan dan jurnal pembalikan diposting.'}
                 </p>
@@ -928,15 +976,26 @@ export default function EditInvoicePage() {
                 )}
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-700">Metode Pembayaran</label>
+                  <label className="text-xs font-bold text-slate-700">Metode Pembayaran (Akun COA)</label>
                   <select
-                    value={paymentMethod}
-                    onChange={e => setPaymentMethod(e.target.value)}
+                    value={paymentAccountId}
+                    onChange={e => {
+                      const accId = e.target.value
+                      setPaymentAccountId(accId)
+                      const matched = paymentAccounts.find(a => a.id === accId)
+                      if (matched) setPaymentMethod(matched.name)
+                    }}
                     className="w-full p-2 text-xs font-bold rounded-lg border border-slate-200 bg-white focus:outline-none"
                   >
-                    <option value="Bank Transfer">Bank Transfer (Default)</option>
-                    <option value="Cash">Cash (Tunai)</option>
-                    <option value="QRIS">QRIS</option>
+                    {paymentAccounts.length > 0 ? (
+                      paymentAccounts.map(acc => (
+                        <option key={acc.id} value={acc.id}>
+                          [{acc.code}] {acc.name}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">{paymentMethod || 'Bank Transfer (Default)'}</option>
+                    )}
                   </select>
                 </div>
 
@@ -1419,7 +1478,7 @@ export default function EditInvoicePage() {
             {!isFinancialsLocked && (
               <div className="pt-2 border-t border-slate-200/80 space-y-2">
                 <p className="text-[10px] font-bold text-slate-700 uppercase tracking-wider">Aksi Cepat Status:</p>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <button
                     type="button"
                     disabled={submitting}
@@ -1431,6 +1490,18 @@ export default function EditInvoicePage() {
                     className="py-2 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-all"
                   >
                     🚀 Terbitkan
+                  </button>
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => {
+                      setInvoiceDocStatus('shipped')
+                      setSubmittingType('shipped')
+                      handleSubmit('shipped')
+                    }}
+                    className="py-2 text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-all"
+                  >
+                    📦 Dikirim
                   </button>
                   <button
                     type="button"
@@ -1608,15 +1679,26 @@ export default function EditInvoicePage() {
 
             <div className="space-y-3">
               <div className="space-y-1">
-                <label className="text-xs font-bold text-[#70706E]">Metode Pembayaran</label>
+                <label className="text-xs font-bold text-[#70706E]">Metode Pembayaran (Akun Kas/Bank COA)</label>
                 <select
-                  value={paymentMethod}
-                  onChange={e => setPaymentMethod(e.target.value)}
+                  value={paymentAccountId}
+                  onChange={e => {
+                    const accId = e.target.value
+                    setPaymentAccountId(accId)
+                    const matched = paymentAccounts.find(a => a.id === accId)
+                    if (matched) setPaymentMethod(matched.name)
+                  }}
                   className="w-full p-2.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white focus:outline-none"
                 >
-                  <option value="Bank Transfer">Bank Transfer (Default)</option>
-                  <option value="Cash">Cash (Tunai)</option>
-                  <option value="QRIS">QRIS</option>
+                  {paymentAccounts.length > 0 ? (
+                    paymentAccounts.map(acc => (
+                      <option key={acc.id} value={acc.id}>
+                        [{acc.code}] {acc.name}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">{paymentMethod || 'Bank Transfer (Default)'}</option>
+                  )}
                 </select>
               </div>
 

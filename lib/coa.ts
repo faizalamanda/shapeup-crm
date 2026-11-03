@@ -84,3 +84,133 @@ export async function seedDefaultCOA(businessId: string, supabase: SupabaseClien
     console.error('Unexpected error in seedDefaultCOA:', err)
   }
 }
+
+export interface COAPaymentAccount {
+  id: string
+  code: string
+  name: string
+  type: string
+  sub_type?: string | null
+}
+
+/**
+ * Determines whether a COA account is an active Cash / Bank / Payment account.
+ * Supports custom COA codes and names across different businesses.
+ */
+export function isCashBankAccount(acc: {
+  code?: string | null
+  name?: string | null
+  type?: string | null
+  sub_type?: string | null
+}): boolean {
+  if (acc.type && acc.type !== 'ASSET') return false
+  const code = String(acc.code || '').trim()
+  const name = String(acc.name || '').toLowerCase()
+  const subType = String(acc.sub_type || '').toLowerCase()
+
+  // Exclude Accounts Receivable (Piutang), Inventory (Persediaan), Prepayments, and Fixed Assets
+  if (
+    subType === 'receivable' ||
+    subType === 'fixed_assets' ||
+    subType === 'non_current_assets' ||
+    subType === 'prepayments'
+  ) {
+    return false
+  }
+  if (
+    code.startsWith('102') ||
+    code.startsWith('103') ||
+    code.startsWith('105') ||
+    code.startsWith('12') ||
+    code.startsWith('13') ||
+    name.includes('piutang') ||
+    name.includes('persediaan') ||
+    name.includes('akumulasi') ||
+    name.includes('peralatan') ||
+    name.includes('inventaris') ||
+    name.includes('dibayar di muka')
+  ) {
+    return false
+  }
+
+  if (subType === 'bank_cash') return true
+  if (code.startsWith('101') || code.startsWith('1100') || code.startsWith('100')) return true
+  if (
+    /kas|bank|qris|tunai|rekening|giro|edc|wallet|e-wallet|gopay|ovo|dana|shopeepay|linkaja|bca|mandiri|bni|bri|bsi|cimb|permata/i.test(
+      name
+    )
+  ) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Resolves the best matching COA payment account from a business's active COA list
+ * based on an explicit accountId or a payment_method string (supporting custom COA names & legacy strings).
+ */
+export function resolvePaymentAccountFromCOA(
+  paymentAccounts: COAPaymentAccount[],
+  methodStr?: string | null,
+  accountId?: string | null
+): COAPaymentAccount | null {
+  if (!paymentAccounts || paymentAccounts.length === 0) return null
+
+  if (accountId) {
+    const byId = paymentAccounts.find(a => a.id === accountId)
+    if (byId) return byId
+  }
+
+  const raw = String(methodStr || '').trim()
+  if (raw) {
+    const lower = raw.toLowerCase()
+
+    // 1. Exact match by id, code, name, or "[code] name"
+    const exact = paymentAccounts.find(
+      a =>
+        a.id === raw ||
+        a.code.toLowerCase() === lower ||
+        a.name.toLowerCase() === lower ||
+        `[${a.code}] ${a.name}`.toLowerCase() === lower
+    )
+    if (exact) return exact
+
+    // 2. Substring match against active COA account names (e.g. "BCA" <-> "Bank BCA")
+    const partial = paymentAccounts.find(a => {
+      const accName = a.name.toLowerCase()
+      return (accName.length >= 3 && lower.includes(accName)) || (lower.length >= 3 && accName.includes(lower))
+    })
+    if (partial) return partial
+
+    // 3. Semantic category match against the business's active COA accounts
+    if (lower.includes('cash') || lower.includes('tunai') || lower.includes('kas') || lower.includes('cod')) {
+      const cashAcc =
+        paymentAccounts.find(a => /tunai|kas pos|kas laci|kas utama|kas toko|kas kecil|cash/i.test(a.name)) ||
+        paymentAccounts.find(a => a.code === '101000') ||
+        paymentAccounts.find(a => a.name.toLowerCase().includes('kas'))
+      if (cashAcc) return cashAcc
+    }
+
+    if (lower.includes('qris')) {
+      const qrisAcc =
+        paymentAccounts.find(a => a.name.toLowerCase().includes('qris')) ||
+        paymentAccounts.find(a => a.code === '101200')
+      if (qrisAcc) return qrisAcc
+    }
+
+    if (lower.includes('bank') || lower.includes('transfer') || lower.includes('rekening')) {
+      const bankAcc =
+        paymentAccounts.find(a => /bank|rekening|bca|mandiri|bni|bri|bsi|cimb|permata|giro/i.test(a.name)) ||
+        paymentAccounts.find(a => a.code === '101100' || a.code === '101200')
+      if (bankAcc) return bankAcc
+    }
+  }
+
+  // Default to the first active bank/cash account in the business's COA
+  return (
+    paymentAccounts.find(a => /bank|rekening|bca|mandiri|bni|bri/i.test(a.name)) ||
+    paymentAccounts[0] ||
+    null
+  )
+}

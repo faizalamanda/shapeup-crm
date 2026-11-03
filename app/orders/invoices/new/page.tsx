@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useUserContext } from '@/components/UserContext'
+import { isCashBankAccount, resolvePaymentAccountFromCOA } from '@/lib/coa'
 import QuickAddProductModal from '@/components/QuickAddProductModal'
 import { QuickAddCustomerForm, NewCustomerFormData, EMPTY_CUSTOMER_FORM } from '@/components/QuickAddCustomerForm'
 import { CustomerSelectCombobox } from '@/components/CustomerSelectCombobox'
@@ -36,6 +37,14 @@ type Product = {
   stock_quantity?: number | null
   stock_type?: string | null
   product_variants?: ProductVariant[]
+}
+
+type COAAccount = {
+  id: string
+  code: string
+  name: string
+  type: string
+  sub_type?: string | null
 }
 
 type InvoiceItemInput = {
@@ -79,6 +88,7 @@ export default function NewInvoicePage() {
   // Master Data States
   const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
+  const [paymentAccounts, setPaymentAccounts] = useState<COAAccount[]>([])
   const [businessName, setBusinessName] = useState<string>('')
   const [businessId, setBusinessId] = useState<string>('')
   const [staffName, setStaffName] = useState<string>('')
@@ -134,12 +144,13 @@ export default function NewInvoicePage() {
   // Payment popup
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false)
   const [paymentMethod, setPaymentMethod] = useState<string>('Bank Transfer')
+  const [paymentAccountId, setPaymentAccountId] = useState<string>('')
   const [submitting, setSubmitting] = useState<boolean>(false)
   const [submittingType, setSubmittingType] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string>('')
 
   // Status Invoice & Status Payment (Decoupled)
-  const [invoiceDocStatus, setInvoiceDocStatus] = useState<'pending' | 'processing' | 'completed'>('processing')
+  const [invoiceDocStatus, setInvoiceDocStatus] = useState<'pending' | 'processing' | 'shipped' | 'completed'>('processing')
   const [paymentSettlementStatus, setPaymentSettlementStatus] = useState<'unpaid' | 'partial' | 'paid'>('unpaid')
   const [inputAmountPaid, setInputAmountPaid] = useState<number>(0)
   const [paymentDate, setPaymentDate] = useState<string>('')
@@ -208,13 +219,36 @@ export default function NewInvoicePage() {
         setBusinessName(activeBusiness.name || 'Bisnis Saya')
         setStaffName(userProfile?.full_name || userProfile?.email?.split('@')[0] || 'Admin')
 
-        // Fetch customers
-        const custRes = await fetch('/api/customers')
+        // Fetch customers & active COA payment accounts in parallel
+        const [custRes, directAccRes, accRes] = await Promise.all([
+          fetch('/api/customers'),
+          supabase
+            .from('accounts')
+            .select('*')
+            .eq('business_id', activeBusiness.id)
+            .eq('type', 'ASSET')
+            .order('code', { ascending: true }),
+          fetch('/api/orders/invoices?only_accounts=true')
+        ])
         if (custRes.ok) {
           const custJson = await custRes.json()
           if (custJson.success) {
             setCustomers(custJson.customers)
           }
+        }
+
+        let accList: COAAccount[] = ((directAccRes.data || []) as COAAccount[]).filter(isCashBankAccount)
+        if (accList.length === 0 && accRes.ok) {
+          const accJson = await accRes.json()
+          if (accJson.success && Array.isArray(accJson.payment_accounts)) {
+            accList = accJson.payment_accounts as COAAccount[]
+          }
+        }
+        setPaymentAccounts(accList)
+        if (accList.length > 0) {
+          const defaultAcc = resolvePaymentAccountFromCOA(accList) || accList[0]
+          setPaymentAccountId(defaultAcc.id)
+          setPaymentMethod(defaultAcc.name)
         }
 
         // Fetch products with variants
@@ -351,7 +385,7 @@ export default function NewInvoicePage() {
 
   // Submit Handler
   const handleSubmit = async (
-    customDocStatus?: 'pending' | 'processing' | 'completed',
+    customDocStatus?: 'pending' | 'processing' | 'shipped' | 'completed',
     customPayStatus?: 'unpaid' | 'partial' | 'paid'
   ) => {
     if (isNewCustomer && (!newCustForm.name || !newCustForm.phone)) {
@@ -405,6 +439,8 @@ export default function NewInvoicePage() {
         payment_status: finalPayStatus,
         amount_paid: finalAmountPaid,
         payment_method: finalAmountPaid > 0 ? paymentMethod : null,
+        payment_method_account_id: finalAmountPaid > 0 ? (paymentAccountId || null) : null,
+        payment_date: finalAmountPaid > 0 ? paymentDate : null,
         source_platform: finalSourcePlatform,
         source_order_ref: sourceOrderRef.trim(),
         utm_source: utmSource.trim(),
@@ -597,11 +633,13 @@ export default function NewInvoicePage() {
                 >
                   <option value="pending">📝 DRAFT (Rancangan Internal)</option>
                   <option value="processing">🚀 DITERBITKAN (Resmi / Open)</option>
+                  <option value="shipped">📦 DIKIRIM (Dalam Pengiriman)</option>
                   <option value="completed">✅ SELESAI (Pesanan Ditutup)</option>
                 </select>
                 <p className="text-[10px] text-[#70706E]">
                   {invoiceDocStatus === 'pending' && 'Faktur belum mengikat piutang atau mutasi stok.'}
                   {invoiceDocStatus === 'processing' && 'Faktur resmi diterbitkan, piutang dicatat di buku besar.'}
+                  {invoiceDocStatus === 'shipped' && 'Barang dikirim ke pelanggan, stok fisik & HPP dipotong.'}
                   {invoiceDocStatus === 'completed' && 'Faktur dan penyerahan barang/layanan tuntas penuh.'}
                 </p>
               </div>
@@ -665,15 +703,28 @@ export default function NewInvoicePage() {
                 )}
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-700">Metode Pembayaran</label>
+                  <label className="text-xs font-bold text-slate-700">Metode Pembayaran (Akun COA)</label>
                   <select
-                    value={paymentMethod}
-                    onChange={e => setPaymentMethod(e.target.value)}
+                    value={paymentAccountId}
+                    onChange={e => {
+                      const accId = e.target.value
+                      setPaymentAccountId(accId)
+                      const matched = paymentAccounts.find(a => a.id === accId)
+                      if (matched) setPaymentMethod(matched.name)
+                    }}
                     className="w-full p-2 text-xs font-bold rounded-lg border border-slate-200 bg-white focus:outline-none"
                   >
-                    <option value="Bank Transfer">Bank Transfer (Default)</option>
-                    <option value="Cash">Cash (Tunai)</option>
-                    <option value="QRIS">QRIS</option>
+                    {paymentAccounts.length > 0 ? (
+                      paymentAccounts.map(acc => (
+                        <option key={acc.id} value={acc.id}>
+                          [{acc.code}] {acc.name}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="">Bank Transfer (Default)</option>
+                      </>
+                    )}
                   </select>
                 </div>
 
@@ -1320,15 +1371,26 @@ export default function NewInvoicePage() {
 
             <div className="space-y-3">
               <div className="space-y-1">
-                <label className="text-xs font-bold text-[#70706E]">Metode Pembayaran</label>
+                <label className="text-xs font-bold text-[#70706E]">Metode Pembayaran (Akun Kas/Bank COA)</label>
                 <select
-                  value={paymentMethod}
-                  onChange={e => setPaymentMethod(e.target.value)}
+                  value={paymentAccountId}
+                  onChange={e => {
+                    const accId = e.target.value
+                    setPaymentAccountId(accId)
+                    const matched = paymentAccounts.find(a => a.id === accId)
+                    if (matched) setPaymentMethod(matched.name)
+                  }}
                   className="w-full p-2.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white focus:outline-none"
                 >
-                  <option value="Bank Transfer">Bank Transfer (Default)</option>
-                  <option value="Cash">Cash (Tunai)</option>
-                  <option value="QRIS">QRIS</option>
+                  {paymentAccounts.length > 0 ? (
+                    paymentAccounts.map(acc => (
+                      <option key={acc.id} value={acc.id}>
+                        [{acc.code}] {acc.name}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">Bank Transfer (Default)</option>
+                  )}
                 </select>
               </div>
 
@@ -1350,7 +1412,7 @@ export default function NewInvoicePage() {
                 type="button"
                 onClick={() => {
                   setSubmittingType('completed');
-                  handleSubmit('completed');
+                  handleSubmit('completed', 'paid');
                 }}
                 disabled={submitting}
                 className="flex-1 flex justify-center items-center gap-2 py-2 font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"

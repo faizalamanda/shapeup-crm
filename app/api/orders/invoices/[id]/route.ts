@@ -1,4 +1,5 @@
 import { getApiContext } from '@/lib/apiContext'
+import { getActivePaymentAccounts, resolvePaymentAccountFromCOA } from '@/lib/accountHelper'
 import { syncOrderToLedger } from '@/lib/orderLedger'
 import { isUuid } from '@/lib/utils'
 import { invalidateInvoicesCache } from '../route'
@@ -30,13 +31,46 @@ export async function GET(
       return NextResponse.json({ error: 'Invoice tidak ditemukan' }, { status: 404 })
     }
 
-    // Fetch payments history for this invoice
-    const { data: payments } = await supabaseAdmin
-      .from('order_payments')
-      .select('*')
-      .eq('order_id', id)
-      .eq('payment_kind', 'payment')
-      .order('created_at', { ascending: true })
+    // Fetch active Cash/Bank COA accounts of this business & order_payments in parallel
+    const [{ data: allOrderPays }, paymentAccounts] = await Promise.all([
+      supabaseAdmin
+        .from('order_payments')
+        .select('*')
+        .eq('order_id', id)
+        .order('created_at', { ascending: true }),
+      getActivePaymentAccounts(businessId, supabaseAdmin)
+    ])
+
+    const reversedPayIds = new Set(
+      (allOrderPays || [])
+        .filter((p: any) => p.payment_kind === 'void' || p.payment_kind === 'refund')
+        .map((p: any) => p.voided_payment_id)
+        .filter(Boolean)
+    )
+    const activePayments = (allOrderPays || []).filter(
+      (p: any) => p.payment_kind === 'payment' && !reversedPayIds.has(p.id)
+    )
+
+    const enrichedPayments = activePayments.map((p: any) => {
+      const resolvedAcc = resolvePaymentAccountFromCOA(
+        paymentAccounts,
+        p.payment_method,
+        p.payment_method_account_id
+      )
+      return {
+        ...p,
+        payment_method_account_id: p.payment_method_account_id || resolvedAcc?.id || null,
+        payment_account: resolvedAcc
+      }
+    })
+
+    // Normalize legacy invoice payment_status & amount_paid if missing
+    const grandTotalNum = Number(invoice.grand_total || 0)
+    const normalizedPaymentStatus = invoice.payment_status
+      || (invoice.status === 'completed' ? 'paid' : (Number(invoice.amount_paid || 0) >= grandTotalNum - 0.01 && grandTotalNum > 0 ? 'paid' : (Number(invoice.amount_paid || 0) > 0 ? 'partial' : 'unpaid')))
+    const normalizedAmountPaid = normalizedPaymentStatus === 'paid' && !Number(invoice.amount_paid)
+      ? grandTotalNum
+      : Number(invoice.amount_paid || 0)
 
     let creator = null
     if (invoice.user_id) {
@@ -52,10 +86,13 @@ export async function GET(
 
     return NextResponse.json({
       success: true,
+      payment_accounts: paymentAccounts,
       invoice: {
         ...invoice,
+        payment_status: normalizedPaymentStatus,
+        amount_paid: normalizedAmountPaid,
         creator,
-        payments: payments || []
+        payments: enrichedPayments
       }
     })
   } catch (err: any) {
@@ -120,7 +157,7 @@ export async function PUT(
       shipping_cost,
       other_fees,
       grand_total,
-      status, // 'pending', 'processing', 'completed', 'cancelled'
+      status, // 'pending', 'processing', 'shipped', 'completed', 'cancelled'
       payment_status, // 'unpaid', 'partial', 'paid'
       amount_paid,
       source_platform, // 'Invoice', 'WhatsApp', 'Instagram', 'Shopee', 'Tokopedia', 'TikTok', 'Manual', etc.
@@ -128,6 +165,8 @@ export async function PUT(
       utm_source,
       utm_campaign,
       payment_method,
+      payment_method_account_id,
+      payment_date,
       notes,
       // Customization settings
       custom_title,
@@ -354,7 +393,7 @@ export async function PUT(
       updatePayload.payment_status = numPaid >= finalGrandTotal - 0.01 ? 'paid' : (numPaid > 0 ? 'partial' : 'unpaid')
     }
 
-    if (nextStatus === 'completed' && payment_method) {
+    if (payment_method !== undefined) {
       updatePayload.payment_method = payment_method
     }
 
@@ -372,11 +411,116 @@ export async function PUT(
 
     if (updErr) throw updErr
 
-    // 3.5. If the invoice was already processing (outstanding) and its items/prices were edited
-    if (existing.status === 'processing' && items && Array.isArray(items)) {
-      // Sync Invoice to Ledger using unified orderLedger service
-      // Stok & Jurnal HPP strictly obey global trigger settings (shipped / completed vs processing)
-      await syncOrderToLedger(id, supabaseAdmin)
+    // 3.4. Synchronize order_payments if payment details were updated in Edit Invoice
+    if (payment_status !== undefined || amount_paid !== undefined || payment_method_account_id !== undefined) {
+      const targetAmountPaid = Number(updated.amount_paid || 0)
+      const { data: existingPays } = await supabaseAdmin
+        .from('order_payments')
+        .select('*')
+        .eq('order_id', id)
+        .eq('payment_kind', 'payment')
+        .order('created_at', { ascending: true })
+
+      const paymentAccounts = await getActivePaymentAccounts(businessId, supabaseAdmin)
+      const matchedAcc = resolvePaymentAccountFromCOA(
+        paymentAccounts,
+        payment_method || updated.payment_method,
+        isUuid(payment_method_account_id) ? payment_method_account_id : null
+      )
+      const resolvedPayAccId = matchedAcc?.id || (isUuid(payment_method_account_id) ? payment_method_account_id : null)
+      const resolvedPayMethodName = matchedAcc?.name || payment_method || updated.payment_method || 'Bank Transfer'
+
+      const payDateObj = payment_date ? new Date(payment_date) : (order_date ? new Date(order_date) : new Date())
+
+      if (targetAmountPaid > 0) {
+        if (!existingPays || existingPays.length === 0) {
+          await supabaseAdmin.from('order_payments').insert({
+            payment_kind: 'payment',
+            business_id: businessId,
+            order_id: id,
+            date: payDateObj.toISOString().split('T')[0],
+            amount: targetAmountPaid,
+            payment_method: resolvedPayMethodName,
+            payment_method_account_id: resolvedPayAccId,
+            notes: `Pembayaran ${updated.source_platform || 'Invoice'} #${updated.order_number}`,
+            created_at: payDateObj.toISOString()
+          })
+        } else if (existingPays.length === 1) {
+          const singlePay = existingPays[0]
+          const nextAccId = resolvedPayAccId || singlePay.payment_method_account_id
+          const hasChanged = Number(singlePay.amount) !== targetAmountPaid || singlePay.payment_method_account_id !== nextAccId || singlePay.payment_method !== resolvedPayMethodName
+          if (hasChanged) {
+            if (singlePay.transaction_id) {
+              await supabaseAdmin.from('transactions').delete().eq('id', singlePay.transaction_id)
+            } else {
+              // Legacy fallback: remove unlinked payment transactions for this order before re-syncing
+              const { data: legacyPayTxs } = await supabaseAdmin
+                .from('transactions')
+                .select('id, description')
+                .eq('order_id', id)
+              const toRemove = (legacyPayTxs || []).filter((tx: any) =>
+                (tx.description?.includes('Pembayaran') || tx.description?.includes('Pelunasan') || tx.description?.includes('Payment')) &&
+                !tx.description?.includes('Pembatalan') && !tx.description?.includes('Retur') && !tx.description?.includes('Refund') && !tx.description?.includes('Void')
+              )
+              if (toRemove.length > 0) {
+                await supabaseAdmin.from('transactions').delete().in('id', toRemove.map((t: any) => t.id))
+              }
+            }
+            await supabaseAdmin
+              .from('order_payments')
+              .update({
+                amount: targetAmountPaid,
+                payment_method: resolvedPayMethodName,
+                payment_method_account_id: nextAccId,
+                transaction_id: null,
+                ...(payment_date ? { date: payDateObj.toISOString().split('T')[0], created_at: payDateObj.toISOString() } : {})
+              })
+              .eq('id', singlePay.id)
+          }
+        }
+      } else if (payment_status === 'unpaid') {
+        if (existingPays && existingPays.length > 0) {
+          const txIds = existingPays.map((p: any) => p.transaction_id).filter(Boolean)
+          if (txIds.length > 0) {
+            await supabaseAdmin.from('transactions').delete().in('id', txIds)
+          }
+          await supabaseAdmin.from('order_payments').delete().in('id', existingPays.map((p: any) => p.id))
+        }
+        // Also clean up any legacy unlinked payment transactions if marked unpaid
+        const { data: legacyPayTxs } = await supabaseAdmin
+          .from('transactions')
+          .select('id, description')
+          .eq('order_id', id)
+        const toRemove = (legacyPayTxs || []).filter((tx: any) =>
+          (tx.description?.includes('Pembayaran') || tx.description?.includes('Pelunasan') || tx.description?.includes('Payment')) &&
+          !tx.description?.includes('Pembatalan') && !tx.description?.includes('Retur') && !tx.description?.includes('Refund') && !tx.description?.includes('Void')
+        )
+        if (toRemove.length > 0) {
+          await supabaseAdmin.from('transactions').delete().in('id', toRemove.map((t: any) => t.id))
+        }
+      }
+    }
+
+    // 3.5. If items/totals were edited or status reverted to pending, refresh active sales journal before re-syncing
+    const financialsChanged =
+      Number(existing.subtotal) !== Number(updated.subtotal) ||
+      Number(existing.grand_total) !== Number(updated.grand_total) ||
+      Number(existing.discount_amount) !== Number(updated.discount_amount) ||
+      Number(existing.shipping_cost) !== Number(updated.shipping_cost) ||
+      Number(existing.other_fees) !== Number(updated.other_fees)
+
+    if ((financialsChanged && Array.isArray(items)) || nextStatus === 'pending') {
+      const { data: existingTxs } = await supabaseAdmin
+        .from('transactions')
+        .select('id, description')
+        .eq('order_id', id)
+      const salesTxsToDelete = (existingTxs || []).filter((tx: any) =>
+        (tx.description?.includes('Penjualan') || tx.description?.includes('Penerbitan') || tx.description?.includes('Sales')) &&
+        !tx.description?.includes('Pembatalan') && !tx.description?.includes('Retur') && !tx.description?.includes('Refund')
+      )
+      if (salesTxsToDelete.length > 0) {
+        await supabaseAdmin.from('transactions').delete().in('id', salesTxsToDelete.map((t: any) => t.id))
+      }
     }
 
     // Always sync status change or invoice details to ledger via unified orderLedger service

@@ -1,4 +1,5 @@
 import { getApiContext } from '@/lib/apiContext'
+import { getActivePaymentAccounts, resolvePaymentAccountFromCOA } from '@/lib/accountHelper'
 import { syncOrderToLedger } from '@/lib/orderLedger'
 import { isUuid } from '@/lib/utils'
 import { NextResponse } from 'next/server'
@@ -46,6 +47,12 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url)
     const status = searchParams.get('status')
     const paymentStatus = searchParams.get('payment_status')
+    const onlyAccounts = searchParams.get('only_accounts') === 'true'
+
+    if (onlyAccounts) {
+      const paymentAccounts = await getActivePaymentAccounts(businessId, supabaseAdmin)
+      return NextResponse.json({ success: true, payment_accounts: paymentAccounts })
+    }
 
     // Check Server-Side Cache
     const cacheKey = `${businessId}:${status || 'all'}:${paymentStatus || 'all'}`
@@ -75,8 +82,8 @@ export async function GET(req: Request) {
 
     if (queryErr) throw queryErr
 
-    // Fetch creators (profiles)
-    let invoicesWithCreator = invoices
+    // Fetch creators (profiles) & normalize legacy payment_status/amount_paid
+    let profileMap = new Map<string, any>()
     const userIds = Array.from(new Set(invoices.map(inv => inv.user_id).filter(Boolean)))
     if (userIds.length > 0) {
       const { data: staffMembers, error: staffErr } = await supabaseAdmin
@@ -85,13 +92,24 @@ export async function GET(req: Request) {
         .in('id', userIds)
 
       if (!staffErr && staffMembers) {
-        const profileMap = new Map(staffMembers.map(p => [p.id, p]))
-        invoicesWithCreator = invoices.map(inv => ({
-          ...inv,
-          creator: inv.user_id ? (profileMap.get(inv.user_id) || null) : null
-        }))
+        profileMap = new Map(staffMembers.map(p => [p.id, p]))
       }
     }
+
+    const invoicesWithCreator = invoices.map(inv => {
+      const grandTotalNum = Number(inv.grand_total || 0)
+      const normalizedPayStatus = inv.payment_status
+        || (inv.status === 'completed' ? 'paid' : (Number(inv.amount_paid || 0) >= grandTotalNum - 0.01 && grandTotalNum > 0 ? 'paid' : (Number(inv.amount_paid || 0) > 0 ? 'partial' : 'unpaid')))
+      const normalizedAmtPaid = normalizedPayStatus === 'paid' && !Number(inv.amount_paid)
+        ? grandTotalNum
+        : Number(inv.amount_paid || 0)
+      return {
+        ...inv,
+        payment_status: normalizedPayStatus,
+        amount_paid: normalizedAmtPaid,
+        creator: inv.user_id ? (profileMap.get(inv.user_id) || null) : null
+      }
+    })
 
     // Set Server-Side Cache
     setInvoicesCache(cacheKey, invoicesWithCreator)
@@ -125,10 +143,12 @@ export async function POST(req: Request) {
       shipping_cost = 0,
       other_fees = 0,
       grand_total,
-      status = 'processing', // 'pending' = draft, 'processing' = issued/unpaid, 'completed' = completed, 'cancelled' = cancelled
+      status = 'processing', // 'pending' = draft, 'processing' = issued, 'shipped' = shipped, 'completed' = completed, 'cancelled' = cancelled
       payment_status, // 'unpaid', 'partial', 'paid'
       amount_paid = 0,
-      payment_method, // 'Cash', 'Bank Transfer', 'QRIS', etc.
+      payment_method, // COA account name or 'Cash', 'Bank Transfer', 'QRIS', etc.
+      payment_method_account_id, // COA account UUID (101xxx)
+      payment_date,
       source_platform = 'Invoice', // Channel: 'Invoice', 'WhatsApp', 'Instagram', 'Shopee', 'Tokopedia', 'TikTok', 'Manual', etc.
       source_order_ref, // Reference / PO number
       utm_source,
@@ -153,7 +173,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invoice harus memiliki minimal 1 item' }, { status: 400 })
     }
 
-    if (!status || !['pending', 'processing', 'completed', 'cancelled'].includes(status)) {
+    if (!status || !['pending', 'processing', 'shipped', 'completed', 'cancelled'].includes(status)) {
       return NextResponse.json({ error: 'Status invoice tidak valid' }, { status: 400 })
     }
 
@@ -361,15 +381,26 @@ export async function POST(req: Request) {
     // If there is an upfront payment (Lunas or DP), record unified order_payments entry
     if (finalAmountPaid > 0) {
       try {
+        const paymentAccounts = await getActivePaymentAccounts(businessId, supabaseAdmin)
+        const matchedAcc = resolvePaymentAccountFromCOA(
+          paymentAccounts,
+          payment_method,
+          isUuid(payment_method_account_id) ? payment_method_account_id : null
+        )
+        const resolvedPayAccId = matchedAcc?.id || (isUuid(payment_method_account_id) ? payment_method_account_id : null)
+        const resolvedPayMethodName = matchedAcc?.name || payment_method || 'Bank Transfer'
+
+        const payDateObj = payment_date ? new Date(payment_date) : dateObj
         await supabaseAdmin.from('order_payments').insert({
           payment_kind: 'payment',
           business_id: businessId,
           order_id: order.id,
-          date: dateObj.toISOString().split('T')[0],
+          date: payDateObj.toISOString().split('T')[0],
           amount: finalAmountPaid,
-          payment_method: payment_method || 'Bank Transfer',
+          payment_method: resolvedPayMethodName,
+          payment_method_account_id: resolvedPayAccId,
           notes: `Pembayaran ${source_platform || 'Invoice'} #${finalInvoiceNumber}`,
-          created_at: dateObj.toISOString()
+          created_at: payDateObj.toISOString()
         })
       } catch (payErr) {
         console.warn('Failed to insert initial payment to order_payments:', payErr)

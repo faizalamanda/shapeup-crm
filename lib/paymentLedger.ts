@@ -1,6 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { postJournalTransaction } from './journalHelper'
-import { getOrCreateDefaultAccounts } from './accountHelper'
+import { getOrCreateDefaultAccounts, getActivePaymentAccounts, resolvePaymentAccountFromCOA } from './accountHelper'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v)
@@ -11,6 +11,7 @@ export interface RecordPaymentParams {
   amount: number
   paymentMethod: string
   paymentMethodAccountId?: string | null
+  paymentDate?: string | null
   cashReceived?: number
   changeAmount?: number
   referenceNumber?: string | null
@@ -89,6 +90,7 @@ export async function recordOrderPayment(params: RecordPaymentParams): Promise<P
     amount,
     paymentMethod = 'cash',
     paymentMethodAccountId,
+    paymentDate,
     cashReceived,
     changeAmount,
     referenceNumber,
@@ -139,11 +141,10 @@ export async function recordOrderPayment(params: RecordPaymentParams): Promise<P
   const accountMap = await getOrCreateDefaultAccounts(businessId, supabase)
   const accPiutang = accountMap['103000'] // Piutang Usaha
 
-  let payAccId = paymentMethodAccountId
-  const isCash = String(paymentMethod).toLowerCase() === 'cash'
+  let payAccId = isUuid(paymentMethodAccountId) ? paymentMethodAccountId : null
+  const isCash = String(paymentMethod).toLowerCase() === 'cash' || String(paymentMethod).toLowerCase().includes('tunai')
 
   if (!payAccId) {
-    payAccId = isCash ? accountMap['101000'] : accountMap['101200']
     if (isCash && shiftId) {
       // Check if shift has register account
       const { data: shiftData } = await supabase
@@ -155,16 +156,24 @@ export async function recordOrderPayment(params: RecordPaymentParams): Promise<P
       const regAccId = (shiftData as any)?.pos_registers?.account_id
       if (regAccId) payAccId = regAccId
     }
+    if (!payAccId) {
+      const activePaymentAccounts = await getActivePaymentAccounts(businessId, supabase)
+      const matched = resolvePaymentAccountFromCOA(activePaymentAccounts, paymentMethod, null)
+      payAccId = matched?.id || (isCash ? accountMap['101000'] : accountMap['101200'])
+    }
   }
 
   // 3. Post Accounting Journal: Debit Kas/Bank, Credit Piutang Usaha
+  const resolvedIsoDate = paymentDate ? new Date(paymentDate).toISOString() : new Date().toISOString()
+  const resolvedDateOnly = resolvedIsoDate.split('T')[0]
+
   let payTxId: string | null = null
   if (payAccId && accPiutang) {
     try {
       const postRes = await postJournalTransaction(
         businessId,
         order.id,
-        new Date().toISOString(),
+        resolvedIsoDate,
         notes || `Pembayaran #${order.order_number} - ${cashierName}`,
         [
           { account_id: payAccId, debit: numAmount, credit: 0 },
@@ -187,7 +196,7 @@ export async function recordOrderPayment(params: RecordPaymentParams): Promise<P
       order_id: order.id,
       shift_id: isUuid(shiftId) ? shiftId : null,
       transaction_id: payTxId,
-      date: new Date().toISOString().split('T')[0],
+      date: resolvedDateOnly,
       amount: numAmount,
       payment_method: isCash ? 'cash' : (paymentMethod || 'bank'),
       payment_method_account_id: isUuid(payAccId) ? payAccId : null,
@@ -195,7 +204,8 @@ export async function recordOrderPayment(params: RecordPaymentParams): Promise<P
       change_amount: isCash ? Number(changeAmount || 0) : 0,
       reference_number: referenceNumber || null,
       notes: notes || `Pembayaran Pesanan #${order.order_number}`,
-      payment_kind: 'payment'
+      payment_kind: 'payment',
+      created_at: resolvedIsoDate
     })
     .select()
     .single()

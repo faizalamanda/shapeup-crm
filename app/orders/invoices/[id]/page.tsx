@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { formatDisplayDate } from '@/lib/timeUtils'
+import { isCashBankAccount, resolvePaymentAccountFromCOA } from '@/lib/coa'
 
 type Customer = {
   id: string
@@ -27,11 +28,27 @@ type InvoiceItem = {
   discount?: number
 }
 
+type COAAccount = {
+  id: string
+  code: string
+  name: string
+  type: string
+  sub_type?: string | null
+}
+
 type PaymentRecord = {
   id: string
   amount: number
   payment_method: string
-  payment_date: string
+  payment_method_account_id?: string | null
+  payment_account?: {
+    id: string
+    code: string
+    name: string
+  } | null
+  payment_date?: string
+  date?: string
+  created_at?: string
   notes?: string
 }
 
@@ -44,7 +61,7 @@ type Invoice = {
   discount_amount: number
   shipping_cost: number
   other_fees: number
-  status: 'pending' | 'processing' | 'completed' | 'cancelled'
+  status: 'pending' | 'processing' | 'shipped' | 'completed' | 'cancelled'
   payment_status?: 'unpaid' | 'partial' | 'paid'
   amount_paid?: number
   source_platform?: string
@@ -207,6 +224,8 @@ export default function InvoiceDetailPage() {
 
   // Payment Record Modal
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false)
+  const [paymentAccounts, setPaymentAccounts] = useState<COAAccount[]>([])
+  const [paymentAccountId, setPaymentAccountId] = useState<string>('')
   const [paymentMethod, setPaymentMethod] = useState<string>('Bank Transfer')
   const [paymentDate, setPaymentDate] = useState<string>('')
   const [paymentAmountInput, setPaymentAmountInput] = useState<number>(0)
@@ -273,6 +292,26 @@ export default function InvoiceDetailPage() {
 
       const invData = result.invoice as Invoice
       setInvoice(invData)
+
+      let accList: COAAccount[] = Array.isArray(result.payment_accounts) ? (result.payment_accounts as COAAccount[]) : []
+      if (profile.active_business_id) {
+        const { data: directAccs } = await supabase
+          .from('accounts')
+          .select('*')
+          .eq('business_id', profile.active_business_id)
+          .eq('type', 'ASSET')
+          .order('code', { ascending: true })
+        const filteredDirect = ((directAccs || []) as COAAccount[]).filter(isCashBankAccount)
+        if (filteredDirect.length > 0) {
+          accList = filteredDirect
+        }
+      }
+      setPaymentAccounts(accList)
+      if (accList.length > 0 && !paymentAccountId) {
+        const defaultAcc = resolvePaymentAccountFromCOA(accList, invData.payment_method) || accList[0]
+        setPaymentAccountId(defaultAcc.id)
+        setPaymentMethod(defaultAcc.name)
+      }
 
       // Initialize Customization State
       const raw = invData.raw_source_data
@@ -657,6 +696,7 @@ export default function InvoiceDetailPage() {
         body: JSON.stringify({
           amount: amountToPay,
           payment_method: paymentMethod,
+          payment_method_account_id: paymentAccountId || null,
           payment_date: paymentDate ? new Date(paymentDate).toISOString() : new Date().toISOString(),
           notes: paymentNotesInput.trim() || undefined
         })
@@ -670,6 +710,33 @@ export default function InvoiceDetailPage() {
       setShowPaymentModal(false)
       fetchInvoiceDetails()
       fetchLedger()
+      fetchStockMoves()
+    } catch (err: any) {
+      setErrorMessage(err.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // Update Invoice Document Status (processing / shipped / completed)
+  const handleUpdateDocStatus = async (nextStatus: 'processing' | 'shipped' | 'completed') => {
+    setSubmitting(true)
+    setErrorMessage('')
+    try {
+      const response = await fetch(`/api/orders/invoices/${invoiceId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus })
+      })
+
+      if (!response.ok) {
+        const resJson = await response.json()
+        throw new Error(resJson.error || 'Gagal memperbarui status invoice')
+      }
+
+      fetchInvoiceDetails()
+      fetchLedger()
+      fetchStockMoves()
     } catch (err: any) {
       setErrorMessage(err.message)
     } finally {
@@ -678,29 +745,7 @@ export default function InvoiceDetailPage() {
   }
 
   // Approve & Publish Invoice (Draft -> Processing)
-  const handleApproveInvoice = async () => {
-    setSubmitting(true)
-    setErrorMessage('')
-    try {
-      const response = await fetch(`/api/orders/invoices/${invoiceId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'processing' })
-      })
-
-      if (!response.ok) {
-        const resJson = await response.json()
-        throw new Error(resJson.error || 'Gagal menerbitkan invoice')
-      }
-
-      fetchInvoiceDetails()
-      fetchLedger()
-    } catch (err: any) {
-      setErrorMessage(err.message)
-    } finally {
-      setSubmitting(false)
-    }
-  }
+  const handleApproveInvoice = () => handleUpdateDocStatus('processing')
 
   // Cancel Invoice
   const handleCancelInvoice = async () => {
@@ -1084,7 +1129,7 @@ export default function InvoiceDetailPage() {
                 <div className="flex justify-between sm:justify-end gap-4 text-[#70706E]">
                   <span>Status Dokumen:</span>
                   <span className="font-bold uppercase text-[#1C1C1A]">
-                    {invoice.status === 'pending' ? 'Draft' : invoice.status === 'processing' ? 'Diterbitkan' : invoice.status === 'completed' ? 'Selesai' : 'Batal'}
+                    {invoice.status === 'pending' ? 'Draft' : invoice.status === 'processing' ? 'Diterbitkan' : invoice.status === 'shipped' ? 'Dikirim' : invoice.status === 'completed' ? 'Selesai' : 'Batal'}
                   </span>
                 </div>
                 <div className="flex justify-between sm:justify-end gap-4 text-[#70706E]">
@@ -1247,6 +1292,9 @@ export default function InvoiceDetailPage() {
                 )}
                 {invoice.status === 'processing' && (
                   <span className="px-3 py-1 text-xs font-black rounded-xl bg-blue-50 text-blue-700 border border-blue-200 shadow-sm">🚀 DITERBITKAN</span>
+                )}
+                {invoice.status === 'shipped' && (
+                  <span className="px-3 py-1 text-xs font-black rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-sm">📦 DIKIRIM</span>
                 )}
                 {invoice.status === 'completed' && (
                   <span className="px-3 py-1 text-xs font-black rounded-xl bg-slate-100 text-slate-800 border border-slate-200 shadow-sm">✅ SELESAI</span>
@@ -1425,6 +1473,67 @@ export default function InvoiceDetailPage() {
                 {invoice.status === 'processing' && (
                   <>
                     {canEdit && (
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={() => handleUpdateDocStatus('shipped')}
+                        className="w-full py-2.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl shadow-sm transition-all cursor-pointer"
+                      >
+                        📦 Tandai Dikirim (Potong Stok)
+                      </button>
+                    )}
+
+                    {canEdit && (
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={() => handleUpdateDocStatus('completed')}
+                        className="w-full py-2 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition-all cursor-pointer"
+                      >
+                        ✅ Tandai Selesai
+                      </button>
+                    )}
+
+                    {canEdit && (
+                      <Link
+                        href={`/orders/invoices/${invoiceId}/edit`}
+                        className="block w-full py-2.5 text-xs text-center font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all"
+                      >
+                        ✏️ Edit Invoice
+                      </Link>
+                    )}
+
+                    {canEdit && (
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={handleCancelInvoice}
+                        className="w-full py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
+                      >
+                        🚫 Batalkan / Void Invoice
+                      </button>
+                    )}
+                  </>
+                )}
+
+                {invoice.status === 'shipped' && (
+                  <>
+                    <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-xl text-[11px] text-indigo-800 font-semibold leading-relaxed">
+                      📦 Barang dalam pengiriman. Stok fisik gudang dan jurnal HPP telah disesuaikan sesuai pengaturan pemicu.
+                    </div>
+
+                    {canEdit && (
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={() => handleUpdateDocStatus('completed')}
+                        className="w-full py-2.5 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl shadow-sm transition-all cursor-pointer"
+                      >
+                        ✅ Tandai Selesai (Pesanan Tuntas)
+                      </button>
+                    )}
+
+                    {canEdit && (
                       <Link
                         href={`/orders/invoices/${invoiceId}/edit`}
                         className="block w-full py-2.5 text-xs text-center font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all"
@@ -1449,7 +1558,9 @@ export default function InvoiceDetailPage() {
                 {invoice.status === 'completed' && (
                   <>
                     <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl text-[11px] text-emerald-800 font-semibold leading-relaxed">
-                      Lunas: Pembayaran telah dicatat dan kas/bank serta piutang telah disesuaikan secara otomatis di ledger akuntansi.
+                      {invoice.payment_status === 'paid'
+                        ? '✅ Pesanan Selesai & Lunas: Pembayaran telah dicatat dan kas/bank serta piutang telah disesuaikan secara otomatis di ledger akuntansi.'
+                        : `✅ Pesanan Selesai: Barang/pekerjaan telah tuntas diserahkan. Tagihan saat ini berstatus ${invoice.payment_status === 'partial' ? 'Sebagian / DP' : 'Belum Lunas'} di buku piutang.`}
                     </div>
 
                     {canEdit && (
@@ -1481,26 +1592,47 @@ export default function InvoiceDetailPage() {
                 )}
 
                 {/* Payment History List */}
-                {invoice.payments && invoice.payments.length > 0 && (
+                {((invoice.payments && invoice.payments.length > 0) || Number(invoice.amount_paid || 0) > 0) && (
                   <div className="pt-3 border-t border-slate-200/80 space-y-2">
                     <span className="text-[11px] font-bold text-[#70706E] uppercase tracking-wider">
-                      Riwayat Pembayaran ({invoice.payments.length}):
+                      Riwayat Pembayaran ({invoice.payments && invoice.payments.length > 0 ? invoice.payments.length : 1}):
                     </span>
                     <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                      {invoice.payments.map((p, pIdx) => (
-                        <div key={p.id || pIdx} className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex justify-between items-center text-xs">
+                      {invoice.payments && invoice.payments.length > 0 ? (
+                        invoice.payments.map((p, pIdx) => {
+                          const rawDate = p.payment_date || p.date || p.created_at
+                          const accountLabel = p.payment_account
+                            ? `[${p.payment_account.code}] ${p.payment_account.name}`
+                            : (p.payment_method || 'Pembayaran')
+                          return (
+                            <div key={p.id || pIdx} className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex justify-between items-center text-xs">
+                              <div>
+                                <div className="font-bold text-slate-800">{accountLabel}</div>
+                                <div className="text-[10px] text-slate-500 font-mono">
+                                  {rawDate ? new Date(rawDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                                  {p.notes ? ` • ${p.notes}` : ''}
+                                </div>
+                              </div>
+                              <div className="font-extrabold text-emerald-700">
+                                {formatIDR(Number(p.amount || 0))}
+                              </div>
+                            </div>
+                          )
+                        })
+                      ) : (
+                        <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex justify-between items-center text-xs">
                           <div>
-                            <div className="font-bold text-slate-800">{p.payment_method || 'Pembayaran'}</div>
+                            <div className="font-bold text-slate-800">{invoice.payment_method || 'Pembayaran Tercatat'}</div>
                             <div className="text-[10px] text-slate-500 font-mono">
-                              {p.payment_date ? new Date(p.payment_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
-                              {p.notes ? ` • ${p.notes}` : ''}
+                              {invoice.order_date ? new Date(invoice.order_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                              {' • Data Historis'}
                             </div>
                           </div>
                           <div className="font-extrabold text-emerald-700">
-                            {formatIDR(Number(p.amount || 0))}
+                            {formatIDR(Number(invoice.amount_paid || 0))}
                           </div>
                         </div>
-                      ))}
+                      )}
                     </div>
                   </div>
                 )}
@@ -1901,15 +2033,26 @@ export default function InvoiceDetailPage() {
                 )}
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#70706E]">Metode Pembayaran</label>
+                  <label className="text-xs font-bold text-[#70706E]">Metode Pembayaran (Akun Kas/Bank COA)</label>
                   <select
-                    value={paymentMethod}
-                    onChange={e => setPaymentMethod(e.target.value)}
+                    value={paymentAccountId}
+                    onChange={e => {
+                      const accId = e.target.value
+                      setPaymentAccountId(accId)
+                      const matched = paymentAccounts.find(a => a.id === accId)
+                      if (matched) setPaymentMethod(matched.name)
+                    }}
                     className="w-full p-2.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white focus:outline-none"
                   >
-                    <option value="Bank Transfer">Bank Transfer (Default)</option>
-                    <option value="Cash">Cash (Tunai)</option>
-                    <option value="QRIS">QRIS</option>
+                    {paymentAccounts.length > 0 ? (
+                      paymentAccounts.map(acc => (
+                        <option key={acc.id} value={acc.id}>
+                          [{acc.code}] {acc.name}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">Bank Transfer (Default)</option>
+                    )}
                   </select>
                 </div>
 
