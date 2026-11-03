@@ -8,7 +8,7 @@ import { useUserContext } from '@/components/UserContext'
 import QuickAddProductModal from '@/components/QuickAddProductModal'
 import { QuickAddCustomerForm, NewCustomerFormData, EMPTY_CUSTOMER_FORM } from '@/components/QuickAddCustomerForm'
 import { CustomerSelectCombobox } from '@/components/CustomerSelectCombobox'
-import { ProductSelectCombobox } from '@/components/ProductSelectCombobox'
+import { ProductSelectCombobox, ProductComboboxItem } from '@/components/ProductSelectCombobox'
 
 type Customer = {
   id: string
@@ -18,16 +18,30 @@ type Customer = {
   address_data?: any
 }
 
+type ProductVariant = {
+  id: string
+  name: string
+  sku: string | null
+  price: number
+  cost_price?: number | null
+  stock_quantity?: number | null
+}
+
 type Product = {
   id: string
   name: string
   price: number
   sku: string | null
   cost_price: number | null
+  stock_quantity?: number | null
+  stock_type?: string | null
+  product_variants?: ProductVariant[]
 }
 
 type InvoiceItemInput = {
   product_id: string | null
+  variant_id?: string | null
+  cost_price?: number | null
   name: string
   sku: string
   description?: string
@@ -83,7 +97,7 @@ export default function NewInvoicePage() {
 
   // Invoice Items
   const [items, setItems] = useState<InvoiceItemInput[]>([
-    { product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1, discount: 0 }
+    { product_id: null, variant_id: null, cost_price: null, name: '', sku: '', description: '', price: 0, quantity: 1, discount: 0 }
   ])
 
   // Visibility toggles for additional fields
@@ -203,14 +217,23 @@ export default function NewInvoicePage() {
           }
         }
 
-        // Fetch products
-        const { data: prodData } = await supabase
+        // Fetch products with variants
+        let { data: prodData, error: prodErr } = await supabase
           .from('products')
-          .select('id, name, price, sku, cost_price')
+          .select('id, name, price, sku, cost_price, stock_quantity, stock_type, product_variants(id, name, sku, price, cost_price, stock_quantity)')
           .eq('business_id', activeBusiness.id)
           .order('name', { ascending: true })
 
-        if (prodData) setProducts(prodData)
+        if (prodErr) {
+          const fallbackRes = await supabase
+            .from('products')
+            .select('id, name, price, sku, cost_price, stock_quantity, stock_type')
+            .eq('business_id', activeBusiness.id)
+            .order('name', { ascending: true })
+          prodData = fallbackRes.data as any
+        }
+
+        if (prodData) setProducts(prodData as Product[])
       } catch (err) {
         console.error('Error loading master data:', err)
       } finally {
@@ -221,14 +244,49 @@ export default function NewInvoicePage() {
     loadData()
   }, [activeBusiness, userProfile, bizLoading, supabase])
 
+  // Unfold products into flat discrete items (Variants as individual rows, or parent product if no variants)
+  const comboboxProducts = useMemo<ProductComboboxItem[]>(() => {
+    const list: ProductComboboxItem[] = []
+    for (const p of products) {
+      if (Array.isArray(p.product_variants) && p.product_variants.length > 0) {
+        for (const v of p.product_variants) {
+          list.push({
+            id: p.id,
+            variant_id: v.id,
+            name: `${p.name} - ${v.name}`,
+            price: Number(v.price || p.price || 0),
+            sku: v.sku || p.sku || null,
+            cost_price: v.cost_price ?? p.cost_price ?? null,
+            stock_quantity: v.stock_quantity ?? null,
+            stock_type: p.stock_type || 'tracked',
+            is_variant: true
+          })
+        }
+      } else {
+        list.push({
+          id: p.id,
+          variant_id: null,
+          name: p.name,
+          price: Number(p.price || 0),
+          sku: p.sku || null,
+          cost_price: p.cost_price ?? null,
+          stock_quantity: p.stock_quantity ?? null,
+          stock_type: p.stock_type || 'tracked',
+          is_variant: false
+        })
+      }
+    }
+    return list
+  }, [products])
+
   // Items Handlers
   const handleAddItemRow = () => {
-    setItems([...items, { product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1, discount: 0 }])
+    setItems([...items, { product_id: null, variant_id: null, cost_price: null, name: '', sku: '', description: '', price: 0, quantity: 1, discount: 0 }])
   }
 
   const handleRemoveItemRow = (index: number) => {
     if (items.length === 1) {
-      setItems([{ product_id: null, name: '', sku: '', description: '', price: 0, quantity: 1, discount: 0 }])
+      setItems([{ product_id: null, variant_id: null, cost_price: null, name: '', sku: '', description: '', price: 0, quantity: 1, discount: 0 }])
       return
     }
     const nextItems = [...items]
@@ -268,6 +326,8 @@ export default function NewInvoicePage() {
     if (quickAddRowIndex !== null) {
       handleItemFieldsChange(quickAddRowIndex, {
         product_id: newProduct.id,
+        variant_id: null,
+        cost_price: newProduct.cost_price ?? null,
         name: newProduct.name,
         price: newProduct.price,
         sku: newProduct.sku || ''
@@ -777,12 +837,15 @@ export default function NewInvoicePage() {
                   {/* Item name input with product search */}
                   <div className="w-full md:flex-1 relative">
                     <ProductSelectCombobox
-                      products={products}
+                      products={comboboxProducts}
                       selectedProductId={item.product_id}
+                      selectedVariantId={item.variant_id}
                       selectedProductName={item.name}
                       onSelectProduct={p => {
                         handleItemFieldsChange(idx, {
                           product_id: p.id,
+                          variant_id: p.variant_id || null,
+                          cost_price: p.cost_price ?? null,
                           name: p.name,
                           price: p.price,
                           sku: p.sku || '',
@@ -792,6 +855,8 @@ export default function NewInvoicePage() {
                       onClearProduct={() => {
                         handleItemFieldsChange(idx, {
                           product_id: null,
+                          variant_id: null,
+                          cost_price: null,
                           name: '',
                           price: 0,
                           sku: '',

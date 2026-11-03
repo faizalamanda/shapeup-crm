@@ -4,10 +4,14 @@ import { useState, useEffect, useRef } from 'react'
 
 export type ProductComboboxItem = {
   id: string
+  variant_id?: string | null
   name: string
   price: number
   sku: string | null
   cost_price: number | null
+  stock_quantity?: number | null
+  stock_type?: string | null
+  is_variant?: boolean
 }
 
 const formatIDR = (value: number) => {
@@ -21,6 +25,7 @@ const formatIDR = (value: number) => {
 interface ProductSelectComboboxProps {
   products: ProductComboboxItem[]
   selectedProductId: string | null
+  selectedVariantId?: string | null
   selectedProductName: string
   onSelectProduct: (product: ProductComboboxItem) => void
   onClearProduct: () => void
@@ -34,6 +39,7 @@ interface ProductSelectComboboxProps {
 export function ProductSelectCombobox({
   products,
   selectedProductId,
+  selectedVariantId = null,
   selectedProductName,
   onSelectProduct,
   onClearProduct,
@@ -47,10 +53,21 @@ export function ProductSelectCombobox({
   const [searchQuery, setSearchQuery] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Find stored product match
-  const selectedProduct = products.find(
-    p => (selectedProductId && p.id === selectedProductId) || (selectedProductName && p.name.toLowerCase() === selectedProductName.toLowerCase())
-  )
+  // Find stored product match (variant-aware)
+  const selectedProduct = products.find(p => {
+    if (selectedProductId && p.id === selectedProductId) {
+      if (selectedVariantId) {
+        return p.variant_id === selectedVariantId
+      }
+      if (!p.variant_id) {
+        return true
+      }
+    }
+    if (selectedProductName && p.name.toLowerCase() === selectedProductName.toLowerCase()) {
+      return true
+    }
+    return false
+  })
 
   // Close dropdown on outside click & reset search query if no product selected
   useEffect(() => {
@@ -142,26 +159,41 @@ export function ProductSelectCombobox({
         <div className="absolute left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg z-50 divide-y divide-gray-100 animate-in fade-in zoom-in-95 duration-100">
           {filteredProducts.length > 0 ? (
             filteredProducts.map(p => {
-              const isSelected = selectedProductId === p.id || (selectedProductName && p.name.toLowerCase() === selectedProductName.toLowerCase())
+              const itemKey = p.variant_id ? `${p.id}_${p.variant_id}` : p.id
+              const isSelected =
+                (selectedProductId === p.id && ((selectedVariantId && p.variant_id === selectedVariantId) || (!selectedVariantId && !p.variant_id))) ||
+                (selectedProductName && p.name.toLowerCase() === selectedProductName.toLowerCase())
               const displayPrice = showCostPrice ? (p.cost_price ?? p.price) : p.price
+              const isTracked = !p.stock_type || p.stock_type === 'tracked'
+              const hasStockInfo = isTracked && p.stock_quantity !== undefined && p.stock_quantity !== null
+
               return (
                 <button
-                  key={p.id}
+                  key={itemKey}
                   type="button"
                   onMouseDown={() => {
                     onSelectProduct(p)
                     setSearchQuery('')
                     setIsOpen(false)
                   }}
-                  className={`w-full text-left p-2.5 text-xs transition-colors flex items-center justify-between cursor-pointer ${
+                  className={`w-full text-left p-2.5 text-xs transition-colors flex items-center justify-between gap-2 cursor-pointer ${
                     isSelected ? 'bg-blue-50/70 font-bold text-blue-900' : 'hover:bg-gray-50 text-gray-800 font-medium'
                   }`}
                 >
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <span className="font-bold text-gray-900">📦 {p.name}</span>
                     {p.sku && <span className="ml-1.5 text-[10px] font-mono text-gray-500">(SKU: {p.sku})</span>}
+                    {hasStockInfo && (
+                      <span className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                        Number(p.stock_quantity) > 0
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : 'bg-rose-50 text-rose-700'
+                      }`}>
+                        Stok: {p.stock_quantity}
+                      </span>
+                    )}
                   </div>
-                  <span className="text-blue-700 font-bold">{formatIDR(displayPrice)}</span>
+                  <span className="text-blue-700 font-bold shrink-0">{formatIDR(displayPrice)}</span>
                 </button>
               )
             })

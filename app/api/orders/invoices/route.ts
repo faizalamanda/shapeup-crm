@@ -311,8 +311,11 @@ export async function POST(req: Request) {
       const qty = Number(item.quantity || 1)
       const discount = Number(item.discount || 0)
       const discountedPrice = Math.max(0, price - discount)
+      const prodId = isUuid(item.product_id) ? item.product_id : null
+      const varId = isUuid(item.variant_id) ? item.variant_id : (isUuid(item.variation_id) ? item.variation_id : null)
+      const costPrice = item.cost_price !== undefined && item.cost_price !== null ? Number(item.cost_price) : undefined
       return {
-        id: item.product_id || idx,
+        id: prodId || idx,
         name: item.name,
         description: item.description || '',
         price: price,
@@ -321,7 +324,9 @@ export async function POST(req: Request) {
         sku: item.sku || '',
         total: String(discountedPrice * qty),
         subtotal: String(price * qty),
-        product_id: item.product_id || null
+        product_id: prodId,
+        variant_id: varId,
+        ...(costPrice !== undefined ? { cost_price: costPrice } : {})
       }
     })
 

@@ -360,9 +360,15 @@ export default function InvoiceDetailPage() {
           qty,
           system_stock,
           reference,
+          variant_id,
           products (
             name,
-            sku
+            sku,
+            product_variants (
+              id,
+              name,
+              sku
+            )
           ),
           origin_location_id
         `)
@@ -1780,12 +1786,19 @@ export default function InvoiceDetailPage() {
                   <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
                     {stockMoves.map((m) => {
                       const isPositive = m.type === 'receipt' || m.type === 'refund' || (m.type === 'adjustment' && !m.origin_location_id)
+                      const matchedVar = m.variant_id && Array.isArray(m.products?.product_variants)
+                        ? m.products.product_variants.find((v: any) => v.id === m.variant_id)
+                        : null
+                      const displayMoveName = matchedVar
+                        ? `${m.products?.name || 'Produk'} - ${matchedVar.name}`
+                        : (m.products?.name || 'Produk Tidak Ditemukan')
+                      const displayMoveSku = matchedVar?.sku || m.products?.sku || null
                       return (
                         <div key={m.id} className="p-3 bg-gray-50 border border-gray-150 rounded-xl space-y-1">
                           <div className="flex justify-between items-start">
                             <div>
-                              <div className="font-black text-[#1C1C1A] text-[11px]">{m.products?.name || 'Produk Tidak Ditemukan'}</div>
-                              {m.products?.sku && <div className="text-[10px] text-gray-500 font-mono">SKU: {m.products.sku}</div>}
+                              <div className="font-black text-[#1C1C1A] text-[11px]">{displayMoveName}</div>
+                              {displayMoveSku && <div className="text-[10px] text-gray-500 font-mono">SKU: {displayMoveSku}</div>}
                             </div>
                             <div className="text-right">
                               <div className={`font-black text-xs ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>

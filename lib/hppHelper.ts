@@ -99,8 +99,9 @@ export async function generateItemizedHppJournalLines(
 
   for (const { item, dbProduct } of itemsWithProducts) {
     const qty = Math.max(1, parseFloat(String(item.quantity || 1)) || 1)
-    const prodName = dbProduct?.name || item.name || 'Produk'
-    const sku = dbProduct?.sku || item.sku || null
+    const hasVariantId = Boolean((item as any).variant_id || (item as any).variation_id)
+    const prodName = (hasVariantId && item.name) ? item.name : (dbProduct?.name || item.name || 'Produk')
+    const sku = (hasVariantId && item.sku) ? item.sku : (dbProduct?.sku || item.sku || null)
     const prodType = dbProduct?.type || 'physical'
     const unit = dbProduct?.unit || 'Pcs'
 
