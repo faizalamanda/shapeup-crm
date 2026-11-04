@@ -1,381 +1,436 @@
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
-import { ensureExpenseAccounts } from '@/lib/expenseLedger'
 import { NextResponse } from 'next/server'
+import { ensureExpenseAccounts } from '@/lib/expenseLedger'
+import { isUuid } from '@/lib/utils'
+import {
+  verifyPayrollAccess,
+  getPeriodLastDay,
+  ensureDecoupledSalaryLedger,
+  voidSingleSalaryPayment,
+  recalculateSalaryStatus,
+  createSalarySettlementPayment
+} from '@/lib/payrollLedger'
 
-// Secure check for salary management permission
-async function verifyAccess(supabase: any) {
-  const { user, error: authErr } = await getAuthUser(supabase)
-  if (authErr || !user) {
-    return { error: 'Sesi tidak valid, silakan login kembali.', status: 401 }
-  }
+export async function GET() {
+  const access = await verifyPayrollAccess()
+  if (access.error) return access.error
 
-  const { data: profile, error: profErr } = await supabase
-    .from('profiles')
-    .select('role, active_business_id')
-    .eq('id', user.id)
-    .single()
-
-  if (profErr || !profile?.active_business_id) {
-    return { error: 'Bisnis aktif tidak ditemukan. Silakan pilih bisnis terlebih dahulu.', status: 400 }
-  }
-
-  const businessId = profile.active_business_id
-
-  // Check relationship & permissions in business_staff
-  const { data: bs } = await supabase
-    .from('business_staff')
-    .select('role, permissions')
-    .eq('profile_id', user.id)
-    .eq('business_id', businessId)
-    .maybeSingle()
-
-  const isOwner = profile.role === 'admin'
-  const isAdminStaff = bs?.role === 'admin'
-  const hasHR = bs?.permissions?.includes('full_access') || bs?.permissions?.includes('manage_employees_salary')
-
-  if (!isOwner && !isAdminStaff && !hasHR) {
-    return { error: 'Anda tidak memiliki hak akses untuk mengelola data gaji.', status: 403 }
-  }
-
-  return { businessId, user }
-}
-
-function getPeriodLastDay(periodStr: string): string {
-  if (!periodStr) return new Date().toISOString().split('T')[0]
-  const parts = periodStr.split('-')
-  if (parts.length === 3) {
-    return periodStr
-  }
-  if (parts.length === 2) {
-    const year = parseInt(parts[0], 10)
-    const month = parseInt(parts[1], 10)
-    if (!isNaN(year) && !isNaN(month) && month >= 1 && month <= 12) {
-      const lastDay = new Date(year, month, 0).getDate()
-      const monthStr = String(month).padStart(2, '0')
-      const dayStr = String(lastDay).padStart(2, '0')
-      return `${year}-${monthStr}-${dayStr}`
-    }
-  }
-  return new Date().toISOString().split('T')[0]
-}
-
-export async function GET(req: Request) {
-  const supabase = await createClient()
-  const access = await verifyAccess(supabase)
-  if (access.error) {
-    return NextResponse.json({ error: access.error }, { status: access.status })
-  }
-
-  const { businessId } = access
+  const { businessId, supabaseAdmin } = access
 
   try {
-    // Get all salaries for the active business, joining employee info and payments history
-    const { data: salaries, error: fetchErr } = await supabase
+    const { data: salaries, error: fetchErr } = await supabaseAdmin
       .from('employee_salaries')
-      .select('*, employees!inner(*), salary_payments(*, accounts(id, name, code))')
+      .select('*, employees!inner(*), salary_payments(*, accounts:payment_method_account_id(id, name, code))')
       .eq('employees.business_id', businessId)
       .order('period', { ascending: false })
+      .order('created_at', { ascending: false })
 
     if (fetchErr) throw fetchErr
 
-    return NextResponse.json(salaries)
+    return NextResponse.json(salaries || [])
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
 
 export async function POST(req: Request) {
-  const supabase = await createClient()
-  const access = await verifyAccess(supabase)
-  if (access.error) {
-    return NextResponse.json({ error: access.error }, { status: access.status })
+  const access = await verifyPayrollAccess()
+  if (access.error) return access.error
+
+  const { businessId, supabaseAdmin } = access
+
+  let body: any
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Payload JSON tidak valid atau kosong.' }, { status: 400 })
   }
 
-  const { businessId } = access
-  const body = await req.json()
-  const { employee_id, amount, period, payment_status, payment_account_id, amount_paid, payment_date } = body
+  const {
+    employee_id,
+    amount,
+    period,
+    payment_status,
+    payment_account_id,
+    amount_paid,
+    payment_date
+  } = body
 
-  if (!employee_id || !amount || !period) {
-    return NextResponse.json({ error: 'Data employee_id, nominal amount, dan periode wajib diisi.' }, { status: 400 })
+  const cleanEmployeeId = isUuid(employee_id) ? employee_id : null
+  const cleanPaymentAccountId = isUuid(payment_account_id) ? payment_account_id : null
+
+  if (!cleanEmployeeId || amount === undefined || !period) {
+    return NextResponse.json(
+      { error: 'Data karyawan, nominal gaji, dan periode wajib diisi.' },
+      { status: 400 }
+    )
   }
 
   const numAmount = parseFloat(amount)
-  if (isNaN(numAmount) || numAmount <= 0) {
-    return NextResponse.json({ error: 'Nominal gaji harus valid dan lebih dari 0.' }, { status: 400 })
+  if (!Number.isFinite(numAmount) || numAmount <= 0) {
+    return NextResponse.json(
+      { error: 'Nominal gaji harus valid dan lebih dari Rp 0.' },
+      { status: 400 }
+    )
   }
 
   try {
-    // 1. Verify that the employee belongs to this business
-    const { data: employee, error: empErr } = await supabase
+    // 1. Verify employee belongs to this business
+    const { data: employee, error: empErr } = await supabaseAdmin
       .from('employees')
-      .select('name')
-      .eq('id', employee_id)
+      .select('id, name')
+      .eq('id', cleanEmployeeId)
       .eq('business_id', businessId)
       .single()
 
     if (empErr || !employee) {
-      return NextResponse.json({ error: 'Karyawan tidak ditemukan di unit bisnis ini.' }, { status: 404 })
+      return NextResponse.json(
+        { error: 'Karyawan tidak ditemukan di unit bisnis ini.' },
+        { status: 404 }
+      )
     }
 
-    const status = payment_status || 'pending'
-    const numAmountPaid = status === 'paid'
-      ? numAmount
-      : (status === 'pending' ? 0 : parseFloat(amount_paid || 0))
+    // 2. Check existing salary for the same employee and period
+    const { data: existingInPeriod } = await supabaseAdmin
+      .from('employee_salaries')
+      .select('id, payment_status, period')
+      .eq('business_id', businessId)
+      .eq('employee_id', cleanEmployeeId)
+      .eq('period', period)
 
-    if (isNaN(numAmountPaid) || numAmountPaid < 0 || numAmountPaid > numAmount) {
-      return NextResponse.json({ error: 'Jumlah nominal terbayar tidak valid.' }, { status: 400 })
+    const activeExisting = (existingInPeriod || []).find(
+      (r: any) => r.payment_status !== 'cancelled'
+    )
+    if (activeExisting) {
+      return NextResponse.json(
+        {
+          error: `Slip gaji untuk ${employee.name} pada periode ${period} sudah terdaftar. Silakan gunakan tombol Edit atau Bayar pada daftar gaji.`
+        },
+        { status: 400 }
+      )
     }
 
-    const numOutstanding = numAmount - numAmountPaid
-
-    if (numAmountPaid > 0 && !payment_account_id) {
-      return NextResponse.json({ error: 'Akun pembayaran (Kas/Bank) wajib diisi untuk status Lunas atau Dibayar Sebagian.' }, { status: 400 })
+    // Resilient fallback if database still has legacy unconditional UNIQUE(employee_id, period)
+    const cancelledExisting = (existingInPeriod || []).filter(
+      (r: any) => r.payment_status === 'cancelled'
+    )
+    for (const canc of cancelledExisting) {
+      const shortCode = String(canc.id).slice(0, 4).toUpperCase()
+      await supabaseAdmin
+        .from('employee_salaries')
+        .update({ period: `${period} (Batal #${shortCode})` })
+        .eq('id', canc.id)
     }
 
-    // Ensure double entry accounts exist
-    const accountMap = await ensureExpenseAccounts(businessId, supabase)
+    const status: 'paid' | 'partial' | 'pending' = payment_status || 'pending'
+    const numAmountPaid =
+      status === 'paid'
+        ? numAmount
+        : status === 'pending'
+        ? 0
+        : parseFloat(amount_paid || 0)
+
+    if (!Number.isFinite(numAmountPaid) || numAmountPaid < 0 || numAmountPaid > numAmount) {
+      return NextResponse.json(
+        { error: 'Jumlah nominal terbayar tidak valid.' },
+        { status: 400 }
+      )
+    }
+
+    const numOutstanding = Math.max(0, numAmount - numAmountPaid)
+
+    if (numAmountPaid > 0 && !cleanPaymentAccountId) {
+      return NextResponse.json(
+        { error: 'Akun pembayaran (Kas/Bank) wajib dipilih untuk status Lunas atau Sebagian.' },
+        { status: 400 }
+      )
+    }
+
+    // 3. Ensure Double-Entry Accounts exist
+    const accountMap = await ensureExpenseAccounts(businessId, supabaseAdmin)
     const salaryExpenseAccountId = accountMap['503300'] // Beban Gaji & Upah
     const salaryLiabilityAccountId = accountMap['201100'] // Hutang Gaji & Upah
 
-    if (!salaryExpenseAccountId) {
-      return NextResponse.json({ error: 'Akun Beban Gaji & Upah (503300) tidak ditemukan.' }, { status: 400 })
-    }
-    if (numOutstanding > 0 && !salaryLiabilityAccountId) {
-      return NextResponse.json({ error: 'Akun Hutang Gaji & Upah (201100) tidak ditemukan.' }, { status: 400 })
+    if (!salaryExpenseAccountId || !salaryLiabilityAccountId) {
+      return NextResponse.json(
+        { error: 'Akun Beban Gaji (503300) atau Hutang Gaji (201100) belum tersedia.' },
+        { status: 400 }
+      )
     }
 
-    // 2. Create a ledger transaction using the last day of the salary period
-    const txDate = getPeriodLastDay(period)
-    const description = `Pencatatan Gaji Karyawan: ${employee.name} (${period})`
+    // 4. PHASE 1 (ACCRUAL): Create pure Accrual Journal Transaction on period end date
+    //    Dr. Beban Gaji & Upah (503300) = numAmount
+    //    Cr. Hutang Gaji & Upah (201100) = numAmount
+    const accrualDate = getPeriodLastDay(period)
+    const accrualDescription = `Pencatatan Gaji Karyawan: ${employee.name} (${period})`
 
-    const { data: tx, error: txErr } = await supabase
+    const { data: accrualTx, error: txErr } = await supabaseAdmin
       .from('transactions')
       .insert({
         business_id: businessId,
-        date: txDate,
-        description
+        date: accrualDate,
+        description: accrualDescription
       })
-      .select('*')
+      .select('id')
       .single()
 
-    if (txErr || !tx) {
-      return NextResponse.json({ error: `Gagal membuat transaksi jurnal: ${txErr?.message}` }, { status: 500 })
+    if (txErr || !accrualTx) {
+      return NextResponse.json(
+        { error: `Gagal membuat transaksi jurnal akrual gaji: ${txErr?.message}` },
+        { status: 500 }
+      )
     }
 
-    const transactionId = tx.id
-
-    // Create balancing journal lines
-    const journalLines = []
-
-    // Debit Beban Gaji
-    journalLines.push({
-      transaction_id: transactionId,
-      account_id: salaryExpenseAccountId,
-      debit: numAmount,
-      credit: 0
-    })
-
-    // Credit Kas/Bank (if paid portion > 0)
-    if (numAmountPaid > 0) {
-      journalLines.push({
-        transaction_id: transactionId,
-        account_id: payment_account_id,
-        debit: 0,
-        credit: numAmountPaid
-      })
-    }
-
-    // Credit Hutang Gaji & Upah (if outstanding > 0)
-    if (numOutstanding > 0) {
-      journalLines.push({
-        transaction_id: transactionId,
+    const { error: jlErr } = await supabaseAdmin.from('journal_lines').insert([
+      {
+        transaction_id: accrualTx.id,
+        account_id: salaryExpenseAccountId,
+        debit: numAmount,
+        credit: 0
+      },
+      {
+        transaction_id: accrualTx.id,
         account_id: salaryLiabilityAccountId,
         debit: 0,
-        credit: numOutstanding
-      })
-    }
+        credit: numAmount
+      }
+    ])
 
-    const { error: jlErr } = await supabase.from('journal_lines').insert(journalLines)
     if (jlErr) {
-      // Rollback transaction
-      await supabase.from('transactions').delete().eq('id', transactionId)
-      return NextResponse.json({ error: `Gagal membuat jurnal penyeimbang: ${jlErr.message}` }, { status: 500 })
+      await supabaseAdmin.from('transactions').delete().eq('id', accrualTx.id)
+      return NextResponse.json(
+        { error: `Gagal membuat baris jurnal akrual gaji: ${jlErr.message}` },
+        { status: 500 }
+      )
     }
 
-    // 3. Insert salary payroll record
-    const actualPaidAt = numAmountPaid > 0 ? (payment_date ? payment_date : new Date().toISOString().split('T')[0]) : null
+    // 5. Insert employee_salaries record
+    const actualPaidDate =
+      numAmountPaid > 0
+        ? payment_date || new Date().toISOString().split('T')[0]
+        : null
 
-    const { data: salaryRecord, error: insErr } = await supabase
+    const { data: salaryRecord, error: insErr } = await supabaseAdmin
       .from('employee_salaries')
       .insert({
         business_id: businessId,
-        employee_id,
+        employee_id: cleanEmployeeId,
         amount: numAmount,
         period,
         payment_status: status,
-        payment_account_id: numAmountPaid > 0 ? payment_account_id : null,
-        paid_at: actualPaidAt,
-        transaction_id: transactionId,
+        payment_account_id: numAmountPaid > 0 ? cleanPaymentAccountId : null,
+        paid_at: actualPaidDate,
+        transaction_id: accrualTx.id,
         amount_paid: numAmountPaid,
         outstanding_amount: numOutstanding
       })
       .select('*')
       .single()
 
-    if (insErr) {
-      // Rollback transaction & journal lines (cascades)
-      await supabase.from('transactions').delete().eq('id', transactionId)
+    if (insErr || !salaryRecord) {
+      await supabaseAdmin.from('transactions').delete().eq('id', accrualTx.id)
       throw insErr
     }
 
-    // 4. Log initial payment in salary_payments if paid portion > 0
-    if (numAmountPaid > 0 && payment_account_id && salaryRecord) {
-      await supabase.from('salary_payments').insert({
-        business_id: businessId,
-        salary_id: salaryRecord.id,
-        transaction_id: transactionId,
-        date: payment_date || new Date().toISOString().split('T')[0],
+    // 6. PHASE 2 (SETTLEMENT): If paid upfront (paid or partial), create separate Settlement Transaction
+    //    Dr. Hutang Gaji & Upah (201100) = numAmountPaid
+    //    Cr. Kas / Bank (cleanPaymentAccountId) = numAmountPaid
+    if (numAmountPaid > 0 && cleanPaymentAccountId && actualPaidDate) {
+      await createSalarySettlementPayment({
+        businessId,
+        salaryId: salaryRecord.id,
+        employeeName: employee.name,
+        period,
         amount: numAmountPaid,
-        payment_method_account_id: payment_account_id,
-        notes: status === 'paid' ? 'Pelunasan Gaji Saat Pencatatan' : 'Pembayaran Sebagian Saat Pencatatan'
+        paymentAccountId: cleanPaymentAccountId,
+        paymentDate: actualPaidDate,
+        notes:
+          status === 'paid'
+            ? 'Pelunasan Gaji Saat Pencatatan'
+            : 'Pembayaran Sebagian Saat Pencatatan',
+        salaryLiabilityAccountId,
+        db: supabaseAdmin
       })
     }
 
-    return NextResponse.json(salaryRecord)
+    const { data: hydratedRecord } = await supabaseAdmin
+      .from('employee_salaries')
+      .select('*, employees!inner(*), salary_payments(*, accounts:payment_method_account_id(id, name, code))')
+      .eq('id', salaryRecord.id)
+      .single()
+
+    return NextResponse.json({
+      ...(hydratedRecord || salaryRecord),
+      auditSummary: {
+        action: 'created',
+        accrualAmount: numAmount,
+        paidAmount: numAmountPaid,
+        outstandingAmount: numOutstanding
+      }
+    })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
 
 export async function PUT(req: Request) {
-  const supabase = await createClient()
-  const access = await verifyAccess(supabase)
-  if (access.error) {
-    return NextResponse.json({ error: access.error }, { status: access.status })
-  }
+  const access = await verifyPayrollAccess()
+  if (access.error) return access.error
 
-  const { businessId } = access
+  const { businessId, supabaseAdmin } = access
   const url = new URL(req.url)
   const id = url.searchParams.get('id')
 
-  if (!id) {
-    return NextResponse.json({ error: 'ID catatan gaji wajib disertakan.' }, { status: 400 })
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: 'ID catatan gaji tidak valid.' }, { status: 400 })
   }
 
-  const body = await req.json()
-  const { employee_id, amount, period, payment_status, payment_account_id, amount_paid, payment_date } = body
+  let body: any
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Payload JSON tidak valid atau kosong.' }, { status: 400 })
+  }
+
+  const {
+    employee_id,
+    amount,
+    period,
+    payment_status,
+    payment_account_id,
+    amount_paid,
+    payment_date,
+    cancel_reason,
+    edit_reason,
+    reset_payments
+  } = body
 
   try {
-    // Get existing record
-    const { data: existing, error: getErr } = await supabase
+    // 1. Fetch existing salary record with employee & payment history
+    const { data: existing, error: getErr } = await supabaseAdmin
       .from('employee_salaries')
-      .select('*, employees!inner(name, business_id)')
+      .select('*, employees!inner(id, name, business_id), salary_payments(*)')
       .eq('id', id)
       .eq('employees.business_id', businessId)
       .single()
 
     if (getErr || !existing) {
-      return NextResponse.json({ error: 'Catatan gaji tidak ditemukan atau Anda tidak memiliki akses.' }, { status: 404 })
+      return NextResponse.json(
+        { error: 'Catatan gaji tidak ditemukan atau Anda tidak memiliki akses.' },
+        { status: 404 }
+      )
     }
 
     if (existing.payment_status === 'cancelled') {
-      return NextResponse.json({ error: 'Catatan gaji yang sudah dibatalkan tidak dapat diubah.' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Catatan gaji yang sudah dibatalkan tidak dapat diubah kembali. Silakan buat catatan gaji baru.' },
+        { status: 400 }
+      )
     }
 
-    // Check if there are any payments registered in salary_payments
-    const { count, error: countErr } = await supabase
-      .from('salary_payments')
-      .select('id', { count: 'exact', head: true })
-      .eq('salary_id', id)
-
-    const hasPayments = count && count > 0
-
-    // Prevent modification if already paid
-    if (existing.payment_status === 'paid' && !payment_status) {
-      return NextResponse.json({ error: 'Catatan gaji tidak dapat diubah karena statusnya sudah lunas. Silakan batalkan transaksi jika ingin mengubah.' }, { status: 400 })
-    }
-
-    // Prevent modification of critical fields if payments have been made
-    if (hasPayments) {
-      if (
-        (employee_id !== undefined && employee_id !== existing.employee_id) ||
-        (amount !== undefined && parseFloat(amount) !== existing.amount) ||
-        (period !== undefined && period !== existing.period) ||
-        (payment_status !== undefined && payment_status !== existing.payment_status) ||
-        (amount_paid !== undefined && parseFloat(amount_paid) !== existing.amount_paid)
-      ) {
-        return NextResponse.json({ error: 'Catatan gaji tidak dapat diubah karena sudah memiliki riwayat pembayaran cicilan. Silakan hapus pembayaran cicilan terlebih dahulu.' }, { status: 400 })
-      }
-    }
-
-    // Load double entry accounts
-    const accountMap = await ensureExpenseAccounts(businessId, supabase)
-    const salaryExpenseAccountId = accountMap['503300']
-    const salaryLiabilityAccountId = accountMap['201100']
+    // 2. Load Double-Entry Accounts
+    const accountMap = await ensureExpenseAccounts(businessId, supabaseAdmin)
+    const salaryExpenseAccountId = accountMap['503300'] // Beban Gaji & Upah
+    const salaryLiabilityAccountId = accountMap['201100'] // Hutang Gaji & Upah
 
     if (!salaryExpenseAccountId || !salaryLiabilityAccountId) {
-      return NextResponse.json({ error: 'Akun pembukuan gaji tidak lengkap.' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Akun pembukuan gaji (503300 / 201100) belum lengkap.' },
+        { status: 400 }
+      )
     }
 
-    // CASE 1: Transitioning to CANCELLED status (Jurnal Pembalik / Reversal Entry)
+    // 3. Ensure legacy combined transaction (if any) is decoupled into pure Accrual + Settlement
+    await ensureDecoupledSalaryLedger({
+      salary: existing,
+      employeeName: existing.employees.name,
+      businessId,
+      salaryExpenseAccountId,
+      salaryLiabilityAccountId,
+      db: supabaseAdmin
+    })
+
+    // Re-fetch payments after potential decoupling
+    const { data: currentPayments } = await supabaseAdmin
+      .from('salary_payments')
+      .select('*')
+      .eq('salary_id', id)
+      .order('date', { ascending: true })
+
+    const activePayments = (currentPayments || []).filter(
+      (p: any) => (p.status || 'active') === 'active'
+    )
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CASE 1: ONE-CLICK CASCADE CANCELLATION (Batal Slip Gaji & Seluruh Pembayarannya)
+    // ═══════════════════════════════════════════════════════════════════════════
     if (payment_status === 'cancelled') {
-      if (hasPayments) {
-        return NextResponse.json({ error: 'Catatan gaji tidak dapat dibatalkan karena sudah memiliki riwayat pembayaran cicilan. Silakan hapus pembayaran cicilan terlebih dahulu.' }, { status: 400 })
+      const cleanCancelReason = cancel_reason ? String(cancel_reason).trim() : 'Pembatalan Slip Gaji'
+      let reversedPaymentsCount = 0
+      let reversedCashTotal = 0
+
+      // Step 1A: Void all active payments (Dr. Kas/Bank, Cr. Hutang Gaji)
+      for (const actPay of activePayments) {
+        await voidSingleSalaryPayment({
+          payment: actPay,
+          salary: existing,
+          employeeName: existing.employees.name,
+          businessId,
+          voidReason: cleanCancelReason,
+          salaryExpenseAccountId,
+          salaryLiabilityAccountId,
+          db: supabaseAdmin
+        })
+        reversedPaymentsCount++
+        reversedCashTotal += Number(actPay.amount) || 0
       }
 
-      const txDate = getPeriodLastDay(existing.period)
+      // Step 1B: Post Accrual Reversal Transaction (Dr. Hutang Gaji, Cr. Beban Gaji)
+      const reversalDate = getPeriodLastDay(existing.period)
       const reversalDesc = `Pembatalan Gaji Karyawan: ${existing.employees.name} (${existing.period})`
 
-      const { data: revTx, error: revTxErr } = await supabase
+      const { data: revTx, error: revTxErr } = await supabaseAdmin
         .from('transactions')
         .insert({
           business_id: businessId,
-          date: txDate,
+          date: reversalDate,
           description: reversalDesc
         })
-        .select('*')
+        .select('id')
         .single()
 
       if (revTxErr || !revTx) {
-        return NextResponse.json({ error: `Gagal membuat transaksi jurnal pembalik: ${revTxErr?.message}` }, { status: 500 })
+        return NextResponse.json(
+          { error: `Gagal membuat transaksi jurnal pembalik gaji: ${revTxErr?.message}` },
+          { status: 500 }
+        )
       }
 
-      const reversalJournalLines = []
-      
-      // Debit whatever was originally credited
-      if (existing.amount_paid > 0) {
-        reversalJournalLines.push({
-          transaction_id: revTx.id,
-          account_id: existing.payment_account_id,
-          debit: existing.amount_paid,
-          credit: 0
-        })
-      }
-      if (existing.outstanding_amount > 0) {
-        reversalJournalLines.push({
+      const fullSalaryAmount = Number(existing.amount) || 0
+      const { error: jlErr } = await supabaseAdmin.from('journal_lines').insert([
+        {
           transaction_id: revTx.id,
           account_id: salaryLiabilityAccountId,
-          debit: existing.outstanding_amount,
+          debit: fullSalaryAmount,
           credit: 0
-        })
-      }
+        },
+        {
+          transaction_id: revTx.id,
+          account_id: salaryExpenseAccountId,
+          debit: 0,
+          credit: fullSalaryAmount
+        }
+      ])
 
-      // Credit Beban Gaji
-      reversalJournalLines.push({
-        transaction_id: revTx.id,
-        account_id: salaryExpenseAccountId,
-        debit: 0,
-        credit: existing.amount
-      })
-
-      const { error: jlErr } = await supabase.from('journal_lines').insert(reversalJournalLines)
       if (jlErr) {
-        await supabase.from('transactions').delete().eq('id', revTx.id)
-        return NextResponse.json({ error: `Gagal membuat jurnal pembalik penyeimbang: ${jlErr.message}` }, { status: 500 })
+        await supabaseAdmin.from('transactions').delete().eq('id', revTx.id)
+        return NextResponse.json(
+          { error: `Gagal membuat jurnal pembalik beban gaji: ${jlErr.message}` },
+          { status: 500 }
+        )
       }
 
-      // Update employee_salaries status and reset paid/outstanding to 0
-      const { data: updatedRecord, error: updErr } = await supabase
+      // Step 1C: Update employee_salaries status to cancelled
+      const { data: cancelledRecord, error: updErr } = await supabaseAdmin
         .from('employee_salaries')
         .update({
           payment_status: 'cancelled',
@@ -384,220 +439,368 @@ export async function PUT(req: Request) {
           outstanding_amount: 0
         })
         .eq('id', id)
-        .select('*')
+        .select('*, employees!inner(*), salary_payments(*, accounts:payment_method_account_id(id, name, code))')
         .single()
 
       if (updErr) {
-        await supabase.from('transactions').delete().eq('id', revTx.id)
+        await supabaseAdmin.from('transactions').delete().eq('id', revTx.id)
         throw updErr
       }
 
-      return NextResponse.json(updatedRecord)
+      return NextResponse.json({
+        ...cancelledRecord,
+        auditSummary: {
+          action: 'cancelled',
+          reversedAccrualAmount: fullSalaryAmount,
+          reversedPaymentsCount,
+          reversedCashTotal,
+          reversalTransactionId: revTx.id
+        }
+      })
     }
 
-    // CASE 2: Regular Edit (update fields and adjust original journal lines)
-    const newEmployeeId = employee_id || existing.employee_id
-    const newAmount = amount !== undefined ? parseFloat(amount) : existing.amount
-    const newPeriod = period || existing.period
-    const newPaymentStatus = payment_status || existing.payment_status
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CASE 2: SMART EDIT & REVISION (Ubah Gaji / Koreksi Pembayaran)
+    // ═══════════════════════════════════════════════════════════════════════════
+    const newEmployeeId = isUuid(employee_id) ? employee_id : existing.employee_id
+    const newAmount = amount !== undefined ? parseFloat(amount) : Number(existing.amount)
+    const newPeriod = period ? String(period).trim() : existing.period
+    const requestedStatus: 'paid' | 'partial' | 'pending' = payment_status || existing.payment_status
+    const cleanPaymentAccountId = isUuid(payment_account_id)
+      ? payment_account_id
+      : isUuid(existing.payment_account_id)
+      ? existing.payment_account_id
+      : null
 
-    if (isNaN(newAmount) || newAmount <= 0) {
-      return NextResponse.json({ error: 'Nominal gaji harus valid dan lebih dari 0.' }, { status: 400 })
+    if (!Number.isFinite(newAmount) || newAmount <= 0) {
+      return NextResponse.json(
+        { error: 'Nominal gaji harus valid dan lebih dari Rp 0.' },
+        { status: 400 }
+      )
     }
 
-    const newAmountPaid = newPaymentStatus === 'paid'
-      ? newAmount
-      : (newPaymentStatus === 'pending' ? 0 : parseFloat(amount_paid !== undefined ? amount_paid : existing.amount_paid))
+    // Verify if changing period/employee conflicts with another active salary
+    if (newEmployeeId !== existing.employee_id || newPeriod !== existing.period) {
+      const { data: conflictRows } = await supabaseAdmin
+        .from('employee_salaries')
+        .select('id, payment_status')
+        .eq('business_id', businessId)
+        .eq('employee_id', newEmployeeId)
+        .eq('period', newPeriod)
+        .neq('id', id)
 
-    if (isNaN(newAmountPaid) || newAmountPaid < 0 || newAmountPaid > newAmount) {
-      return NextResponse.json({ error: 'Jumlah nominal terbayar tidak valid.' }, { status: 400 })
+      const activeConflict = (conflictRows || []).find(
+        (r: any) => r.payment_status !== 'cancelled'
+      )
+      if (activeConflict) {
+        return NextResponse.json(
+          { error: `Karyawan tersebut sudah memiliki catatan gaji aktif pada periode ${newPeriod}.` },
+          { status: 400 }
+        )
+      }
     }
 
-    const newOutstanding = newAmount - newAmountPaid
-    const newPaymentAccountId = newAmountPaid > 0 ? (payment_account_id || existing.payment_account_id) : null
-
-    if (newAmountPaid > 0 && !newPaymentAccountId) {
-      return NextResponse.json({ error: 'Akun pembayaran (Kas/Bank) wajib diisi untuk status Lunas atau Dibayar Sebagian.' }, { status: 400 })
-    }
-
-    // Get employee name (resolve name if employee changed)
+    // Resolve employee name
     let employeeName = existing.employees.name
     if (newEmployeeId !== existing.employee_id) {
-      const { data: newEmployee, error: newEmpErr } = await supabase
+      const { data: newEmp, error: newEmpErr } = await supabaseAdmin
         .from('employees')
         .select('name')
         .eq('id', newEmployeeId)
         .eq('business_id', businessId)
         .single()
 
-      if (newEmpErr || !newEmployee) {
+      if (newEmpErr || !newEmp) {
         return NextResponse.json({ error: 'Karyawan baru tidak ditemukan.' }, { status: 404 })
       }
-      employeeName = newEmployee.name
+      employeeName = newEmp.name
     }
 
-    let transactionId = existing.transaction_id
-    const txDate = getPeriodLastDay(newPeriod)
-    const newDescription = `Pencatatan Gaji Karyawan: ${employeeName} (${newPeriod})`
+    const currentActivePaid = activePayments.reduce(
+      (sum: number, p: any) => sum + (Number(p.amount) || 0),
+      0
+    )
 
-    if (!transactionId) {
-      // Create new transaction if missing
-      const { data: tx, error: txErr } = await supabase
+    const requestedAmountPaid =
+      requestedStatus === 'paid'
+        ? newAmount
+        : requestedStatus === 'pending'
+        ? 0
+        : amount_paid !== undefined
+        ? parseFloat(amount_paid)
+        : currentActivePaid
+
+    if (!Number.isFinite(requestedAmountPaid) || requestedAmountPaid < 0 || requestedAmountPaid > newAmount) {
+      return NextResponse.json(
+        { error: 'Jumlah nominal terbayar tidak valid atau melebihi total gaji.' },
+        { status: 400 }
+      )
+    }
+
+    // Determine if existing active payments need to be voided & replaced
+    const singleActivePay = activePayments.length === 1 ? activePayments[0] : null
+    const accountChanged =
+      singleActivePay &&
+      cleanPaymentAccountId &&
+      singleActivePay.payment_method_account_id !== cleanPaymentAccountId
+    const dateChanged =
+      singleActivePay &&
+      payment_date &&
+      singleActivePay.date !== payment_date
+
+    const shouldResetPayments =
+      Boolean(reset_payments) ||
+      (activePayments.length > 0 &&
+        (requestedStatus === 'pending' ||
+          newAmount < currentActivePaid - 0.01 ||
+          newEmployeeId !== existing.employee_id ||
+          Math.abs(requestedAmountPaid - currentActivePaid) > 0.01 ||
+          Boolean(accountChanged) ||
+          Boolean(dateChanged)))
+
+    let voidedOldPaymentsCount = 0
+    let voidedOldCashTotal = 0
+
+    if (shouldResetPayments && activePayments.length > 0) {
+      if (requestedAmountPaid > 0 && !cleanPaymentAccountId) {
+        return NextResponse.json(
+          { error: 'Silakan pilih akun pembayaran (Kas/Bank) untuk mencatat pembayaran baru.' },
+          { status: 400 }
+        )
+      }
+
+      const reason = edit_reason
+        ? String(edit_reason).trim()
+        : 'Koreksi / Perubahan Data Gaji'
+
+      for (const actPay of activePayments) {
+        await voidSingleSalaryPayment({
+          payment: actPay,
+          salary: existing,
+          employeeName: existing.employees.name,
+          businessId,
+          voidReason: reason,
+          salaryExpenseAccountId,
+          salaryLiabilityAccountId,
+          db: supabaseAdmin
+        })
+        voidedOldPaymentsCount++
+        voidedOldCashTotal += Number(actPay.amount) || 0
+      }
+    }
+
+    // Update or create Accrual Transaction (Dr. Beban Gaji = newAmount, Cr. Hutang Gaji = newAmount)
+    let accrualTxId = existing.transaction_id
+    const accrualDate = getPeriodLastDay(newPeriod)
+    const accrualDesc = `Pencatatan Gaji Karyawan: ${employeeName} (${newPeriod})`
+
+    if (!accrualTxId) {
+      const { data: newTx, error: txErr } = await supabaseAdmin
         .from('transactions')
         .insert({
           business_id: businessId,
-          date: txDate,
-          description: newDescription
+          date: accrualDate,
+          description: accrualDesc
         })
-        .select('*')
+        .select('id')
         .single()
 
-      if (txErr || !tx) {
-        return NextResponse.json({ error: `Gagal membuat transaksi jurnal: ${txErr?.message}` }, { status: 500 })
+      if (txErr || !newTx) {
+        return NextResponse.json(
+          { error: `Gagal membuat transaksi jurnal akrual: ${txErr?.message}` },
+          { status: 500 }
+        )
       }
-      transactionId = tx.id
+      accrualTxId = newTx.id
     } else {
-      // Update transaction description and date
-      await supabase
+      await supabaseAdmin
         .from('transactions')
         .update({
-          date: txDate,
-          description: newDescription
+          date: accrualDate,
+          description: accrualDesc
         })
-        .eq('id', transactionId)
+        .eq('id', accrualTxId)
 
-      // Clear old journal lines to rebuild
-      await supabase.from('journal_lines').delete().eq('transaction_id', transactionId)
+      await supabaseAdmin.from('journal_lines').delete().eq('transaction_id', accrualTxId)
     }
 
-    // Rebuild journal lines
-    const journalLines = []
-
-    // Debit Beban Gaji
-    journalLines.push({
-      transaction_id: transactionId,
-      account_id: salaryExpenseAccountId,
-      debit: newAmount,
-      credit: 0
-    })
-
-    // Credit Kas/Bank (if paid > 0)
-    if (newAmountPaid > 0) {
-      journalLines.push({
-        transaction_id: transactionId,
-        account_id: newPaymentAccountId,
-        debit: 0,
-        credit: newAmountPaid
-      })
-    }
-
-    // Credit Hutang Gaji & Upah (if outstanding > 0)
-    if (newOutstanding > 0) {
-      journalLines.push({
-        transaction_id: transactionId,
+    const { error: accrualJlErr } = await supabaseAdmin.from('journal_lines').insert([
+      {
+        transaction_id: accrualTxId,
+        account_id: salaryExpenseAccountId,
+        debit: newAmount,
+        credit: 0
+      },
+      {
+        transaction_id: accrualTxId,
         account_id: salaryLiabilityAccountId,
         debit: 0,
-        credit: newOutstanding
-      })
+        credit: newAmount
+      }
+    ])
+
+    if (accrualJlErr) {
+      return NextResponse.json(
+        { error: `Gagal memperbarui baris jurnal beban gaji: ${accrualJlErr.message}` },
+        { status: 500 }
+      )
     }
 
-    const { error: jlErr } = await supabase.from('journal_lines').insert(journalLines)
-    if (jlErr) {
-      return NextResponse.json({ error: `Gagal memperbarui jurnal penyeimbang: ${jlErr.message}` }, { status: 500 })
-    }
-
-    // Update existing salary record
-    const updatedPaidAt = newAmountPaid > 0 ? (payment_date || existing.paid_at || new Date().toISOString().split('T')[0]) : null
-
-    const { data: updatedRecord, error: updErr } = await supabase
+    // Update core employee_salaries fields first
+    await supabaseAdmin
       .from('employee_salaries')
       .update({
         employee_id: newEmployeeId,
         amount: newAmount,
         period: newPeriod,
-        payment_status: newPaymentStatus,
-        payment_account_id: newPaymentAccountId,
-        paid_at: updatedPaidAt,
-        transaction_id: transactionId,
-        amount_paid: newAmountPaid,
-        outstanding_amount: newOutstanding
+        transaction_id: accrualTxId
       })
       .eq('id', id)
-      .select('*')
-      .single()
 
-    if (updErr) throw updErr
+    // If there are no active payments remaining (either originally pending or just reset)
+    // and the user specified a paid/partial amount > 0, record the new Settlement Payment!
+    const hasRemainingActivePayments = !shouldResetPayments && activePayments.length > 0
+    if (!hasRemainingActivePayments && requestedAmountPaid > 0) {
+      if (!cleanPaymentAccountId) {
+        return NextResponse.json(
+          { error: 'Akun pembayaran (Kas/Bank) wajib dipilih untuk status Lunas atau Sebagian.' },
+          { status: 400 }
+        )
+      }
+      const effectivePayDate = payment_date || new Date().toISOString().split('T')[0]
+      await createSalarySettlementPayment({
+        businessId,
+        salaryId: id,
+        employeeName,
+        period: newPeriod,
+        amount: requestedAmountPaid,
+        paymentAccountId: cleanPaymentAccountId,
+        paymentDate: effectivePayDate,
+        notes:
+          voidedOldPaymentsCount > 0
+            ? `Pembayaran Gaji (Hasil Revisi Data Gaji)`
+            : requestedStatus === 'paid'
+            ? 'Pelunasan Gaji'
+            : 'Pembayaran Sebagian Gaji',
+        salaryLiabilityAccountId,
+        db: supabaseAdmin
+      })
+    }
 
-    return NextResponse.json(updatedRecord)
+    // Recalculate final status & totals from active salary_payments
+    const { updatedSalary, netPaid, outstanding, paymentStatus } = await recalculateSalaryStatus({
+      salaryId: id,
+      totalAmount: newAmount,
+      db: supabaseAdmin
+    })
+
+    return NextResponse.json({
+      ...updatedSalary,
+      auditSummary: {
+        action: 'updated',
+        newAmount,
+        netPaid,
+        outstanding,
+        paymentStatus,
+        voidedOldPaymentsCount,
+        voidedOldCashTotal
+      }
+    })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
 
 export async function DELETE(req: Request) {
-  const supabase = await createClient()
-  const access = await verifyAccess(supabase)
-  if (access.error) {
-    return NextResponse.json({ error: access.error }, { status: access.status })
-  }
+  const access = await verifyPayrollAccess()
+  if (access.error) return access.error
 
-  const { businessId } = access
+  const { businessId, supabaseAdmin } = access
   const url = new URL(req.url)
   const id = url.searchParams.get('id')
 
-  if (!id) {
-    return NextResponse.json({ error: 'ID catatan gaji wajib disertakan.' }, { status: 400 })
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: 'ID catatan gaji tidak valid.' }, { status: 400 })
   }
 
   try {
-    // Fetch existing salary first
-    const { data: existing, error: getErr } = await supabase
+    const { data: existing, error: getErr } = await supabaseAdmin
       .from('employee_salaries')
-      .select('*, employees!inner(name, business_id)')
+      .select('*, employees!inner(name, business_id), salary_payments(*)')
       .eq('id', id)
       .eq('employees.business_id', businessId)
       .single()
 
     if (getErr || !existing) {
-      return NextResponse.json({ error: 'Catatan gaji tidak ditemukan atau Anda tidak memiliki akses.' }, { status: 404 })
+      return NextResponse.json(
+        { error: 'Catatan gaji tidak ditemukan atau Anda tidak memiliki akses.' },
+        { status: 404 }
+      )
     }
 
-    // Check if there are any payments registered in salary_payments
-    const { count, error: countErr } = await supabase
-      .from('salary_payments')
-      .select('id', { count: 'exact', head: true })
-      .eq('salary_id', id)
+    const allPayments = existing.salary_payments || []
+    const activePayments = allPayments.filter(
+      (p: any) => (p.status || 'active') === 'active'
+    )
 
-    if (count && count > 0) {
-      return NextResponse.json({ error: 'Catatan gaji tidak dapat dihapus karena sudah memiliki riwayat pembayaran. Silakan hapus pembayaran terlebih dahulu.' }, { status: 400 })
+    if (activePayments.length > 0 && existing.payment_status !== 'cancelled') {
+      return NextResponse.json(
+        {
+          error:
+            'Catatan gaji ini masih memiliki pembayaran aktif. Silakan klik tombol "Batal" pada daftar gaji (untuk membalik jurnal otomatis) atau batalkan pembayarannya terlebih dahulu.'
+        },
+        { status: 400 }
+      )
     }
 
-    // 1. Delete salary record (payment logs would cascade delete if any did exist, but we blocked above)
-    const { error: delSalErr } = await supabase
+    // Collect all related transaction IDs (accrual, payments, and payment reversals)
+    const txIdsToDelete = new Set<string>()
+    if (isUuid(existing.transaction_id)) {
+      txIdsToDelete.add(existing.transaction_id)
+    }
+    for (const p of allPayments) {
+      if (isUuid(p.transaction_id)) txIdsToDelete.add(p.transaction_id)
+      if (isUuid(p.reversal_transaction_id)) txIdsToDelete.add(p.reversal_transaction_id)
+    }
+
+    // 1. Delete salary record
+    const { error: delSalErr } = await supabaseAdmin
       .from('employee_salaries')
       .delete()
       .eq('id', id)
 
     if (delSalErr) {
-      return NextResponse.json({ error: `Gagal menghapus catatan gaji: ${delSalErr.message}` }, { status: 500 })
+      return NextResponse.json(
+        { error: `Gagal menghapus catatan gaji: ${delSalErr.message}` },
+        { status: 500 }
+      )
     }
 
-    // 2. Delete original transaction
-    if (existing.transaction_id) {
-      await supabase.from('transactions').delete().eq('id', existing.transaction_id)
-    }
-
-    // 3. Delete any reversal transactions if cancelled
-    if (existing.payment_status === 'cancelled') {
-      const reversalDesc = `Pembatalan Gaji Karyawan: ${existing.employees.name} (${existing.period})`
-      await supabase
+    // 2. Delete collected transactions
+    if (txIdsToDelete.size > 0) {
+      await supabaseAdmin
         .from('transactions')
         .delete()
-        .eq('business_id', businessId)
-        .eq('description', reversalDesc)
+        .in('id', Array.from(txIdsToDelete))
     }
 
-    return NextResponse.json({ success: true })
+    // 3. Delete any accrual reversal transactions if cancelled
+    const cleanPeriod = String(existing.period).split(' (Batal')[0]
+    const reversalDescPrefix = `Pembatalan Gaji Karyawan: ${existing.employees.name} (${cleanPeriod})`
+    await supabaseAdmin
+      .from('transactions')
+      .delete()
+      .eq('business_id', businessId)
+      .ilike('description', `${reversalDescPrefix}%`)
+
+    return NextResponse.json({
+      success: true,
+      auditSummary: {
+        action: 'deleted',
+        employeeName: existing.employees.name,
+        period: existing.period
+      }
+    })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
