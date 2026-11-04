@@ -187,24 +187,37 @@ export async function PUT(
     // If it's a cancellation request
     if (status === 'cancelled' && existing.status !== 'cancelled') {
       // 1. Update status
-      const { error: cancelErr } = await supabaseAdmin
+      const { data: cancelledOrder, error: cancelErr } = await supabaseAdmin
         .from('orders')
         .update({ status: 'cancelled' })
         .eq('id', id)
+        .select('*')
+        .single()
 
       if (cancelErr) throw cancelErr
 
       // 2. Delegate Reversal to unified orderLedger service
       // This automatically restores stock safely via stock_moves and reverses financial journals
-      await syncOrderToLedger(id, supabaseAdmin)
+      await syncOrderToLedger(id, supabaseAdmin, cancelledOrder)
 
       invalidateInvoicesCache(businessId)
       return NextResponse.json({ success: true, message: 'Invoice berhasil dibatalkan' })
     }
 
-    // Lock financials if already Paid (completed)
-    if (existing.status === 'completed') {
-      // Paid invoices can update customization/appearance, courier, resi, and source_order attribution
+    // Check if it's purely a design/customization update on an already completed & paid invoice
+    const isPaymentUpdateRequested =
+      payment_status !== undefined ||
+      amount_paid !== undefined ||
+      payment_method !== undefined ||
+      payment_method_account_id !== undefined ||
+      payment_date !== undefined
+
+    const isStatusOrItemsUpdateRequested =
+      (status !== undefined && status !== existing.status) ||
+      (items !== undefined && Array.isArray(items))
+
+    if (existing.status === 'completed' && existing.payment_status === 'paid' && !isPaymentUpdateRequested && !isStatusOrItemsUpdateRequested) {
+      // Fast-path for pure design/customization updates on completed & paid invoices
       const currentRaw = (existing.raw_source_data || {}) as Record<string, any>
       const updatedRaw = {
         ...currentRaw,
@@ -248,24 +261,27 @@ export async function PUT(
       return NextResponse.json({ success: true, message: 'Desain, Pengiriman, & Sumber Invoice diperbarui', order: updated })
     }
 
-    // For Draft or Unpaid (pending/processing), we can edit details
-    // If client provided new values, calculate or use them
+    // For all other updates (including updating payment on a completed invoice, or editing draft/processing/shipped invoices)
+    const isItemsLocked = existing.status === 'completed' && existing.payment_status === 'paid' && (payment_status === undefined || payment_status === 'paid')
+
     let resolvedCustomerId = existing.customer_id
-    if (customer_name && customer_phone) {
-      const { customer: resolvedCust } = await resolveOrCreateCustomer(
-        {
-          businessId,
-          name: customer_name,
-          phone: customer_phone,
-          email: customer_email,
-          address_data: customer_address ?? null,
-          reuseExistingOnPhoneMatch: true
-        },
-        supabaseAdmin
-      )
-      resolvedCustomerId = resolvedCust.id
-    } else if (isUuid(customer_id)) {
-      resolvedCustomerId = customer_id
+    if (!isItemsLocked) {
+      if (customer_name && customer_phone) {
+        const { customer: resolvedCust } = await resolveOrCreateCustomer(
+          {
+            businessId,
+            name: customer_name,
+            phone: customer_phone,
+            email: customer_email,
+            address_data: customer_address ?? null,
+            reuseExistingOnPhoneMatch: true
+          },
+          supabaseAdmin
+        )
+        resolvedCustomerId = resolvedCust.id
+      } else if (isUuid(customer_id)) {
+        resolvedCustomerId = customer_id
+      }
     }
 
     const currentRaw = (existing.raw_source_data || {}) as Record<string, any>
@@ -300,13 +316,13 @@ export async function PUT(
     let finalItems = existing.items_json
     let totalQty = existing.total_qty
     let subtotal = existing.subtotal
-    let finalGrandTotal = existing.grand_total
+    let finalGrandTotal = Number(existing.grand_total || 0)
 
-    if (items && Array.isArray(items)) {
+    if (!isItemsLocked && items && Array.isArray(items)) {
       totalQty = items.reduce((sum: number, item: any) => sum + Number(item.quantity || 1), 0)
       subtotal = items.reduce((sum: number, item: any) => sum + (Number(item.price || 0) * Number(item.quantity || 1)), 0)
       const calculatedDiscountAmount = items.reduce((sum: number, item: any) => sum + (Number(item.discount || 0) * Number(item.quantity || 1)), 0)
-      finalGrandTotal = grand_total !== undefined ? grand_total : (subtotal - calculatedDiscountAmount + Number(shipping_cost || 0) + Number(other_fees || 0))
+      finalGrandTotal = grand_total !== undefined ? Number(grand_total) : (subtotal - calculatedDiscountAmount + Number(shipping_cost || 0) + Number(other_fees || 0))
 
       finalItems = items.map((item: any, idx: number) => {
         const price = Number(item.price || 0)
@@ -331,28 +347,26 @@ export async function PUT(
           ...(costPrice !== undefined ? { cost_price: costPrice } : {})
         }
       })
-    } else {
-      if (grand_total !== undefined) {
-        finalGrandTotal = grand_total
-      }
+    } else if (!isItemsLocked && grand_total !== undefined) {
+      finalGrandTotal = Number(grand_total)
     }
 
     const nextStatus = status || existing.status
 
-    const calculatedDiscountAmount = items && Array.isArray(items)
+    const calculatedDiscountAmount = !isItemsLocked && items && Array.isArray(items)
       ? items.reduce((sum: number, item: any) => sum + (Number(item.discount || 0) * Number(item.quantity || 1)), 0)
-      : (discount_amount !== undefined ? Number(discount_amount) : existing.discount_amount)
+      : (!isItemsLocked && discount_amount !== undefined ? Number(discount_amount) : existing.discount_amount)
 
     const updatePayload: Record<string, any> = {
       customer_id: resolvedCustomerId,
       source_platform: source_platform !== undefined ? source_platform : existing.source_platform,
-      order_date: order_date ? new Date(order_date).toISOString() : existing.order_date,
-      order_date_utc: order_date ? new Date(order_date).toISOString() : existing.order_date_utc,
+      order_date: !isItemsLocked && order_date ? new Date(order_date).toISOString() : existing.order_date,
+      order_date_utc: !isItemsLocked && order_date ? new Date(order_date).toISOString() : existing.order_date_utc,
       total_qty: totalQty,
       subtotal: subtotal,
-      shipping_cost: shipping_cost !== undefined ? Number(shipping_cost) : existing.shipping_cost,
+      shipping_cost: !isItemsLocked && shipping_cost !== undefined ? Number(shipping_cost) : existing.shipping_cost,
       discount_amount: calculatedDiscountAmount,
-      other_fees: other_fees !== undefined ? Number(other_fees) : existing.other_fees,
+      other_fees: !isItemsLocked && other_fees !== undefined ? Number(other_fees) : existing.other_fees,
       grand_total: finalGrandTotal,
       status: nextStatus,
       items_json: finalItems,
@@ -365,8 +379,11 @@ export async function PUT(
         updatePayload.amount_paid = finalGrandTotal
       } else if (payment_status === 'unpaid') {
         updatePayload.amount_paid = 0
-      } else if (payment_status === 'partial' && amount_paid !== undefined) {
-        updatePayload.amount_paid = Math.min(finalGrandTotal, Math.max(0, Number(amount_paid)))
+      } else if (payment_status === 'partial') {
+        const requestedPartial = amount_paid !== undefined ? Number(amount_paid) : Number(existing.amount_paid || 0)
+        const clampedPartial = Math.min(finalGrandTotal, Math.max(0, requestedPartial))
+        updatePayload.amount_paid = clampedPartial
+        updatePayload.payment_status = clampedPartial >= finalGrandTotal - 0.01 ? 'paid' : (clampedPartial > 0 ? 'partial' : 'unpaid')
       }
     } else if (amount_paid !== undefined) {
       const numPaid = Math.min(finalGrandTotal, Math.max(0, Number(amount_paid)))
@@ -374,8 +391,23 @@ export async function PUT(
       updatePayload.payment_status = numPaid >= finalGrandTotal - 0.01 ? 'paid' : (numPaid > 0 ? 'partial' : 'unpaid')
     }
 
-    if (payment_method !== undefined) {
-      updatePayload.payment_method = payment_method
+    let resolvedPayAccId: string | null = isUuid(payment_method_account_id) ? payment_method_account_id : null
+    let resolvedPayMethodName: string | null = payment_method !== undefined ? payment_method : existing.payment_method
+
+    if (isPaymentUpdateRequested) {
+      const paymentAccounts = await getActivePaymentAccounts(businessId, supabaseAdmin)
+      const matchedAcc = resolvePaymentAccountFromCOA(
+        paymentAccounts,
+        payment_method || existing.payment_method,
+        resolvedPayAccId
+      )
+      resolvedPayAccId = matchedAcc?.id || resolvedPayAccId
+      resolvedPayMethodName = matchedAcc?.name || payment_method || existing.payment_method || 'Bank Transfer'
+      if (updatePayload.payment_status === 'unpaid') {
+        updatePayload.payment_method = null
+      } else if (resolvedPayMethodName) {
+        updatePayload.payment_method = resolvedPayMethodName
+      }
     }
 
     if (!existing.user_id) {
@@ -393,91 +425,127 @@ export async function PUT(
     if (updErr) throw updErr
 
     // 3.4. Synchronize order_payments if payment details were updated in Edit Invoice
-    if (payment_status !== undefined || amount_paid !== undefined || payment_method_account_id !== undefined) {
+    if (isPaymentUpdateRequested) {
       const targetAmountPaid = Number(updated.amount_paid || 0)
-      const { data: existingPays } = await supabaseAdmin
+      const { data: allPays } = await supabaseAdmin
         .from('order_payments')
         .select('*')
         .eq('order_id', id)
-        .eq('payment_kind', 'payment')
         .order('created_at', { ascending: true })
 
-      const paymentAccounts = await getActivePaymentAccounts(businessId, supabaseAdmin)
-      const matchedAcc = resolvePaymentAccountFromCOA(
-        paymentAccounts,
-        payment_method || updated.payment_method,
-        isUuid(payment_method_account_id) ? payment_method_account_id : null
+      const reversedIds = new Set(
+        (allPays || [])
+          .filter((p: any) => p.payment_kind === 'void' || p.payment_kind === 'refund')
+          .map((p: any) => p.voided_payment_id)
+          .filter(Boolean)
       )
-      const resolvedPayAccId = matchedAcc?.id || (isUuid(payment_method_account_id) ? payment_method_account_id : null)
-      const resolvedPayMethodName = matchedAcc?.name || payment_method || updated.payment_method || 'Bank Transfer'
+      const existingPays = (allPays || []).filter(
+        (p: any) => p.payment_kind === 'payment' && !reversedIds.has(p.id)
+      )
 
       const payDateObj = payment_date ? new Date(payment_date) : (order_date ? new Date(order_date) : new Date())
+      const effectiveMethodName = resolvedPayMethodName || updated.payment_method || 'Bank Transfer'
 
-      if (targetAmountPaid > 0) {
-        if (!existingPays || existingPays.length === 0) {
-          await supabaseAdmin.from('order_payments').insert({
-            payment_kind: 'payment',
-            business_id: businessId,
-            order_id: id,
-            date: payDateObj.toISOString().split('T')[0],
-            amount: targetAmountPaid,
-            payment_method: resolvedPayMethodName,
-            payment_method_account_id: resolvedPayAccId,
-            notes: `Pembayaran ${updated.source_platform || 'Invoice'} #${updated.order_number}`,
-            created_at: payDateObj.toISOString()
-          })
-        } else if (existingPays.length === 1) {
-          const singlePay = existingPays[0]
-          const nextAccId = resolvedPayAccId || singlePay.payment_method_account_id
-          const hasChanged = Number(singlePay.amount) !== targetAmountPaid || singlePay.payment_method_account_id !== nextAccId || singlePay.payment_method !== resolvedPayMethodName
-          if (hasChanged) {
-            if (singlePay.transaction_id) {
-              await supabaseAdmin.from('transactions').delete().eq('id', singlePay.transaction_id)
-            } else {
-              // Legacy fallback: remove unlinked payment transactions for this order before re-syncing
-              const { data: legacyPayTxs } = await supabaseAdmin
-                .from('transactions')
-                .select('id, description')
-                .eq('order_id', id)
-              const toRemove = (legacyPayTxs || []).filter((tx: any) =>
-                (tx.description?.includes('Pembayaran') || tx.description?.includes('Pelunasan') || tx.description?.includes('Payment')) &&
-                !tx.description?.includes('Pembatalan') && !tx.description?.includes('Retur') && !tx.description?.includes('Refund') && !tx.description?.includes('Void')
-              )
-              if (toRemove.length > 0) {
-                await supabaseAdmin.from('transactions').delete().in('id', toRemove.map((t: any) => t.id))
-              }
-            }
-            await supabaseAdmin
-              .from('order_payments')
-              .update({
-                amount: targetAmountPaid,
-                payment_method: resolvedPayMethodName,
-                payment_method_account_id: nextAccId,
-                transaction_id: null,
-                ...(payment_date ? { date: payDateObj.toISOString().split('T')[0], created_at: payDateObj.toISOString() } : {})
-              })
-              .eq('id', singlePay.id)
-          }
+      // Helper to remove existing non-reversal payment transactions for this order when re-building payment ledger
+      const removeExistingPaymentTransactions = async (specificTxIds?: string[]) => {
+        if (specificTxIds && specificTxIds.length > 0) {
+          await supabaseAdmin.from('transactions').delete().in('id', specificTxIds)
         }
-      } else if (payment_status === 'unpaid') {
-        if (existingPays && existingPays.length > 0) {
-          const txIds = existingPays.map((p: any) => p.transaction_id).filter(Boolean)
-          if (txIds.length > 0) {
-            await supabaseAdmin.from('transactions').delete().in('id', txIds)
-          }
-          await supabaseAdmin.from('order_payments').delete().in('id', existingPays.map((p: any) => p.id))
-        }
-        // Also clean up any legacy unlinked payment transactions if marked unpaid
         const { data: legacyPayTxs } = await supabaseAdmin
           .from('transactions')
           .select('id, description')
           .eq('order_id', id)
         const toRemove = (legacyPayTxs || []).filter((tx: any) =>
           (tx.description?.includes('Pembayaran') || tx.description?.includes('Pelunasan') || tx.description?.includes('Payment')) &&
-          !tx.description?.includes('Pembatalan') && !tx.description?.includes('Retur') && !tx.description?.includes('Refund') && !tx.description?.includes('Void')
+          !tx.description?.includes('Pembatalan') && !tx.description?.includes('Retur') && !tx.description?.includes('Refund') && !tx.description?.includes('Void') && !tx.description?.includes('Reversal')
         )
         if (toRemove.length > 0) {
           await supabaseAdmin.from('transactions').delete().in('id', toRemove.map((t: any) => t.id))
+        }
+      }
+
+      if (targetAmountPaid > 0) {
+        if (existingPays.length === 0) {
+          await removeExistingPaymentTransactions()
+          const { error: insPayErr } = await supabaseAdmin.from('order_payments').insert({
+            payment_kind: 'payment',
+            business_id: businessId,
+            order_id: id,
+            date: payDateObj.toISOString().split('T')[0],
+            amount: targetAmountPaid,
+            payment_method: effectiveMethodName,
+            payment_method_account_id: resolvedPayAccId,
+            notes: `Pembayaran ${updated.source_platform || 'Invoice'} #${updated.order_number}`,
+            created_at: payDateObj.toISOString()
+          })
+          if (insPayErr) {
+            console.warn('[EditInvoice] Failed to insert order_payments:', insPayErr.message)
+          }
+        } else if (existingPays.length === 1) {
+          const singlePay = existingPays[0]
+          const nextAccId = resolvedPayAccId || singlePay.payment_method_account_id
+          const nextDateStr = payment_date ? payDateObj.toISOString().split('T')[0] : singlePay.date
+          const hasChanged =
+            Math.abs(Number(singlePay.amount) - targetAmountPaid) > 0.01 ||
+            singlePay.payment_method_account_id !== nextAccId ||
+            singlePay.payment_method !== effectiveMethodName ||
+            (payment_date && singlePay.date !== nextDateStr) ||
+            !singlePay.transaction_id
+
+          if (hasChanged) {
+            await removeExistingPaymentTransactions(singlePay.transaction_id ? [singlePay.transaction_id] : [])
+            await supabaseAdmin
+              .from('order_payments')
+              .update({
+                amount: targetAmountPaid,
+                payment_method: effectiveMethodName,
+                payment_method_account_id: nextAccId,
+                transaction_id: null,
+                ...(payment_date ? { date: nextDateStr, created_at: payDateObj.toISOString() } : {})
+              })
+              .eq('id', singlePay.id)
+          }
+        } else {
+          // Multiple active payments exist (e.g., previous DP + new settlement in Edit Invoice)
+          const currentSum = existingPays.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0)
+          const diff = targetAmountPaid - currentSum
+
+          if (diff > 0.01) {
+            // Add the delta as a new installment payment row so history of previous DP is preserved
+            await supabaseAdmin.from('order_payments').insert({
+              payment_kind: 'payment',
+              business_id: businessId,
+              order_id: id,
+              date: payDateObj.toISOString().split('T')[0],
+              amount: diff,
+              payment_method: effectiveMethodName,
+              payment_method_account_id: resolvedPayAccId,
+              notes: `${updated.payment_status === 'paid' ? 'Pelunasan' : 'Pembayaran Lanjutan'} ${updated.source_platform || 'Invoice'} #${updated.order_number}`,
+              created_at: payDateObj.toISOString()
+            })
+          } else if (diff < -0.01) {
+            // Total paid was reduced below previous multi-payment sum: consolidate into single updated payment record
+            const oldTxIds = existingPays.map((p: any) => p.transaction_id).filter(Boolean)
+            await removeExistingPaymentTransactions(oldTxIds)
+            await supabaseAdmin.from('order_payments').delete().in('id', existingPays.map((p: any) => p.id))
+            await supabaseAdmin.from('order_payments').insert({
+              payment_kind: 'payment',
+              business_id: businessId,
+              order_id: id,
+              date: payDateObj.toISOString().split('T')[0],
+              amount: targetAmountPaid,
+              payment_method: effectiveMethodName,
+              payment_method_account_id: resolvedPayAccId,
+              notes: `Pembayaran ${updated.source_platform || 'Invoice'} #${updated.order_number}`,
+              created_at: payDateObj.toISOString()
+            })
+          }
+        }
+      } else if (updated.payment_status === 'unpaid' || targetAmountPaid <= 0) {
+        const oldTxIds = existingPays.map((p: any) => p.transaction_id).filter(Boolean)
+        await removeExistingPaymentTransactions(oldTxIds)
+        if (existingPays.length > 0) {
+          await supabaseAdmin.from('order_payments').delete().in('id', existingPays.map((p: any) => p.id))
         }
       }
     }
@@ -504,11 +572,25 @@ export async function PUT(
       }
     }
 
-    // Always sync status change or invoice details to ledger via unified orderLedger service
-    await syncOrderToLedger(id, supabaseAdmin)
+    // Always sync status change or invoice details to ledger via unified orderLedger service (pass preloaded updated order)
+    const syncRes = await syncOrderToLedger(id, supabaseAdmin, {
+      ...updated,
+      payment_method_account_id: resolvedPayAccId
+    })
+    if (!syncRes.success) {
+      throw new Error(syncRes.message)
+    }
 
     invalidateInvoicesCache(businessId)
-    return NextResponse.json({ success: true, order: updated })
+    return NextResponse.json({
+      success: true,
+      message: updated.payment_status === 'paid'
+        ? 'Perubahan invoice & pelunasan pembayaran berhasil disimpan dan dijurnal ke Buku Besar'
+        : updated.payment_status === 'partial'
+        ? 'Perubahan invoice & pembayaran DP berhasil disimpan dan dijurnal ke Buku Besar'
+        : 'Perubahan invoice berhasil disimpan',
+      order: updated
+    })
   } catch (err: any) {
     console.error('Update Invoice Error:', err)
     return NextResponse.json({ error: err.message || 'Internal server error' }, { status: 500 })

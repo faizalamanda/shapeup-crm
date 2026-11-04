@@ -221,21 +221,16 @@ export default function NewInvoicePage() {
         setBusinessName(activeBusiness.name || 'Bisnis Saya')
         setStaffName(userProfile?.full_name || userProfile?.email?.split('@')[0] || 'Admin')
 
-        // Fetch active COA payment accounts in parallel (Customers handled via reactive useCustomerDirectory)
-        const [directAccRes, accRes] = await Promise.all([
-          supabase
-            .from('accounts')
-            .select('*')
-            .eq('business_id', activeBusiness.id)
-            .eq('type', 'ASSET')
-            .order('code', { ascending: true }),
-          fetch('/api/orders/invoices?only_accounts=true')
+        // Fetch active COA payment accounts & products in parallel (Customers handled via reactive useCustomerDirectory)
+        const [accRes, prodData] = await Promise.all([
+          fetch('/api/orders/invoices?only_accounts=true'),
+          fetchAllBusinessProducts<Product>(supabase, activeBusiness.id)
         ])
 
-        let accList: COAAccount[] = ((directAccRes.data || []) as COAAccount[]).filter(isCashBankAccount)
-        if (accList.length === 0 && accRes.ok) {
-          const accJson = await accRes.json()
-          if (accJson.success && Array.isArray(accJson.payment_accounts)) {
+        let accList: COAAccount[] = []
+        if (accRes.ok) {
+          const accJson = await accRes.json().catch(() => null)
+          if (accJson?.success && Array.isArray(accJson.payment_accounts)) {
             accList = accJson.payment_accounts as COAAccount[]
           }
         }
@@ -246,8 +241,6 @@ export default function NewInvoicePage() {
           setPaymentMethod(defaultAcc.name)
         }
 
-        // Fetch all products with variants (Chunked to bypass 1,000 PostgREST limit)
-        const prodData = await fetchAllBusinessProducts<Product>(supabase, activeBusiness.id)
         if (prodData) setProducts(prodData)
       } catch (err) {
         console.error('Error loading master data:', err)
@@ -393,6 +386,10 @@ export default function NewInvoicePage() {
       finalAmountPaid = grandTotal
     } else if (finalPayStatus === 'partial') {
       finalAmountPaid = Math.min(grandTotal, Math.max(0, Number(inputAmountPaid) || 0))
+      if (finalAmountPaid <= 0) {
+        setErrorMessage('Nominal pembayaran sebagian (DP) harus lebih besar dari Rp 0.')
+        return
+      }
     }
 
     const finalSourcePlatform = sourcePlatform === 'Lainnya' ? (customSourcePlatform.trim() || 'Lainnya') : sourcePlatform
@@ -446,10 +443,14 @@ export default function NewInvoicePage() {
         body: JSON.stringify(payload)
       })
 
-      const result = await response.json()
+      const result = await response.json().catch(() => ({}))
 
       if (!response.ok) {
         throw new Error(result.error || 'Gagal menyimpan invoice')
+      }
+
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('shapeup_invoices_cache')
       }
 
       if (isNewCustomer && result.order?.customer_id) {
@@ -467,7 +468,7 @@ export default function NewInvoicePage() {
         )
       }
 
-      router.push(`/orders/invoices/${result.order.id}`)
+      router.push(`/orders/invoices/${result.order.id}?created=1&pay=${finalPayStatus}`)
       router.refresh()
     } catch (err: any) {
       setErrorMessage(err.message || 'Terjadi kesalahan sistem.')

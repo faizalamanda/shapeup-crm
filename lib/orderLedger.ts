@@ -340,8 +340,11 @@ export async function syncOrderToLedger(
           salesTx.date = expectedSalesDate
         }
       }
+    }
 
-      // 6.2 PAYMENT POSTING
+    // 6.2 PAYMENT POSTING (Decoupled from isSalesTriggered so payments on pending/draft or completed orders always journalize)
+    const isReversalOrderStatus = ['cancelled', 'failed', 'refunded', 'returned'].includes(status)
+    if (!isReversalOrderStatus) {
       const numGrandTotal = parseFloat(grand_total) || 0
       const rawOrderData = order.raw_source_data || {}
       const hasDatePaid = !!rawOrderData.date_paid
@@ -358,6 +361,7 @@ export async function syncOrderToLedger(
           .from('order_payments')
           .select('*')
           .eq('order_id', orderId)
+          .order('created_at', { ascending: true })
 
         const reversedIds = new Set(
           (allOrderPays || [])
@@ -372,6 +376,8 @@ export async function syncOrderToLedger(
         let paymentLines: any[] = []
         let totalPaymentAmount = 0
         let effectivePostResult: any = null
+
+        const existingTxIds = new Set((txs || []).map((t: any) => t.id))
 
         if (!paymentTx) {
           if (existingOrderPays && existingOrderPays.length > 0) {
@@ -401,7 +407,7 @@ export async function syncOrderToLedger(
             }
           } else {
             // Single-payment fallback (e.g. WooCommerce or legacy orders)
-            const payAccId = isCod ? accountMap['101000'] : resolveFallbackAccountId(order.payment_method)
+            const payAccId = isCod ? accountMap['101000'] : resolveFallbackAccountId(order.payment_method, order.payment_method_account_id)
             const effectivePayAmount = isPartialPaid ? Number(order.amount_paid) : numGrandTotal
             if (effectivePayAmount > 0) {
               paymentLines = [
@@ -425,46 +431,85 @@ export async function syncOrderToLedger(
 
             // Link transaction_id back to order_payments if they existed without transaction_id
             if (effectivePostResult?.transactionId && existingOrderPays && existingOrderPays.length > 0) {
-              const allPayIds = existingOrderPays.map((p: any) => p.id)
-              if (allPayIds.length > 0) {
+              for (const p of existingOrderPays) {
+                const resolvedAcc = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
                 await supabase
                   .from('order_payments')
-                  .update({ 
-                    transaction_id: effectivePostResult.transactionId
+                  .update({
+                    transaction_id: effectivePostResult.transactionId,
+                    payment_method_account_id: resolvedAcc
                   })
-                  .in('id', allPayIds)
+                  .eq('id', p.id)
               }
             }
           }
         } else if (paymentTx && existingOrderPays && existingOrderPays.length > 0) {
-          // If paymentTx already exists but there are new unlinked installment payments in order_payments
-          const unlinkedPays = existingOrderPays.filter((p: any) => !p.transaction_id && Number(p.amount) > 0)
-          for (const p of unlinkedPays) {
+          // If paymentTx already exists:
+          // Case A: Single active payment whose amount/account/date was edited in Edit Invoice
+          if (existingOrderPays.length === 1) {
+            const p = existingOrderPays[0]
             const pAmt = Number(p.amount) || 0
-            if (pAmt <= 0) continue
             const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
             const pDate = p.created_at || (p.date ? `${p.date}T12:00:00Z` : paymentDate)
-            const pLines = [
-              { account_id: accId, debit: pAmt, credit: 0 },
-              { account_id: accountMap['103000'], debit: 0, credit: pAmt }
-            ]
-            const installmentTx = await postJournalTransaction(
-              businessId,
-              orderId,
-              pDate,
-              `Pembayaran ${platform} #${orderNumber} (${p.notes || `Ref ${String(p.id).slice(0, 8)}`})`,
-              pLines,
-              supabase,
-              false
-            )
-            if (installmentTx?.transactionId) {
+            const existingLines = paymentTx.journal_lines || []
+            const debitLine = existingLines.find((jl: any) => Number(jl.debit) > 0)
+            const creditLine = existingLines.find((jl: any) => Number(jl.credit) > 0)
+
+            const linesMismatch =
+              !debitLine ||
+              !creditLine ||
+              Math.abs(Number(debitLine.debit) - pAmt) > 0.01 ||
+              Math.abs(Number(creditLine.credit) - pAmt) > 0.01 ||
+              debitLine.account_id !== accId
+
+            if (linesMismatch && pAmt > 0) {
+              await supabase.from('journal_lines').delete().eq('transaction_id', paymentTx.id)
+              await supabase.from('journal_lines').insert([
+                { transaction_id: paymentTx.id, account_id: accId, debit: pAmt, credit: 0 },
+                { transaction_id: paymentTx.id, account_id: accountMap['103000'], debit: 0, credit: pAmt }
+              ])
+            }
+            if (pDate && paymentTx.date !== pDate) {
+              await supabase.from('transactions').update({ date: pDate }).eq('id', paymentTx.id)
+            }
+            if (p.transaction_id !== paymentTx.id || p.payment_method_account_id !== accId) {
               await supabase
                 .from('order_payments')
-                .update({ 
-                  transaction_id: installmentTx.transactionId,
-                  payment_method_account_id: accId
-                })
+                .update({ transaction_id: paymentTx.id, payment_method_account_id: accId })
                 .eq('id', p.id)
+            }
+          } else {
+            // Case B: Multiple installment payments — post any unlinked or orphaned installment payments
+            const unlinkedPays = existingOrderPays.filter(
+              (p: any) => (!p.transaction_id || !existingTxIds.has(p.transaction_id)) && Number(p.amount) > 0
+            )
+            for (const p of unlinkedPays) {
+              const pAmt = Number(p.amount) || 0
+              if (pAmt <= 0) continue
+              const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
+              const pDate = p.created_at || (p.date ? `${p.date}T12:00:00Z` : paymentDate)
+              const pLines = [
+                { account_id: accId, debit: pAmt, credit: 0 },
+                { account_id: accountMap['103000'], debit: 0, credit: pAmt }
+              ]
+              const installmentTx = await postJournalTransaction(
+                businessId,
+                orderId,
+                pDate,
+                `Pembayaran ${platform} #${orderNumber} (${p.notes || `Ref ${String(p.id).slice(0, 8)}`})`,
+                pLines,
+                supabase,
+                false
+              )
+              if (installmentTx?.transactionId) {
+                await supabase
+                  .from('order_payments')
+                  .update({
+                    transaction_id: installmentTx.transactionId,
+                    payment_method_account_id: accId
+                  })
+                  .eq('id', p.id)
+              }
             }
           }
         }
@@ -478,10 +523,10 @@ export async function syncOrderToLedger(
             const cashReceived = Number(order.cash_received || rawOrderData.cash_received || 0)
             const changeAmount = Number(order.change_amount || rawOrderData.change_amount || 0)
             const isCashMethod = String(order.payment_method || '').toLowerCase() === 'cash' || String(order.payment_method || '').toLowerCase().includes('tunai')
-            const fallbackPayAccId = isCod ? accountMap['101000'] : resolveFallbackAccountId(order.payment_method)
+            const fallbackPayAccId = isCod ? accountMap['101000'] : resolveFallbackAccountId(order.payment_method, order.payment_method_account_id)
             const effectivePayAmount = totalPaymentAmount > 0 ? totalPaymentAmount : (isPartialPaid ? Number(order.amount_paid) : numGrandTotal)
 
-            await supabase.from('order_payments').insert({
+            const { error: fallbackPayErr } = await supabase.from('order_payments').insert({
               payment_kind: 'payment',
               business_id: businessId,
               order_id: orderId,
@@ -496,6 +541,9 @@ export async function syncOrderToLedger(
               notes: `Pembayaran ${platform} #${orderNumber}`,
               created_at: paymentDate || new Date().toISOString()
             })
+            if (fallbackPayErr) {
+              console.warn('[orderLedger] Fallback order_payments insert error:', fallbackPayErr.message)
+            }
             finalAmountPaid = effectivePayAmount
           } catch (payErr) {
             console.warn('[orderLedger] Failed to record fallback order_payments entry:', payErr)
@@ -533,7 +581,7 @@ export async function syncOrderToLedger(
       }
     }
 
-    else if (status === 'cancelled' || status === 'failed') {
+    if (status === 'cancelled' || status === 'failed') {
       if (salesTx && !reversalSalesTx) {
         await applyStockMovement(businessId, matchedProducts, 'restore', orderRef, supabase, undefined, orderId, 'order', 'pending')
         const reversalLines = salesTx.journal_lines.map((line: any) => ({

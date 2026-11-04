@@ -218,7 +218,7 @@ export default function InvoicesPage() {
     invoices.forEach(inv => {
       const grandTotal = Number(inv.grand_total || 0)
       const amountPaid = Number(inv.amount_paid || 0)
-      const isPaid = inv.payment_status === 'paid' || inv.status === 'completed'
+      const isPaid = inv.payment_status ? inv.payment_status === 'paid' : inv.status === 'completed'
       const remaining = isPaid ? 0 : Math.max(0, grandTotal - amountPaid)
 
       if (inv.status === 'pending') {
@@ -275,12 +275,12 @@ export default function InvoicesPage() {
       if (activeTab === 'draft' && inv.status !== 'pending') return false
       if (activeTab === 'shipped' && inv.status !== 'shipped') return false
       if (activeTab === 'unpaid') {
-        const isPaid = inv.payment_status === 'paid' || inv.status === 'completed'
+        const isPaid = inv.payment_status ? inv.payment_status === 'paid' : inv.status === 'completed'
         if (isPaid || inv.status === 'pending' || inv.status === 'cancelled') return false
       }
       if (activeTab === 'partial' && inv.payment_status !== 'partial') return false
       if (activeTab === 'paid') {
-        const isPaid = inv.payment_status === 'paid' || inv.status === 'completed'
+        const isPaid = inv.payment_status ? inv.payment_status === 'paid' : inv.status === 'completed'
         if (!isPaid) return false
       }
       if (activeTab === 'cancelled' && inv.status !== 'cancelled') return false
@@ -469,7 +469,7 @@ export default function InvoicesPage() {
 
                     const grandTotal = Number(inv.grand_total || 0)
                     const amountPaid = Number(inv.amount_paid || 0)
-                    const isPaid = inv.payment_status === 'paid' || inv.status === 'completed'
+                    const isPaid = inv.payment_status ? inv.payment_status === 'paid' : inv.status === 'completed'
                     const remaining = isPaid ? 0 : Math.max(0, grandTotal - amountPaid)
 
                     return (

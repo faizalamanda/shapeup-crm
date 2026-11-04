@@ -111,6 +111,7 @@ export default function EditInvoicePage() {
 
   // Decoupled Invoice status & Payment settlement
   const [invoiceStatus, setInvoiceStatus] = useState<string>('pending')
+  const [initialPaymentStatus, setInitialPaymentStatus] = useState<'unpaid' | 'partial' | 'paid'>('unpaid')
   const [invoiceDocStatus, setInvoiceDocStatus] = useState<'pending' | 'processing' | 'shipped' | 'completed' | 'cancelled'>('pending')
   const [paymentSettlementStatus, setPaymentSettlementStatus] = useState<'unpaid' | 'partial' | 'paid'>('unpaid')
   const [inputAmountPaid, setInputAmountPaid] = useState<number>(0)
@@ -183,8 +184,11 @@ export default function EditInvoicePage() {
   const [submittingType, setSubmittingType] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string>('')
 
-  // Check if financials are locked (if already paid/completed)
-  const isFinancialsLocked = useMemo(() => invoiceStatus === 'completed', [invoiceStatus])
+  // Check if financials (line items/totals) are locked (only when both completed AND already paid)
+  const isFinancialsLocked = useMemo(
+    () => invoiceStatus === 'completed' && initialPaymentStatus === 'paid',
+    [invoiceStatus, initialPaymentStatus]
+  )
 
   // Check if invoice is cancelled
   const isCancelled = useMemo(() => invoiceStatus === 'cancelled', [invoiceStatus])
@@ -328,24 +332,13 @@ export default function EditInvoicePage() {
 
           // Payment Settlement Status & COA Account
           const payStatus = (inv.payment_status || (inv.status === 'completed' ? 'paid' : 'unpaid')) as 'unpaid' | 'partial' | 'paid'
+          setInitialPaymentStatus(payStatus)
           setPaymentSettlementStatus(payStatus)
           const paidNum = Number(inv.amount_paid || (payStatus === 'paid' ? inv.grand_total : 0))
           setInputAmountPaid(paidNum)
           if (inv.payment_method) setPaymentMethod(inv.payment_method)
 
-          let accList: COAAccount[] = Array.isArray(json.payment_accounts) ? json.payment_accounts : []
-          if (inv.business_id) {
-            const { data: directAccs } = await supabase
-              .from('accounts')
-              .select('*')
-              .eq('business_id', inv.business_id)
-              .eq('type', 'ASSET')
-              .order('code', { ascending: true })
-            const filteredDirect = ((directAccs || []) as COAAccount[]).filter(isCashBankAccount)
-            if (filteredDirect.length > 0) {
-              accList = filteredDirect
-            }
-          }
+          const accList: COAAccount[] = Array.isArray(json.payment_accounts) ? json.payment_accounts : []
           setPaymentAccounts(accList)
 
           const firstPay = Array.isArray(inv.payments) && inv.payments.length > 0 ? inv.payments[0] : null
@@ -358,7 +351,7 @@ export default function EditInvoicePage() {
               accList,
               firstPay?.payment_method || inv.payment_method,
               firstPay?.payment_method_account_id
-            )
+            ) || accList[0]
             if (matchedAcc) {
               setPaymentAccountId(matchedAcc.id)
               setPaymentMethod(matchedAcc.name)
@@ -569,8 +562,13 @@ export default function EditInvoicePage() {
   }, [subtotal, discountAmount, shippingCost, otherFees])
 
   // Submit Handler
-  const handleSubmit = async (submitStatus?: 'pending' | 'processing' | 'shipped' | 'completed' | 'cancelled') => {
+  const handleSubmit = async (
+    submitStatus?: 'pending' | 'processing' | 'shipped' | 'completed' | 'cancelled',
+    submitPayStatus?: 'unpaid' | 'partial' | 'paid',
+    submitAmountPaid?: number
+  ) => {
     const finalDocStatus = submitStatus || invoiceDocStatus
+    const finalPayStatus = submitPayStatus || paymentSettlementStatus
 
     if (!isFinancialsLocked) {
       if (isNewCustomer && (!newCustForm.name || !newCustForm.phone)) {
@@ -591,17 +589,23 @@ export default function EditInvoicePage() {
       }
     }
 
+    let finalAmountPaid = 0
+    if (finalPayStatus === 'paid') {
+      finalAmountPaid = grandTotal
+    } else if (finalPayStatus === 'partial') {
+      const rawPartial = submitAmountPaid !== undefined ? submitAmountPaid : inputAmountPaid
+      finalAmountPaid = Math.min(grandTotal, Math.max(0, Number(rawPartial) || 0))
+      if (finalAmountPaid <= 0) {
+        setErrorMessage('Nominal pembayaran sebagian (DP) harus lebih besar dari Rp 0.')
+        return
+      }
+    }
+
     setSubmitting(true)
     setErrorMessage('')
 
     try {
       const resolvedSourcePlatform = sourcePlatform === 'Lainnya' ? (customSourcePlatform.trim() || 'Lainnya') : sourcePlatform
-      let finalAmountPaid = 0
-      if (paymentSettlementStatus === 'paid') {
-        finalAmountPaid = grandTotal
-      } else if (paymentSettlementStatus === 'partial') {
-        finalAmountPaid = Math.min(grandTotal, Math.max(0, inputAmountPaid))
-      }
 
       const payload: Record<string, any> = {
         customer_id: isNewCustomer ? null : selectedCustomerId,
@@ -619,11 +623,11 @@ export default function EditInvoicePage() {
         other_fees: Number(otherFees),
         grand_total: grandTotal,
         status: finalDocStatus,
-        payment_status: paymentSettlementStatus,
+        payment_status: finalPayStatus,
         amount_paid: finalAmountPaid,
-        payment_method: paymentSettlementStatus !== 'unpaid' ? paymentMethod : null,
-        payment_method_account_id: paymentSettlementStatus !== 'unpaid' ? (paymentAccountId || null) : null,
-        payment_date: paymentSettlementStatus !== 'unpaid' ? paymentDate : null,
+        payment_method: finalPayStatus !== 'unpaid' ? paymentMethod : null,
+        payment_method_account_id: finalPayStatus !== 'unpaid' ? (paymentAccountId || null) : null,
+        payment_date: finalPayStatus !== 'unpaid' ? paymentDate : null,
         source_platform: resolvedSourcePlatform,
         source_order_ref: sourceOrderRef.trim() || null,
         utm_source: utmSource.trim() || null,
@@ -650,9 +654,13 @@ export default function EditInvoicePage() {
         body: JSON.stringify(payload)
       })
 
-      const json = await res.json()
+      const json = await res.json().catch(() => ({}))
       if (!res.ok) {
         throw new Error(json.error || 'Gagal menyimpan perubahan invoice.')
+      }
+
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('shapeup_invoices_cache')
       }
 
       if (isNewCustomer && json.order?.customer_id) {
@@ -670,7 +678,7 @@ export default function EditInvoicePage() {
         )
       }
 
-      router.push(`/orders/invoices/${invoiceId}`)
+      router.push(`/orders/invoices/${invoiceId}?saved=1&pay=${finalPayStatus}`)
       router.refresh()
     } catch (err: any) {
       setErrorMessage(err.message || 'Terjadi kesalahan sistem.')
@@ -1493,47 +1501,51 @@ export default function EditInvoicePage() {
               )}
             </button>
 
-            {!isFinancialsLocked && (
+            {!isCancelled && (
               <div className="pt-2 border-t border-slate-200/80 space-y-2">
-                <p className="text-[10px] font-bold text-slate-700 uppercase tracking-wider">Aksi Cepat Status:</p>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => {
-                      setInvoiceDocStatus('processing')
-                      setSubmittingType('processing')
-                      handleSubmit('processing')
-                    }}
-                    className="py-2 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-all"
-                  >
-                    🚀 Terbitkan
-                  </button>
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => {
-                      setInvoiceDocStatus('shipped')
-                      setSubmittingType('shipped')
-                      handleSubmit('shipped')
-                    }}
-                    className="py-2 text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-all"
-                  >
-                    📦 Dikirim
-                  </button>
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => {
-                      setInvoiceDocStatus('pending')
-                      setSubmittingType('pending')
-                      handleSubmit('pending')
-                    }}
-                    className="py-2 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-all"
-                  >
-                    📝 Draft
-                  </button>
-                </div>
+                {!isFinancialsLocked && (
+                  <>
+                    <p className="text-[10px] font-bold text-slate-700 uppercase tracking-wider">Aksi Cepat Status:</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={() => {
+                          setInvoiceDocStatus('processing')
+                          setSubmittingType('processing')
+                          handleSubmit('processing')
+                        }}
+                        className="py-2 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-all cursor-pointer"
+                      >
+                        🚀 Terbitkan
+                      </button>
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={() => {
+                          setInvoiceDocStatus('shipped')
+                          setSubmittingType('shipped')
+                          handleSubmit('shipped')
+                        }}
+                        className="py-2 text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-all cursor-pointer"
+                      >
+                        📦 Dikirim
+                      </button>
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={() => {
+                          setInvoiceDocStatus('pending')
+                          setSubmittingType('pending')
+                          handleSubmit('pending')
+                        }}
+                        className="py-2 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-all cursor-pointer"
+                      >
+                        📝 Draft
+                      </button>
+                    </div>
+                  </>
+                )}
                 {paymentSettlementStatus !== 'paid' && (
                   <button
                     type="button"
@@ -1543,11 +1555,15 @@ export default function EditInvoicePage() {
                       setPaymentSettlementStatus('paid')
                       setInputAmountPaid(grandTotal)
                       setSubmittingType('paid')
-                      handleSubmit('completed')
+                      handleSubmit('completed', 'paid', grandTotal)
                     }}
-                    className="w-full py-2 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-all"
+                    className="w-full flex justify-center items-center gap-2 py-2 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-all cursor-pointer disabled:opacity-50"
                   >
-                    💰 Tandai Lunas Seketika
+                    {submitting && submittingType === 'paid' ? (
+                      <><svg className="animate-spin h-3.5 w-3.5 text-emerald-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Memproses Pelunasan...</>
+                    ) : (
+                      <>💰 Tandai Lunas Seketika</>
+                    )}
                   </button>
                 )}
               </div>

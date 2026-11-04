@@ -351,42 +351,52 @@ export async function POST(req: Request) {
         items_json: lineItems,
         raw_source_data: rawSourceData
       })
-      .select('id, order_number, grand_total, status, payment_status, amount_paid, payment_method, order_date')
+      .select('*')
       .single()
 
     if (insertErr) throw insertErr
 
     // If there is an upfront payment (Lunas or DP), record unified order_payments entry
+    let resolvedPayAccId: string | null = null
     if (finalAmountPaid > 0) {
-      try {
-        const paymentAccounts = await getActivePaymentAccounts(businessId, supabaseAdmin)
-        const matchedAcc = resolvePaymentAccountFromCOA(
-          paymentAccounts,
-          payment_method,
-          isUuid(payment_method_account_id) ? payment_method_account_id : null
-        )
-        const resolvedPayAccId = matchedAcc?.id || (isUuid(payment_method_account_id) ? payment_method_account_id : null)
-        const resolvedPayMethodName = matchedAcc?.name || payment_method || 'Bank Transfer'
+      const paymentAccounts = await getActivePaymentAccounts(businessId, supabaseAdmin)
+      const matchedAcc = resolvePaymentAccountFromCOA(
+        paymentAccounts,
+        payment_method,
+        isUuid(payment_method_account_id) ? payment_method_account_id : null
+      )
+      resolvedPayAccId = matchedAcc?.id || (isUuid(payment_method_account_id) ? payment_method_account_id : null)
+      const resolvedPayMethodName = matchedAcc?.name || payment_method || 'Bank Transfer'
 
-        const payDateObj = payment_date ? new Date(payment_date) : dateObj
-        await supabaseAdmin.from('order_payments').insert({
-          payment_kind: 'payment',
-          business_id: businessId,
-          order_id: order.id,
-          date: payDateObj.toISOString().split('T')[0],
-          amount: finalAmountPaid,
-          payment_method: resolvedPayMethodName,
-          payment_method_account_id: resolvedPayAccId,
-          notes: `Pembayaran ${source_platform || 'Invoice'} #${finalInvoiceNumber}`,
-          created_at: payDateObj.toISOString()
-        })
-      } catch (payErr) {
-        console.warn('Failed to insert initial payment to order_payments:', payErr)
+      const payDateObj = payment_date ? new Date(payment_date) : dateObj
+      const { error: payInsErr } = await supabaseAdmin.from('order_payments').insert({
+        payment_kind: 'payment',
+        business_id: businessId,
+        order_id: order.id,
+        date: payDateObj.toISOString().split('T')[0],
+        amount: finalAmountPaid,
+        payment_method: resolvedPayMethodName,
+        payment_method_account_id: resolvedPayAccId,
+        notes: `Pembayaran ${source_platform || 'Invoice'} #${finalInvoiceNumber}`,
+        created_at: payDateObj.toISOString()
+      })
+      if (payInsErr) {
+        console.warn('Failed to insert initial payment to order_payments:', payInsErr.message)
+      }
+      if (resolvedPayMethodName !== order.payment_method) {
+        await supabaseAdmin
+          .from('orders')
+          .update({ payment_method: resolvedPayMethodName })
+          .eq('id', order.id)
+        order.payment_method = resolvedPayMethodName
       }
     }
 
-    // 5. Accounting Ledger Integration & Stock Reduction
-    const syncRes = await syncOrderToLedger(order.id, supabaseAdmin)
+    // 5. Accounting Ledger Integration & Stock Reduction (Pass preloaded order with resolved payment_method_account_id)
+    const syncRes = await syncOrderToLedger(order.id, supabaseAdmin, {
+      ...order,
+      payment_method_account_id: resolvedPayAccId
+    })
     if (!syncRes.success) {
       throw new Error(syncRes.message)
     }

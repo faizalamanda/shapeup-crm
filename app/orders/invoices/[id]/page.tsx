@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { useUserContext } from '@/components/UserContext'
 import { formatDisplayDate } from '@/lib/timeUtils'
-import { isCashBankAccount, resolvePaymentAccountFromCOA } from '@/lib/coa'
+import { resolvePaymentAccountFromCOA } from '@/lib/coa'
 
 type Customer = {
   id: string
@@ -203,7 +204,9 @@ export default function InvoiceDetailPage() {
   // Using singleton supabase client from @/lib/supabase
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const invoiceId = params.id as string
+  const { activeBusiness, userProfile: ctxProfile, currentUserRole } = useUserContext()
 
   // State
   const [invoice, setInvoice] = useState<Invoice | null>(null)
@@ -212,6 +215,7 @@ export default function InvoiceDetailPage() {
   const [loading, setLoading] = useState<boolean>(true)
   const [submitting, setSubmitting] = useState<boolean>(false)
   const [errorMessage, setErrorMessage] = useState<string>('')
+  const [successMessage, setSuccessMessage] = useState<string>('')
   const [activeTab, setActiveTab] = useState<'actions' | 'design' | 'ledger' | 'stock_ledger'>('actions')
   const [currentUserProfile, setCurrentUserProfile] = useState<{ id: string; role: string } | null>(null)
 
@@ -263,28 +267,52 @@ export default function InvoiceDetailPage() {
   const [labelRecipientAddress, setLabelRecipientAddress] = useState<string>('')
   const [labelFooterBody, setLabelFooterBody] = useState<string>('')
 
-  // Fetch Invoice Details
-  const fetchInvoiceDetails = useCallback(async () => {
-    setLoading(true)
+  // Sync user & business context from UserContext immediately (0ms)
+  useEffect(() => {
+    if (activeBusiness) {
+      setBusinessName(activeBusiness.name || 'Bisnis Saya')
+      setBusinessTimezone((activeBusiness as any).timezone || 'Asia/Jakarta')
+    }
+    if (ctxProfile?.id) {
+      setCurrentUserProfile({ id: ctxProfile.id, role: currentUserRole || ctxProfile.role || 'staff' })
+    }
+  }, [activeBusiness, ctxProfile, currentUserRole])
+
+  // Check URL searchParams for instant creation/update feedback
+  useEffect(() => {
+    const saved = searchParams.get('saved')
+    const created = searchParams.get('created')
+    const pay = searchParams.get('pay')
+
+    if (saved === '1' || created === '1') {
+      const actionLabel = created === '1' ? 'Faktur baru berhasil dibuat' : 'Perubahan faktur berhasil disimpan'
+      const payLabel =
+        pay === 'paid'
+          ? ' & pelunasan pembayaran telah dijurnal ke Buku Besar.'
+          : pay === 'partial'
+          ? ' & pembayaran DP telah dijurnal ke Buku Besar.'
+          : '.'
+      setSuccessMessage(`${actionLabel}${payLabel}`)
+      // Clean URL query params without reloading
+      if (typeof window !== 'undefined') {
+        window.history.replaceState({}, '', `/orders/invoices/${invoiceId}`)
+      }
+    }
+  }, [searchParams, invoiceId])
+
+  // Auto-dismiss success message after 6 seconds
+  useEffect(() => {
+    if (!successMessage) return
+    const timer = setTimeout(() => setSuccessMessage(''), 6000)
+    return () => clearTimeout(timer)
+  }, [successMessage])
+
+  // Fetch Invoice Details (Immediate API fetch without blocking on auth roundtrip)
+  const fetchInvoiceDetails = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('id, role, active_business_id, businesses!active_business_id(name, timezone)')
-        .eq('id', user.id)
-        .single()
-
-      if (!profile?.active_business_id) return
-      
-      const bizData = profile.businesses as { name?: string; timezone?: string } | null
-      setBusinessName(bizData?.name || 'Bisnis Saya')
-      setBusinessTimezone(bizData?.timezone || 'Asia/Jakarta')
-      setCurrentUserProfile({ id: profile.id, role: profile.role || 'staff' })
-
       const response = await fetch(`/api/orders/invoices/${invoiceId}`)
-      const result = await response.json()
+      const result = await response.json().catch(() => ({}))
 
       if (!response.ok) {
         throw new Error(result.error || 'Gagal memuat invoice')
@@ -293,22 +321,16 @@ export default function InvoiceDetailPage() {
       const invData = result.invoice as Invoice
       setInvoice(invData)
 
-      let accList: COAAccount[] = Array.isArray(result.payment_accounts) ? (result.payment_accounts as COAAccount[]) : []
-      if (profile.active_business_id) {
-        const { data: directAccs } = await supabase
-          .from('accounts')
-          .select('*')
-          .eq('business_id', profile.active_business_id)
-          .eq('type', 'ASSET')
-          .order('code', { ascending: true })
-        const filteredDirect = ((directAccs || []) as COAAccount[]).filter(isCashBankAccount)
-        if (filteredDirect.length > 0) {
-          accList = filteredDirect
-        }
-      }
+      const accList: COAAccount[] = Array.isArray(result.payment_accounts) ? (result.payment_accounts as COAAccount[]) : []
       setPaymentAccounts(accList)
-      if (accList.length > 0 && !paymentAccountId) {
-        const defaultAcc = resolvePaymentAccountFromCOA(accList, invData.payment_method) || accList[0]
+      if (accList.length > 0) {
+        const firstPay = Array.isArray(invData.payments) && invData.payments.length > 0 ? invData.payments[0] : null
+        const defaultAcc =
+          resolvePaymentAccountFromCOA(
+            accList,
+            firstPay?.payment_method || invData.payment_method,
+            firstPay?.payment_method_account_id
+          ) || accList[0]
         setPaymentAccountId(defaultAcc.id)
         setPaymentMethod(defaultAcc.name)
       }
@@ -352,7 +374,7 @@ export default function InvoiceDetailPage() {
     } finally {
       setLoading(false)
     }
-  }, [invoiceId, supabase])
+  }, [invoiceId])
 
   // Fetch Ledger Transactions
   const fetchLedger = useCallback(async () => {
@@ -423,18 +445,21 @@ export default function InvoiceDetailPage() {
     }
   }, [invoiceId, supabase])
 
+  // Parallel initial fetch on mount (0ms tab switch for Ledger & Stock History)
   useEffect(() => {
     fetchInvoiceDetails()
-  }, [fetchInvoiceDetails])
+    fetchLedger()
+    fetchStockMoves()
+  }, [fetchInvoiceDetails, fetchLedger, fetchStockMoves])
 
-  // Fetch ledger when ledger tab opens
+  // Refresh ledger or stock moves when switching tabs if empty
   useEffect(() => {
-    if (activeTab === 'ledger') {
+    if (activeTab === 'ledger' && ledgerTransactions.length === 0) {
       fetchLedger()
-    } else if (activeTab === 'stock_ledger') {
+    } else if (activeTab === 'stock_ledger' && stockMoves.length === 0) {
       fetchStockMoves()
     }
-  }, [activeTab, fetchLedger, fetchStockMoves])
+  }, [activeTab, ledgerTransactions.length, stockMoves.length, fetchLedger, fetchStockMoves])
 
   // Set default payment date and remaining balance on modal open
   useEffect(() => {
@@ -644,6 +669,7 @@ export default function InvoiceDetailPage() {
   const handleSaveCustomization = async () => {
     setSubmitting(true)
     setErrorMessage('')
+    setSuccessMessage('')
     try {
       const response = await fetch(`/api/orders/invoices/${invoiceId}`, {
         method: 'PUT',
@@ -662,13 +688,16 @@ export default function InvoiceDetailPage() {
         })
       })
 
+      const resJson = await response.json().catch(() => ({}))
       if (!response.ok) {
-        const resJson = await response.json()
         throw new Error(resJson.error || 'Gagal menyimpan kustomisasi')
       }
 
-      // Reload
-      fetchInvoiceDetails()
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('shapeup_invoices_cache')
+      }
+      setSuccessMessage('Kustomisasi desain faktur berhasil disimpan.')
+      fetchInvoiceDetails(true)
     } catch (err: any) {
       setErrorMessage(err.message)
     } finally {
@@ -689,6 +718,7 @@ export default function InvoiceDetailPage() {
 
     setSubmitting(true)
     setErrorMessage('')
+    setSuccessMessage('')
     try {
       const response = await fetch(`/api/orders/invoices/${invoiceId}/payment`, {
         method: 'POST',
@@ -702,15 +732,20 @@ export default function InvoiceDetailPage() {
         })
       })
 
+      const resJson = await response.json().catch(() => ({}))
       if (!response.ok) {
-        const resJson = await response.json()
         throw new Error(resJson.error || 'Gagal mencatat pembayaran')
       }
 
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('shapeup_invoices_cache')
+      }
       setShowPaymentModal(false)
-      fetchInvoiceDetails()
-      fetchLedger()
-      fetchStockMoves()
+      setSuccessMessage(
+        resJson.message ||
+          `Pembayaran sebesar ${formatIDR(amountToPay)} berhasil dicatat dan dijurnal ke Buku Besar.`
+      )
+      await Promise.all([fetchInvoiceDetails(true), fetchLedger(), fetchStockMoves()])
     } catch (err: any) {
       setErrorMessage(err.message)
     } finally {
@@ -722,6 +757,7 @@ export default function InvoiceDetailPage() {
   const handleUpdateDocStatus = async (nextStatus: 'processing' | 'shipped' | 'completed') => {
     setSubmitting(true)
     setErrorMessage('')
+    setSuccessMessage('')
     try {
       const response = await fetch(`/api/orders/invoices/${invoiceId}`, {
         method: 'PUT',
@@ -729,14 +765,22 @@ export default function InvoiceDetailPage() {
         body: JSON.stringify({ status: nextStatus })
       })
 
+      const resJson = await response.json().catch(() => ({}))
       if (!response.ok) {
-        const resJson = await response.json()
         throw new Error(resJson.error || 'Gagal memperbarui status invoice')
       }
 
-      fetchInvoiceDetails()
-      fetchLedger()
-      fetchStockMoves()
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('shapeup_invoices_cache')
+      }
+      const statusLabel =
+        nextStatus === 'processing'
+          ? 'Diterbitkan'
+          : nextStatus === 'shipped'
+          ? 'Dikirim'
+          : 'Selesai'
+      setSuccessMessage(`Status dokumen berhasil diperbarui menjadi "${statusLabel}" dan disinkronkan ke Buku Besar.`)
+      await Promise.all([fetchInvoiceDetails(true), fetchLedger(), fetchStockMoves()])
     } catch (err: any) {
       setErrorMessage(err.message)
     } finally {
@@ -755,6 +799,7 @@ export default function InvoiceDetailPage() {
 
     setSubmitting(true)
     setErrorMessage('')
+    setSuccessMessage('')
     try {
       const response = await fetch(`/api/orders/invoices/${invoiceId}`, {
         method: 'PUT',
@@ -762,13 +807,16 @@ export default function InvoiceDetailPage() {
         body: JSON.stringify({ status: 'cancelled' })
       })
 
+      const resJson = await response.json().catch(() => ({}))
       if (!response.ok) {
-        const resJson = await response.json()
         throw new Error(resJson.error || 'Gagal membatalkan invoice')
       }
 
-      fetchInvoiceDetails()
-      fetchLedger()
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('shapeup_invoices_cache')
+      }
+      setSuccessMessage('Invoice berhasil dibatalkan dan jurnal pembalikan telah diposting ke Buku Besar.')
+      await Promise.all([fetchInvoiceDetails(true), fetchLedger(), fetchStockMoves()])
     } catch (err: any) {
       setErrorMessage(err.message)
     } finally {
@@ -995,8 +1043,16 @@ export default function InvoiceDetailPage() {
       </div>
 
       {errorMessage && (
-        <div className="p-3 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-xl no-print">
-          ⚠️ {errorMessage}
+        <div className="flex items-center justify-between p-3 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-xl no-print">
+          <span>⚠️ {errorMessage}</span>
+          <button onClick={() => setErrorMessage('')} className="text-rose-500 hover:text-rose-800 px-2">✕</button>
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="flex items-center justify-between p-3 text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl no-print">
+          <span>✅ {successMessage}</span>
+          <button onClick={() => setSuccessMessage('')} className="text-emerald-600 hover:text-emerald-900 px-2">✕</button>
         </div>
       )}
 
@@ -1010,7 +1066,7 @@ export default function InvoiceDetailPage() {
             className="relative p-8 sm:p-12 bg-white rounded-2xl border border-[#EBEBEA] shadow-md space-y-8 min-h-[842px] transition-all overflow-hidden"
           >
             {/* Watermark / Stamp */}
-            {(invoice.payment_status === 'paid' || invoice.status === 'completed') && (
+            {invoice.payment_status === 'paid' && (
               <div className="absolute top-28 right-8 pointer-events-none opacity-25 transform rotate-[-12deg] border-4 border-emerald-600 text-emerald-700 font-black text-4xl px-6 py-2 rounded-2xl tracking-widest uppercase select-none">
                 LUNAS
               </div>
@@ -1138,7 +1194,7 @@ export default function InvoiceDetailPage() {
                     {invoice.payment_status === 'paid' ? 'Lunas' : invoice.payment_status === 'partial' ? 'Bayar Sebagian (DP)' : 'Belum Bayar'}
                   </span>
                 </div>
-                {invoice.status === 'completed' && invoice.payment_method && (
+                {(invoice.payment_status === 'paid' || invoice.payment_status === 'partial') && invoice.payment_method && (
                   <div className="flex justify-between sm:justify-end gap-4 text-emerald-700">
                     <span>Metode:</span>
                     <span className="font-extrabold">{invoice.payment_method}</span>
