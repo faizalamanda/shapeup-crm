@@ -354,7 +354,7 @@ export default function InvoiceDetailPage() {
       const foundTracking = meta.find((m: any) => m.key === 'shapeup_resi_awb')?.value || 
                             meta.find((m: any) => m.key === '_resi_awb')?.value || ''
 
-      const standardCouriers = ['JNE', 'J&T', 'Sicepat', 'POS', 'Tiki', 'Anteraja', 'Wahana']
+      const standardCouriers = ['JNE', 'J&T', 'Sicepat', 'POS', 'Tiki', 'Anteraja', 'Wahana', 'SPX']
       if (foundCourier) {
         if (standardCouriers.includes(foundCourier)) {
           setCourier(foundCourier)

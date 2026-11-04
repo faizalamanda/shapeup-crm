@@ -755,6 +755,7 @@ export default function NewInvoicePage() {
                 <option value="Tiki">TIKI</option>
                 <option value="Anteraja">Anteraja</option>
                 <option value="Wahana">Wahana</option>
+                <option value="SPX">SPX (Shopee Xpress)</option>
                 <option value="Lainnya">Lainnya / Custom</option>
               </select>
               {courier === 'Lainnya' && (
