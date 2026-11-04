@@ -1,43 +1,25 @@
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
-import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { getApiContext } from '@/lib/apiContext'
+import { isUuid } from '@/lib/utils'
+import {
+  normalizePhoneCanonical,
+  buildPhoneSearchVariants,
+  upsertCustomerInServerCache
+} from '@/lib/customerHelper'
 
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  const supabase = await createClient()
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: 'Customer ID tidak valid' }, { status: 400 })
+  }
 
   try {
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found for user profile' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
-
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
-      return NextResponse.json({ 
-        error: 'SUPABASE_SERVICE_ROLE_KEY is not defined in env' 
-      }, { status: 500 })
-    }
-
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey
-    )
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { businessId, supabaseAdmin } = ctx
 
     const { data: customerData, error: fetchErr } = await supabaseAdmin
       .from('customers')
@@ -50,11 +32,10 @@ export async function GET(
       return NextResponse.json({ error: 'Customer tidak ditemukan' }, { status: 404 })
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      customer: customerData 
+    return NextResponse.json({
+      success: true,
+      customer: customerData
     })
-
   } catch (err: any) {
     console.error('[ShapeUp] Customer get error:', err)
     return NextResponse.json({ error: err.message }, { status: 500 })
@@ -66,39 +47,14 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  const supabase = await createClient()
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: 'Customer ID tidak valid' }, { status: 400 })
+  }
 
   try {
-    // 1. Get logged-in user and active business ID
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found for user profile' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
-
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
-      return NextResponse.json({ 
-        error: 'SUPABASE_SERVICE_ROLE_KEY is not defined in env' 
-      }, { status: 500 })
-    }
-
-    // 2. Initialize Admin Client to bypass RLS
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey
-    )
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { businessId, supabaseAdmin } = ctx
 
     // Verify customer exists and belongs to this business
     const { data: existing, error: existErr } = await supabaseAdmin
@@ -112,36 +68,40 @@ export async function PATCH(
       return NextResponse.json({ error: 'Customer tidak ditemukan' }, { status: 404 })
     }
 
-    // Parse request body
-    const body = await req.json()
-    const { name, phone, email, category, address_data, metadata } = body
+    let body: any
+    try {
+      body = await req.json()
+    } catch {
+      return NextResponse.json({ error: 'Payload JSON tidak valid' }, { status: 400 })
+    }
 
-    const targetName = name !== undefined ? name.trim() : existing.name
+    const { name, phone, email, category, address_data, metadata } = body || {}
+
+    const targetName = name !== undefined ? String(name).trim() : existing.name
     let targetPhone = existing.phone
 
     if (phone !== undefined && phone !== null) {
-      let cleanPhone = String(phone).replace(/\D/g, '')
-      if (cleanPhone.startsWith('0')) {
-        cleanPhone = '62' + cleanPhone.substring(1)
-      } else if (cleanPhone.startsWith('8')) {
-        cleanPhone = '62' + cleanPhone
-      }
+      const cleanPhone = normalizePhoneCanonical(phone)
       targetPhone = cleanPhone
 
       // Check if phone number is already used by ANOTHER customer in the same business
-      const { data: phoneCheck, error: phoneErr } = await supabaseAdmin
+      const phoneVariants = buildPhoneSearchVariants(targetPhone)
+      const { data: phoneCheckList, error: phoneErr } = await supabaseAdmin
         .from('customers')
         .select('id, name')
         .eq('business_id', businessId)
-        .eq('phone', targetPhone)
+        .in('phone', phoneVariants.length > 0 ? phoneVariants : [targetPhone])
         .neq('id', id)
-        .maybeSingle()
+        .limit(1)
 
       if (phoneErr) throw phoneErr
-      if (phoneCheck) {
-        return NextResponse.json({ 
-          error: `Nomor HP sudah digunakan oleh customer lain: ${phoneCheck.name}` 
-        }, { status: 400 })
+      if (phoneCheckList && phoneCheckList.length > 0) {
+        return NextResponse.json(
+          {
+            error: `Nomor HP sudah digunakan oleh customer lain: ${phoneCheckList[0].name}`
+          },
+          { status: 400 }
+        )
       }
     }
 
@@ -149,32 +109,35 @@ export async function PATCH(
       return NextResponse.json({ error: 'Nama dan Nomor HP wajib diisi' }, { status: 400 })
     }
 
-    const mergedMetadata = metadata !== undefined 
-      ? { ...(existing.metadata || {}), ...metadata }
-      : existing.metadata
+    const mergedMetadata =
+      metadata !== undefined
+        ? { ...(existing.metadata || {}), ...metadata }
+        : existing.metadata
 
-    // Update customer
     const { data: updatedCustomer, error: updateErr } = await supabaseAdmin
       .from('customers')
       .update({
         name: targetName,
         phone: targetPhone,
-        email: email !== undefined ? (email ? email.trim() : null) : existing.email,
+        email: email !== undefined ? (email ? String(email).trim() : null) : existing.email,
         category: category !== undefined ? (category || 'General') : existing.category,
         address_data: address_data !== undefined ? (address_data || null) : existing.address_data,
         metadata: mergedMetadata || null
       })
       .eq('id', id)
+      .eq('business_id', businessId)
       .select('*')
       .single()
 
     if (updateErr) throw updateErr
 
-    return NextResponse.json({ 
-      success: true, 
-      customer: updatedCustomer 
-    })
+    // Immediately update server-side directory cache
+    upsertCustomerInServerCache(businessId, updatedCustomer)
 
+    return NextResponse.json({
+      success: true,
+      customer: updatedCustomer
+    })
   } catch (err: any) {
     console.error('[ShapeUp] Customer update error:', err)
     return NextResponse.json({ error: err.message }, { status: 500 })

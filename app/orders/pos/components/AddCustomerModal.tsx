@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
+import { notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
 
 type Customer = {
   id: string
@@ -82,6 +83,8 @@ export default function AddCustomerModal({ isOpen, onClose, onSave, businessId }
       if (result.existing) {
         alert(`Pelanggan dengan nomor tersebut sudah terdaftar sebagai "${result.customer.name}". Otomatis memilih pelanggan tersebut.`)
       }
+
+      notifyCustomerDirectoryUpdate(result.customer, 'upsert', businessId)
 
       onSave({
         id: result.customer.id,

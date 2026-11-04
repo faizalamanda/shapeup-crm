@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
+import { notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
 import { StatsPanel } from './components/StatsPanel'
 import { FilterBar, FilterRule } from './components/FilterBar'
 import { AnalyticsCharts } from './components/AnalyticsCharts'
@@ -357,6 +358,18 @@ export default function CustomerPage() {
     fetchCustomerData(businessId, debouncedSearch, rulesArray, currentPage, pageSize, false)
   }, [businessId, debouncedSearch, serializedRules, currentPage, pageSize, fetchCustomerData])
 
+  // Listen to global customer directory mutations (e.g. from Invoice, POS, or another tab)
+  useEffect(() => {
+    if (!businessId) return
+    const handleGlobalUpdate = () => {
+      try { sessionStorage.removeItem(getCacheKey(businessId)) } catch {}
+      const rulesArray = JSON.parse(serializedRules)
+      fetchCustomerData(businessId, debouncedSearch, rulesArray, currentPage, pageSize, true)
+    }
+    window.addEventListener('shapeup:customer_updated', handleGlobalUpdate)
+    return () => window.removeEventListener('shapeup:customer_updated', handleGlobalUpdate)
+  }, [businessId, debouncedSearch, serializedRules, currentPage, pageSize, fetchCustomerData])
+
   // ─── Fetch available products for filter ───────────────────────────────
   const [availableProducts, setAvailableProducts] = useState<string[]>([])
 
@@ -394,6 +407,7 @@ export default function CustomerPage() {
     if (businessId) {
       try { sessionStorage.removeItem(getCacheKey(businessId)) } catch {}
     }
+    notifyCustomerDirectoryUpdate({ id: customerId, business_id: businessId, metadata: { tags: newTags } }, 'upsert', businessId)
     setCustomers(prev => prev.map(c => {
       if (c.customer_id === customerId || c.id === customerId) {
         return {
@@ -425,6 +439,7 @@ export default function CustomerPage() {
     if (businessId) {
       try { sessionStorage.removeItem(getCacheKey(businessId)) } catch {}
     }
+    notifyCustomerDirectoryUpdate(updatedCustomer, 'upsert', businessId)
     setCustomers(prev => prev.map(c => {
       if (c.customer_id === updatedCustomer.id || c.id === updatedCustomer.id) {
         let newAddressString = ''

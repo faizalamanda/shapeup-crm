@@ -135,6 +135,55 @@ const guestId = await resolveGuestCustomerId(businessId, supabaseAdmin)
 
 ---
 
+### 2b. `lib/customerHelper.ts` & `lib/customerDirectoryStore.ts` — Universal Customer Directory & Reactive Cache Coherence
+
+Gunakan modul kembar ini untuk semua pengambilan daftar pelanggan, pencarian simetris nomor telepon (`08` $\leftrightarrow$ `628`), pembuatan/resolusi pelanggan, serta sinkronisasi reaktif lintas halaman (Invoice, POS, Order Manual, dan Halaman Customer).
+
+**Server-Side (`@/lib/customerHelper.ts`):**
+```typescript
+import {
+  queryBusinessCustomers,
+  resolveOrCreateCustomer,
+  upsertCustomerInServerCache,
+  invalidateCustomerCache
+} from '@/lib/customerHelper'
+
+// 1. Ambil seluruh pelanggan bisnis (bebas limit 1.000 PostgREST via chunked .range() + cached 60s)
+const { customers, total } = await queryBusinessCustomers(businessId, supabaseAdmin, {
+  search,
+  limit,
+  includeId
+})
+
+// 2. Resolve atau buat pelanggan baru dengan pencocokan telepon simetris (08 <-> 628)
+const { customer, isExisting } = await resolveOrCreateCustomer(
+  { businessId, customerId, name, phone, email, address_data, reuseExistingOnPhoneMatch: true },
+  supabaseAdmin
+)
+```
+
+**Client-Side (`@/lib/customerDirectoryStore.ts`):**
+```typescript
+import { useCustomerDirectory, notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
+
+// 1. Hook reaktif (0ms L1 RAM + L2 sessionStorage SWR + BroadcastChannel lintas tab)
+const { customers, loading, searchServer } = useCustomerDirectory({
+  businessId: activeBusiness?.id,
+  includeCustomerId: selectedCustomerId
+})
+
+// 2. Broadcast mutasi: otomatis meng-update seluruh dropdown di Invoice, POS, & halaman /customers
+notifyCustomerDirectoryUpdate(updatedOrNewCustomer, 'upsert', businessId)
+```
+
+**Fitur Utama:**
+- **Zero 1.000-Row Truncation:** Mengambil seluruh populasi pelanggan bisnis (contoh: $> 2.500$ pelanggan pada Bisnis Tanem) menggunakan *Chunked Range Fetching* (`.range(offset, offset + 999)`).
+- **Symmetric Phone Canonicalization (`08` $\leftrightarrow$ `628`):** Mencari `0812345` otomatis cocok dengan `628123456789` baik di memori klien maupun kueri SQL.
+- **Strict Cache Coherence ("Satu Update, Semua Terupdate"):** Perubahan pelanggan di `/customers`, POS, atau Invoice langsung memperbarui L1 RAM, L2 `sessionStorage`, menghapus cache stale `su_customers_v2_${bid}`, dan menyiarkan event via `BroadcastChannel` ke seluruh tab aktif.
+- **Generic Chunked Query Helper (`@/lib/chunkedQueryHelper.ts`):** Gunakan `fetchAllSupabaseRows()` dan `fetchAllBusinessProducts()` untuk tabel apapun yang berpotensi melampaui 1.000 baris. Untuk dokumentasi lengkap arsitektur data $> 1.000$ baris, baca skill utama [high-cardinality-data](../high-cardinality-data/SKILL.md) dan [knowledge high-cardinality-directory-and-cache-coherence](../../knowledge/high-cardinality-directory-and-cache-coherence.md).
+
+---
+
 ### 3. `lib/orderLedger.ts` — Order Ledger Sync (Sales)
 
 Modul utama untuk sinkronisasi order ke jurnal akuntansi + stok + loyalty.

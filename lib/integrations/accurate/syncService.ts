@@ -1,5 +1,6 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import crypto from 'crypto'
+import { invalidateCustomerCache } from '@/lib/customerHelper'
 
 // Helper to delay execution (rate limiting)
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -350,6 +351,7 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
       upsertedCustomers?.forEach(c => {
         customerIdMap.set(c.phone, c.id)
       })
+      invalidateCustomerCache(businessId)
     }
 
     // 2. UPSERT PRODUCTS

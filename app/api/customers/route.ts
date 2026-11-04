@@ -1,149 +1,144 @@
-import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
 import { NextResponse } from 'next/server'
+import { getApiContext } from '@/lib/apiContext'
+import { isUuid } from '@/lib/utils'
+import {
+  queryBusinessCustomers,
+  resolveOrCreateCustomer
+} from '@/lib/customerHelper'
 
-export async function GET() {
-  const supabase = await createClient()
+async function resolveTargetBusinessId(
+  requestedBizId: string | null,
+  defaultBusinessId: string,
+  userId: string,
+  supabaseAdmin: any
+): Promise<string> {
+  if (!requestedBizId || !isUuid(requestedBizId) || requestedBizId === defaultBusinessId) {
+    return defaultBusinessId
+  }
 
+  // Verify user is owner or assigned staff of requestedBizId
+  const [{ data: owned }, { data: staff }] = await Promise.all([
+    supabaseAdmin
+      .from('businesses')
+      .select('id')
+      .eq('id', requestedBizId)
+      .eq('owner_id', userId)
+      .maybeSingle(),
+    supabaseAdmin
+      .from('business_staff')
+      .select('business_id')
+      .eq('business_id', requestedBizId)
+      .eq('profile_id', userId)
+      .maybeSingle()
+  ])
+
+  if (owned?.id || staff?.business_id) {
+    return requestedBizId
+  }
+  return defaultBusinessId
+}
+
+export async function GET(req: Request) {
   try {
-    // 1. Get logged-in user and active business ID
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId: activeBusinessId, supabaseAdmin } = ctx
 
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found for user profile' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
-
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
-      return NextResponse.json({ 
-        error: 'SUPABASE_SERVICE_ROLE_KEY is not defined in env' 
-      }, { status: 500 })
-    }
-
-    // 2. Initialize Admin Client to bypass RLS
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey
+    const { searchParams } = new URL(req.url)
+    const reqBizId = searchParams.get('business_id')
+    const businessId = await resolveTargetBusinessId(
+      reqBizId,
+      activeBusinessId,
+      user.id,
+      supabaseAdmin
     )
 
-    // 3. Fetch customers
-    const { data: customers, error: fetchErr } = await supabaseAdmin
-      .from('customers')
-      .select('id, name, phone, email, address_data, metadata')
-      .eq('business_id', businessId)
-      .order('name', { ascending: true })
+    const search = searchParams.get('search') || ''
+    const includeId = searchParams.get('include_id') || null
+    const forceRefresh = searchParams.get('refresh') === '1'
+    const rawLimit = parseInt(searchParams.get('limit') || '0', 10)
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 0
 
-    if (fetchErr) throw fetchErr
+    const { customers, total } = await queryBusinessCustomers(businessId, supabaseAdmin, {
+      search,
+      limit,
+      includeId,
+      forceRefresh
+    })
 
-    return NextResponse.json({ success: true, customers: customers || [] })
-
+    return NextResponse.json({
+      success: true,
+      customers,
+      total
+    })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    console.error('[ShapeUp] Customer GET error:', err)
+    return NextResponse.json({ error: err.message || 'Gagal memuat data pelanggan' }, { status: 500 })
   }
 }
 
 export async function POST(req: Request) {
-  const supabase = await createClient()
-
   try {
-    // 1. Get logged-in user and active business ID
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { user, businessId: activeBusinessId, supabaseAdmin } = ctx
+
+    let body: any
+    try {
+      body = await req.json()
+    } catch {
+      return NextResponse.json({ error: 'Payload JSON tidak valid atau kosong' }, { status: 400 })
     }
 
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
+    const {
+      business_id: reqBizId,
+      name,
+      phone,
+      email,
+      category,
+      address_data,
+      metadata,
+      reuse_existing = false
+    } = body || {}
 
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found for user profile' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
-
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
-      return NextResponse.json({ 
-        error: 'SUPABASE_SERVICE_ROLE_KEY is not defined in env' 
-      }, { status: 500 })
-    }
-
-    // 2. Parse request body
-    const body = await req.json()
-    const { name, phone, email, category, address_data, metadata } = body
+    const businessId = await resolveTargetBusinessId(
+      reqBizId || null,
+      activeBusinessId,
+      user.id,
+      supabaseAdmin
+    )
 
     if (!name || !phone) {
       return NextResponse.json({ error: 'Nama dan Nomor HP wajib diisi' }, { status: 400 })
     }
 
-    // 3. Clean phone number
-    let cleanPhone = phone.replace(/\D/g, '')
-    if (cleanPhone.startsWith('0')) {
-      cleanPhone = '62' + cleanPhone.substring(1)
-    } else if (cleanPhone.startsWith('8')) {
-      cleanPhone = '62' + cleanPhone
-    }
-
-    // 4. Initialize Admin Client to bypass RLS
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey
+    const { customer, isExisting } = await resolveOrCreateCustomer(
+      {
+        businessId,
+        name,
+        phone,
+        email,
+        category,
+        address_data,
+        metadata,
+        reuseExistingOnPhoneMatch: Boolean(reuse_existing)
+      },
+      supabaseAdmin
     )
 
-    // 5. Check if phone number already exists in this business
-    const { data: existing, error: phoneErr } = await supabaseAdmin
-      .from('customers')
-      .select('id, name')
-      .eq('business_id', businessId)
-      .eq('phone', cleanPhone)
-      .maybeSingle()
-
-    if (phoneErr) throw phoneErr
-    if (existing) {
-      return NextResponse.json({ 
-        error: `Nomor HP sudah terdaftar atas nama pelanggan: ${existing.name}` 
-      }, { status: 400 })
-    }
-
-    // 6. Insert new customer
-    const { data: newCustomer, error: insertErr } = await supabaseAdmin
-      .from('customers')
-      .insert({
-        business_id: businessId,
-        name: name.trim(),
-        phone: cleanPhone,
-        email: email ? email.trim() : null,
-        category: category || 'General',
-        address_data: address_data || null,
-        metadata: metadata || null
-      })
-      .select('*')
-      .single()
-
-    if (insertErr) throw insertErr
-
-    return NextResponse.json({ 
-      success: true, 
-      customer: newCustomer 
+    return NextResponse.json({
+      success: true,
+      existing: isExisting,
+      customer
     })
-
   } catch (err: any) {
+    if (err.statusCode === 400) {
+      return NextResponse.json(
+        { error: err.message, existingCustomer: err.existingCustomer },
+        { status: 400 }
+      )
+    }
     console.error('[ShapeUp] Customer create error:', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: err.message || 'Gagal menyimpan pelanggan' }, { status: 500 })
   }
 }
-

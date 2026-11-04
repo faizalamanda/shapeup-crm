@@ -73,6 +73,7 @@ Semua API route invoice **WAJIB** menggunakan modul terpadu yang telah disediaka
 | Kebutuhan | Modul Standar | Fungsi Utama |
 |---|---|---|
 | **Auth & Multi-Tenant** | `@/lib/apiContext.ts` | `getApiContext()` (0ms JWT fast-path, profile cache, admin client) |
+| **Direktori & Resolusi Customer** | `@/lib/customerHelper.ts` & `@/lib/customerDirectoryStore.ts` | `queryBusinessCustomers()`, `resolveOrCreateCustomer()`, `useCustomerDirectory()`, `notifyCustomerDirectoryUpdate()` |
 | **Pencatatan Pembayaran / DP** | `@/lib/paymentLedger.ts` | `recordOrderPayment()` & `recalculateOrderPaymentStatus()` |
 | **Buku Besar Penjualan & Stok** | `@/lib/orderLedger.ts` | `syncOrderToLedger()` |
 | **Posting Jurnal Anti-Duplikasi** | `@/lib/journalHelper.ts` | `postJournalTransaction()` |

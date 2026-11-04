@@ -1,5 +1,6 @@
 import { getApiContext } from '@/lib/apiContext'
 import { getActivePaymentAccounts, resolvePaymentAccountFromCOA } from '@/lib/accountHelper'
+import { resolveOrCreateCustomer } from '@/lib/customerHelper'
 import { syncOrderToLedger } from '@/lib/orderLedger'
 import { isUuid } from '@/lib/utils'
 import { invalidateInvoicesCache } from '../route'
@@ -251,39 +252,19 @@ export async function PUT(
     // If client provided new values, calculate or use them
     let resolvedCustomerId = existing.customer_id
     if (customer_name && customer_phone) {
-      let cleanPhone = customer_phone.replace(/\D/g, '')
-      if (cleanPhone.startsWith('0')) {
-        cleanPhone = '62' + cleanPhone.substring(1)
-      } else if (cleanPhone.startsWith('8')) {
-        cleanPhone = '62' + cleanPhone
-      }
-
-      const { data: existingCust } = await supabaseAdmin
-        .from('customers')
-        .select('id')
-        .eq('business_id', businessId)
-        .eq('phone', cleanPhone)
-        .maybeSingle()
-
-      if (existingCust) {
-        resolvedCustomerId = existingCust.id
-      } else {
-        const { data: newCust, error: newCustErr } = await supabaseAdmin
-          .from('customers')
-          .insert({
-            business_id: businessId,
-            name: customer_name.trim(),
-            phone: cleanPhone,
-            email: customer_email ? customer_email.trim() : null,
-            address_data: customer_address ?? null
-          })
-          .select('id')
-          .single()
-
-        if (newCustErr) throw newCustErr
-        resolvedCustomerId = newCust.id
-      }
-    } else if (customer_id) {
+      const { customer: resolvedCust } = await resolveOrCreateCustomer(
+        {
+          businessId,
+          name: customer_name,
+          phone: customer_phone,
+          email: customer_email,
+          address_data: customer_address ?? null,
+          reuseExistingOnPhoneMatch: true
+        },
+        supabaseAdmin
+      )
+      resolvedCustomerId = resolvedCust.id
+    } else if (isUuid(customer_id)) {
       resolvedCustomerId = customer_id
     }
 

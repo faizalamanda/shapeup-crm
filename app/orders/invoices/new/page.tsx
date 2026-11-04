@@ -10,6 +10,8 @@ import QuickAddProductModal from '@/components/QuickAddProductModal'
 import { QuickAddCustomerForm, NewCustomerFormData, EMPTY_CUSTOMER_FORM } from '@/components/QuickAddCustomerForm'
 import { CustomerSelectCombobox } from '@/components/CustomerSelectCombobox'
 import { ProductSelectCombobox, ProductComboboxItem } from '@/components/ProductSelectCombobox'
+import { useCustomerDirectory, notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
+import { fetchAllBusinessProducts } from '@/lib/chunkedQueryHelper'
 
 type Customer = {
   id: string
@@ -86,7 +88,6 @@ export default function NewInvoicePage() {
   const router = useRouter()
 
   // Master Data States
-  const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [paymentAccounts, setPaymentAccounts] = useState<COAAccount[]>([])
   const [businessName, setBusinessName] = useState<string>('')
@@ -207,6 +208,7 @@ export default function NewInvoicePage() {
   }, [invoiceDate, paymentTerms])
 
   const { activeBusiness, userProfile, bizLoading } = useUserContext()
+  const { customers } = useCustomerDirectory({ businessId: activeBusiness?.id })
 
   // Load Initial Data from UserContext
   useEffect(() => {
@@ -219,9 +221,8 @@ export default function NewInvoicePage() {
         setBusinessName(activeBusiness.name || 'Bisnis Saya')
         setStaffName(userProfile?.full_name || userProfile?.email?.split('@')[0] || 'Admin')
 
-        // Fetch customers & active COA payment accounts in parallel
-        const [custRes, directAccRes, accRes] = await Promise.all([
-          fetch('/api/customers'),
+        // Fetch active COA payment accounts in parallel (Customers handled via reactive useCustomerDirectory)
+        const [directAccRes, accRes] = await Promise.all([
           supabase
             .from('accounts')
             .select('*')
@@ -230,12 +231,6 @@ export default function NewInvoicePage() {
             .order('code', { ascending: true }),
           fetch('/api/orders/invoices?only_accounts=true')
         ])
-        if (custRes.ok) {
-          const custJson = await custRes.json()
-          if (custJson.success) {
-            setCustomers(custJson.customers)
-          }
-        }
 
         let accList: COAAccount[] = ((directAccRes.data || []) as COAAccount[]).filter(isCashBankAccount)
         if (accList.length === 0 && accRes.ok) {
@@ -251,23 +246,9 @@ export default function NewInvoicePage() {
           setPaymentMethod(defaultAcc.name)
         }
 
-        // Fetch products with variants
-        let { data: prodData, error: prodErr } = await supabase
-          .from('products')
-          .select('id, name, price, sku, cost_price, stock_quantity, stock_type, product_variants(id, name, sku, price, cost_price, stock_quantity)')
-          .eq('business_id', activeBusiness.id)
-          .order('name', { ascending: true })
-
-        if (prodErr) {
-          const fallbackRes = await supabase
-            .from('products')
-            .select('id, name, price, sku, cost_price, stock_quantity, stock_type')
-            .eq('business_id', activeBusiness.id)
-            .order('name', { ascending: true })
-          prodData = fallbackRes.data as any
-        }
-
-        if (prodData) setProducts(prodData as Product[])
+        // Fetch all products with variants (Chunked to bypass 1,000 PostgREST limit)
+        const prodData = await fetchAllBusinessProducts<Product>(supabase, activeBusiness.id)
+        if (prodData) setProducts(prodData)
       } catch (err) {
         console.error('Error loading master data:', err)
       } finally {
@@ -469,6 +450,21 @@ export default function NewInvoicePage() {
 
       if (!response.ok) {
         throw new Error(result.error || 'Gagal menyimpan invoice')
+      }
+
+      if (isNewCustomer && result.order?.customer_id) {
+        notifyCustomerDirectoryUpdate(
+          {
+            id: result.order.customer_id,
+            business_id: businessId || activeBusiness?.id,
+            name: newCustForm.name,
+            phone: newCustForm.phone,
+            email: newCustForm.email || null,
+            address_data: newCustForm.address || null
+          },
+          'upsert',
+          businessId || activeBusiness?.id
+        )
       }
 
       router.push(`/orders/invoices/${result.order.id}`)

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import { CustomerAddressForm, AddressData, EMPTY_ADDRESS } from '@/components/CustomerAddressForm'
 import { CustomerLoyaltyTab } from '@/plugins/loyalty/components/CustomerLoyaltyTab'
+import { notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
 
 interface CustomerDetailProps {
   customer: any
@@ -218,6 +219,7 @@ export function CustomerDetail({ customer, onClose, onUpdate }: CustomerDetailPr
       setSaveStatus('success')
       // Update full customer state
       setFullCustomer(result.customer)
+      notifyCustomerDirectoryUpdate(result.customer, 'upsert')
 
       // Notify parent list to update UI in-place
       if (onUpdate) {

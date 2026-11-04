@@ -4,11 +4,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useUserContext } from '@/components/UserContext'
 import { isCashBankAccount, resolvePaymentAccountFromCOA } from '@/lib/coa'
 import QuickAddProductModal from '@/components/QuickAddProductModal'
 import { QuickAddCustomerForm, NewCustomerFormData, EMPTY_CUSTOMER_FORM } from '@/components/QuickAddCustomerForm'
 import { CustomerSelectCombobox } from '@/components/CustomerSelectCombobox'
 import { ProductSelectCombobox, ProductComboboxItem } from '@/components/ProductSelectCombobox'
+import { useCustomerDirectory, notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
+import { fetchAllBusinessProducts } from '@/lib/chunkedQueryHelper'
 
 type Customer = {
   id: string
@@ -87,7 +90,6 @@ export default function EditInvoicePage() {
   const invoiceId = params.id as string
 
   // Master Data States
-  const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [paymentAccounts, setPaymentAccounts] = useState<COAAccount[]>([])
   const [businessName, setBusinessName] = useState<string>('')
@@ -218,52 +220,46 @@ export default function EditInvoicePage() {
     }
   }, [showPaymentModal])
 
-  // Load Initial Data (Customers & Products)
+  const { activeBusiness, userProfile: ctxProfile, currentUserRole } = useUserContext()
+  const { customers, upsertCustomer } = useCustomerDirectory({
+    businessId: businessId || activeBusiness?.id,
+    includeCustomerId: selectedCustomerId || null
+  })
+
+  // Load Initial Data (Products & Business Context)
   useEffect(() => {
     const loadMasterData = async () => {
       setLoadingData(true)
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
+        let targetBizId = activeBusiness?.id || ''
+        let targetBizName = activeBusiness?.name || 'Bisnis Saya'
 
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('id, role, active_business_id, businesses!active_business_id(name)')
-          .eq('id', user.id)
-          .single()
-
-        if (!profile?.active_business_id) return
-
-        setBusinessId(profile.active_business_id)
-        setBusinessName((profile.businesses as { name?: string } | null)?.name || 'Bisnis Saya')
-        setCurrentUserProfile({ id: profile.id, role: profile.role || 'staff' })
-
-        // Fetch customers from secure endpoint
-        const custRes = await fetch('/api/customers')
-        if (custRes.ok) {
-          const custJson = await custRes.json()
-          if (custJson.success) {
-            setCustomers(custJson.customers)
-          }
+        if (ctxProfile?.id) {
+          setCurrentUserProfile({ id: ctxProfile.id, role: currentUserRole || ctxProfile.role || 'staff' })
         }
 
-        // Fetch products with variants
-        let { data: prodData, error: prodErr } = await supabase
-          .from('products')
-          .select('id, name, price, sku, cost_price, stock_quantity, stock_type, product_variants(id, name, sku, price, cost_price, stock_quantity)')
-          .eq('business_id', profile.active_business_id)
-          .order('name', { ascending: true })
+        if (!targetBizId) {
+          const { data: { user } } = await supabase.auth.getUser()
+          if (!user) return
 
-        if (prodErr) {
-          const fallbackRes = await supabase
-            .from('products')
-            .select('id, name, price, sku, cost_price, stock_quantity, stock_type')
-            .eq('business_id', profile.active_business_id)
-            .order('name', { ascending: true })
-          prodData = fallbackRes.data as any
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('id, role, active_business_id, businesses!active_business_id(name)')
+            .eq('id', user.id)
+            .single()
+
+          if (!profile?.active_business_id) return
+          targetBizId = profile.active_business_id
+          targetBizName = (profile.businesses as { name?: string } | null)?.name || 'Bisnis Saya'
+          setCurrentUserProfile({ id: profile.id, role: profile.role || 'staff' })
         }
 
-        if (prodData) setProducts(prodData as Product[])
+        setBusinessId(targetBizId)
+        setBusinessName(targetBizName)
+
+        // Fetch all products with variants (Chunked to bypass 1,000 PostgREST limit)
+        const prodData = await fetchAllBusinessProducts<Product>(supabase, targetBizId)
+        if (prodData) setProducts(prodData)
       } catch (err) {
         console.error('Error loading master data:', err)
       } finally {
@@ -272,7 +268,7 @@ export default function EditInvoicePage() {
     }
 
     loadMasterData()
-  }, [supabase])
+  }, [supabase, activeBusiness?.id, activeBusiness?.name, ctxProfile?.id, ctxProfile?.role, currentUserRole])
 
   // Unfold products into flat discrete items (Variants as individual rows, or parent product if no variants)
   const comboboxProducts = useMemo<ProductComboboxItem[]>(() => {
@@ -394,6 +390,13 @@ export default function EditInvoicePage() {
 
           setSelectedCustomerId(inv.customer_id || '')
           setLoadedCustomerAddress(inv.customers?.address_data || null)
+          if (inv.customers && inv.customer_id) {
+            upsertCustomer({
+              ...inv.customers,
+              id: inv.customer_id,
+              business_id: inv.business_id || businessId
+            })
+          }
           setInvoiceNumber(inv.order_number || '')
           setCreatorUserId(inv.user_id || null)
           setCreatorName(inv.creator?.full_name || 'Tidak diketahui')
@@ -650,6 +653,21 @@ export default function EditInvoicePage() {
       const json = await res.json()
       if (!res.ok) {
         throw new Error(json.error || 'Gagal menyimpan perubahan invoice.')
+      }
+
+      if (isNewCustomer && json.order?.customer_id) {
+        notifyCustomerDirectoryUpdate(
+          {
+            id: json.order.customer_id,
+            business_id: businessId || activeBusiness?.id,
+            name: newCustForm.name,
+            phone: newCustForm.phone,
+            email: newCustForm.email || null,
+            address_data: newCustForm.address || null
+          },
+          'upsert',
+          businessId || activeBusiness?.id
+        )
       }
 
       router.push(`/orders/invoices/${invoiceId}`)

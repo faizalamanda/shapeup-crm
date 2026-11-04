@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { CustomerAddressForm, AddressData, EMPTY_ADDRESS } from '@/components/CustomerAddressForm'
+import { notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
 
 interface CustomerFormProps {
   mode: 'create' | 'edit'
@@ -159,6 +160,10 @@ export function CustomerForm({ mode, customerId, initialCustomer }: CustomerForm
       const result = await res.json()
       if (!res.ok) {
         throw new Error(result.error || 'Gagal menyimpan data pelanggan')
+      }
+
+      if (result.customer) {
+        notifyCustomerDirectoryUpdate(result.customer, 'upsert')
       }
 
       // Success -> Show Success Modal

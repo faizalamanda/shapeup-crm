@@ -90,10 +90,14 @@ export function ProductSelectCombobox({
     const q = searchQuery.trim().toLowerCase()
     if (!q) return true
     return (
-      p.name.toLowerCase().includes(q) ||
+      (p.name || '').toLowerCase().includes(q) ||
       (p.sku && p.sku.toLowerCase().includes(q))
     )
   })
+
+  // DOM Windowing: Limit rendered nodes to 50 items for 0ms dropdown open latency on > 1,000 products
+  const MAX_VISIBLE_ITEMS = 50
+  const visibleProducts = filteredProducts.slice(0, MAX_VISIBLE_ITEMS)
 
   const hasSelection = Boolean(selectedProduct || selectedProductName)
 
@@ -157,46 +161,53 @@ export function ProductSelectCombobox({
       {/* Dropdown list */}
       {isOpen && !disabled && (
         <div className="absolute left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg z-50 divide-y divide-gray-100 animate-in fade-in zoom-in-95 duration-100">
-          {filteredProducts.length > 0 ? (
-            filteredProducts.map(p => {
-              const itemKey = p.variant_id ? `${p.id}_${p.variant_id}` : p.id
-              const isSelected =
-                (selectedProductId === p.id && ((selectedVariantId && p.variant_id === selectedVariantId) || (!selectedVariantId && !p.variant_id))) ||
-                (selectedProductName && p.name.toLowerCase() === selectedProductName.toLowerCase())
-              const displayPrice = showCostPrice ? (p.cost_price ?? p.price) : p.price
-              const isTracked = !p.stock_type || p.stock_type === 'tracked'
-              const hasStockInfo = isTracked && p.stock_quantity !== undefined && p.stock_quantity !== null
+          {visibleProducts.length > 0 ? (
+            <>
+              {visibleProducts.map(p => {
+                const itemKey = p.variant_id ? `${p.id}_${p.variant_id}` : p.id
+                const isSelected =
+                  (selectedProductId === p.id && ((selectedVariantId && p.variant_id === selectedVariantId) || (!selectedVariantId && !p.variant_id))) ||
+                  (selectedProductName && (p.name || '').toLowerCase() === selectedProductName.toLowerCase())
+                const displayPrice = showCostPrice ? (p.cost_price ?? p.price) : p.price
+                const isTracked = !p.stock_type || p.stock_type === 'tracked'
+                const hasStockInfo = isTracked && p.stock_quantity !== undefined && p.stock_quantity !== null
 
-              return (
-                <button
-                  key={itemKey}
-                  type="button"
-                  onMouseDown={() => {
-                    onSelectProduct(p)
-                    setSearchQuery('')
-                    setIsOpen(false)
-                  }}
-                  className={`w-full text-left p-2.5 text-xs transition-colors flex items-center justify-between gap-2 cursor-pointer ${
-                    isSelected ? 'bg-blue-50/70 font-bold text-blue-900' : 'hover:bg-gray-50 text-gray-800 font-medium'
-                  }`}
-                >
-                  <div className="min-w-0 flex-1">
-                    <span className="font-bold text-gray-900">📦 {p.name}</span>
-                    {p.sku && <span className="ml-1.5 text-[10px] font-mono text-gray-500">(SKU: {p.sku})</span>}
-                    {hasStockInfo && (
-                      <span className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                        Number(p.stock_quantity) > 0
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-rose-50 text-rose-700'
-                      }`}>
-                        Stok: {p.stock_quantity}
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-blue-700 font-bold shrink-0">{formatIDR(displayPrice)}</span>
-                </button>
-              )
-            })
+                return (
+                  <button
+                    key={itemKey}
+                    type="button"
+                    onMouseDown={() => {
+                      onSelectProduct(p)
+                      setSearchQuery('')
+                      setIsOpen(false)
+                    }}
+                    className={`w-full text-left p-2.5 text-xs transition-colors flex items-center justify-between gap-2 cursor-pointer ${
+                      isSelected ? 'bg-blue-50/70 font-bold text-blue-900' : 'hover:bg-gray-50 text-gray-800 font-medium'
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <span className="font-bold text-gray-900">📦 {p.name}</span>
+                      {p.sku && <span className="ml-1.5 text-[10px] font-mono text-gray-500">(SKU: {p.sku})</span>}
+                      {hasStockInfo && (
+                        <span className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                          Number(p.stock_quantity) > 0
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : 'bg-rose-50 text-rose-700'
+                        }`}>
+                          Stok: {p.stock_quantity}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-blue-700 font-bold shrink-0">{formatIDR(displayPrice)}</span>
+                  </button>
+                )
+              })}
+              {filteredProducts.length > MAX_VISIBLE_ITEMS && (
+                <div className="px-3 py-2 bg-slate-50 text-[11px] text-gray-500 font-semibold text-center">
+                  Menampilkan {MAX_VISIBLE_ITEMS} dari {filteredProducts.length.toLocaleString('id-ID')} item — ketik nama atau SKU untuk memfilter
+                </div>
+              )}
+            </>
           ) : (
             <div className="p-3 text-xs text-gray-500 font-medium text-center">
               Produk &quot;{searchQuery}&quot; tidak ditemukan.

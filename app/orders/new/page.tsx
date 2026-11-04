@@ -1,8 +1,11 @@
 "use client"
 import { useState } from 'react'
 import { formatPhoneNumberSmart } from '@/lib/utils'
+import { CustomerSelectCombobox } from '@/components/CustomerSelectCombobox'
+import { notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
 
 export default function NewOrderManual() {
+  const [selectedCustomerId, setSelectedCustomerId] = useState('')
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [items, setItems] = useState([{ product_name: '', quantity: 1, price: 0 }])
@@ -37,6 +40,7 @@ export default function NewOrderManual() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
+          customer_id: selectedCustomerId || null,
           name, 
           phone, 
           items, 
@@ -45,7 +49,9 @@ export default function NewOrderManual() {
       })
       
       if (res.ok) {
+        notifyCustomerDirectoryUpdate(undefined, 'invalidate')
         alert("Order & Customer Berhasil Disimpan!")
+        setSelectedCustomerId('')
         setName('')
         setPhone('')
         setItems([{ product_name: '', quantity: 1, price: 0 }])
@@ -72,6 +78,25 @@ export default function NewOrderManual() {
         {/* SECTION 1: PELANGGAN */}
         <div className="p-8 border-b border-slate-100 bg-slate-50/50">
           <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400 mb-6">Informasi Pelanggan</h3>
+          <div className="mb-6">
+            <CustomerSelectCombobox
+              selectedCustomerId={selectedCustomerId}
+              label="Pilih Pelanggan Terdaftar (Opsional — Otomatis Isi Nama & No. WA)"
+              onSelectCustomer={(id) => {
+                setSelectedCustomerId(id)
+                if (!id) {
+                  setName('')
+                  setPhone('')
+                }
+              }}
+              onSelectCustomerObject={(cust) => {
+                if (cust) {
+                  setName(cust.name || '')
+                  setPhone(cust.phone || '')
+                }
+              }}
+            />
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700 ml-1">Nama Lengkap</label>

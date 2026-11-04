@@ -361,6 +361,9 @@ export default function CustomerImportPage() {
         throw new Error(data.error || 'Terjadi kesalahan saat mengimpor data customer.')
       }
 
+      const { notifyCustomerDirectoryUpdate } = await import('@/lib/customerDirectoryStore')
+      notifyCustomerDirectoryUpdate(undefined, 'invalidate')
+
       setSuccessResult({
         insertedCount: data.insertedCount || 0,
         updatedCount: data.updatedCount || 0,

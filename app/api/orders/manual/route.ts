@@ -1,40 +1,36 @@
 import { NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
-import { formatPhoneNumberSmart } from '@/lib/utils'
+import { resolveOrCreateCustomer } from '@/lib/customerHelper'
 import { syncOrderToLedger } from '@/lib/orderLedger'
 
 export async function POST(req: Request) {
   try {
     const ctx = await getApiContext()
     if (ctx.error) return ctx.error
-    const { user, businessId, supabase, supabaseAdmin } = ctx
+    const { user, businessId, supabaseAdmin } = ctx
 
     const body = await req.json().catch(() => null)
     if (!body) {
       return NextResponse.json({ error: 'Body permintaan tidak valid' }, { status: 400 })
     }
 
-    const { name, phone, items, total_amount, payment_method = 'Cash' } = body
+    const { customer_id, name, phone, items, total_amount, payment_method = 'Cash' } = body
 
     if (!items || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'Daftar produk tidak boleh kosong' }, { status: 400 })
     }
 
-    // 1. Sanitize Phone
-    const cleanPhone = formatPhoneNumberSmart(phone || '0')
-
-    // 2. UPSERT Customer
-    const { data: customer, error: custError } = await supabaseAdmin
-      .from('customers')
-      .upsert({ 
-        business_id: businessId,
-        phone: cleanPhone, 
-        name: name || 'Pelanggan Manual'
-      }, { onConflict: 'phone' })
-      .select('id')
-      .single()
-
-    if (custError) throw custError
+    // 1. Resolve or Create Customer via Unified Customer Helper
+    const { customer } = await resolveOrCreateCustomer(
+      {
+        businessId,
+        customerId: customer_id || null,
+        name: name || 'Pelanggan Manual',
+        phone: phone || '0',
+        reuseExistingOnPhoneMatch: true
+      },
+      supabaseAdmin
+    )
 
     const orderNumber = 'MAN-' + Date.now().toString().slice(-8)
     const numTotal = Number(total_amount) || 0

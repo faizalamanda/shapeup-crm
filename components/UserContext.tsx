@@ -361,10 +361,22 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({ active_business_id: bizId })
-      .eq('id', user.id)
+    // Update via server endpoint first to guarantee server-side profileCache invalidation,
+    // with direct client fallback for resilience
+    const switchRes = await fetch('/api/business', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ business_id: bizId })
+    }).catch(() => null)
+
+    let error: any = null
+    if (!switchRes || !switchRes.ok) {
+      const res = await supabase
+        .from('profiles')
+        .update({ active_business_id: bizId })
+        .eq('id', user.id)
+      error = res.error
+    }
 
     if (error) {
       alert("Gagal mengaktifkan bisnis: " + error.message)

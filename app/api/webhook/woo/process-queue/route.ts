@@ -13,6 +13,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { syncOrderToLedger } from '@/lib/orderLedger'
+import { invalidateCustomerCache } from '@/lib/customerHelper'
 
 function normalizePhone(rawPhone: string): string {
   let clean = rawPhone.replace(/\D/g, "")
@@ -182,6 +183,7 @@ export async function POST(req: Request) {
           if (insertErr || !newCustomer) throw new Error(`Customer insert failed: ${insertErr?.message}`)
           customerId = newCustomer.id
         }
+        invalidateCustomerCache(business_id)
 
         // 7. Order Upsert
         const { data: orderData, error: orderError } = await supabaseAdmin

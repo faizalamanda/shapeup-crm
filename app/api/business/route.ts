@@ -138,3 +138,56 @@ export async function POST(req: Request) {
   }
 }
 
+export async function PATCH(req: Request) {
+  try {
+    const ctx = await getApiContext({ requireBusiness: false })
+    if (ctx.error) return ctx.error
+    const { user, supabaseAdmin } = ctx
+
+    const body = await req.json().catch(() => ({}))
+    const targetBizId = typeof body?.business_id === 'string' ? body.business_id.trim() : ''
+
+    if (!targetBizId) {
+      return NextResponse.json({ error: 'business_id wajib disertakan' }, { status: 400 })
+    }
+
+    // Verify ownership or staff assignment
+    const [{ data: owned }, { data: staff }] = await Promise.all([
+      supabaseAdmin
+        .from('businesses')
+        .select('id')
+        .eq('id', targetBizId)
+        .eq('owner_id', user.id)
+        .maybeSingle(),
+      supabaseAdmin
+        .from('business_staff')
+        .select('business_id')
+        .eq('business_id', targetBizId)
+        .eq('profile_id', user.id)
+        .maybeSingle()
+    ])
+
+    if (!owned?.id && !staff?.business_id) {
+      return NextResponse.json({ error: 'Akses ke unit bisnis ini ditolak' }, { status: 403 })
+    }
+
+    const { error: updateErr } = await supabaseAdmin
+      .from('profiles')
+      .update({ active_business_id: targetBizId })
+      .eq('id', user.id)
+
+    if (updateErr) {
+      return NextResponse.json({ error: updateErr.message }, { status: 400 })
+    }
+
+    // Critical: Invalidate server-side 30s profileCache so subsequent API calls
+    // immediately resolve the newly selected active_business_id (0ms stale drift)
+    invalidateProfileCache(user.id)
+
+    return NextResponse.json({ success: true, active_business_id: targetBizId })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Terjadi kesalahan server internal'
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
+}
+

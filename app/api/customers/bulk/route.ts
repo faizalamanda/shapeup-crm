@@ -1,61 +1,39 @@
-import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { createClient, getAuthUser } from '@/lib/supabaseServer'
 import { NextResponse } from 'next/server'
+import { getApiContext } from '@/lib/apiContext'
+import {
+  fetchAllBusinessCustomers,
+  invalidateCustomerCache,
+  normalizePhoneCanonical
+} from '@/lib/customerHelper'
 
 export async function POST(req: Request) {
-  const supabase = await createClient()
-
   try {
-    // 1. Get logged-in user and active business ID
-    const { user, error: authErr } = await getAuthUser(supabase)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const ctx = await getApiContext()
+    if (ctx.error) return ctx.error
+    const { businessId, supabaseAdmin } = ctx
+
+    let body: any
+    try {
+      body = await req.json()
+    } catch {
+      return NextResponse.json({ error: 'Payload JSON tidak valid' }, { status: 400 })
     }
 
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('active_business_id')
-      .eq('id', user.id)
-      .single()
-
-    if (profErr || !profile?.active_business_id) {
-      return NextResponse.json({ error: 'Active business not found for user profile' }, { status: 400 })
-    }
-
-    const businessId = profile.active_business_id
-
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
-      return NextResponse.json({ 
-        error: 'SUPABASE_SERVICE_ROLE_KEY is not defined in env' 
-      }, { status: 500 })
-    }
-
-    // 2. Parse request body
-    const body = await req.json()
-    const { customers, duplicateAction = 'skip' } = body
+    const { customers, duplicateAction = 'skip' } = body || {}
 
     if (!Array.isArray(customers) || customers.length === 0) {
       return NextResponse.json({ error: 'Data customer tidak boleh kosong' }, { status: 400 })
     }
 
-    // 3. Initialize Admin Client to bypass RLS
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      serviceRoleKey
-    )
+    // Fetch ALL existing customers for this business (chunked, bypasses 1,000 PostgREST limit)
+    const existingCustomers = await fetchAllBusinessCustomers(businessId, supabaseAdmin, true)
 
-    // 4. Fetch existing customers for this business to check duplicates by phone
-    const { data: existingCustomers, error: fetchErr } = await supabaseAdmin
-      .from('customers')
-      .select('id, phone')
-      .eq('business_id', businessId)
-
-    if (fetchErr) throw fetchErr
-
-    const existingPhoneMap = new Map<string, string>() // phone -> id
-    existingCustomers?.forEach(c => {
-      if (c.phone) existingPhoneMap.set(c.phone, c.id)
+    const existingPhoneMap = new Map<string, string>() // canonical phone -> id
+    existingCustomers.forEach(c => {
+      if (c.phone) {
+        existingPhoneMap.set(normalizePhoneCanonical(c.phone), c.id)
+        existingPhoneMap.set(c.phone, c.id)
+      }
     })
 
     let insertedCount = 0
@@ -75,12 +53,10 @@ export async function POST(req: Request) {
         continue
       }
 
-      // Clean phone number
-      let cleanPhone = rawPhone.replace(/\D/g, '')
-      if (cleanPhone.startsWith('0')) {
-        cleanPhone = '62' + cleanPhone.substring(1)
-      } else if (cleanPhone.startsWith('8')) {
-        cleanPhone = '62' + cleanPhone
+      const cleanPhone = normalizePhoneCanonical(rawPhone)
+      if (!cleanPhone) {
+        skippedCount++
+        continue
       }
 
       const existingId = existingPhoneMap.get(cleanPhone)
@@ -96,7 +72,7 @@ export async function POST(req: Request) {
       }
 
       if (existingId) {
-        if (duplicateAction === 'update') {
+        if (duplicateAction === 'update' && existingId !== 'pending_insert') {
           recordsToUpdate.push({
             id: existingId,
             payload: recordPayload
@@ -106,7 +82,6 @@ export async function POST(req: Request) {
         }
       } else {
         newRecordsToInsert.push(recordPayload)
-        // Mark as added in local map in case duplicate phone occurs multiple times in same file
         existingPhoneMap.set(cleanPhone, 'pending_insert')
       }
     }
@@ -125,13 +100,14 @@ export async function POST(req: Request) {
       }
     }
 
-    // Execute updates individually or in parallel batch
+    // Execute updates
     if (recordsToUpdate.length > 0) {
       for (const item of recordsToUpdate) {
         const { error: updErr } = await supabaseAdmin
           .from('customers')
           .update(item.payload)
           .eq('id', item.id)
+          .eq('business_id', businessId)
 
         if (updErr) {
           console.error(`Failed to update customer ${item.id}:`, updErr)
@@ -142,6 +118,9 @@ export async function POST(req: Request) {
       }
     }
 
+    // Invalidate server-side customer directory cache so all pages get fresh data
+    invalidateCustomerCache(businessId)
+
     return NextResponse.json({
       success: true,
       count: insertedCount,
@@ -150,7 +129,6 @@ export async function POST(req: Request) {
       skippedCount,
       message: `Berhasil mengimpor customer! (Ditambahkan: ${insertedCount}, Diperbarui: ${updatedCount}, Diabaikan: ${skippedCount})`
     })
-
   } catch (err: any) {
     console.error('[ShapeUp] Customer bulk import error:', err)
     return NextResponse.json({ error: err.message }, { status: 500 })

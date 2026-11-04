@@ -24,6 +24,8 @@ import { useUserContext } from '@/components/UserContext'
 import { formatDisplayDate } from '@/lib/timeUtils'
 import { fetchLoyaltySettings } from '@/plugins/loyalty/helpers/loyaltyApi'
 import { LoyaltySettings, LoyaltyTier, DEFAULT_LOYALTY_SETTINGS, resolveTier, calculateEarnedPoints } from '@/plugins/loyalty/types'
+import { useCustomerDirectory, matchesCustomerQuery, notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
+import { fetchAllBusinessProducts } from '@/lib/chunkedQueryHelper'
 
 // Pastel badge colors for product cards
 const getPastelBadge = (name: string) => {
@@ -139,6 +141,48 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   const [loyaltySettings, setLoyaltySettings] = useState<LoyaltySettings | null>(null)
 
   const { activeBusiness, userProfile: ctxProfile, bizLoading } = useUserContext()
+  const { customers: dirCustomers, searchServer: searchCustomersServer } = useCustomerDirectory({
+    businessId: activeBusiness?.id
+  })
+
+  // Merge full customer directory with loyalty points from customer_metrics
+  const mergedPosCustomers = useMemo(() => {
+    if (dirCustomers.length === 0) return customers
+    const loyaltyMap = new Map<string, { loyalty_points: number; loyalty_tier: string }>()
+    for (const c of customers) {
+      if (c.id) {
+        loyaltyMap.set(c.id, {
+          loyalty_points: Number(c.loyalty_points || 0),
+          loyalty_tier: c.loyalty_tier || 'Bronze'
+        })
+      }
+    }
+    return dirCustomers.map(dc => {
+      const loy = loyaltyMap.get(dc.id)
+      return {
+        ...dc,
+        loyalty_points: loy?.loyalty_points ?? Number(dc.loyalty_points || 0),
+        loyalty_tier: loy?.loyalty_tier ?? dc.loyalty_tier ?? 'Bronze'
+      }
+    })
+  }, [dirCustomers, customers])
+
+  const filteredPosCustomers = useMemo(() => {
+    const q = customerSearch.trim()
+    const list = q
+      ? mergedPosCustomers.filter(c => matchesCustomerQuery(c, q))
+      : mergedPosCustomers
+    return list.slice(0, 50)
+  }, [mergedPosCustomers, customerSearch])
+
+  useEffect(() => {
+    const q = customerSearch.trim()
+    if (!isCustomerDropdownOpen || q.length < 2 || filteredPosCustomers.length >= 5) return
+    const timer = setTimeout(() => {
+      searchCustomersServer(q)
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [customerSearch, isCustomerDropdownOpen, filteredPosCustomers.length, searchCustomersServer])
 
   // Initialize POS
   useEffect(() => {
@@ -163,7 +207,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   const loadCatalogAndCustomers = async (bId: string) => {
     // Jalankan query secara paralel (Performance Rule #2)
     const [
-      { data: prods },
+      prods,
       { data: cats },
       { data: custs },
       { data: accs },
@@ -173,7 +217,10 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       posSettingsRes,
       holdRes
     ] = await Promise.all([
-      supabase.from('products').select('*, product_variants(*), product_modifiers(*)').eq('business_id', bId).order('name', { ascending: true }),
+      fetchAllBusinessProducts(supabase, bId, {
+        selectWithVariants: '*, product_variants(*), product_modifiers(*)',
+        selectFallback: '*'
+      }),
       supabase.from('categories').select('*').eq('business_id', bId).order('name', { ascending: true }),
       supabase.from('customer_metrics').select('customer_id, name, phone, loyalty_points, loyalty_tier').eq('business_id', bId).limit(100),
       supabase.from('accounts').select('id, code, name, type').eq('business_id', bId).in('type', ['ASSET', 'EQUITY']).order('code', { ascending: true }),
@@ -744,7 +791,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
             <div className="absolute left-0 top-full mt-1 w-full bg-white border border-slate-200 rounded-2xl shadow-xl z-30 p-2.5 space-y-2">
               <input
                 type="text"
-                placeholder="Cari pelanggan..."
+                placeholder="Cari nama atau No. HP (08... / 628...)..."
                 value={customerSearch}
                 onChange={(e) => setCustomerSearch(e.target.value)}
                 className="w-full px-3 py-1.5 rounded-xl border text-xs outline-none focus:ring-2 focus:ring-indigo-500"
@@ -759,21 +806,19 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                 >
                   Walk-in Customer (Tanpa Nama)
                 </button>
-                {customers
-                  .filter((c) => c.name.toLowerCase().includes(customerSearch.toLowerCase()))
-                  .map((c) => (
-                    <button
-                      key={c.id}
-                      onClick={() => {
-                        setSelectedCustomer(c)
-                        setIsCustomerDropdownOpen(false)
-                      }}
-                      className="w-full text-left px-3 py-2 hover:bg-slate-100 rounded-xl text-xs text-slate-800 flex justify-between items-center"
-                    >
-                      <span className="font-semibold">{c.name}</span>
-                      <span className="text-slate-400 font-mono text-[10px]">{c.phone}</span>
-                    </button>
-                  ))}
+                {filteredPosCustomers.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => {
+                      setSelectedCustomer(c)
+                      setIsCustomerDropdownOpen(false)
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-slate-100 rounded-xl text-xs text-slate-800 flex justify-between items-center gap-2"
+                  >
+                    <span className="font-semibold truncate">{c.name}</span>
+                    <span className="text-slate-400 font-mono text-[10px] shrink-0">{c.phone}</span>
+                  </button>
+                ))}
               </div>
               <button
                 onClick={() => {
@@ -1703,7 +1748,8 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
               loyalty_points: Number(c.loyalty_points || 0),
               loyalty_tier: c.loyalty_tier || 'Bronze'
             }
-            setCustomers((prev) => [newCust, ...prev])
+            notifyCustomerDirectoryUpdate(newCust, 'upsert', businessId)
+            setCustomers((prev) => [newCust, ...prev.filter(item => item.id !== newCust.id)])
             setSelectedCustomer(newCust)
           }}
         />

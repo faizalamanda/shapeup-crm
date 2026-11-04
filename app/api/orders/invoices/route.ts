@@ -1,5 +1,6 @@
 import { getApiContext } from '@/lib/apiContext'
 import { getActivePaymentAccounts, resolvePaymentAccountFromCOA } from '@/lib/accountHelper'
+import { resolveOrCreateCustomer } from '@/lib/customerHelper'
 import { syncOrderToLedger } from '@/lib/orderLedger'
 import { isUuid } from '@/lib/utils'
 import { NextResponse } from 'next/server'
@@ -177,45 +178,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Status invoice tidak valid' }, { status: 400 })
     }
 
-    // 2. Resolve Customer ID
+    // 2. Resolve Customer ID (via Unified Customer Helper + Server Cache Upsert)
     let resolvedCustomerId = isUuid(customer_id) ? customer_id : null
 
     if (!resolvedCustomerId && customer_name && customer_phone) {
-      // Clean phone number
-      let cleanPhone = customer_phone.replace(/\D/g, '')
-      if (cleanPhone.startsWith('0')) {
-        cleanPhone = '62' + cleanPhone.substring(1)
-      } else if (cleanPhone.startsWith('8')) {
-        cleanPhone = '62' + cleanPhone
-      }
-
-      // Check if phone already exists
-      const { data: existingCust } = await supabaseAdmin
-        .from('customers')
-        .select('id')
-        .eq('business_id', businessId)
-        .eq('phone', cleanPhone)
-        .maybeSingle()
-
-      if (existingCust) {
-        resolvedCustomerId = existingCust.id
-      } else {
-        // Create new customer
-        const { data: newCust, error: newCustErr } = await supabaseAdmin
-          .from('customers')
-          .insert({
-            business_id: businessId,
-            name: customer_name.trim(),
-            phone: cleanPhone,
-            email: customer_email ? customer_email.trim() : null,
-            address_data: customer_address ?? null
-          })
-          .select('id')
-          .single()
-
-        if (newCustErr) throw newCustErr
-        resolvedCustomerId = newCust.id
-      }
+      const { customer: resolvedCust } = await resolveOrCreateCustomer(
+        {
+          businessId,
+          name: customer_name,
+          phone: customer_phone,
+          email: customer_email,
+          address_data: customer_address ?? null,
+          reuseExistingOnPhoneMatch: true
+        },
+        supabaseAdmin
+      )
+      resolvedCustomerId = resolvedCust.id
     }
 
     if (!resolvedCustomerId) {
