@@ -46,8 +46,11 @@ export default function AccurateSettingsModal({
     e.preventDefault()
     setSaving(true)
     try {
-      // 1. Get db_integer_id silently first
-      let fetchedDbIntegerId = null;
+      // 1. Get db_integer_id and renew webhook silently first
+      let fetchedDbIntegerId = accurateSaved?.config?.db_integer_id || null
+      let fetchedWebhookExpiry = accurateSaved?.config?.webhook_expiry || null
+      let fetchedLastWebhookRenewAt = accurateSaved?.config?.last_webhook_renew_at || null
+
       try {
         const testRes = await fetch('/api/integrations/accurate/test-connection', {
           method: 'POST',
@@ -55,20 +58,29 @@ export default function AccurateSettingsModal({
           body: JSON.stringify({ access_token: accurateAccessToken, db_id: accurateDbId })
         })
         const testData = await testRes.json()
-        if (testData.success && testData.db_integer_id) {
-          fetchedDbIntegerId = testData.db_integer_id
+        if (testData.success) {
+          if (testData.db_integer_id) fetchedDbIntegerId = testData.db_integer_id
+          if (testData.webhook_expiry) fetchedWebhookExpiry = testData.webhook_expiry
+          if (testData.last_webhook_renew_at) fetchedLastWebhookRenewAt = testData.last_webhook_renew_at
         }
       } catch (e) {
         console.error("Failed to fetch integer DB id", e)
       }
 
-      // 2. Save config
+      // 2. Save config while preserving existing metadata (last_sync_date, etc.)
       const configToSave: any = {
+        ...(accurateSaved?.config || {}),
         access_token: accurateAccessToken,
         db_id: accurateDbId
       }
       if (fetchedDbIntegerId) {
         configToSave.db_integer_id = fetchedDbIntegerId
+      }
+      if (fetchedWebhookExpiry) {
+        configToSave.webhook_expiry = fetchedWebhookExpiry
+      }
+      if (fetchedLastWebhookRenewAt) {
+        configToSave.last_webhook_renew_at = fetchedLastWebhookRenewAt
       }
 
       const res = await fetch('/api/integrations', {
@@ -84,8 +96,8 @@ export default function AccurateSettingsModal({
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Gagal menyimpan')
-      alert('Pengaturan Accurate berhasil disimpan!')
-      setAccurateSaved({ is_active: true })
+      alert('Pengaturan Accurate berhasil disimpan & Webhook otomatis diaktifkan!')
+      setAccurateSaved({ is_active: true, config: configToSave })
       if (onSaveSuccess) onSaveSuccess()
       setSelectedPlugin(null)
     } catch (err: any) {
@@ -96,8 +108,8 @@ export default function AccurateSettingsModal({
   }
 
   const handleTestConnection = async () => {
-    if (!accurateAccessToken || !accurateDbId) {
-      alert('Access Token dan Database ID wajib diisi untuk test koneksi.')
+    if (!accurateAccessToken) {
+      alert('API Token wajib diisi untuk test koneksi.')
       return
     }
     setIsTestingConnection(true)
@@ -112,7 +124,8 @@ export default function AccurateSettingsModal({
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Gagal test koneksi')
-      alert('Koneksi berhasil! Kredensial valid.')
+      const expiryInfo = data.webhook_expiry ? `\nWebhook Aktif s/d: ${data.webhook_expiry} (Auto-Renew Aktif)` : ''
+      alert(`${data.message || 'Koneksi berhasil! Kredensial valid.'}${expiryInfo}`)
     } catch (err: any) {
       alert('Error: ' + err.message)
     } finally {
@@ -238,6 +251,17 @@ export default function AccurateSettingsModal({
 
           {accurateSaved?.is_active && (
             <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col gap-2">
+              {accurateSaved?.config?.webhook_expiry && (
+                <div className="flex items-center justify-between bg-emerald-50/70 border border-emerald-200/80 rounded-xl px-3.5 py-2 mb-1">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span className="text-xs font-semibold text-emerald-900">Webhook Real-Time Aktif (Auto-Renew)</span>
+                  </div>
+                  <span className="text-[11px] font-medium text-emerald-700">
+                    Berlaku s/d: {accurateSaved.config.webhook_expiry}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between items-center mb-2">
                 <p className="text-xs text-slate-500 font-semibold">Tarik pesanan terbaru dari Accurate secara manual:</p>
                 {(accurateSaved?.config?.last_sync_time_str || accurateSaved?.config?.last_sync_date) && (

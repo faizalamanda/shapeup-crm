@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
+import { renewAccurateWebhookForToken } from '@/lib/integrations/accurate/syncService'
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json()
-    const { access_token, db_id } = body
+    const body = await req.json().catch(() => null)
+    const { access_token, db_id } = body || {}
 
     if (!access_token) {
       return NextResponse.json({ error: 'Access token wajib diisi.' }, { status: 400 })
@@ -41,11 +42,16 @@ export async function POST(req: NextRequest) {
         const dbData = tokenData.d?.database || tokenData.d?.["data usaha"]
         const dbAlias = dbData?.alias || "Unknown"
         const dbIntegerId = dbData?.id // the 2871875 number
+
+        // Automatically activate/renew Accurate webhook upon test/save
+        const renewRes = await renewAccurateWebhookForToken(cleanToken, cleanSecret, cleanDbId)
         
         return NextResponse.json({ 
           success: true, 
           message: `Koneksi berhasil! (Metode API Token) Terhubung dengan database: ${dbAlias}`,
-          db_integer_id: dbIntegerId
+          db_integer_id: dbIntegerId,
+          webhook_expiry: renewRes.expiryDate || null,
+          last_webhook_renew_at: renewRes.success ? new Date().toISOString() : null
         })
       } else {
         return NextResponse.json({ error: `Koneksi API Token gagal: ${JSON.stringify(tokenData.d || tokenData)}` }, { status: 400 })
@@ -85,9 +91,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Koneksi token berhasil, namun Database ID ${cleanDbId} tidak ditemukan di akun ini. Cek kembali Database ID.` }, { status: 400 })
     }
 
+    const renewRes = await renewAccurateWebhookForToken(cleanToken, undefined, cleanDbId)
+
     return NextResponse.json({ 
       success: true, 
-      message: `Koneksi berhasil! Terhubung dengan database: ${dbFound.alias}` 
+      message: `Koneksi berhasil! Terhubung dengan database: ${dbFound.alias}`,
+      db_integer_id: dbFound.id,
+      webhook_expiry: renewRes.expiryDate || null,
+      last_webhook_renew_at: renewRes.success ? new Date().toISOString() : null
     })
 
   } catch (err: any) {

@@ -54,8 +54,20 @@ export async function POST(req: NextRequest) {
     // Process each database ID sequentially to ingest into Queue
     for (const dbId of dbIds) {
       const integration = integrations.find(int => {
-        const conf = int.config as any
-        return conf.db_integer_id == dbId || conf.db_id == dbId
+        const conf = (int.config || {}) as any
+        if (conf.db_integer_id == dbId || conf.db_id == dbId) return true
+
+        // Fallback for legacy configs without db_integer_id: decode JWT payload from access_token (`aat.xxx.<base64_payload>.sig`)
+        if (typeof conf.access_token === 'string' && conf.access_token.startsWith('aat.')) {
+          try {
+            const parts = conf.access_token.split('.')
+            if (parts.length >= 3) {
+              const decoded = JSON.parse(Buffer.from(parts[2], 'base64').toString('utf8'))
+              if (decoded && decoded.d == dbId) return true
+            }
+          } catch (_) {}
+        }
+        return false
       })
 
       if (integration) {

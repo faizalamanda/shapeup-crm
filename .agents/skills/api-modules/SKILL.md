@@ -497,6 +497,29 @@ Setiap kolom input password di seluruh aplikasi **WAJIB** menerapkan tombol mata
 
 ---
 
+### 16. `lib/integrations/accurate/syncService.ts` — Accurate Online Webhook Auto-Renew & Unified Queue Processing
+
+Integrasi Accurate Online (`provider = 'accurate'`) menggunakan antrean asinkronus `webhook_ingest_queue` dan mekanisme perpanjangan masa aktif webhook otomatis (*Auto-Renew*):
+
+1. **Perpanjangan Masa Aktif Webhook Otomatis (`webhook-renew.do`):**
+   - Server Accurate Online hanya mengaktifkan pengiriman webhook selama **7 hari** sejak diaktifkan/diperpanjang. Jika tidak diperpanjang, seluruh event ditandai `status: "Skip"` (`skipped: true`) di sisi Accurate.
+   - Fungsi `renewAccurateWebhookForToken()` dan `autoRenewAllAccurateWebhooks()` memanggil `GET https://account.accurate.id/api/webhook-renew.do` (dengan tanda tangan HMAC-SHA256 `X-Api-Timestamp` & `X-Api-Signature` untuk API Token, atau `X-Session-ID` untuk OAuth).
+   - **Siklus Auto-Renew 3 Hari:** Setiap kali worker cron `/api/webhook/woo/process-queue` berjalan (setiap 1 menit), `autoRenewAllAccurateWebhooks(supabaseAdmin)` memeriksa apakah `config.last_webhook_renew_at` sudah berusia $\ge 3$ hari (72 jam). Jika ya, sistem otomatis memperpanjang masa aktif webhook (+7 hari ke depan) dan menyimpan `webhook_expiry` serta `last_webhook_renew_at` ke `business_integrations.config`.
+   - Selain di cron background, perpanjangan juga dipicu otomatis saat pengguna menekan **Test Koneksi**, **Simpan Pengaturan** di `AccurateSettingsModal.tsx`, dan di akhir sinkronisasi manual.
+
+2. **Multi-Source Webhook Queue Worker (`/api/webhook/woo/process-queue`):**
+   - Karena RPC `fetch_webhook_queue_batch` menarik seluruh item `pending` dari tabel `webhook_ingest_queue` tanpa membedakan `source`, worker `POST /api/webhook/woo/process-queue` **WAJIB** memeriksa `item.source` terlebih dahulu:
+     - Jika `item.source === 'accurate'`: panggil `processAccurateWebhookPayload(business_id, payload)` yang mengekstrak `salesInvoiceId` & `salesReceiptId` lalu mengeksekusi `executeAccurateSync()`.
+     - Jika `item.source === 'woocommerce'` (default): jalankan alur transformasi order WooCommerce.
+   - **DILARANG KERAS** langsung mengakses `payload.id.toString()` sebelum memeriksa `item.source`, karena payload Accurate berbentuk Array event (`[{ databaseId, type, data: [...] }]`).
+
+3. **Kompatibilitas & Fallback Data Lama (`db_integer_id` & Metadata Preservation):**
+   - Saat webhook Accurate masuk ke `/api/webhook/accurate`, pencocokan bisnis menggunakan `conf.db_integer_id == dbId || conf.db_id == dbId`.
+   - **JWT Token Fallback:** Jika integrasi lama belum memiliki `db_integer_id` di JSON `config`, sistem otomatis mendekode segmen payload Base64 dari `access_token` (`aat.<ver>.<base64_payload>.<sig>`) untuk membaca properti `d` (integer ID database Accurate) dan mem-backfill `db_integer_id`.
+   - **Preservasi Config saat Simpan:** Saat menyimpan ulang kredensial di `AccurateSettingsModal.tsx`, objek `configToSave` wajib melakukan spread `...(accurateSaved?.config || {})` agar metadata historis (`last_sync_date`, `last_sync_time_str`, `webhook_expiry`, `last_webhook_renew_at`, `db_integer_id`) tidak pernah terhapus.
+
+---
+
 ## ⚡ Performance Rules
 
 1. **Auth:** `getApiContext()` uses JWT fast-path → ~0-5ms (no network call to Supabase Auth)

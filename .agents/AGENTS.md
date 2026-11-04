@@ -328,6 +328,15 @@
     - **Strict Multi-Tier Cache Coherence ("Satu Update, Semua Terupdate"):** Seluruh pemilihan dan mutasi pelanggan di Buat Invoice, Edit Invoice, Kasir POS, Order Manual, dan Halaman Customer (`/customers`) wajib terhubung ke `useCustomerDirectory()` dan memanggil `notifyCustomerDirectoryUpdate()` dari `@/lib/customerDirectoryStore.ts`. Setiap mutasi langsung memperbarui L1 RAM, L2 `sessionStorage` (dengan *Quota Guard* untuk $> 500$ baris), meng-invalidate cache tabel `/customers` (`su_customers_v2_${bid}`), dan menyiarkan pembaruan lintas tab via `BroadcastChannel`.
     - **Server Profile Cache Invalidation on Business Switch (`PATCH /api/business`):** Saat berpindah unit bisnis di `UserContext.tsx` (`handleSwitchBusiness`), sistem wajib memanggil `PATCH /api/business` yang mengeksekusi `invalidateProfileCache(user.id)` di server agar perpindahan ke bisnis lain (seperti Bisnis Tanem) berlaku instan 0ms tanpa *30-second cache drift*. (Lihat skill `high-cardinality-data` dan knowledge `high-cardinality-directory-and-cache-coherence.md`).
 
+23. **Accurate Online Webhook Auto-Renewal & Multi-Source Queue Worker Standards:**
+    - **Automatic 3-Day Webhook Renewal (`webhook-renew.do`):** Masa aktif pengiriman webhook di Accurate Online hanya berlaku **7 hari** sejak diaktifkan/diperpanjang (jika kedaluwarsa, event dilewati oleh Accurate dengan `status: "Skip"`). Sistem **WAJIB** memperpanjang masa aktif secara otomatis setiap **3 hari sekali** melalui `autoRenewAllAccurateWebhooks()` dan `renewAccurateWebhookForToken()` (`@/lib/integrations/accurate/syncService.ts`) yang memanggil `GET https://account.accurate.id/api/webhook-renew.do` (dengan header HMAC-SHA256 `X-Api-Timestamp` & `X-Api-Signature`) dan menyimpan `webhook_expiry` serta `last_webhook_renew_at` ke dalam `business_integrations.config`.
+    - **Multi-Source Queue Dispatching in `/api/webhook/woo/process-queue`:** Karena fungsi RPC `fetch_webhook_queue_batch` mengklaim seluruh baris `pending` dari tabel `webhook_ingest_queue` lintas sumber (`woocommerce` dan `accurate`), worker `/api/webhook/woo/process-queue` **WAJIB** memeriksa `item.source` di awal iterasi:
+      - Jika `item.source === 'accurate'`, delegasikan ke `processAccurateWebhookPayload(business_id, payload)` yang memanggil `executeAccurateSync()`.
+      - Dilarang keras mengasumsikan semua item antrean adalah objek order WooCommerce (`payload.id.toString()`), karena payload Accurate berbentuk Array event.
+    - **Legacy Data Fallback (`db_integer_id` JWT Decode & Config Preservation):**
+      - Pada endpoint penerima `/api/webhook/accurate` dan saat auto-renew, jika konfigurasi lama belum menyimpan `db_integer_id`, sistem wajib memiliki fallback mendekode payload Base64 dari token `aat.<ver>.<base64_payload>.<sig>` (membaca properti `d` sebagai integer ID database Accurate).
+      - Saat menyimpan pengaturan di `AccurateSettingsModal.tsx`, sistem wajib melakukan spread `...(accurateSaved?.config || {})` agar metadata historis (`last_sync_date`, `db_integer_id`, `webhook_expiry`) tidak pernah tertimpa. (Lihat knowledge `accurate-webhook-auto-renewal-and-queue.md`).
+
 
 
 

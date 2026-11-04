@@ -14,6 +14,7 @@ import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { syncOrderToLedger } from '@/lib/orderLedger'
 import { invalidateCustomerCache } from '@/lib/customerHelper'
+import { processAccurateWebhookPayload, autoRenewAllAccurateWebhooks } from '@/lib/integrations/accurate/syncService'
 
 function normalizePhone(rawPhone: string): string {
   let clean = rawPhone.replace(/\D/g, "")
@@ -68,7 +69,10 @@ export async function POST(req: Request) {
       console.warn('[process-queue] Stuck recovery warning:', recoveryErr.message)
     }
 
-    // 3. Fetch pending batch using RPC (batch size 5 to stay under Vercel 10s execution limit)
+    // 3. Always run lightweight Accurate webhook auto-renewal check (only calls API if >= 3 days since last renew)
+    await autoRenewAllAccurateWebhooks(supabaseAdmin)
+
+    // 4. Fetch pending batch using RPC (batch size 5 to stay under Vercel 10s execution limit)
     const { data: batch, error: fetchErr } = await supabaseAdmin.rpc('fetch_webhook_queue_batch', {
       batch_size: 5
     })
@@ -89,7 +93,20 @@ export async function POST(req: Request) {
 
     for (const item of batch) {
       try {
-        const { id, business_id, payload, retry_count } = item
+        const { id, business_id, payload, source } = item
+
+        // ─── BRANCH A: ACCURATE ONLINE WEBHOOK ───
+        if (source === 'accurate') {
+          const accRes = await processAccurateWebhookPayload(business_id, payload)
+          if (!accRes.success) {
+            throw new Error(`Accurate webhook sync failed: ${accRes.error}`)
+          }
+          await markDone(supabaseAdmin, id)
+          processedCount++
+          continue
+        }
+
+        // ─── BRANCH B: WOOCOMMERCE WEBHOOK (DEFAULT) ───
         const woo = payload
 
         // 4. Check if integration is active

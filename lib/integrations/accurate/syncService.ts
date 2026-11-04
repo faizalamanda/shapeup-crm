@@ -12,6 +12,163 @@ const toNum = (val: any) => {
 
 const pad = (n: number) => n.toString().padStart(2, '0')
 
+export function buildAccurateAuthHeaders(accessToken: string, clientSecret?: string, dbId?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${accessToken.trim()}`
+  }
+
+  const activeSecret = (process.env.ACCURATE_CLIENT_SECRET || clientSecret || '').trim()
+
+  if (activeSecret) {
+    // API Token Method requires Signature in Jakarta timezone (UTC+7)
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" }))
+    const tsStr = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+    headers['X-Api-Timestamp'] = tsStr
+    headers['X-Api-Signature'] = crypto.createHmac('sha256', activeSecret).update(tsStr).digest('base64')
+  } else if (dbId) {
+    headers['X-Session-ID'] = dbId.trim()
+  }
+
+  return headers
+}
+
+/**
+ * Calls Accurate Online /api/webhook-renew.do to extend webhook delivery validity (+7 days).
+ */
+export async function renewAccurateWebhookForToken(accessToken: string, clientSecret?: string, dbId?: string): Promise<{ success: boolean; expiryDate?: string; error?: string }> {
+  try {
+    const headers = buildAccurateAuthHeaders(accessToken, clientSecret, dbId)
+    const res = await fetch('https://account.accurate.id/api/webhook-renew.do', {
+      method: 'GET',
+      headers
+    })
+    const data = await res.json().catch(() => null)
+    if (res.ok && data?.s) {
+      return { success: true, expiryDate: typeof data.d === 'string' ? data.d : undefined }
+    }
+    return { success: false, error: JSON.stringify(data?.d || data || `HTTP ${res.status}`) }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+}
+
+/**
+ * Checks all active Accurate integrations and automatically renews their webhooks
+ * if they have not been renewed in the last 3 days (72 hours), ensuring the 7-day
+ * Accurate webhook lease never expires.
+ */
+export async function autoRenewAllAccurateWebhooks(supabaseAdmin: any, force = false): Promise<{ renewed: number; skipped: number; failed: number }> {
+  let renewed = 0
+  let skipped = 0
+  let failed = 0
+
+  try {
+    const { data: integrations } = await supabaseAdmin
+      .from('business_integrations')
+      .select('id, business_id, config')
+      .eq('provider', 'accurate')
+      .eq('is_active', true)
+
+    if (!integrations || integrations.length === 0) {
+      return { renewed, skipped, failed }
+    }
+
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000
+    const nowMs = Date.now()
+
+    for (const int of integrations) {
+      const conf = (int.config || {}) as Record<string, any>
+      if (!conf.access_token) {
+        skipped++
+        continue
+      }
+
+      const lastRenewMs = conf.last_webhook_renew_at ? new Date(conf.last_webhook_renew_at).getTime() : 0
+      if (!force && lastRenewMs && !isNaN(lastRenewMs) && (nowMs - lastRenewMs) < THREE_DAYS_MS) {
+        skipped++
+        continue
+      }
+
+      const renewRes = await renewAccurateWebhookForToken(conf.access_token, conf.client_secret, conf.db_id)
+      if (renewRes.success) {
+        // Backfill db_integer_id from JWT payload if missing on legacy records
+        let backfilledDbIntId = conf.db_integer_id
+        if (!backfilledDbIntId && typeof conf.access_token === 'string' && conf.access_token.startsWith('aat.')) {
+          try {
+            const parts = conf.access_token.split('.')
+            if (parts.length >= 3) {
+              const decoded = JSON.parse(Buffer.from(parts[2], 'base64').toString('utf8'))
+              if (decoded?.d) backfilledDbIntId = decoded.d
+            }
+          } catch (_) {}
+        }
+
+        const updatedConfig = {
+          ...conf,
+          ...(backfilledDbIntId ? { db_integer_id: backfilledDbIntId } : {}),
+          webhook_expiry: renewRes.expiryDate || conf.webhook_expiry,
+          last_webhook_renew_at: new Date().toISOString()
+        }
+        await supabaseAdmin
+          .from('business_integrations')
+          .update({ config: updatedConfig })
+          .eq('id', int.id)
+        renewed++
+        console.log(`[Accurate Auto-Renew] Renewed webhook for business ${int.business_id} until ${renewRes.expiryDate}`)
+      } else {
+        failed++
+        console.warn(`[Accurate Auto-Renew] Failed for business ${int.business_id}:`, renewRes.error)
+      }
+    }
+  } catch (err: any) {
+    console.error('[Accurate Auto-Renew] Error:', err?.message || err)
+  }
+
+  return { renewed, skipped, failed }
+}
+
+/**
+ * Extracts specific salesInvoiceId and salesReceiptId from an Accurate webhook payload array
+ * and runs executeAccurateSync for that business.
+ */
+export async function processAccurateWebhookPayload(businessId: string, payload: any): Promise<{ success: boolean; error?: string }> {
+  const events = Array.isArray(payload) ? payload : [payload]
+  const specificInvoiceIds: number[] = []
+  const specificReceiptIds: number[] = []
+
+  events.forEach((event: any) => {
+    if (event?.data && Array.isArray(event.data)) {
+      event.data.forEach((item: any) => {
+        if (item.salesInvoiceId) specificInvoiceIds.push(Number(item.salesInvoiceId))
+        if (item.salesReceiptId) specificReceiptIds.push(Number(item.salesReceiptId))
+
+        const typeStr = String(event.type || '').toUpperCase()
+        const moduleStr = String(event.module || '').toUpperCase()
+
+        if ((typeStr.includes('INVOICE') || moduleStr.includes('INVOICE')) && item.id) {
+          specificInvoiceIds.push(Number(item.id))
+        }
+        if ((typeStr.includes('RECEIPT') || moduleStr.includes('RECEIPT')) && item.id) {
+          specificReceiptIds.push(Number(item.id))
+        }
+      })
+    }
+  })
+
+  const uniqueInvoiceIds = Array.from(new Set(specificInvoiceIds.filter(n => Number.isFinite(n) && n > 0)))
+  const uniqueReceiptIds = Array.from(new Set(specificReceiptIds.filter(n => Number.isFinite(n) && n > 0)))
+
+  if (uniqueInvoiceIds.length > 0 || uniqueReceiptIds.length > 0) {
+    console.log(`[Accurate Webhook Processor] Syncing specific IDs for ${businessId}: Invoices=[${uniqueInvoiceIds.join(',')}], Receipts=[${uniqueReceiptIds.join(',')}]`)
+    const res = await executeAccurateSync(businessId, 1, { invoiceIds: uniqueInvoiceIds, receiptIds: uniqueReceiptIds })
+    return { success: res.success, error: res.error }
+  } else {
+    console.log(`[Accurate Webhook Processor] No specific IDs found in payload, running page 1 sync for ${businessId}`)
+    const res = await executeAccurateSync(businessId, 1)
+    return { success: res.success, error: res.error }
+  }
+}
+
 export async function executeAccurateSync(businessId: string, page = 1, specificIds?: { invoiceIds: number[], receiptIds: number[] }, forceAll: boolean = false): Promise<{ success: boolean; hasNextPage?: boolean; error?: string; processedOrders?: number; newProducts?: number; message?: string; totalPages?: number }> {
   try {
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -472,15 +629,30 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
       }
     }
 
-    // If this is the last page, update last_sync_date to today (Jakarta time)
+    // If this is the last page, update last_sync_date to today (Jakarta time) and auto-renew webhook if due
     if (!hasNextPage) {
       const today = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"}))
       const formattedToday = `${pad(today.getDate())}/${pad(today.getMonth() + 1)}/${today.getFullYear()}`
       
+      let webhookExpiry = (config as any).webhook_expiry
+      let lastWebhookRenewAt = (config as any).last_webhook_renew_at
+      const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000
+      const lastRenewMs = lastWebhookRenewAt ? new Date(lastWebhookRenewAt).getTime() : 0
+
+      if (!lastRenewMs || isNaN(lastRenewMs) || (Date.now() - lastRenewMs) >= THREE_DAYS_MS) {
+        const renewRes = await renewAccurateWebhookForToken(config.access_token, config.client_secret, config.db_id)
+        if (renewRes.success) {
+          webhookExpiry = renewRes.expiryDate || webhookExpiry
+          lastWebhookRenewAt = new Date().toISOString()
+        }
+      }
+
       const newConfig = {
         ...config,
         last_sync_date: formattedToday,
-        last_sync_time_str: `${pad(today.getHours())}:${pad(today.getMinutes())}:${pad(today.getSeconds())} WIB`
+        last_sync_time_str: `${pad(today.getHours())}:${pad(today.getMinutes())}:${pad(today.getSeconds())} WIB`,
+        ...(webhookExpiry ? { webhook_expiry: webhookExpiry } : {}),
+        ...(lastWebhookRenewAt ? { last_webhook_renew_at: lastWebhookRenewAt } : {})
       }
       
       await supabaseAdmin
