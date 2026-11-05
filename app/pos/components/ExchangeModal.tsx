@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
+import { fetchPosCatalog } from '@/lib/posCatalogStore'
 
 type Props = {
   isOpen: boolean
@@ -50,20 +51,16 @@ export default function ExchangeModal({
     setMounted(true)
   }, [])
 
-  // Load product catalog for replacement selection
+  // Load product catalog for replacement selection (0ms RAM from POS Catalog Store)
   useEffect(() => {
     if (isOpen && effectiveBusinessId) {
       setLoadingCatalog(true)
-      supabase
-        .from('products')
-        .select('id, name, sku, price, stock_quantity, stock_type')
-        .eq('business_id', effectiveBusinessId)
-        .order('name', { ascending: true })
-        .limit(200)
-        .then(({ data, error }) => {
-          if (!error && data) {
-            setCatalog(data)
-          }
+      fetchPosCatalog(supabase, effectiveBusinessId)
+        .then(({ products }) => {
+          setCatalog(products || [])
+          setLoadingCatalog(false)
+        })
+        .catch(() => {
           setLoadingCatalog(false)
         })
     }

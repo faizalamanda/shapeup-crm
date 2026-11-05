@@ -65,6 +65,7 @@ export async function fetchAllBusinessProducts<T = any>(
   businessId: string,
   options?: {
     selectWithVariants?: string
+    selectVariantsOnly?: string
     selectFallback?: string
   }
 ): Promise<T[]> {
@@ -72,6 +73,9 @@ export async function fetchAllBusinessProducts<T = any>(
 
   const selectWithVariants =
     options?.selectWithVariants ||
+    'id, name, price, sku, cost_price, stock_quantity, stock_type, product_variants(id, name, sku, price, cost_price, stock_quantity)'
+  const selectVariantsOnly =
+    options?.selectVariantsOnly ||
     'id, name, price, sku, cost_price, stock_quantity, stock_type, product_variants(id, name, sku, price, cost_price, stock_quantity)'
   const selectFallback =
     options?.selectFallback ||
@@ -87,7 +91,20 @@ export async function fetchAllBusinessProducts<T = any>(
         .order('id', { ascending: true })
         .range(from, to)
     )
-  } catch {
+  } catch (err1) {
+    if (selectVariantsOnly && selectVariantsOnly !== selectWithVariants) {
+      try {
+        return await fetchAllSupabaseRows<T>((from, to) =>
+          supabaseClient
+            .from('products')
+            .select(selectVariantsOnly)
+            .eq('business_id', businessId)
+            .order('name', { ascending: true })
+            .order('id', { ascending: true })
+            .range(from, to)
+        )
+      } catch (err2) {}
+    }
     return await fetchAllSupabaseRows<T>((from, to) =>
       supabaseClient
         .from('products')

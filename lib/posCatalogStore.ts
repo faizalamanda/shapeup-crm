@@ -12,7 +12,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { fetchAllBusinessProducts } from '@/lib/chunkedQueryHelper'
+import { fetchAllSupabaseRows, fetchAllBusinessProducts } from '@/lib/chunkedQueryHelper'
 
 // ─── Types & Constants ───────────────────────────────────────────────────────
 
@@ -50,17 +50,20 @@ interface L1PosCatalogEntry {
 
 const L1_STALE_MS = 60_000        // Background recheck after 60s
 const L2_TTL_MS = 10 * 60_000     // sessionStorage valid for 10 minutes
-const BROADCAST_CHANNEL_NAME = 'shapeup_pos_catalog_sync_v1'
+const BROADCAST_CHANNEL_NAME = 'shapeup_pos_catalog_sync_v2'
 const CUSTOM_EVENT_NAME = 'shapeup:pos_catalog_updated'
 
 export const POS_SLIM_PRODUCT_SELECT_VARIANTS =
-  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, has_variants, prevent_below_hpp, product_variants(*), product_modifiers(*)'
+  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, prevent_below_hpp, product_variants(*), product_modifiers(*)'
+
+export const POS_SLIM_PRODUCT_SELECT_VARIANTS_ONLY =
+  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, prevent_below_hpp, product_variants(*)'
 
 export const POS_SLIM_PRODUCT_SELECT_FALLBACK =
-  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, has_variants, prevent_below_hpp'
+  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, prevent_below_hpp'
 
 function getL2Key(businessId: string): string {
-  return `su_pos_cat_v1_${businessId}`
+  return `su_pos_cat_v2_${businessId}`
 }
 
 // ─── L1 In-Memory Store & In-Flight Registry ────────────────────────────────
@@ -116,7 +119,7 @@ function writeL2Cache(
           stock_type: p.stock_type,
           category_id: p.category_id,
           type: p.type,
-          has_variants: p.has_variants,
+          has_variants: Boolean((Array.isArray(p.product_variants) && p.product_variants.length > 0) || p.has_variants),
           prevent_below_hpp: p.prevent_below_hpp,
           product_variants: p.product_variants,
           product_modifiers: p.product_modifiers,
@@ -146,6 +149,8 @@ if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
           invalidatePosCatalogCache(data.businessId, false)
         } else if (data.action === 'stock_decrement' && Array.isArray(data.soldItems)) {
           applyLocalStockDecrement(data.businessId, data.soldItems, false)
+        } else if (data.action === 'upsert_items' && Array.isArray(data.items)) {
+          upsertPosCatalogItems(data.businessId, data.items, false)
         }
       }
     }
@@ -158,7 +163,10 @@ export function invalidatePosCatalogCache(businessId?: string, broadcast = true)
   if (businessId) {
     l1Store.delete(businessId)
     if (typeof window !== 'undefined') {
-      try { sessionStorage.removeItem(getL2Key(businessId)) } catch {}
+      try {
+        sessionStorage.removeItem(getL2Key(businessId))
+        sessionStorage.removeItem(`su_pos_cat_v1_${businessId}`)
+      } catch {}
     }
     emitChange(businessId)
   } else {
@@ -167,7 +175,7 @@ export function invalidatePosCatalogCache(businessId?: string, broadcast = true)
       try {
         for (let i = sessionStorage.length - 1; i >= 0; i--) {
           const k = sessionStorage.key(i)
-          if (k && k.startsWith('su_pos_cat_v1_')) {
+          if (k && (k.startsWith('su_pos_cat_v1_') || k.startsWith('su_pos_cat_v2_'))) {
             sessionStorage.removeItem(k)
           }
         }
@@ -186,6 +194,61 @@ export function invalidatePosCatalogCache(businessId?: string, broadcast = true)
       window.dispatchEvent(
         new CustomEvent(CUSTOM_EVENT_NAME, {
           detail: { businessId, action: 'invalidate' }
+        })
+      )
+    } catch {}
+  }
+}
+
+export function upsertPosCatalogItems(
+  businessId: string,
+  newItems: PosCatalogItem[],
+  broadcast = true
+): void {
+  if (!businessId || !newItems || newItems.length === 0) return
+
+  const entry = l1Store.get(businessId) || readL2Cache(businessId)
+  const currentProds = entry?.products || []
+  const currentCats = entry?.categories || []
+
+  const itemMap = new Map(currentProds.map((p) => [p.id, p]))
+  let hasNew = false
+
+  for (const item of newItems) {
+    if (!item?.id) continue
+    const existing = itemMap.get(item.id)
+    if (!existing || JSON.stringify(existing) !== JSON.stringify(item)) {
+      itemMap.set(item.id, {
+        ...existing,
+        ...item,
+        has_variants: Boolean((Array.isArray(item.product_variants) && item.product_variants.length > 0) || item.has_variants)
+      })
+      hasNew = true
+    }
+  }
+
+  if (!hasNew) return
+
+  const updatedProducts = Array.from(itemMap.values()).sort((a, b) =>
+    (a.name || '').localeCompare(b.name || '')
+  )
+
+  const now = Date.now()
+  l1Store.set(businessId, { products: updatedProducts, categories: currentCats, ts: now })
+  writeL2Cache(businessId, updatedProducts, currentCats, now)
+  emitChange(businessId)
+
+  if (broadcast && typeof window !== 'undefined') {
+    try {
+      broadcastChannel?.postMessage({
+        type: 'POS_CATALOG_MUTATION',
+        businessId,
+        action: 'upsert_items',
+        items: newItems
+      })
+      window.dispatchEvent(
+        new CustomEvent(CUSTOM_EVENT_NAME, {
+          detail: { businessId, action: 'upsert_items', items: newItems }
         })
       )
     } catch {}
@@ -280,6 +343,7 @@ export async function fetchPosCatalog(
       const [prods, catsRes] = await Promise.all([
         fetchAllBusinessProducts<PosCatalogItem>(supabaseClient, businessId, {
           selectWithVariants: POS_SLIM_PRODUCT_SELECT_VARIANTS,
+          selectVariantsOnly: POS_SLIM_PRODUCT_SELECT_VARIANTS_ONLY,
           selectFallback: POS_SLIM_PRODUCT_SELECT_FALLBACK,
         }),
         supabaseClient
@@ -289,7 +353,10 @@ export async function fetchPosCatalog(
           .order('name', { ascending: true })
       ])
 
-      const cleanProducts = prods || []
+      const cleanProducts = (prods || []).map((p: any) => ({
+        ...p,
+        has_variants: Boolean((Array.isArray(p.product_variants) && p.product_variants.length > 0) || p.has_variants)
+      }))
       const cleanCategories = (catsRes?.data as PosCategoryItem[]) || []
 
       const now = Date.now()
@@ -301,15 +368,18 @@ export async function fetchPosCatalog(
     } catch (err) {
       console.error('[posCatalogStore] Fetch error:', err)
 
-      // Fallback sistem lama jika chunked range query gagal: eksekusi direct query biasa
+      // Fallback chunked query tanpa relasi jika chunked query dengan varian gagal
       try {
-        const [directProds, directCats] = await Promise.all([
-          supabaseClient
-            .from('products')
-            .select('id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type')
-            .eq('business_id', businessId)
-            .order('name', { ascending: true })
-            .limit(1000),
+        const [fallbackProds, directCats] = await Promise.all([
+          fetchAllSupabaseRows<PosCatalogItem>((from, to) =>
+            supabaseClient
+              .from('products')
+              .select('id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, prevent_below_hpp')
+              .eq('business_id', businessId)
+              .order('name', { ascending: true })
+              .order('id', { ascending: true })
+              .range(from, to)
+          ),
           supabaseClient
             .from('categories')
             .select('id, business_id, name, color')
@@ -317,17 +387,20 @@ export async function fetchPosCatalog(
             .order('name', { ascending: true })
         ])
 
-        if (directProds?.data && Array.isArray(directProds.data) && directProds.data.length > 0) {
-          const fallbackProds = directProds.data as PosCatalogItem[]
+        if (fallbackProds && Array.isArray(fallbackProds) && fallbackProds.length > 0) {
+          const cleanFallback = fallbackProds.map((p: any) => ({
+            ...p,
+            has_variants: Boolean((Array.isArray(p.product_variants) && p.product_variants.length > 0) || p.has_variants)
+          }))
           const fallbackCats = (directCats?.data as PosCategoryItem[]) || []
           const now = Date.now()
-          l1Store.set(businessId, { products: fallbackProds, categories: fallbackCats, ts: now })
-          writeL2Cache(businessId, fallbackProds, fallbackCats, now)
+          l1Store.set(businessId, { products: cleanFallback, categories: fallbackCats, ts: now })
+          writeL2Cache(businessId, cleanFallback, fallbackCats, now)
           emitChange(businessId)
-          return { products: fallbackProds, categories: fallbackCats }
+          return { products: cleanFallback, categories: fallbackCats }
         }
       } catch (legacyErr) {
-        console.warn('[posCatalogStore] Emergency direct fallback failed:', legacyErr)
+        console.warn('[posCatalogStore] Emergency chunked fallback failed:', legacyErr)
       }
 
       const fallback = l1Store.get(businessId) || readL2Cache(businessId)
@@ -342,6 +415,83 @@ export async function fetchPosCatalog(
 
   inFlightFetches.set(businessId, fetchTask)
   return fetchTask
+}
+
+/**
+ * Live Server Search Fallback untuk POS:
+ * Mencari produk dan varian langsung ke server database berdasarkan nama atau SKU,
+ * lalu secara otomatis menggabungkan (upsert) hasilnya ke L1 RAM & L2 Cache.
+ */
+export async function searchPosCatalogServer(
+  supabaseClient: any,
+  businessId: string,
+  query: string
+): Promise<PosCatalogItem[]> {
+  if (!businessId || !query.trim()) return []
+  const cleanQ = query.trim().replace(/[,()]/g, '')
+  if (!cleanQ) return []
+
+  try {
+    // 1. Search products by name or sku
+    const { data: matchedProds, error: pErr } = await supabaseClient
+      .from('products')
+      .select(POS_SLIM_PRODUCT_SELECT_VARIANTS)
+      .eq('business_id', businessId)
+      .or(`name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`)
+      .order('name', { ascending: true })
+      .limit(60)
+
+    let prods: any[] = matchedProds || []
+    if (pErr) {
+      const { data: fallbackProds } = await supabaseClient
+        .from('products')
+        .select(POS_SLIM_PRODUCT_SELECT_FALLBACK)
+        .eq('business_id', businessId)
+        .or(`name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`)
+        .order('name', { ascending: true })
+        .limit(60)
+      prods = fallbackProds || []
+    }
+
+    // 2. Also search variants by name or sku
+    try {
+      const { data: matchedVars } = await supabaseClient
+        .from('product_variants')
+        .select('product_id')
+        .eq('business_id', businessId)
+        .or(`name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`)
+        .limit(60)
+
+      const parentIds = (matchedVars || [])
+        .map((v: any) => v.product_id)
+        .filter((id: string) => !prods.some((p: any) => p.id === id))
+
+      if (parentIds.length > 0) {
+        const { data: extraProds } = await supabaseClient
+          .from('products')
+          .select(POS_SLIM_PRODUCT_SELECT_VARIANTS)
+          .eq('business_id', businessId)
+          .in('id', parentIds)
+        if (extraProds && extraProds.length > 0) {
+          prods = [...prods, ...extraProds]
+        }
+      }
+    } catch {}
+
+    const cleanFound: PosCatalogItem[] = prods.map((p: any) => ({
+      ...p,
+      has_variants: Boolean((Array.isArray(p.product_variants) && p.product_variants.length > 0) || p.has_variants)
+    }))
+
+    if (cleanFound.length > 0) {
+      upsertPosCatalogItems(businessId, cleanFound, true)
+    }
+
+    return cleanFound
+  } catch (err) {
+    console.warn('[posCatalogStore] searchPosCatalogServer error:', err)
+    return []
+  }
 }
 
 /**
@@ -482,12 +632,21 @@ export function usePosCatalog(
     [resolvedBid]
   )
 
+  const searchServer = useCallback(
+    async (q: string) => {
+      if (!resolvedBid || !q.trim()) return []
+      return await searchPosCatalogServer(supabaseClient, resolvedBid, q)
+    },
+    [resolvedBid, supabaseClient]
+  )
+
   return {
     products: Array.isArray(state.products) ? state.products : [],
     categories: Array.isArray(state.categories) ? state.categories : [],
     loading: state.loading,
     isSyncing: state.isSyncing,
     refresh,
-    updateLocalStock
+    updateLocalStock,
+    searchServer
   }
 }

@@ -69,7 +69,8 @@ export default function POSWorkspace({
     loading: catalogLoading,
     isSyncing: catalogSyncing,
     refresh: refreshCatalog,
-    updateLocalStock
+    updateLocalStock,
+    searchServer: searchProductsServer
   } = usePosCatalog(supabase, activeBusiness?.id)
 
   // Data State (Hydrated from session handoff if available)
@@ -82,6 +83,7 @@ export default function POSWorkspace({
   // Search, Filter & Windowing State
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [isSearchingServer, setIsSearchingServer] = useState(false)
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [activeTab, setActiveTab] = useState<'catalog' | 'keypad'>('catalog')
@@ -301,27 +303,48 @@ export default function POSWorkspace({
     ])
   }, [businessId, refreshCatalog, loadSecondaryData])
 
-  // Filtered Products (Null-Safe for Empty Data / Sparse Schema)
+  // Filtered Products (Tokenized Multi-Word Matching, Null-Safe)
   const filteredProducts = useMemo(() => {
     const list = Array.isArray(products) ? products : []
     const q = (debouncedSearch || '').trim().toLowerCase()
+    if (!q) {
+      if (!selectedCategoryId) return list
+      return list.filter((p) => p && p.category_id === selectedCategoryId)
+    }
+
+    const tokens = q.split(/\s+/).filter(Boolean)
+
     return list.filter((p) => {
       if (!p) return false
       const pName = (p.name || '').toLowerCase()
       const pSku = (p.sku || '').toLowerCase()
-      const matchSearch =
-        !q ||
-        pName.includes(q) ||
-        pSku.includes(q) ||
-        (Array.isArray(p.product_variants) && p.product_variants.some((v: any) =>
-          ((v?.name || '').toLowerCase().includes(q)) ||
-          ((v?.sku || '').toLowerCase().includes(q))
-        ))
+      const variantTexts = Array.isArray(p.product_variants)
+        ? p.product_variants.map((v: any) => `${(v?.name || '').toLowerCase()} ${(v?.sku || '').toLowerCase()}`)
+        : []
+
+      const matchSearch = tokens.every((t) =>
+        pName.includes(t) ||
+        pSku.includes(t) ||
+        variantTexts.some((vt) => vt.includes(t))
+      )
 
       const matchCategory = !selectedCategoryId || p.category_id === selectedCategoryId
       return matchSearch && matchCategory
     })
   }, [products, debouncedSearch, selectedCategoryId])
+
+  // Hybrid Server Search Fallback (Debounced 250ms jika hasil lokal < 5)
+  useEffect(() => {
+    const q = (debouncedSearch || '').trim()
+    if (!q || q.length < 2) return
+
+    if (filteredProducts.length < 5) {
+      setIsSearchingServer(true)
+      searchProductsServer(q).finally(() => {
+        setIsSearchingServer(false)
+      })
+    }
+  }, [debouncedSearch, filteredProducts.length, searchProductsServer])
 
   // Windowed Products for DOM Performance (Pilar 4: DOM Windowing)
   useEffect(() => {
@@ -1269,7 +1292,9 @@ export default function POSWorkspace({
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-8 pr-7 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition"
                 />
-                <span className="absolute left-2.5 top-2.5 text-slate-400 text-xs">🔍</span>
+                <span className={`absolute left-2.5 top-2.5 text-xs ${isSearchingServer ? 'animate-spin text-indigo-500' : 'text-slate-400'}`}>
+                  {isSearchingServer ? '🔄' : '🔍'}
+                </span>
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery('')}

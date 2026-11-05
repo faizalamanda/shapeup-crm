@@ -18,6 +18,7 @@ import { computeReturnableLines, quoteReturn } from '@/lib/pos/returns/engine'
 import { getPrinterAdapter } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from '@/lib/pos/receiptSettings'
 import { buildReturnReceiptData } from '@/lib/pos/receiptDataBuilder'
+import { fetchPosCatalog } from '@/lib/posCatalogStore'
 
 interface ReturnLineState {
   ref: string
@@ -229,7 +230,7 @@ export default function POSReturnModal({
       })
       .catch(() => {})
 
-    // Load products catalog for exchange replacement
+    // Load products catalog for exchange replacement (0ms RAM from POS Catalog Store)
     async function loadCatalog() {
       if (!effectiveBusinessId) {
         setLoadingCatalog(false)
@@ -237,25 +238,9 @@ export default function POSReturnModal({
       }
       setLoadingCatalog(true)
       try {
-        const { data, error } = await supabase
-          .from('products')
-          .select('id, name, sku, price, stock_quantity, stock_type, product_variants(id, name, sku, price, stock_quantity)')
-          .eq('business_id', effectiveBusinessId)
-          .order('name', { ascending: true })
-          .limit(300)
-
-        if (!error && data) {
-          setCatalog(data)
-        } else {
-          console.warn('Query with product_variants failed, retrying standard products:', error?.message)
-          const { data: fallbackData } = await supabase
-            .from('products')
-            .select('id, name, sku, price, stock_quantity, stock_type')
-            .eq('business_id', effectiveBusinessId)
-            .order('name', { ascending: true })
-            .limit(300)
-
-          if (fallbackData) setCatalog(fallbackData)
+        const { products } = await fetchPosCatalog(supabase, effectiveBusinessId)
+        if (products && products.length > 0) {
+          setCatalog(products)
         }
       } catch (catErr) {
         console.warn('Catalog load error:', catErr)
