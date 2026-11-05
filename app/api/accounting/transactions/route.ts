@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { formatTransactionDate, sortTransactionsNewestFirst } from '@/lib/timeUtils'
+import { localDateToUtcBounds } from '@/lib/localzone'
+import { fetchAllSupabaseRows } from '@/lib/chunkedQueryHelper'
 
 function getSupabase() {
   return createClient(
@@ -18,12 +20,24 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get('end_date')
     const accountId = searchParams.get('account_id')
     const search = searchParams.get('search')
+    const timezone = searchParams.get('timezone') || 'Asia/Jakarta'
     const page = parseInt(searchParams.get('page') || '1', 10)
     const limit = parseInt(searchParams.get('limit') || '50', 10)
     const offset = (page - 1) * limit
 
     if (!businessId) {
       return NextResponse.json({ error: 'business_id parameters is required' }, { status: 400 })
+    }
+
+    // Precise Timezone-Aware UTC Bounds
+    let startISO: string | null = null
+    let endISO: string | null = null
+    if (startDate || endDate) {
+      const s = startDate || '1970-01-01'
+      const e = endDate || '2099-12-31'
+      const bounds = localDateToUtcBounds(s, e, timezone)
+      if (startDate) startISO = bounds.startOfDayISO
+      if (endDate) endISO = bounds.endOfDayISO
     }
 
     let resultTransactions: any[] = []
@@ -43,54 +57,69 @@ export async function GET(request: NextRequest) {
         .eq('business_id', businessId)
         .eq('journal_lines.account_id', accountId)
 
-      if (startDate) {
-        idQuery = idQuery.gte('date', `${startDate}T00:00:00.000Z`)
+      if (startISO) {
+        idQuery = idQuery.gte('date', startISO)
       }
-      if (endDate) {
-        idQuery = idQuery.lte('date', `${endDate}T23:59:59.999Z`)
+      if (endISO) {
+        idQuery = idQuery.lte('date', endISO)
       }
       if (search) {
         idQuery = idQuery.ilike('description', `%${search}%`)
       }
 
-      idQuery = idQuery.order('date', { ascending: false }).range(offset, offset + limit - 1)
+      idQuery = idQuery.order('date', { ascending: false }).order('id', { ascending: false })
 
-      const { data: pageTxIds, count, error: idErr } = await idQuery
-
-      if (idErr) {
-        return NextResponse.json({ error: idErr.message }, { status: 500 })
+      let pageTxIds: any[] = []
+      if (limit >= 1000) {
+        // High-cardinality fetch using chunked ranges
+        pageTxIds = await fetchAllSupabaseRows((from, to) =>
+          idQuery.range(from, to)
+        )
+        totalCount = pageTxIds.length
+      } else {
+        const { data, count, error: idErr } = await idQuery.range(offset, offset + limit - 1)
+        if (idErr) {
+          return NextResponse.json({ error: idErr.message }, { status: 500 })
+        }
+        pageTxIds = data || []
+        totalCount = count || 0
       }
-
-      totalCount = count || 0
 
       if (pageTxIds && pageTxIds.length > 0) {
         const ids = pageTxIds.map((t: any) => t.id)
-        const { data: fullTxs, error: fullErr } = await supabase
-          .from('transactions')
-          .select(`
-            id,
-            date,
-            description,
-            order_id,
-            business_id,
-            journal_lines (
+        
+        // Chunk ID fetch if exceeding 200 items
+        const fullTxs: any[] = []
+        for (let i = 0; i < ids.length; i += 200) {
+          const chunkIds = ids.slice(i, i + 200)
+          const { data: chunkData, error: fullErr } = await supabase
+            .from('transactions')
+            .select(`
               id,
-              account_id,
-              debit,
-              credit,
-              accounts (
+              date,
+              description,
+              order_id,
+              business_id,
+              journal_lines (
                 id,
-                code,
-                name,
-                type,
-                sub_type
+                account_id,
+                debit,
+                credit,
+                accounts (
+                  id,
+                  code,
+                  name,
+                  type,
+                  sub_type
+                )
               )
-            )
-          `)
-          .in('id', ids)
+            `)
+            .in('id', chunkIds)
 
-        if (fullErr) {
-          return NextResponse.json({ error: fullErr.message }, { status: 500 })
+          if (fullErr) {
+            return NextResponse.json({ error: fullErr.message }, { status: 500 })
+          }
+          if (chunkData) fullTxs.push(...chunkData)
         }
 
         const txMap = new Map((fullTxs || []).map((t: any) => [t.id, t]))
@@ -122,27 +151,35 @@ export async function GET(request: NextRequest) {
         `, { count: 'exact' })
         .eq('business_id', businessId)
 
-      if (startDate) {
-        query = query.gte('date', `${startDate}T00:00:00.000Z`)
+      if (startISO) {
+        query = query.gte('date', startISO)
       }
-      if (endDate) {
-        query = query.lte('date', `${endDate}T23:59:59.999Z`)
+      if (endISO) {
+        query = query.lte('date', endISO)
       }
 
       if (search) {
         query = query.ilike('description', `%${search}%`)
       }
 
-      query = query.order('date', { ascending: false }).range(offset, offset + limit - 1)
+      query = query.order('date', { ascending: false }).order('id', { ascending: false })
 
-      const { data: transactions, count, error } = await query
+      if (limit >= 1000) {
+        // High-cardinality chunked range fetching (> 1,000 rows bypass)
+        resultTransactions = await fetchAllSupabaseRows((from, to) =>
+          query.range(from, to)
+        )
+        totalCount = resultTransactions.length
+      } else {
+        const { data: transactions, count, error } = await query.range(offset, offset + limit - 1)
 
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 })
+        if (error) {
+          return NextResponse.json({ error: error.message }, { status: 500 })
+        }
+
+        resultTransactions = transactions || []
+        totalCount = count || 0
       }
-
-      resultTransactions = transactions || []
-      totalCount = count || 0
     }
 
     // Sort transactions strictly newest first

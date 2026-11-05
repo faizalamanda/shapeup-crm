@@ -118,7 +118,9 @@ export async function fetchLedgerData(
       query = query.gte('date', startOfDayISO)
     }
 
-    query = query.order('date', { ascending: true })
+    query = query
+      .order('date', { ascending: true })
+      .order('id', { ascending: true })
       .range(page * pageSize, (page + 1) * pageSize - 1)
 
     const { data: pageData, error: txErr } = await query

@@ -189,12 +189,14 @@ export async function syncOrderToLedger(
     const orderRef = `Order #${orderNumber}`
 
     // Determine precise order / shipped move date
-    let orderMoveDate = order.updated_at ? new Date(order.updated_at).toISOString() : new Date().toISOString()
+    let orderMoveDate: string | null = null
     const raw = order.raw_source_data || {}
     if (raw.date_shipped_gmt) orderMoveDate = new Date(raw.date_shipped_gmt + 'Z').toISOString()
     else if (raw.date_shipped) orderMoveDate = new Date(raw.date_shipped).toISOString()
     else if (raw.date_completed_gmt) orderMoveDate = new Date(raw.date_completed_gmt + 'Z').toISOString()
     else if (raw.date_completed) orderMoveDate = new Date(raw.date_completed).toISOString()
+
+    const stockMoveTimestamp = orderMoveDate || order.order_date_utc || order.order_date || (order.updated_at ? new Date(order.updated_at).toISOString() : new Date().toISOString())
 
     // 6. State Machine for Transitions
     const activePaymentAccounts = await getActivePaymentAccounts(businessId, supabase)
@@ -225,7 +227,7 @@ export async function syncOrderToLedger(
 
       // Stock Deduction — STRICTLY obey user settings (stockReductionStatuses)
       if (stockReductionStatuses.includes(status)) {
-        await applyStockMovement(businessId, matchedProducts, 'deduct', orderRef, supabase, sharedHppMap, orderId, 'order', 'done', orderMoveDate)
+        await applyStockMovement(businessId, matchedProducts, 'deduct', orderRef, supabase, sharedHppMap, orderId, 'order', 'done', stockMoveTimestamp)
       }
 
       // Check if it's a partial commit (tx exists but has 0 lines)
@@ -233,11 +235,16 @@ export async function syncOrderToLedger(
       const shouldCreateSalesLines = !salesTx || isPartialCommit
 
       if (shouldCreateSalesLines) {
-        const sub = parseFloat(order.subtotal) || 0
+        let sub = parseFloat(order.subtotal) || 0
         const ship = parseFloat(order.shipping_cost) || 0
         const fee = parseFloat(order.other_fees) || 0
         const disc = parseFloat(order.discount_amount) || 0
         const grand = parseFloat(order.grand_total) || 0
+
+        // Fallback: If subtotal is empty/0 but grand_total exists (e.g. WooCommerce/custom imports without subtotal column)
+        if (sub <= 0 && grand > 0) {
+          sub = Math.max(0, grand - ship - fee + disc)
+        }
 
         const journalLines: any[] = []
 
@@ -277,8 +284,6 @@ export async function syncOrderToLedger(
             salesDate = paymentDate
           } else if (orderMoveDate) {
             salesDate = orderMoveDate
-          } else if (order.updated_at) {
-            salesDate = new Date(order.updated_at).toISOString()
           }
         }
 
@@ -331,8 +336,6 @@ export async function syncOrderToLedger(
             expectedSalesDate = paymentDate
           } else if (orderMoveDate) {
             expectedSalesDate = orderMoveDate
-          } else if (order.updated_at) {
-            expectedSalesDate = new Date(order.updated_at).toISOString()
           }
         }
         if (salesTx && expectedSalesDate && salesTx.date !== expectedSalesDate) {

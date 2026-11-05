@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js'
+import { fetchAllSupabaseRows } from '@/lib/chunkedQueryHelper'
 
 type ExpensePaymentRecord = {
   id: string
@@ -25,39 +26,61 @@ export async function syncExpenseStatus(
 ) {
   try {
     // 1. Fetch expenses for business (or specific target expense)
-    let query = supabase
-      .from('expenses')
-      .select(`
-        id,
-        business_id,
-        transaction_id,
-        amount,
-        amount_paid,
-        outstanding_amount,
-        payment_status,
-        date,
-        payment_account_id
-      `)
-      .eq('business_id', businessId)
-
+    let expenses: any[] = []
     if (targetExpenseId) {
-      query = query.eq('id', targetExpenseId)
+      const { data, error } = await supabase
+        .from('expenses')
+        .select(`
+          id,
+          business_id,
+          transaction_id,
+          amount,
+          amount_paid,
+          outstanding_amount,
+          payment_status,
+          date,
+          payment_account_id
+        `)
+        .eq('business_id', businessId)
+        .eq('id', targetExpenseId)
+      if (error || !data || data.length === 0) return
+      expenses = data
+    } else {
+      expenses = await fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from('expenses')
+          .select(`
+            id,
+            business_id,
+            transaction_id,
+            amount,
+            amount_paid,
+            outstanding_amount,
+            payment_status,
+            date,
+            payment_account_id
+          `)
+          .eq('business_id', businessId)
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
+      if (!expenses || expenses.length === 0) return
     }
-
-    const { data: expenses, error: expErr } = await query
-    if (expErr || !expenses || expenses.length === 0) return
 
     const expenseIds = expenses.map(e => e.id)
 
-    // 2. Fetch all expense_payments for these expenses
-    const { data: paymentsData, error: payErr } = await supabase
-      .from('expense_payments')
-      .select('id, expense_id, transaction_id, amount')
-      .in('expense_id', expenseIds)
+    // 2. Fetch all expense_payments for these expenses in safe batches
+    const paymentsData: any[] = []
+    for (let i = 0; i < expenseIds.length; i += 200) {
+      const chunkIds = expenseIds.slice(i, i + 200)
+      const { data, error } = await supabase
+        .from('expense_payments')
+        .select('id, expense_id, transaction_id, amount')
+        .in('expense_id', chunkIds)
+      if (!error && data) paymentsData.push(...data)
+    }
 
-    if (payErr) return
-
-    const payments: ExpensePaymentRecord[] = (paymentsData || []).map((p: any) => ({
+    const payments: ExpensePaymentRecord[] = paymentsData.map((p: any) => ({
       id: p.id,
       expense_id: p.expense_id,
       transaction_id: p.transaction_id,
@@ -73,23 +96,31 @@ export async function syncExpenseStatus(
       if (p.transaction_id) txIds.add(p.transaction_id)
     })
 
-    // Fetch existing transactions
+    // Fetch existing transactions in safe batches
     const existingTxMap = new Map<string, string>()
     if (txIds.size > 0) {
-      const { data: txList } = await supabase
-        .from('transactions')
-        .select('id, description')
-        .in('id', Array.from(txIds))
+      const txIdArray = Array.from(txIds)
+      for (let i = 0; i < txIdArray.length; i += 200) {
+        const chunkIds = txIdArray.slice(i, i + 200)
+        const { data: txList } = await supabase
+          .from('transactions')
+          .select('id, description')
+          .in('id', chunkIds)
 
-      txList?.forEach((t: any) => existingTxMap.set(t.id, t.description || ''))
+        txList?.forEach((t: any) => existingTxMap.set(t.id, t.description || ''))
+      }
     }
 
-    // Fetch reversal transactions for this business
-    const { data: revTxs } = await supabase
-      .from('transactions')
-      .select('id, description')
-      .eq('business_id', businessId)
-      .like('description', '[VOID / REVERSAL]%')
+    // Fetch reversal transactions for this business using chunked query (> 1,000 rows bypass)
+    const revTxs = await fetchAllSupabaseRows((from, to) =>
+      supabase
+        .from('transactions')
+        .select('id, description')
+        .eq('business_id', businessId)
+        .like('description', '[VOID / REVERSAL]%')
+        .order('id', { ascending: true })
+        .range(from, to)
+    )
 
     const reversedDescriptions = new Set<string>()
     revTxs?.forEach((r: any) => {

@@ -505,16 +505,17 @@ export default function TransactionsPage() {
     }
   }, [activeBusiness, bizLoading, fetchAccounts])
 
-  // Calculate Start & End Date
+  // Calculate Start & End Date with Business Timezone Awareness
   const dateLimits = useMemo(() => {
+    const tz = activeBusiness?.timezone || 'Asia/Jakarta'
     if (datePreset === 'custom') {
       return {
         start: customStartDate || new Date().toISOString().split('T')[0],
         end: customEndDate || new Date().toISOString().split('T')[0]
       }
     }
-    return getDateRangeLimits(datePreset)
-  }, [datePreset, customStartDate, customEndDate])
+    return getDateRangeLimits(datePreset, tz)
+  }, [datePreset, customStartDate, customEndDate, activeBusiness?.timezone])
 
   // Fetch Transactions Data
   const loadTransactions = useCallback(async () => {
@@ -524,11 +525,13 @@ export default function TransactionsPage() {
     }
     setLoading(true)
     try {
+      const tz = activeBusiness?.timezone || 'Asia/Jakarta'
       const params = new URLSearchParams({
         business_id: activeBusiness.id,
         start_date: dateLimits.start,
         end_date: dateLimits.end,
-        limit: '200'
+        timezone: tz,
+        limit: '1000'
       })
 
       if (selectedAccountId) params.append('account_id', selectedAccountId)

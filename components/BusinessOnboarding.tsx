@@ -39,8 +39,6 @@ export default function BusinessOnboarding({ onLogout }: OnboardingProps) {
   const [currentProgressText, setCurrentProgressText] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
 
-  const delay = (ms: number) => new Promise(res => setTimeout(res, ms))
-
   const handleCreateBusiness = async () => {
     if (!formData.name.trim()) {
       setErrorMsg("Nama bisnis wajib diisi!")
@@ -51,16 +49,10 @@ export default function BusinessOnboarding({ onLogout }: OnboardingProps) {
     setStep(3)
 
     try {
-      // Step 3-1: Get user session
-      setCurrentProgressText("Menghubungkan sesi pengguna...")
-      await delay(600)
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error("Sesi habis, silakan login ulang.")
-      setInitProgress(prev => [...prev, 'user'])
+      setCurrentProgressText("Mendaftarkan unit bisnis & menyusun sistem...")
+      setInitProgress(['user'])
 
-      // Step 3-2: Call API route to register business, update role, staff, and seed COA
-      setCurrentProgressText("Mendaftarkan unit bisnis & menyusun sistem admin...")
-      await delay(600)
+      // Call API route to register business, update role, staff, and seed COA
       const response = await fetch('/api/business', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -78,9 +70,7 @@ export default function BusinessOnboarding({ onLogout }: OnboardingProps) {
       }
 
       setInitProgress(prev => [...prev, 'biz', 'staff', 'profile', 'coa'])
-
       setCurrentProgressText("Semua siap! Mengalihkan ke dashboard...")
-      await delay(800)
 
       // Reload page to refresh all layouts and context
       window.location.reload()

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
+import { localDateToUtcBounds } from '@/lib/localzone'
+import { fetchAllSupabaseRows } from '@/lib/chunkedQueryHelper'
 
 export async function GET(request: NextRequest) {
   try {
@@ -17,8 +19,20 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get('search')?.trim()
     const dateFrom = searchParams.get('dateFrom')
     const dateTo = searchParams.get('dateTo')
+    const timezone = searchParams.get('timezone') || 'Asia/Jakarta'
     const sortField = searchParams.get('sortField') || 'created_at'
     const sortOrder = searchParams.get('sortOrder') === 'asc' ? true : false
+
+    // Convert date filter into precise UTC bounds in the business timezone
+    let dateFromISO: string | null = null
+    let dateToISO: string | null = null
+    if (dateFrom || dateTo) {
+      const s = dateFrom || '1970-01-01'
+      const e = dateTo || '2099-12-31'
+      const bounds = localDateToUtcBounds(s, e, timezone)
+      if (dateFrom) dateFromISO = bounds.startOfDayISO
+      if (dateTo) dateToISO = bounds.endOfDayISO
+    }
 
     // 1. Build Query on v_all_payments using supabaseAdmin to bypass RLS for customers
     let query = supabaseAdmin
@@ -34,12 +48,12 @@ export async function GET(request: NextRequest) {
       query = query.ilike('channel', channel)
     }
 
-    if (dateFrom) {
-      query = query.gte('date', dateFrom)
+    if (dateFromISO) {
+      query = query.gte('date', dateFromISO)
     }
 
-    if (dateTo) {
-      query = query.lte('date', dateTo)
+    if (dateToISO) {
+      query = query.lte('date', dateToISO)
     }
 
     if (search) {
@@ -48,10 +62,13 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Apply Server-Side Sorting
+    // Apply Server-Side Sorting with deterministic tie-breaker
     const validSortFields = ['date', 'amount', 'created_at', 'document_number', 'channel', 'payment_type']
     const safeSortField = validSortFields.includes(sortField) ? sortField : 'created_at'
-    query = query.order(safeSortField, { ascending: sortOrder }).range(offset, offset + pageSize - 1)
+    query = query
+      .order(safeSortField, { ascending: sortOrder })
+      .order('id', { ascending: true })
+      .range(offset, offset + pageSize - 1)
 
     const { data: payments, count, error } = await query
 
@@ -104,18 +121,22 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // 3. Fetch Aggregate KPI (Inbound, Outbound, Net) for this business in the date range
+    // 3. Fetch Aggregate KPI (Inbound, Outbound, Net) with chunked range fetching (> 1,000 rows bypass)
     let kpiQuery = supabaseAdmin
       .from('v_all_payments')
-      .select('payment_type, amount')
+      .select('id, payment_type, amount, created_at')
       .eq('business_id', businessId)
 
     if (paymentType && paymentType !== 'all') kpiQuery = kpiQuery.eq('payment_type', paymentType)
     if (channel && channel !== 'all') kpiQuery = kpiQuery.ilike('channel', channel)
-    if (dateFrom) kpiQuery = kpiQuery.gte('date', dateFrom)
-    if (dateTo) kpiQuery = kpiQuery.lte('date', dateTo)
+    if (dateFromISO) kpiQuery = kpiQuery.gte('date', dateFromISO)
+    if (dateToISO) kpiQuery = kpiQuery.lte('date', dateToISO)
 
-    const { data: kpiData } = await kpiQuery
+    kpiQuery = kpiQuery.order('created_at', { ascending: false }).order('id', { ascending: true })
+
+    const kpiData = await fetchAllSupabaseRows((from, to) =>
+      kpiQuery.range(from, to)
+    )
 
     let totalInbound = 0
     let totalOutbound = 0

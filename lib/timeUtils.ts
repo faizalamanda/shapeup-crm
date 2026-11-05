@@ -2,11 +2,37 @@ import {
   DEFAULT_TIMEZONE, 
   formatLocalDateString, 
   getLocalDateRangeLimits, 
+  getPreviousDateRangeLimits,
+  getPeriodComparisonBounds,
+  localDateToUtcBounds,
+  getUtcTimestampInTimezone,
   formatLocalTransactionDate, 
-  DateRangeKey 
+  getBusinessTimezone,
+  getDateRangeLabel,
+  getLocalizedGreeting,
+  resolveOrderTimestamp,
+  getOrderLocalDateKey,
+  shiftLocalCalendarDate,
+  DateRangeKey,
+  PeriodComparisonBounds
 } from './localzone'
 
-export { DEFAULT_TIMEZONE }
+export { 
+  DEFAULT_TIMEZONE,
+  formatLocalDateString,
+  getLocalDateRangeLimits,
+  getPreviousDateRangeLimits,
+  getPeriodComparisonBounds,
+  localDateToUtcBounds,
+  getUtcTimestampInTimezone,
+  getBusinessTimezone,
+  getDateRangeLabel,
+  getLocalizedGreeting,
+  resolveOrderTimestamp,
+  getOrderLocalDateKey,
+  shiftLocalCalendarDate
+}
+export type { DateRangeKey, PeriodComparisonBounds }
 
 /**
  * Format a Date object or ISO string into a local YYYY-MM-DD string without timezone shift.
@@ -162,55 +188,11 @@ export function getTimezoneAbbr(timezone: string = DEFAULT_TIMEZONE): string {
 
 /**
  * Get ISO start & end limits for common date range keys accounting for local timezone.
+ * Delegates directly to universal getLocalDateRangeLimits in localzone.ts.
  */
 export function getTimezoneDateRangeLimits(
   key: string,
   timezone: string = DEFAULT_TIMEZONE
 ): { start: string; end: string } {
-  const now = new Date()
-  const todayKey = getLocalDateString(now, timezone)
-  const [yearStr, monthStr, dayStr] = todayKey.split('-')
-  const year = parseInt(yearStr, 10)
-  const month = parseInt(monthStr, 10) - 1
-
-  let startStr = todayKey
-  let endStr = todayKey
-
-  switch (key) {
-    case 'today':
-      startStr = todayKey
-      endStr = todayKey
-      break
-    case 'yesterday': {
-      const yesterday = new Date(now.getTime() - 86400000)
-      startStr = getLocalDateString(yesterday, timezone)
-      endStr = startStr
-      break
-    }
-    case 'this-month': {
-      const firstDay = new Date(year, month, 1)
-      const lastDay = new Date(year, month + 1, 0)
-      startStr = getLocalDateString(firstDay, timezone)
-      endStr = getLocalDateString(lastDay, timezone)
-      break
-    }
-    case 'last-month': {
-      const firstDay = new Date(year, month - 1, 1)
-      const lastDay = new Date(year, month, 0)
-      startStr = getLocalDateString(firstDay, timezone)
-      endStr = getLocalDateString(lastDay, timezone)
-      break
-    }
-    case 'this-year': {
-      startStr = `${year}-01-01`
-      endStr = `${year}-12-31`
-      break
-    }
-    default:
-      startStr = todayKey
-      endStr = todayKey
-      break
-  }
-
-  return { start: startStr, end: endStr }
+  return getLocalDateRangeLimits(key, timezone)
 }

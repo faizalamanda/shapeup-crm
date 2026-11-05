@@ -1,11 +1,21 @@
 "use client"
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { canAccessPath } from '@/lib/permissions'
 import { useUserContext } from '@/components/UserContext'
-import { getLocalDateRangeLimits, localDateToUtcBounds } from '@/lib/localzone'
+import {
+  getPeriodComparisonBounds,
+  getOrderLocalDateKey,
+  getLocalizedGreeting,
+  getDateRangeLabel,
+  DateRangeKey,
+} from '@/lib/localzone'
+import { fetchAllSupabaseRows } from '@/lib/chunkedQueryHelper'
+
+// L1 In-Memory Cache for 0ms date-filter tab switching
+const onboardingMetricsCache = new Map<string, { data: any; timestamp: number }>()
 
 // ─── Available Shortcuts Pool ────────────────────────────────────────────────
 type ShortcutItem = {
@@ -248,120 +258,153 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     async function fetchMetrics() {
-      if (!activeBusiness?.id) return;
+      if (!activeBusiness?.id) return
+      const businessTimezone = activeBusiness?.timezone || 'Asia/Jakarta'
+      const cacheKey = `${activeBusiness.id}_${dateFilter}_${businessTimezone}`
+
+      // Check L1 In-Memory Cache (0ms)
+      const memCached = onboardingMetricsCache.get(cacheKey)
+      if (memCached && Date.now() - memCached.timestamp < 60000) {
+        setMetrics(memCached.data)
+        setIsLoadingMetrics(false)
+        return
+      }
+
+      // Check L2 SessionStorage Cache (0ms)
+      try {
+        const sessionCached = sessionStorage.getItem(`su_onboarding_metrics_v2_${cacheKey}`)
+        if (sessionCached) {
+          const parsed = JSON.parse(sessionCached)
+          if (parsed && typeof parsed.timestamp === 'number' && Date.now() - parsed.timestamp < 60000) {
+            onboardingMetricsCache.set(cacheKey, { data: parsed.data, timestamp: parsed.timestamp })
+            setMetrics(parsed.data)
+            setIsLoadingMetrics(false)
+            return
+          }
+        }
+      } catch (e) {}
+
       setIsLoadingMetrics(true)
       try {
-        const businessTimezone = activeBusiness?.timezone || 'Asia/Jakarta'
-        
-        // 1. Get local date range string limits (e.g. "2026-09-11")
-        // Mapping our component's dateFilter to localzone keys
-        let dateKey = 'today'
-        if (dateFilter === 'yesterday') dateKey = 'yesterday'
-        else if (dateFilter === 'last7') dateKey = 'last7'
-        else if (dateFilter === 'last30') dateKey = 'last30'
-        else if (dateFilter === 'thisMonth') dateKey = 'this-month'
-        
-        let startLocal, endLocal;
-        if (dateKey === 'last7' || dateKey === 'last30') {
-          const days = dateKey === 'last30' ? 29 : 6;
-          const now = new Date();
-          const endDate = new Date(now);
-          const startDate = new Date(now);
-          startDate.setDate(now.getDate() - days);
-          const { formatLocalDateString } = require('@/lib/localzone');
-          startLocal = formatLocalDateString(startDate, businessTimezone);
-          endLocal = formatLocalDateString(endDate, businessTimezone);
-        } else {
-          const range = getLocalDateRangeLimits(dateKey as any, businessTimezone)
-          startLocal = range.start
-          endLocal = range.end
-        }
+        const bounds = getPeriodComparisonBounds(dateFilter as DateRangeKey, businessTimezone)
+        const countedStatuses = ['shipped', 'processing', 'complete', 'completed']
 
-        // Current period UTC bounds
-        const bounds = localDateToUtcBounds(startLocal, endLocal, businessTimezone)
-        
-        // Calculate Previous Period
-        const sDate = new Date(startLocal)
-        const eDate = new Date(endLocal)
-        const diffMs = eDate.getTime() - sDate.getTime()
-        const prevStart = new Date(sDate.getTime() - diffMs - 24 * 60 * 60 * 1000)
-        const prevEnd = new Date(sDate.getTime() - 24 * 60 * 60 * 1000)
-        const { formatLocalDateString } = require('@/lib/localzone');
-        const prevBounds = localDateToUtcBounds(
-          formatLocalDateString(prevStart, businessTimezone),
-          formatLocalDateString(prevEnd, businessTimezone),
-          businessTimezone
+        // Fetch all orders in chunked batches across the entire comparison window (prev start -> curr end)
+        // Eliminates the 1,000-row PostgREST truncation limit!
+        const allOrders = await fetchAllSupabaseRows(
+          (from, to) =>
+            supabase
+              .from('orders')
+              .select('id, grand_total, customer_id, order_date, order_date_utc')
+              .eq('business_id', activeBusiness.id)
+              .in('status', countedStatuses)
+              .gte('order_date', bounds.previous.startOfDayISO)
+              .lte('order_date', bounds.current.endOfDayISO)
+              .order('order_date', { ascending: true })
+              .order('id', { ascending: true })
+              .range(from, to),
+          1000
         )
 
-        const countedStatuses = ['shipped', 'processing', 'complete', 'completed']
-        
-        const [o1Res, o2Res] = await Promise.all([
-          // Current period orders (with joined customer metrics for zero-latency newCust checking)
-          supabase.from('orders')
-            .select('grand_total, customer_id, customer_metrics(total_order_count)')
-            .eq('business_id', activeBusiness.id)
-            .in('status', countedStatuses)
-            .gte('order_date_utc', bounds.startOfDayISO)
-            .lte('order_date_utc', bounds.endOfDayISO),
-            
-          // Previous period orders
-          supabase.from('orders')
-            .select('grand_total, customer_id, customer_metrics(total_order_count)')
-            .eq('business_id', activeBusiness.id)
-            .in('status', countedStatuses)
-            .gte('order_date_utc', prevBounds.startOfDayISO)
-            .lte('order_date_utc', prevBounds.endOfDayISO)
-        ])
+        // Deterministically partition orders into Current vs Previous period in Business Timezone
+        const o1: typeof allOrders = []
+        const o2: typeof allOrders = []
 
-        const o1 = o1Res.data || []
-        const o2 = o2Res.data || []
-        
-        // customer_metrics logic is now resolved seamlessly through relational joins in the orders query!
+        for (const o of allOrders) {
+          const localYmd = getOrderLocalDateKey(o, businessTimezone)
+          if (localYmd >= bounds.current.startLocal && localYmd <= bounds.current.endLocal) {
+            o1.push(o)
+          } else if (localYmd >= bounds.previous.startLocal && localYmd <= bounds.previous.endLocal) {
+            o2.push(o)
+          }
+        }
 
-        // Calculation exactly like dashboard
+        // Aggregate core financial metrics
         const s1 = o1.reduce((acc, o) => acc + (Number(o.grand_total) || 0), 0)
         const t1 = o1.length
         const a1 = t1 > 0 ? s1 / t1 : 0
-        const c1 = new Set(o1.map(o => o.customer_id).filter(Boolean)).size // Unique active customers
-        
+        const c1CustomerIds = new Set(o1.map(o => o.customer_id).filter(Boolean))
+        const c1 = c1CustomerIds.size
+
         const s2 = o2.reduce((acc, o) => acc + (Number(o.grand_total) || 0), 0)
         const t2 = o2.length
         const a2 = t2 > 0 ? s2 / t2 : 0
-        const c2 = new Set(o2.map(o => o.customer_id).filter(Boolean)).size
+        const c2CustomerIds = new Set(o2.map(o => o.customer_id).filter(Boolean))
+        const c2 = c2CustomerIds.size
 
-        const calcGrowth = (curr: number, prev: number) => prev > 0 ? ((curr - prev) / prev) * 100 : (curr > 0 ? 100 : 0)
+        const calcGrowth = (curr: number, prev: number) =>
+          prev > 0 ? ((curr - prev) / prev) * 100 : (curr > 0 ? 100 : 0)
 
-        // Count new customers based on the joined total_order_count (<= 1 or unindexed null)
-        const c1New = new Set(o1.filter(o => {
-          // In PostgREST, a join on a 1:1 view may return an array if types are not perfectly synced
-          const m: any = Array.isArray(o.customer_metrics) ? o.customer_metrics[0] : o.customer_metrics
-          return !m || m.total_order_count <= 1
-        }).map(o => o.customer_id)).size
+        // Resolve new customers with fast targeted ID batch lookup (O(1) in-memory map)
+        // instead of slow correlated view joins on every order row!
+        const allCustIds = Array.from(new Set([...c1CustomerIds, ...c2CustomerIds]))
+        const customerCountMap = new Map<string, number>()
 
-        const c2New = new Set(o2.filter(o => {
-          const m: any = Array.isArray(o.customer_metrics) ? o.customer_metrics[0] : o.customer_metrics
-          return !m || m.total_order_count <= 1
-        }).map(o => o.customer_id)).size
+        if (allCustIds.length > 0) {
+          const chunks: string[][] = []
+          for (let i = 0; i < allCustIds.length; i += 200) {
+            chunks.push(allCustIds.slice(i, i + 200))
+          }
+          await Promise.all(
+            chunks.map(async (ids) => {
+              const { data } = await supabase
+                .from('customer_metrics')
+                .select('customer_id, total_order_count')
+                .eq('business_id', activeBusiness.id)
+                .in('customer_id', ids)
+              if (data) {
+                for (const m of data) {
+                  customerCountMap.set(m.customer_id, m.total_order_count ?? 1)
+                }
+              }
+            })
+          )
+        }
+
+        const c1New = Array.from(c1CustomerIds).filter(
+          id => (customerCountMap.get(id) ?? 1) <= 1
+        ).length
+
+        const c2New = Array.from(c2CustomerIds).filter(
+          id => (customerCountMap.get(id) ?? 1) <= 1
+        ).length
 
         const clv1 = c1 > 0 ? s1 / c1 : 0
         const clv2 = c2 > 0 ? s2 / c2 : 0
 
-        setMetrics({
-          sales: s1, salesGrowth: calcGrowth(s1, s2),
-          trx: t1, trxGrowth: calcGrowth(t1, t2),
-          avg: a1, avgGrowth: calcGrowth(a1, a2),
-          cust: c1, custGrowth: calcGrowth(c1, c2),
-          newCust: c1New, newCustGrowth: calcGrowth(c1New, c2New),
-          clv: clv1, clvGrowth: calcGrowth(clv1, clv2)
-        })
+        const calculatedMetrics = {
+          sales: s1,
+          salesGrowth: calcGrowth(s1, s2),
+          trx: t1,
+          trxGrowth: calcGrowth(t1, t2),
+          avg: a1,
+          avgGrowth: calcGrowth(a1, a2),
+          cust: c1,
+          custGrowth: calcGrowth(c1, c2),
+          newCust: c1New,
+          newCustGrowth: calcGrowth(c1New, c2New),
+          clv: clv1,
+          clvGrowth: calcGrowth(clv1, clv2),
+        }
 
-      } catch(e) {
+        // Save to L1 RAM & L2 SessionStorage
+        onboardingMetricsCache.set(cacheKey, { data: calculatedMetrics, timestamp: Date.now() })
+        try {
+          sessionStorage.setItem(
+            `su_onboarding_metrics_v2_${cacheKey}`,
+            JSON.stringify({ data: calculatedMetrics, timestamp: Date.now() })
+          )
+        } catch (e) {}
+
+        setMetrics(calculatedMetrics)
+      } catch (e) {
         console.error('Error fetching metrics', e)
+      } finally {
+        setIsLoadingMetrics(false)
       }
-      setIsLoadingMetrics(false)
     }
     fetchMetrics()
-  }, [dateFilter, supabase, activeBusiness?.id])
+  }, [dateFilter, supabase, activeBusiness?.id, activeBusiness?.timezone])
 
 
   // Manual checked state stored in localStorage
@@ -438,9 +481,12 @@ export default function OnboardingPage() {
     }
 
     async function checkDbCounts() {
+      if (!activeBusiness?.id) return
+      const bId = activeBusiness.id
+
       // Check session cache first to prevent redundant DB queries within 60s
       try {
-        const cached = sessionStorage.getItem('su_cached_onboarding_counts')
+        const cached = sessionStorage.getItem(`su_cached_onboarding_counts_${bId}`)
         if (cached) {
           const parsed = JSON.parse(cached)
           if (parsed && typeof parsed.timestamp === 'number' && Date.now() - parsed.timestamp < 60000) {
@@ -453,32 +499,39 @@ export default function OnboardingPage() {
 
       setLoadingDb(true)
       try {
+        // High-performance O(1) existence checks with LIMIT 1 filtered by business_id
         const [
           prodRes,
           ordRes,
           custRes,
           expRes,
           supRes,
+          stockRes,
+          invRes,
         ] = await Promise.all([
-          supabase.from('products').select('*', { count: 'exact', head: true }),
-          supabase.from('orders').select('*', { count: 'exact', head: true }),
-          supabase.from('customers').select('*', { count: 'exact', head: true }),
-          supabase.from('expenses').select('*', { count: 'exact', head: true }),
-          supabase.from('suppliers').select('*', { count: 'exact', head: true }),
+          supabase.from('products').select('id').eq('business_id', bId).limit(1),
+          supabase.from('orders').select('id').eq('business_id', bId).limit(1),
+          supabase.from('customers').select('id').eq('business_id', bId).limit(1),
+          supabase.from('expenses').select('id').eq('business_id', bId).limit(1),
+          supabase.from('suppliers').select('id').eq('business_id', bId).limit(1),
+          supabase.from('stock_opname').select('id').eq('business_id', bId).limit(1),
+          supabase.from('orders').select('id').eq('business_id', bId).not('invoice_number', 'is', null).limit(1),
         ])
 
         const counts = {
-          products: prodRes.count || 0,
-          orders: ordRes.count || 0,
-          customers: custRes.count || 0,
-          expenses: expRes.count || 0,
-          suppliers: supRes.count || 0,
+          products: (prodRes.data && prodRes.data.length > 0) ? 1 : 0,
+          orders: (ordRes.data && ordRes.data.length > 0) ? 1 : 0,
+          customers: (custRes.data && custRes.data.length > 0) ? 1 : 0,
+          expenses: (expRes.data && expRes.data.length > 0) ? 1 : 0,
+          suppliers: (supRes.data && supRes.data.length > 0) ? 1 : 0,
+          stock_opname: (stockRes.data && stockRes.data.length > 0) ? 1 : 0,
+          invoices: (invRes.data && invRes.data.length > 0) ? 1 : 0,
         }
 
         setDbCounts(counts)
 
         try {
-          sessionStorage.setItem('su_cached_onboarding_counts', JSON.stringify({
+          sessionStorage.setItem(`su_cached_onboarding_counts_${bId}`, JSON.stringify({
             counts,
             timestamp: Date.now()
           }))
@@ -491,7 +544,7 @@ export default function OnboardingPage() {
     }
 
     checkDbCounts()
-  }, [supabase])
+  }, [supabase, activeBusiness?.id])
 
   // Dynamically Filtered Shortcuts & Stages based on Permissions
   const allowedShortcutsPool = useMemo(() => {
@@ -639,14 +692,10 @@ export default function OnboardingPage() {
 
   const isGuideHidden = isDismissedPermanently || isDismissedTemporarily
 
-  const [greeting, setGreeting] = useState('Good morning')
+  const [greeting, setGreeting] = useState('Selamat pagi')
   useEffect(() => {
-    const hour = new Date().getHours()
-    if (hour >= 5 && hour < 12) setGreeting('Good morning')
-    else if (hour >= 12 && hour < 15) setGreeting('Good afternoon')
-    else if (hour >= 15 && hour < 18) setGreeting('Good evening')
-    else setGreeting('Good night')
-  }, [])
+    setGreeting(getLocalizedGreeting(activeBusiness?.timezone))
+  }, [activeBusiness?.timezone])
 
   return (
     <div className="min-h-screen bg-[var(--su-bg,#F7F7F5)] text-[var(--su-text,#1C1C1A)] p-3 sm:p-5 md:p-6 space-y-4 md:space-y-6 max-w-7xl mx-auto pb-20">
@@ -691,7 +740,7 @@ export default function OnboardingPage() {
             {/* Left side */}
             <div className="w-full lg:w-1/4 flex flex-col justify-center items-start text-left">
               <div>
-                <h3 className="text-xs font-bold text-slate-700">Penjualan {dateFilter === 'today' ? 'Hari Ini' : dateFilter === 'yesterday' ? 'Kemarin' : dateFilter === 'last7' ? '7 Hari Terakhir' : dateFilter === 'last30' ? '30 Hari Terakhir' : 'Bulan Ini'}</h3>
+                <h3 className="text-xs font-bold text-slate-700">Penjualan {getDateRangeLabel(dateFilter as any)}</h3>
                 <div className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tighter mt-0.5">
                   {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(metrics.sales)}
                 </div>
