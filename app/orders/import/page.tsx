@@ -11,6 +11,8 @@ import {
   detectOrderFieldByHeader,
   downloadPresetSampleExcel
 } from '@/lib/orderImportPresets'
+import { parseAndResolveOrderDate } from '@/lib/localzone'
+import { getTimezoneAbbr, formatDisplayDate } from '@/lib/timeUtils'
 
 interface GroupedOrderForImport {
   order_number: string
@@ -57,6 +59,7 @@ export default function OrderImportPage() {
   // Business Context State
   const [activeBizId, setActiveBizId] = useState<string | null>(null)
   const [activeBizName, setActiveBizName] = useState<string>('Bisnis Saya')
+  const [activeBizTimezone, setActiveBizTimezone] = useState<string>('Asia/Jakarta')
   const [loadingContext, setLoadingContext] = useState(true)
 
   // Wizard Steps
@@ -73,6 +76,7 @@ export default function OrderImportPage() {
   const [duplicateAction, setDuplicateAction] = useState<'skip' | 'update'>('skip')
   const [autoJournal, setAutoJournal] = useState<boolean>(true)
   const [customerWithoutPhone, setCustomerWithoutPhone] = useState<'guest' | 'create'>('guest')
+  const [orderDateIsLocal, setOrderDateIsLocal] = useState<boolean>(true)
 
   // Streaming Import Progress & Metrics (Step 4)
   const [importProgress, setImportProgress] = useState(0) // 0 to 100
@@ -107,7 +111,7 @@ export default function OrderImportPage() {
 
         const { data: profile } = await supabase
           .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name)')
+          .select('active_business_id, businesses!active_business_id(name, timezone)')
           .eq('id', user.id)
           .single()
 
@@ -115,6 +119,9 @@ export default function OrderImportPage() {
           setActiveBizId(profile.active_business_id)
           const b = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
           setActiveBizName(b?.name || 'Bisnis Saya')
+          if (b?.timezone) {
+            setActiveBizTimezone(b.timezone)
+          }
         }
       } catch (err) {
         console.error('Failed to load profile for order import:', err)
@@ -322,12 +329,7 @@ export default function OrderImportPage() {
       if (!map.has(orderNumber)) {
         // First occurrence of this orderNumber
         const rawDate = invertedMapping['order_date'] ? row[invertedMapping['order_date']] : null
-        let orderDateStr: string | null = null
-        if (rawDate instanceof Date) {
-          orderDateStr = rawDate.toISOString()
-        } else if (rawDate) {
-          orderDateStr = String(rawDate).trim()
-        }
+        const orderDateStr = parseAndResolveOrderDate(rawDate, orderDateIsLocal, activeBizTimezone)
 
         const rawPlatform = invertedMapping['source_platform'] ? row[invertedMapping['source_platform']] : null
         const platform = rawPlatform ? String(rawPlatform).trim() : defaultPlatform
@@ -391,7 +393,7 @@ export default function OrderImportPage() {
       }
       return o
     })
-  }, [rawRows, invertedMapping, defaultPlatform])
+  }, [rawRows, invertedMapping, defaultPlatform, orderDateIsLocal, activeBizTimezone])
 
   // ── 4. Streaming Batch Ingestion Engine (Zero-Timeout, Real-time Speed) ───
   const handleStartImport = async () => {
@@ -455,7 +457,9 @@ export default function OrderImportPage() {
             orders: chunk,
             duplicateAction,
             autoJournal,
-            customerWithoutPhone
+            customerWithoutPhone,
+            orderDateIsLocal,
+            timezone: activeBizTimezone
           })
         })
 
@@ -987,6 +991,65 @@ export default function OrderImportPage() {
                     <option value="Manual">Manual</option>
                   </select>
                 </div>
+
+                {/* Order Date Timezone Setting */}
+                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 md:col-span-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-2">
+                    <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                      <span>🕒 Zona Waktu Tanggal Order / Transaksi:</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+                        Zona Bisnis: {getTimezoneAbbr(activeBizTimezone)} ({activeBizTimezone})
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-slate-500">
+                      Mencegah tanggal/jam bergeser +7 jam saat disimpan
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mb-3 leading-relaxed">
+                    Tentukan apakah tanggal & jam transaksi di berkas Excel/CSV Anda sudah sesuai dengan waktu operasional lokal toko Anda:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className={`flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer ${orderDateIsLocal ? 'border-indigo-500 bg-white ring-2 ring-indigo-100 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                      <input
+                        type="radio"
+                        name="orderDateIsLocal"
+                        value="local"
+                        checked={orderDateIsLocal === true}
+                        onChange={() => setOrderDateIsLocal(true)}
+                        className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                          <span>Sudah Sesuai Waktu Lokal ({getTimezoneAbbr(activeBizTimezone)})</span>
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            Rekomendasi
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                          Waktu di berkas adalah jam lokal riil (cth: ekspor Shopee, Tokopedia, TikTok Shop, Moka POS, Pawoon, Majoo, Kasir). Sistem mengonversinya ke UTC yang akurat agar riwayat pesanan & laporan tepat waktu.
+                        </p>
+                      </div>
+                    </label>
+                    <label className={`flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer ${!orderDateIsLocal ? 'border-indigo-500 bg-white ring-2 ring-indigo-100 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                      <input
+                        type="radio"
+                        name="orderDateIsLocal"
+                        value="utc"
+                        checked={orderDateIsLocal === false}
+                        onChange={() => setOrderDateIsLocal(false)}
+                        className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <div className="text-xs font-bold text-slate-900">
+                          Format Standar UTC (Data Mentah)
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                          Waktu di berkas sudah berformat UTC mentah tanpa offset lokal (cth: ekspor database internasional atau sistem global WooCommerce/Shopify UTC).
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1001,6 +1064,7 @@ export default function OrderImportPage() {
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold">
                       <th className="py-2 px-3">No. Pesanan</th>
+                      <th className="py-2 px-3">Tanggal Transaksi</th>
                       <th className="py-2 px-3">Pelanggan</th>
                       <th className="py-2 px-3">Rincian Item Produk</th>
                       <th className="py-2 px-3 text-right">Total Qty</th>
@@ -1016,6 +1080,20 @@ export default function OrderImportPage() {
                           <div className="text-[10px] text-slate-400 font-normal">
                             Baris #{o._sourceRowNumbers.join(', ')}
                           </div>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {o.order_date ? (
+                            <div>
+                              <div className="font-semibold text-slate-800">
+                                {formatDisplayDate(o.order_date, 'datetime', activeBizTimezone)}
+                              </div>
+                              <div className="text-[10px] text-slate-400">
+                                {orderDateIsLocal ? `Waktu lokal (${getTimezoneAbbr(activeBizTimezone)})` : 'Format UTC'}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 italic">Otomatis Waktu Saat Ini</span>
+                          )}
                         </td>
                         <td className="py-2.5 px-3">
                           <div className="font-medium text-slate-800">{o.customer.name || 'Tamu / Umum'}</div>

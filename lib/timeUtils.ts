@@ -13,6 +13,7 @@ import {
   resolveOrderTimestamp,
   getOrderLocalDateKey,
   shiftLocalCalendarDate,
+  parseAndResolveOrderDate,
   DateRangeKey,
   PeriodComparisonBounds
 } from './localzone'
@@ -30,7 +31,8 @@ export {
   getLocalizedGreeting,
   resolveOrderTimestamp,
   getOrderLocalDateKey,
-  shiftLocalCalendarDate
+  shiftLocalCalendarDate,
+  parseAndResolveOrderDate
 }
 export type { DateRangeKey, PeriodComparisonBounds }
 

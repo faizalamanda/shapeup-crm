@@ -482,6 +482,137 @@ export function formatLocalTransactionDate(
   return getUtcTimestampInTimezone(dateOnly, localTimeStr, tz)
 }
 
+/**
+ * Resolves a raw date value from Excel, CSV, or text into a valid UTC ISO string,
+ * taking into account whether the raw data represents local business time or UTC.
+ * 
+ * - If isLocalZone is true: wall-clock date/time from the file is interpreted in business timezone,
+ *   then accurately converted to UTC ISO (preventing unwanted +7 / +8 / +9 hour shifts).
+ * - If isLocalZone is false: date/time is treated as already in UTC format.
+ */
+export function parseAndResolveOrderDate(
+  rawVal: any,
+  isLocalZone: boolean = true,
+  timezone: string = DEFAULT_TIMEZONE
+): string | null {
+  if (rawVal === undefined || rawVal === null || rawVal === '') return null
+
+  const tz = getBusinessTimezone(timezone)
+
+  // Case 1: JavaScript Date object (e.g. from SheetJS cellDates: true)
+  if (rawVal instanceof Date) {
+    if (isNaN(rawVal.getTime())) return null
+
+    const y = rawVal.getFullYear()
+    const m = rawVal.getMonth() + 1
+    const d = rawVal.getDate()
+    const h = rawVal.getHours()
+    const min = rawVal.getMinutes()
+    const s = rawVal.getSeconds()
+
+    if (!isLocalZone) {
+      return new Date(Date.UTC(y, m - 1, d, h, min, s)).toISOString()
+    }
+
+    const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    const timeStr = `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:${String(s).padStart(2, '0')}.000`
+    return getUtcTimestampInTimezone(dateStr, timeStr, tz)
+  }
+
+  // Case 2: Numeric Excel serial date (e.g. 46310.60416)
+  if (typeof rawVal === 'number' && !isNaN(rawVal)) {
+    try {
+      const ms = Math.round((rawVal - 25569) * 86400 * 1000)
+      const d = new Date(ms)
+      if (!isNaN(d.getTime())) {
+        if (!isLocalZone) return d.toISOString()
+        const y = d.getUTCFullYear()
+        const m = d.getUTCMonth() + 1
+        const dd = d.getUTCDate()
+        const h = d.getUTCHours()
+        const min = d.getUTCMinutes()
+        const s = d.getUTCSeconds()
+        const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(dd).padStart(2, '0')}`
+        const timeStr = `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:${String(s).padStart(2, '0')}.000`
+        return getUtcTimestampInTimezone(dateStr, timeStr, tz)
+      }
+    } catch {
+      // Fallback to string handling
+    }
+  }
+
+  // Case 3: String date representation
+  const str = String(rawVal).trim()
+  if (!str) return null
+
+  // If string contains explicit timezone offset preceded by time (e.g. 2026-10-15T14:30:00+07:00 or 14:30:00Z)
+  const hasExplicitTz = /(?:T|\s)\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?\s*(Z|[+-]\d{2}(?::?\d{2})?)$/i.test(str)
+  if (hasExplicitTz) {
+    const d = new Date(str)
+    if (!isNaN(d.getTime())) return d.toISOString()
+  }
+
+  // Split into datePart and timePart
+  const [datePart, timePart] = str.split(/[ T]/)
+  let hours = 12
+  let minutes = 0
+  let seconds = 0
+
+  if (timePart) {
+    const tPieces = timePart.split(':')
+    hours = parseInt(tPieces[0], 10) || 0
+    minutes = parseInt(tPieces[1], 10) || 0
+    seconds = parseInt(tPieces[2], 10) || 0
+  }
+
+  let year = new Date().getFullYear()
+  let month = 1
+  let day = 1
+
+  const dPieces = (datePart || '').split(/[-/.]/)
+  if (dPieces.length === 3) {
+    if (dPieces[0].length === 4) {
+      // YYYY-MM-DD or YYYY/MM/DD
+      year = parseInt(dPieces[0], 10)
+      month = parseInt(dPieces[1], 10)
+      day = parseInt(dPieces[2], 10)
+    } else if (dPieces[2].length === 4) {
+      // DD-MM-YYYY or DD/MM/YYYY
+      day = parseInt(dPieces[0], 10)
+      month = parseInt(dPieces[1], 10)
+      year = parseInt(dPieces[2], 10)
+    } else if (dPieces[2].length === 2) {
+      // DD-MM-YY or DD/MM/YY
+      day = parseInt(dPieces[0], 10)
+      month = parseInt(dPieces[1], 10)
+      year = 2000 + parseInt(dPieces[2], 10)
+    }
+  } else {
+    // Fallback parsing via standard Date
+    const fallback = new Date(str)
+    if (!isNaN(fallback.getTime())) {
+      if (!isLocalZone) return fallback.toISOString()
+      year = fallback.getFullYear()
+      month = fallback.getMonth() + 1
+      day = fallback.getDate()
+      hours = fallback.getHours()
+      minutes = fallback.getMinutes()
+      seconds = fallback.getSeconds()
+    } else {
+      return null
+    }
+  }
+
+  const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  const timeStr = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.000`
+
+  if (isLocalZone) {
+    return getUtcTimestampInTimezone(dateStr, timeStr, tz)
+  } else {
+    return new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds)).toISOString()
+  }
+}
+
 export type LocalzoneCheckReport = {
   timezone: string
   valid: boolean

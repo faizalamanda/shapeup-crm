@@ -3,6 +3,7 @@ import { getApiContext } from '@/lib/apiContext'
 import { resolveGuestCustomerId } from '@/lib/guestCustomer'
 import { formatPhoneNumberSmart, isUuid } from '@/lib/utils'
 import { syncOrderToLedger } from '@/lib/orderLedger'
+import { parseAndResolveOrderDate } from '@/lib/localzone'
 
 interface OrderItemInput {
   name: string
@@ -42,6 +43,8 @@ interface BulkOrdersRequestBody {
   duplicateAction?: 'skip' | 'update'
   autoJournal?: boolean
   customerWithoutPhone?: 'guest' | 'create'
+  orderDateIsLocal?: boolean
+  timezone?: string
 }
 
 export async function POST(req: Request) {
@@ -62,7 +65,9 @@ export async function POST(req: Request) {
       orders,
       duplicateAction = 'skip',
       autoJournal = true,
-      customerWithoutPhone = 'guest'
+      customerWithoutPhone = 'guest',
+      orderDateIsLocal = true,
+      timezone = 'Asia/Jakarta'
     } = body
 
     const failedItems: Array<{
@@ -307,12 +312,17 @@ export async function POST(req: Request) {
       const normPayStatus = normalizePaymentStatus(ord.payment_status || (normStatus === 'completed' ? 'paid' : 'unpaid'))
       const amountPaid = normPayStatus === 'paid' ? grandTotal : 0
 
-      // Format ISO Date safely
+      // Format ISO Date safely with timezone awareness
       let parsedDate = new Date().toISOString()
       if (ord.order_date) {
-        const d = new Date(ord.order_date)
-        if (!isNaN(d.getTime())) {
-          parsedDate = d.toISOString()
+        const resolved = parseAndResolveOrderDate(ord.order_date, orderDateIsLocal, timezone)
+        if (resolved) {
+          parsedDate = resolved
+        } else {
+          const d = new Date(ord.order_date)
+          if (!isNaN(d.getTime())) {
+            parsedDate = d.toISOString()
+          }
         }
       }
 
