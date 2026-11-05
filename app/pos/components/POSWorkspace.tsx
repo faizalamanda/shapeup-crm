@@ -84,10 +84,16 @@ export default function POSWorkspace({
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [isSearchingServer, setIsSearchingServer] = useState(false)
+  const [showAllSimilarMatches, setShowAllSimilarMatches] = useState(false)
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [activeTab, setActiveTab] = useState<'catalog' | 'keypad'>('catalog')
   const [visibleProductCount, setVisibleProductCount] = useState<number>(60)
+
+  // Reset expansion when search query changes
+  useEffect(() => {
+    setShowAllSimilarMatches(false)
+  }, [debouncedSearch])
 
   // Debounce Search
   useEffect(() => {
@@ -303,40 +309,78 @@ export default function POSWorkspace({
     ])
   }, [businessId, refreshCatalog, loadSecondaryData])
 
-  // Filtered Products (Tokenized Multi-Word Matching, Null-Safe)
-  const filteredProducts = useMemo(() => {
+  // Smart Exact-Match vs Tokenized Matches Separation (Option B: Smart Focus with Expansion)
+  const { exactMatches, otherMatches, hasExactMatch } = useMemo(() => {
     const list = Array.isArray(products) ? products : []
-    const q = (debouncedSearch || '').trim().toLowerCase()
-    if (!q) {
-      if (!selectedCategoryId) return list
-      return list.filter((p) => p && p.category_id === selectedCategoryId)
+    const rawQ = (debouncedSearch || '').trim()
+    const cleanQ = rawQ.toLowerCase().replace(/\s+/g, ' ')
+
+    if (!cleanQ) {
+      const baseList = selectedCategoryId
+        ? list.filter((p) => p && p.category_id === selectedCategoryId)
+        : list
+      return { exactMatches: [], otherMatches: baseList, hasExactMatch: false }
     }
 
-    const tokens = q.split(/\s+/).filter(Boolean)
+    const tokens = cleanQ.split(/\s+/).filter(Boolean)
+    const exactList: any[] = []
+    const otherList: any[] = []
 
-    return list.filter((p) => {
-      if (!p) return false
-      const pName = (p.name || '').toLowerCase()
-      const pSku = (p.sku || '').toLowerCase()
-      const variantTexts = Array.isArray(p.product_variants)
-        ? p.product_variants.map((v: any) => `${(v?.name || '').toLowerCase()} ${(v?.sku || '').toLowerCase()}`)
-        : []
+    for (const p of list) {
+      if (!p) continue
+      if (selectedCategoryId && p.category_id !== selectedCategoryId) continue
 
-      const matchSearch = tokens.every((t) =>
+      const pName = (p.name || '').trim().toLowerCase().replace(/\s+/g, ' ')
+      const pSku = (p.sku || '').trim().toLowerCase()
+      const variants = Array.isArray(p.product_variants) ? p.product_variants : []
+
+      // Check Exact SKU Match (Case A) or Exact Name Match (Case B - min 2 chars)
+      const isExactSku = pSku === cleanQ || variants.some((v: any) => (v?.sku || '').trim().toLowerCase() === cleanQ)
+      const isExactName = cleanQ.length >= 2 && pName === cleanQ
+
+      if (isExactSku || isExactName) {
+        exactList.push({ ...p, _isExactMatch: true })
+        continue
+      }
+
+      // Check Tokenized Substring Match
+      const variantTexts = variants.map((v: any) => `${(v?.name || '').toLowerCase()} ${(v?.sku || '').toLowerCase()}`)
+      const isTokenMatch = tokens.every((t) =>
         pName.includes(t) ||
         pSku.includes(t) ||
         variantTexts.some((vt) => vt.includes(t))
       )
 
-      const matchCategory = !selectedCategoryId || p.category_id === selectedCategoryId
-      return matchSearch && matchCategory
-    })
+      if (isTokenMatch) {
+        otherList.push({ ...p, _isExactMatch: false })
+      }
+    }
+
+    return {
+      exactMatches: exactList,
+      otherMatches: otherList,
+      hasExactMatch: exactList.length > 0
+    }
   }, [products, debouncedSearch, selectedCategoryId])
 
-  // Hybrid Server Search Fallback (Debounced 250ms jika hasil lokal < 5)
+  // Filtered Products: Collapsed to Exact Matches if present, unless user toggled expansion
+  const filteredProducts = useMemo(() => {
+    if (hasExactMatch && !showAllSimilarMatches) {
+      return exactMatches
+    }
+    if (hasExactMatch && showAllSimilarMatches) {
+      return [...exactMatches, ...otherMatches]
+    }
+    return otherMatches
+  }, [hasExactMatch, showAllSimilarMatches, exactMatches, otherMatches])
+
+  // Hybrid Server Search Fallback (Debounced 250ms jika hasil lokal < 5 dan belum ada exact match)
   useEffect(() => {
     const q = (debouncedSearch || '').trim()
     if (!q || q.length < 2) return
+
+    // Jika sudah ada exact match, tidak perlu search server lagi
+    if (hasExactMatch) return
 
     if (filteredProducts.length < 5) {
       setIsSearchingServer(true)
@@ -344,7 +388,7 @@ export default function POSWorkspace({
         setIsSearchingServer(false)
       })
     }
-  }, [debouncedSearch, filteredProducts.length, searchProductsServer])
+  }, [debouncedSearch, filteredProducts.length, hasExactMatch, searchProductsServer])
 
   // Windowed Products for DOM Performance (Pilar 4: DOM Windowing)
   useEffect(() => {
@@ -1445,119 +1489,187 @@ export default function POSWorkspace({
                     </button>
                   )}
                 </div>
-              ) : viewMode === 'grid' ? (
-                /* GRID VIEW */
-                <>
-                  <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6 gap-3 sm:gap-3.5">
-                    {visibleProducts.map((p) => {
-                      const isOutOfStock = p.stock_type === 'tracked' && p.stock_quantity <= 0
-                      const badgeClass = getPastelBadge(p.name)
-                      return (
-                        <div
-                          key={p.id}
-                          onClick={() => !isOutOfStock && handleProductTap(p)}
-                          className={`group bg-white rounded-3xl border p-3.5 flex flex-col justify-between transition-all duration-200 cursor-pointer shadow-xs hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98] ${
-                            isOutOfStock ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200' : 'border-slate-200/90 hover:border-indigo-400'
-                          }`}
-                        >
-                          <div>
-                            <div className="flex items-center justify-between gap-1 mb-2">
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeClass} truncate max-w-[100px]`}>
-                                {p.sku || 'RETAIL'}
-                              </span>
-                              {Array.isArray(p.product_variants) && p.product_variants.length > 0 && (
-                                <span className="text-[9px] bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded-full border border-indigo-200/60">
-                                  {p.product_variants.length} Varian
-                                </span>
-                              )}
-                              {isOutOfStock ? (
-                                <span className="text-[9px] bg-rose-100 text-rose-700 font-extrabold px-2 py-0.5 rounded-full">Habis</span>
-                              ) : p.stock_type === 'tracked' ? (
-                                <span className="text-[9px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
-                                  Stok: {p.stock_quantity}
-                                </span>
-                              ) : null}
-                            </div>
-                            <h4 className="font-bold text-xs sm:text-sm text-slate-900 line-clamp-2 leading-snug group-hover:text-indigo-600 transition">
-                              {p.name}
-                            </h4>
-                          </div>
-
-                          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                            <span className="text-xs sm:text-sm font-black text-slate-950">
-                              Rp {p.price.toLocaleString('id-ID')}
-                            </span>
-                            <span className="w-7 h-7 rounded-xl bg-indigo-50 text-indigo-600 font-black flex items-center justify-center text-xs group-hover:bg-indigo-600 group-hover:text-white transition shadow-2xs">
-                              +
-                            </span>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                  {visibleProductCount < filteredProducts.length && (
-                    <div className="py-6 text-center">
-                      <button
-                        type="button"
-                        onClick={() => setVisibleProductCount((prev) => Math.min(prev + 60, filteredProducts.length))}
-                        className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold rounded-2xl text-xs transition shadow-2xs hover:shadow-xs"
-                      >
-                        Menampilkan {visibleProducts.length} dari {filteredProducts.length} produk (Gulir ke bawah untuk memuat lebih banyak)
-                      </button>
-                    </div>
-                  )}
-                </>
               ) : (
-                /* LIST VIEW */
                 <>
-                  <div className="bg-white rounded-3xl border border-slate-200/90 overflow-hidden divide-y divide-slate-100 shadow-2xs">
-                    {visibleProducts.map((p) => {
-                      const isOutOfStock = p.stock_type === 'tracked' && p.stock_quantity <= 0
-                      return (
-                        <div
-                          key={p.id}
-                          onClick={() => !isOutOfStock && handleProductTap(p)}
-                          className={`p-3.5 sm:p-4 flex items-center justify-between hover:bg-indigo-50/40 transition cursor-pointer ${
-                            isOutOfStock ? 'opacity-50 cursor-not-allowed bg-slate-50' : ''
-                          }`}
-                        >
-                          <div className="space-y-1">
-                            <div className="font-bold text-xs sm:text-sm text-slate-900">{p.name}</div>
-                            <div className="text-[10px] text-slate-400 font-mono">SKU: {p.sku || '-'}</div>
-                          </div>
-
-                          <div className="flex items-center gap-3 sm:gap-4 text-right">
-                            {p.stock_type === 'tracked' && (
-                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                                isOutOfStock ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'
-                              }`}>
-                                Stok: {p.stock_quantity}
-                              </span>
-                            )}
-                            <span className="text-xs sm:text-sm font-black text-slate-950">
-                              Rp {p.price.toLocaleString('id-ID')}
+                  {/* Smart Exact Match Collapse Banner (Option B: Smart Focus with Expansion) */}
+                  {hasExactMatch && otherMatches.length > 0 && (
+                    !showAllSimilarMatches ? (
+                      <div className="mb-3.5 p-3 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-indigo-50 border border-emerald-200/90 flex items-center justify-between gap-3 text-xs shadow-2xs animate-in fade-in">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-6 h-6 rounded-xl bg-emerald-600 text-white flex items-center justify-center text-xs font-black shadow-2xs shrink-0">
+                            ✓
+                          </span>
+                          <div className="min-w-0">
+                            <span className="font-bold text-emerald-950">
+                              {exactMatches.length === 1 ? '1 Produk Cocok Persis' : `${exactMatches.length} Produk Cocok Persis`}
                             </span>
-                            <button
-                              disabled={isOutOfStock}
-                              className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition shadow-2xs"
-                            >
-                              + Tambah
-                            </button>
+                            <span className="text-emerald-700 block text-[11px] truncate">
+                              Menyembunyikan {otherMatches.length} produk serupa lainnya agar layar kasir tetap bersih.
+                            </span>
                           </div>
                         </div>
-                      )
-                    })}
-                  </div>
-                  {visibleProductCount < filteredProducts.length && (
-                    <div className="py-6 text-center">
-                      <button
-                        type="button"
-                        onClick={() => setVisibleProductCount((prev) => Math.min(prev + 60, filteredProducts.length))}
-                        className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold rounded-2xl text-xs transition shadow-2xs hover:shadow-xs"
-                      >
-                        Menampilkan {visibleProducts.length} dari {filteredProducts.length} produk (Gulir ke bawah untuk memuat lebih banyak)
-                      </button>
-                    </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowAllSimilarMatches(true)}
+                          className="px-3 py-1.5 bg-white hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-xl font-bold text-xs transition shadow-2xs shrink-0 cursor-pointer flex items-center gap-1"
+                        >
+                          <span>Tampilkan Semua ({exactMatches.length + otherMatches.length})</span>
+                          <span>▾</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mb-3.5 p-2.5 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-between gap-3 text-xs animate-in fade-in">
+                        <span className="text-slate-600 text-[11px] font-medium">
+                          Menampilkan semua ({exactMatches.length} cocok persis + {otherMatches.length} produk serupa).
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowAllSimilarMatches(false)}
+                          className="px-2.5 py-1 bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 rounded-lg font-bold text-[11px] transition shrink-0 cursor-pointer"
+                        >
+                          Fokus Cocok Persis Saja ▴
+                        </button>
+                      </div>
+                    )
+                  )}
+
+                  {viewMode === 'grid' ? (
+                    /* GRID VIEW */
+                    <>
+                      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6 gap-3 sm:gap-3.5">
+                        {visibleProducts.map((p) => {
+                          const isOutOfStock = p.stock_type === 'tracked' && p.stock_quantity <= 0
+                          const badgeClass = getPastelBadge(p.name)
+                          const isExact = Boolean(p._isExactMatch)
+                          return (
+                            <div
+                              key={p.id}
+                              onClick={() => !isOutOfStock && handleProductTap(p)}
+                              className={`group bg-white rounded-3xl border p-3.5 flex flex-col justify-between transition-all duration-200 cursor-pointer shadow-xs hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98] ${
+                                isOutOfStock
+                                  ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200'
+                                  : isExact
+                                  ? 'border-emerald-400 ring-2 ring-emerald-500/30 shadow-md bg-gradient-to-b from-emerald-50/20 to-white'
+                                  : 'border-slate-200/90 hover:border-indigo-400'
+                              }`}
+                            >
+                              <div>
+                                <div className="flex items-center justify-between gap-1 mb-2 flex-wrap">
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeClass} truncate max-w-[100px]`}>
+                                    {p.sku || 'RETAIL'}
+                                  </span>
+                                  {isExact && (
+                                    <span className="text-[9px] bg-emerald-100 text-emerald-800 font-black px-2 py-0.5 rounded-full border border-emerald-300 shadow-2xs">
+                                      🎯 Sama Persis
+                                    </span>
+                                  )}
+                                  {Array.isArray(p.product_variants) && p.product_variants.length > 0 && (
+                                    <span className="text-[9px] bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded-full border border-indigo-200/60">
+                                      {p.product_variants.length} Varian
+                                    </span>
+                                  )}
+                                  {isOutOfStock ? (
+                                    <span className="text-[9px] bg-rose-100 text-rose-700 font-extrabold px-2 py-0.5 rounded-full">Habis</span>
+                                  ) : p.stock_type === 'tracked' ? (
+                                    <span className="text-[9px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
+                                      Stok: {p.stock_quantity}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <h4 className="font-bold text-xs sm:text-sm text-slate-900 line-clamp-2 leading-snug group-hover:text-indigo-600 transition">
+                                  {p.name}
+                                </h4>
+                              </div>
+
+                              <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                                <span className="text-xs sm:text-sm font-black text-slate-950">
+                                  Rp {p.price.toLocaleString('id-ID')}
+                                </span>
+                                <span className="w-7 h-7 rounded-xl bg-indigo-50 text-indigo-600 font-black flex items-center justify-center text-xs group-hover:bg-indigo-600 group-hover:text-white transition shadow-2xs">
+                                  +
+                                </span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {visibleProductCount < filteredProducts.length && (
+                        <div className="py-6 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setVisibleProductCount((prev) => Math.min(prev + 60, filteredProducts.length))}
+                            className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold rounded-2xl text-xs transition shadow-2xs hover:shadow-xs"
+                          >
+                            Menampilkan {visibleProducts.length} dari {filteredProducts.length} produk (Gulir ke bawah untuk memuat lebih banyak)
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    /* LIST VIEW */
+                    <>
+                      <div className="bg-white rounded-3xl border border-slate-200/90 overflow-hidden divide-y divide-slate-100 shadow-2xs">
+                        {visibleProducts.map((p) => {
+                          const isOutOfStock = p.stock_type === 'tracked' && p.stock_quantity <= 0
+                          const isExact = Boolean(p._isExactMatch)
+                          return (
+                            <div
+                              key={p.id}
+                              onClick={() => !isOutOfStock && handleProductTap(p)}
+                              className={`p-3.5 sm:p-4 flex items-center justify-between hover:bg-indigo-50/40 transition cursor-pointer ${
+                                isOutOfStock
+                                  ? 'opacity-50 cursor-not-allowed bg-slate-50'
+                                  : isExact
+                                  ? 'bg-emerald-50/30 border-l-4 border-l-emerald-500'
+                                  : ''
+                              }`}
+                            >
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-xs sm:text-sm text-slate-900">{p.name}</span>
+                                  {isExact && (
+                                    <span className="text-[9px] bg-emerald-100 text-emerald-800 font-black px-1.5 py-0.5 rounded-full border border-emerald-300">
+                                      🎯 Sama Persis
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-400 font-mono">SKU: {p.sku || '-'}</div>
+                              </div>
+
+                              <div className="flex items-center gap-3 sm:gap-4 text-right">
+                                {p.stock_type === 'tracked' && (
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                    isOutOfStock ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'
+                                  }`}>
+                                    Stok: {p.stock_quantity}
+                                  </span>
+                                )}
+                                <span className="text-xs sm:text-sm font-black text-slate-950">
+                                  Rp {p.price.toLocaleString('id-ID')}
+                                </span>
+                                <button
+                                  disabled={isOutOfStock}
+                                  className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition shadow-2xs"
+                                >
+                                  + Tambah
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {visibleProductCount < filteredProducts.length && (
+                        <div className="py-6 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setVisibleProductCount((prev) => Math.min(prev + 60, filteredProducts.length))}
+                            className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold rounded-2xl text-xs transition shadow-2xs hover:shadow-xs"
+                          >
+                            Menampilkan {visibleProducts.length} dari {filteredProducts.length} produk (Gulir ke bawah untuk memuat lebih banyak)
+                          </button>
+                        </div>
+                      )}
+                    </>
                   )}
                 </>
               )
