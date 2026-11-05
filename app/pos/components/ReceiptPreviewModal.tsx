@@ -18,8 +18,18 @@ type Props = {
 
 export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props) {
   const [mounted, setMounted] = useState(false)
-  const [paperSize, setPaperSize] = useState<PaperSize>('58mm')
-  const [connectionType, setConnectionType] = useState<ConnectionType>('system')
+  const [paperSize, setPaperSize] = useState<PaperSize>(() => {
+    if (typeof window !== 'undefined') {
+      return getStoredReceiptSettings().paperSize || '58mm'
+    }
+    return '58mm'
+  })
+  const [connectionType, setConnectionType] = useState<ConnectionType>(() => {
+    if (typeof window !== 'undefined') {
+      return getStoredReceiptSettings().connectionType || 'system'
+    }
+    return 'system'
+  })
   const [isPrinting, setIsPrinting] = useState(false)
   const [printMessage, setPrintMessage] = useState<string | null>(null)
 

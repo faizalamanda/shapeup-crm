@@ -577,6 +577,17 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize?: PaperSiz
 let activeBluetoothDevice: any = null
 let activeWriteCharacteristic: any = null
 
+export const THERMAL_PRINTER_SERVICES = [
+  '000018f0-0000-1000-8000-00805f9b34fb',
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+  'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+  '0000af30-0000-1000-8000-00805f9b34fb',
+  '0000e781-0000-1000-8000-00805f9b34fb',
+  '0000ff00-0000-1000-8000-00805f9b34fb',
+  '0000ffff-0000-1000-8000-00805f9b34fb',
+  '000018f1-0000-1000-8000-00805f9b34fb',
+]
+
 export function isWebBluetoothSupported(): boolean {
   return typeof window !== 'undefined' && Boolean((navigator as any)?.bluetooth)
 }
@@ -584,6 +595,126 @@ export function isWebBluetoothSupported(): boolean {
 export function getActiveBluetoothDeviceName(): string | null {
   if (typeof window === 'undefined') return null
   return localStorage.getItem('shapeup_pos_bt_name') || (activeBluetoothDevice?.name ?? null)
+}
+
+export function getActiveBluetoothDeviceId(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem('shapeup_pos_bt_id') || (activeBluetoothDevice?.id ?? null)
+}
+
+/**
+ * Connects to device GATT and locates the first writable characteristic.
+ */
+async function connectGattAndFindWriteChar(device: any): Promise<any> {
+  if (!device || !device.gatt) return null
+
+  let server = device.gatt
+  if (!server.connected) {
+    server = await device.gatt.connect()
+  }
+
+  const services = await server.getPrimaryServices()
+  let writeChar: any = null
+
+  for (const service of services) {
+    try {
+      const chars = await service.getCharacteristics()
+      for (const char of chars) {
+        if (char.properties.write || char.properties.writeWithoutResponse) {
+          writeChar = char
+          break
+        }
+      }
+    } catch {
+      // Continue to next service if characteristic reading is restricted
+    }
+    if (writeChar) break
+  }
+
+  if (writeChar) {
+    device.onadvertisementreceived = null
+    // Listen for disconnection to reset active write characteristic
+    device.addEventListener('gattserverdisconnected', () => {
+      activeWriteCharacteristic = null
+    })
+  }
+
+  return writeChar
+}
+
+/**
+ * Attempts silent reconnection using getDevices() or existing device in memory.
+ * Falls back to interactive requestDevice() only if interactive is true.
+ */
+export async function ensureBluetoothPrinterConnection(interactive = true): Promise<{ success: boolean; deviceName?: string; error?: string }> {
+  if (!isWebBluetoothSupported()) {
+    return { success: false, error: 'Web Bluetooth tidak didukung pada peramban ini. Gunakan Chrome pada Android atau Komputer.' }
+  }
+
+  // 1. Check if existing memory connection is still healthy
+  if (activeBluetoothDevice?.gatt?.connected && activeWriteCharacteristic) {
+    return { success: true, deviceName: activeBluetoothDevice.name || 'Bluetooth Printer' }
+  }
+
+  // 2. Try reconnecting existing in-memory device if GATT dropped
+  if (activeBluetoothDevice?.gatt) {
+    try {
+      const writeChar = await connectGattAndFindWriteChar(activeBluetoothDevice)
+      if (writeChar) {
+        activeWriteCharacteristic = writeChar
+        return { success: true, deviceName: activeBluetoothDevice.name || 'Bluetooth Printer' }
+      }
+    } catch (e) {
+      console.warn('Reconnecting in-memory bluetooth device failed, trying getDevices:', e)
+    }
+  }
+
+  // 3. Silent reconnect via navigator.bluetooth.getDevices() (No popup required)
+  const navBt = (navigator as any).bluetooth
+  if (navBt && typeof navBt.getDevices === 'function') {
+    try {
+      const savedId = getActiveBluetoothDeviceId()
+      const savedName = getActiveBluetoothDeviceName()
+      const permittedDevices: any[] = await navBt.getDevices()
+
+      if (permittedDevices && permittedDevices.length > 0) {
+        let matchedDevice = permittedDevices.find((d: any) => savedId && d.id === savedId)
+        if (!matchedDevice && savedName) {
+          matchedDevice = permittedDevices.find((d: any) => d.name === savedName)
+        }
+        // Fallback: if only 1 device was previously authorized and we have a saved printer setting, use it
+        if (!matchedDevice && (savedId || savedName) && permittedDevices.length === 1) {
+          matchedDevice = permittedDevices[0]
+        }
+
+        if (matchedDevice) {
+          const writeChar = await connectGattAndFindWriteChar(matchedDevice)
+          if (writeChar) {
+            activeBluetoothDevice = matchedDevice
+            activeWriteCharacteristic = writeChar
+            const name = matchedDevice.name || savedName || 'Bluetooth Thermal Printer'
+            localStorage.setItem('shapeup_pos_bt_name', name)
+            if (matchedDevice.id) {
+              localStorage.setItem('shapeup_pos_bt_id', matchedDevice.id)
+            }
+            return { success: true, deviceName: name }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Silent bluetooth reconnection failed:', err)
+    }
+  }
+
+  // 4. If silent reconnection could not resolve and interactive is allowed, prompt user
+  if (interactive) {
+    return requestAndConnectBluetoothPrinter()
+  }
+
+  return { 
+    success: false, 
+    error: 'Printer Bluetooth belum terhubung. Pastikan printer dalam keadaan menyala dan dekat dengan perangkat.' 
+  }
 }
 
 export async function requestAndConnectBluetoothPrinter(): Promise<{ success: boolean; deviceName?: string; error?: string }> {
@@ -594,37 +725,14 @@ export async function requestAndConnectBluetoothPrinter(): Promise<{ success: bo
   try {
     const device = await (navigator as any).bluetooth.requestDevice({
       acceptAllDevices: true,
-      optionalServices: [
-        '000018f0-0000-1000-8000-00805f9b34fb',
-        '49535343-fe7d-4ae5-8fa9-9fafd205e455',
-        'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
-        '0000af30-0000-1000-8000-00805f9b34fb',
-        '0000e781-0000-1000-8000-00805f9b34fb',
-        '0000ff00-0000-1000-8000-00805f9b34fb',
-        '0000ffff-0000-1000-8000-00805f9b34fb',
-        '000018f1-0000-1000-8000-00805f9b34fb',
-      ]
+      optionalServices: THERMAL_PRINTER_SERVICES
     })
 
     if (!device) {
       return { success: false, error: 'Pencarian printer dibatalkan' }
     }
 
-    const server = await device.gatt.connect()
-    const services = await server.getPrimaryServices()
-
-    let writeChar: any = null
-    for (const service of services) {
-      const chars = await service.getCharacteristics()
-      for (const char of chars) {
-        if (char.properties.write || char.properties.writeWithoutResponse) {
-          writeChar = char
-          break
-        }
-      }
-      if (writeChar) break
-    }
-
+    const writeChar = await connectGattAndFindWriteChar(device)
     if (!writeChar) {
       return { success: false, error: 'Karakteristik cetak printer tidak ditemukan pada perangkat Bluetooth ini.' }
     }
@@ -633,10 +741,9 @@ export async function requestAndConnectBluetoothPrinter(): Promise<{ success: bo
     activeWriteCharacteristic = writeChar
     const name = device.name || 'Bluetooth Thermal Printer'
     localStorage.setItem('shapeup_pos_bt_name', name)
-
-    device.addEventListener('gattserverdisconnected', () => {
-      activeWriteCharacteristic = null
-    })
+    if (device.id) {
+      localStorage.setItem('shapeup_pos_bt_id', device.id)
+    }
 
     return { success: true, deviceName: name }
   } catch (err: any) {
@@ -652,6 +759,7 @@ export async function disconnectBluetoothPrinter(): Promise<void> {
   activeWriteCharacteristic = null
   if (typeof window !== 'undefined') {
     localStorage.removeItem('shapeup_pos_bt_name')
+    localStorage.removeItem('shapeup_pos_bt_id')
   }
 }
 
@@ -785,30 +893,26 @@ export class WebBluetoothPrinterAdapter implements PrinterAdapter {
     }
 
     try {
-      // Connect if not already connected
-      if (!activeWriteCharacteristic || !activeBluetoothDevice?.gatt?.connected) {
-        if (activeBluetoothDevice && activeBluetoothDevice.gatt) {
-          const server = await activeBluetoothDevice.gatt.connect()
-          const services = await server.getPrimaryServices()
-          for (const service of services) {
-            const chars = await service.getCharacteristics()
-            for (const char of chars) {
-              if (char.properties.write || char.properties.writeWithoutResponse) {
-                activeWriteCharacteristic = char
-                break
-              }
-            }
-            if (activeWriteCharacteristic) break
-          }
-        }
+      // 1. First attempt silent reconnection via getDevices() / in-memory GATT
+      let connRes = await ensureBluetoothPrinterConnection(false)
+
+      // 2. If silent reconnect failed, check if device was ever paired
+      const hasPairedBefore = Boolean(getActiveBluetoothDeviceId() || getActiveBluetoothDeviceName())
+      if (!connRes.success && hasPairedBefore) {
+        // Quick retry (e.g. printer waking up from BLE power-save sleep)
+        await new Promise((r) => setTimeout(r, 400))
+        connRes = await ensureBluetoothPrinterConnection(false)
       }
 
-      // If still not connected, prompt pair dialog
-      if (!activeWriteCharacteristic) {
-        const pairRes = await requestAndConnectBluetoothPrinter()
-        if (!pairRes.success || !activeWriteCharacteristic) {
-          console.warn('Bluetooth connection not active, falling back to system print:', pairRes.error)
-          return printReceiptViaIframe(receipt, effectiveSize)
+      // 3. If still not connected and either never paired or silent wake-up failed, prompt interactive connection
+      if (!connRes.success || !activeWriteCharacteristic) {
+        connRes = await ensureBluetoothPrinterConnection(true)
+      }
+
+      if (!connRes.success || !activeWriteCharacteristic) {
+        return {
+          success: false,
+          message: connRes.error || 'Printer Bluetooth tidak terhubung. Pastikan printer menyala dan berada dalam jangkauan.'
         }
       }
 
@@ -827,10 +931,13 @@ export class WebBluetoothPrinterAdapter implements PrinterAdapter {
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
 
-      return { success: true, message: 'Receipt berhasil dicetak via Bluetooth' }
+      return { success: true, message: 'Struk berhasil dicetak via Bluetooth.' }
     } catch (err: any) {
-      console.warn('Web Bluetooth print error, gracefully falling back to system print:', err)
-      return printReceiptViaIframe(receipt, effectiveSize)
+      console.warn('Web Bluetooth print error:', err)
+      return {
+        success: false,
+        message: 'Gagal mencetak via Bluetooth: ' + (err.message || 'Koneksi terputus')
+      }
     }
   }
 }

@@ -34,8 +34,18 @@ export default function PaymentSuccessModal({
   onVoidSuccess
 }: Props) {
   const [mounted, setMounted] = useState(false)
-  const [paperSize, setPaperSize] = useState<PaperSize>('58mm')
-  const [connectionType, setConnectionType] = useState<ConnectionType>('system')
+  const [paperSize, setPaperSize] = useState<PaperSize>(() => {
+    if (typeof window !== 'undefined') {
+      return getStoredReceiptSettings().paperSize || '58mm'
+    }
+    return '58mm'
+  })
+  const [connectionType, setConnectionType] = useState<ConnectionType>(() => {
+    if (typeof window !== 'undefined') {
+      return getStoredReceiptSettings().connectionType || 'system'
+    }
+    return 'system'
+  })
   const [isPrinting, setIsPrinting] = useState(false)
   const [isVoiding, setIsVoiding] = useState(false)
   const [printMessage, setPrintMessage] = useState<string | null>(null)
@@ -52,13 +62,18 @@ export default function PaymentSuccessModal({
   }, [receipt, paperSize])
 
   // Handle Print Action
-  const handlePrint = useCallback(async () => {
+  const handlePrint = useCallback(async (
+    overrideConn?: ConnectionType,
+    overrideSize?: PaperSize
+  ) => {
     if (!receipt || isPrinting) return
     setIsPrinting(true)
     setPrintMessage(null)
+    const effectiveConn = overrideConn || connectionType
+    const effectiveSize = overrideSize || paperSize
     try {
-      const adapter = getPrinterAdapter(connectionType)
-      const res = await adapter.print(receipt, paperSize)
+      const adapter = getPrinterAdapter(effectiveConn)
+      const res = await adapter.print(receipt, effectiveSize)
       if (res.success) {
         setPrintMessage(res.message || '✓ Struk berhasil dicetak.')
       } else {
@@ -81,7 +96,7 @@ export default function PaymentSuccessModal({
       setShowThermalPreview(false)
 
       if (settings.autoPrintAfterPayment) {
-        handlePrint()
+        handlePrint(settings.connectionType, settings.paperSize)
       }
     }
   }, [isOpen, receipt, handlePrint])
@@ -308,7 +323,7 @@ export default function PaymentSuccessModal({
             {/* 3. Tombol CETAK STRUK (Kanan — Highlight Utama) */}
             <button
               type="button"
-              onClick={handlePrint}
+              onClick={() => handlePrint()}
               disabled={isPrinting}
               className="w-full py-3 sm:py-3.5 rounded-xl bg-blue-500 hover:bg-blue-400 active:bg-blue-600 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-500/20 transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] disabled:opacity-50"
               title="Cetak struk ke printer kasir (Tekan Enter)"

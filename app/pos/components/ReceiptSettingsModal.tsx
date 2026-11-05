@@ -98,6 +98,14 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
         setBtDeviceName(res.deviceName)
         setConnectionType('bluetooth')
         setBtStatusMsg(`Terhubung ke ${res.deviceName}`)
+        // Auto-persist connectionType so cashier doesn't lose setting if they don't press bottom save
+        try {
+          const cur = getStoredReceiptSettings(defaultBusinessName)
+          localStorage.setItem(RECEIPT_SETTINGS_STORAGE_KEY, JSON.stringify({
+            ...cur,
+            connectionType: 'bluetooth'
+          }))
+        } catch {}
       } else {
         setBtStatusMsg(res.error || 'Gagal menyambungkan Bluetooth')
       }
@@ -111,7 +119,15 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
   const handleDisconnectBluetooth = async () => {
     await disconnectBluetoothPrinter()
     setBtDeviceName(null)
+    setConnectionType('system')
     setBtStatusMsg('Bluetooth printer diputuskan')
+    try {
+      const cur = getStoredReceiptSettings(defaultBusinessName)
+      localStorage.setItem(RECEIPT_SETTINGS_STORAGE_KEY, JSON.stringify({
+        ...cur,
+        connectionType: 'system'
+      }))
+    } catch {}
   }
 
   const handleTestPrintBluetooth = async () => {
