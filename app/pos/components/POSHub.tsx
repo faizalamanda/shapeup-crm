@@ -14,21 +14,33 @@ import POSOrderDetailModal from './POSOrderDetailModal'
 import OrderHistoryModal from '../../orders/pos/components/OrderHistoryModal'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
 import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
+import { prefetchPosCatalog } from '@/lib/posCatalogStore'
 
 type Props = {
-  onOpenWorkspace: () => void
+  onOpenWorkspace: (sessionData?: {
+    activeShift: any | null
+    cashierName?: string
+    accounts?: any[]
+    posRegisters?: any[]
+  }) => void
+  preloadedSession?: {
+    activeShift?: any | null
+    cashierName?: string
+    accounts?: any[]
+    posRegisters?: any[]
+  }
 }
 
-export default function POSHub({ onOpenWorkspace }: Props) {
+export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
   const { activeBusiness, userProfile, bizLoading } = useUserContext()
   const timezone = activeBusiness?.timezone
 
-  // Core Data State
-  const [loading, setLoading] = useState(true)
-  const [activeShift, setActiveShift] = useState<any | null>(null)
-  const [cashierName, setCashierName] = useState<string>('Kasir')
-  const [accounts, setAccounts] = useState<any[]>([])
-  const [posRegisters, setPosRegisters] = useState<any[]>([])
+  // Core Data State (Hydrate immediately from preloadedSession if available)
+  const [loading, setLoading] = useState(!preloadedSession?.activeShift)
+  const [activeShift, setActiveShift] = useState<any | null>(preloadedSession?.activeShift ?? null)
+  const [cashierName, setCashierName] = useState<string>(preloadedSession?.cashierName ?? 'Kasir')
+  const [accounts, setAccounts] = useState<any[]>(preloadedSession?.accounts ?? [])
+  const [posRegisters, setPosRegisters] = useState<any[]>(preloadedSession?.posRegisters ?? [])
   const [pastShifts, setPastShifts] = useState<any[]>([])
   const [totalShiftsCount, setTotalShiftsCount] = useState<number>(0)
   const [hasMoreShifts, setHasMoreShifts] = useState<boolean>(false)
@@ -128,6 +140,22 @@ export default function POSHub({ onOpenWorkspace }: Props) {
       loadData()
     }
   }, [bizLoading, activeBusiness?.id, loadData])
+
+  // Speculative idle prefetch for POS Catalog & Categories during cashier think-time
+  useEffect(() => {
+    if (activeBusiness?.id) {
+      prefetchPosCatalog(supabase, activeBusiness.id)
+    }
+  }, [activeBusiness?.id])
+
+  const handleTriggerOpenWorkspace = useCallback(() => {
+    onOpenWorkspace({
+      activeShift,
+      cashierName,
+      accounts,
+      posRegisters
+    })
+  }, [onOpenWorkspace, activeShift, cashierName, accounts, posRegisters])
 
   // Load More Shifts Handler (Pagination / Load More)
   const handleLoadMoreShifts = async () => {
@@ -388,7 +416,7 @@ export default function POSHub({ onOpenWorkspace }: Props) {
                 <>
                   {/* Primary CTA: Buka Register Kasir */}
                   <button
-                    onClick={onOpenWorkspace}
+                    onClick={handleTriggerOpenWorkspace}
                     className="flex-1 sm:flex-none px-7 py-3.5 bg-gradient-to-r from-indigo-600 via-indigo-700 to-violet-700 hover:from-indigo-700 hover:to-violet-800 active:scale-[0.99] text-white font-black rounded-2xl text-sm transition shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2.5"
                   >
                     <span className="text-lg">🛒</span>
@@ -602,7 +630,7 @@ export default function POSHub({ onOpenWorkspace }: Props) {
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation()
-                    onOpenWorkspace()
+                    handleTriggerOpenWorkspace()
                   }}
                   className="px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-black transition shadow-xs flex items-center gap-1.5"
                 >

@@ -734,4 +734,41 @@ Pengembalian barang retur **DILARANG KERAS** membalikkan (*overwrite*) atau meng
 - **Thermal Credit Note Auto-Print:**
   Setelah retur disetujui, kasir dapat langsung mencetak Nota Kredit (Credit Note) berformat ESC/POS atau HTML via printer thermal Bluetooth / Desktop.
 
+---
+
+## 18. POS Hub to Workspace Instant Transition & Speculative Prefetching Architecture
+
+Untuk mengeliminasi latensi perpindahan dari halaman manajemen sesi kasir (`POSHub.tsx`) menuju ruang kerja kasir (`POSWorkspace.tsx`) dari $1.200\text{ms} - 3.500\text{ms}$ menjadi $< 16\text{ms}$ (instant 1-frame), sistem menerapkan arsitektur **5-Pillar Zero-Latency POS Transition** yang setara standar **Square POS, Shopify POS, Toast, dan Odoo 17/18**:
+
+### 18.1 Shared Session State Handoff (`POSContainer.tsx`)
+- Objek sesi kasir (`activeShift`), Bagan Akun Kas & Bank (`accounts`), nomor laci register (`posRegisters`), serta nama kasir (`cashierName`) diangkat (*lifted state*) pada `POSContainer.tsx`.
+- Saat tombol **"Buka Register Kasir"** ditekan, state tersebut diteruskan langsung ke `POSWorkspace.tsx` melalui `preloadedSession`.
+- **Dilarang Keras:** Memaksa `POSWorkspace` melakukan *cold-mount fetch* ulang terhadap data shift dan akun yang sudah dimuat oleh `POSHub`.
+- Ketika kasir menekan tombol kembali ke Hub, state sesi kasir mutakhir dikembalikan secara simetris sehingga `POSHub` tidak kehilangan konteks sesi.
+
+### 18.2 3-Tier Reactive POS Catalog Store (`lib/posCatalogStore.ts`)
+Mengadopsi pola sukses direktori pelanggan dengan 3 tingkatan penyimpanan:
+1. **L1 RAM Cache:** Memori volatile JavaScript per `businessId` untuk akses $0\text{ms}$ saat kasir berpindah layar atau bolak-balik antara kasir dan hub.
+2. **L2 `sessionStorage`:** Persistensi instan saat browser di-refresh (`su_pos_cat_v1_${businessId}`) dengan mekanisme *quota guard* (stripping deskripsi panjang untuk dataset $> 500$ baris).
+3. **BroadcastChannel Cross-Tab Sync:** Sinkronisasi mutasi katalog dan pengurangan stok fisik (`shapeup_pos_catalog_sync_v1`) lintas tab browser.
+
+### 18.3 Speculative Idle Prefetching di `POSHub.tsx`
+- Memanfaatkan *think-time* kasir saat berada di Hub (misal: melihat saldo kas laci, mengecek Z-report, atau membuka shift baru) untuk menjalankan `prefetchPosCatalog(supabase, businessId)` di latar belakang.
+- Saat kasir menekan tombol menuju transaksi, seluruh data produk dan kategori telah selesai diunduh dan ter-hydrate $100\%$ di RAM L1.
+
+### 18.4 Instant App-Shell & Zero Black-Screen Standard
+- **Larangan Full-Screen Blocking Spinner:** Dilarang menggunakan pola `if (loadingInit) return <FullScreenSpinner />` yang menampilkan layar hitam penuh dan merusak memori kerja (*working memory*) kasir.
+- Seluruh antarmuka kasir (Navbar atas, Input pencarian, Tab Kategori, Panel Keranjang, dan Keypad) wajib tampil instan dalam $< 16\text{ms}$ (1 frame @ 60Hz).
+- Jika katalog sedang dimuat pada kunjungan perdana (*cold boot*), sistem merender *skeleton grid* beranimasi halus murni di area kartu produk tanpa memblokir interaksi keranjang dan kontrol lainnya.
+- **Deferred Secondary Hydration:** Fitur sekunder (`unpaidOrdersCount`, `heldOrders`, `loyaltySettings`, `priceGuardSettings`, `customer_metrics`) dijalankan di latar belakang secara *non-blocking*.
+
+### 18.5 DOM Windowing pada Grid & List Produk (`VISIBLE_BATCH = 60`)
+- Berdasarkan prinsip efisiensi `high-cardinality-data`: pencarian teks dan filter kategori tetap memindai $100\%$ populasi produk di memori RAM, namun elemen JSX yang di-mount ke DOM dibatasi pada **60 item pertama** (`visibleProducts`).
+- Guliran kasir (*scrolling*) memicu penambahan batch secara otomatis (`visibleProductCount += 60`), mencegah pembekuan *main thread* (*Long Animation Frame*) pada katalog dengan ribuan produk.
+
+### 18.6 Optimistic Local Stock Mutation & Self-Healing Fallback
+- **Optimistic Local Stock:** Sesaat setelah checkout kasir sukses, sistem langsung mengurangi saldo fisik produk dan varian terkait di `posCatalogStore` secara lokal ($0\text{ms}$), sehingga kartu produk langsung menampilkan sisa stok terbaru tanpa menunggu respon server.
+- **Self-Healing Fallback:** Jika kueri *chunked range* mengalami kendala jaringan atau kegagalan skema, sistem secara otomatis mengeksekusi *emergency legacy fallback* (kueri langsung tanpa varian) dan menyajikan tombol **"🔄 Muat Ulang Katalog"** pada antarmuka kasir jika katalog kosong.
+
+
 

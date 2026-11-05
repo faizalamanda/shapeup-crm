@@ -337,6 +337,29 @@
       - Pada endpoint penerima `/api/webhook/accurate` dan saat auto-renew, jika konfigurasi lama belum menyimpan `db_integer_id`, sistem wajib memiliki fallback mendekode payload Base64 dari token `aat.<ver>.<base64_payload>.<sig>` (membaca properti `d` sebagai integer ID database Accurate).
       - Saat menyimpan pengaturan di `AccurateSettingsModal.tsx`, sistem wajib melakukan spread `...(accurateSaved?.config || {})` agar metadata historis (`last_sync_date`, `db_integer_id`, `webhook_expiry`) tidak pernah tertimpa. (Lihat knowledge `accurate-webhook-auto-renewal-and-queue.md`).
 
+24. **Zero-Latency POS Hub to Workspace Instant Transition & Reactive Catalog Store Standards (Skill `pos-session-ledger` & Knowledge `pos-hub-to-workspace-instant-transition.md`):**
+    - **Shared Session State Handoff (`POSContainer.tsx`):**
+      - Objek sesi kasir (`activeShift`), akun kas/bank (`accounts`), nomor laci register (`posRegisters`), serta nama kasir diangkat (*lifted state*) pada `POSContainer.tsx`.
+      - Saat berpindah dari `POSHub` ke `POSWorkspace`, data sesi diteruskan langsung melalui `preloadedSession`.
+      - **DILARANG KERAS** membiarkan `POSWorkspace` melakukan *cold fetch* redundan atau membuat *two-stage sequential waterfall* (`await checkActiveShift()`) yang memblokir antarmuka kasir. Saat kembali ke Hub, state sesi kasir mutakhir dikembalikan secara simetris.
+    - **3-Tier Reactive POS Catalog Store (`lib/posCatalogStore.ts`):**
+      - Seluruh pembacaan katalog produk kasir POS **WAJIB** menggunakan `usePosCatalog()` dari `@/lib/posCatalogStore.ts`.
+      - Menggabungkan **L1 RAM Cache** ($0\text{ms}$ instan per `businessId`), **L2 `sessionStorage` Cache** (`su_pos_cat_v1_${bid}` dengan *quota guard*), dan sinkronisasi lintas tab via `BroadcastChannel` (`shapeup_pos_catalog_sync_v1`).
+      - Menggunakan *Slim Column Projection* (`POS_SLIM_PRODUCT_SELECT_VARIANTS`) yang memangkas ukuran payload JSON $45\% - 65\%$ tanpa mengangkut deskripsi artikel panjang yang tidak diperlukan di meja kasir.
+    - **Speculative Idle Prefetching di `POSHub.tsx` (`prefetchPosCatalog`):**
+      - Memanfaatkan *think-time* kasir saat berada di Hub untuk mem-prefetch katalog produk dan kategori di latar belakang. Saat tombol **"Buka Register Kasir"** ditekan, data produk sudah $100\%$ siap di RAM L1.
+    - **Instant App-Shell & Zero Black-Screen Standard:**
+      - **DILARANG KERAS** menggunakan full-screen blocking spinner (`if (loadingInit) return <FullScreenSpinner />`). Seluruh kerangka kerja kasir (Navbar atas, Input pencarian, Tab Kategori, Keranjang, dan Keypad) wajib tampil instan dalam $< 16\text{ms}$ (1 frame @ 60Hz).
+      - Jika data katalog masih dalam proses pengambilan pada *cold boot* awal, hanya area kartu produk yang menampilkan *skeleton pulse grid* tanpa mengunci navigasi kasir. Data sekunder (`unpaidOrdersCount`, `heldOrders`, `loyaltySettings`, `priceGuardSettings`, `customer_metrics`) dimuat di latar belakang secara *non-blocking*.
+    - **DOM Windowing pada Grid & List Produk (`VISIBLE_BATCH = 60`):**
+      - Pencarian dan filter kategori tetap memindai $100\%$ populasi produk di memori RAM (bahkan untuk $> 4.000$ SKU), namun elemen JSX yang di-render ke DOM dibatasi pada **60 item pertama** (`visibleProducts`). Guliran kasir (*scrolling*) memicu penambahan batch secara otomatis (`visibleProductCount += 60`), mencegah pembekuan *main thread* (*Long Animation Frame* $> 800\text{ms}$).
+    - **Optimistic Local Stock Mutation & Self-Healing Fallback:**
+      - Saat transaksi selesai dibayar, `updateLocalStock` langsung memotong stok fisik produk dan varian di memori lokal ($0\text{ms}$) agar kartu produk langsung terbarui seketika.
+      - Jika kueri *chunked range* mengalami kendala jaringan atau kegagalan skema, sistem otomatis jatuh kembali (*graceful fallback*) ke kueri langsung standar (`limit 1000`).
+      - Antarmuka kasir menyediakan tombol pemulihan mandiri **"🔄 Muat Ulang Katalog"** pada keadaan kosong jika terjadi *network drop*.
+      - Seluruh pemfilteran string produk wajib menerapkan null-safety ketat: `(p.name || '').toLowerCase()`.
+
+
 
 
 

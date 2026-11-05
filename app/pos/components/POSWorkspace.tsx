@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import VariantSelectorModal from './VariantSelectorModal'
@@ -25,7 +25,7 @@ import { formatDisplayDate } from '@/lib/timeUtils'
 import { fetchLoyaltySettings } from '@/plugins/loyalty/helpers/loyaltyApi'
 import { LoyaltySettings, LoyaltyTier, DEFAULT_LOYALTY_SETTINGS, resolveTier, calculateEarnedPoints } from '@/plugins/loyalty/types'
 import { useCustomerDirectory, matchesCustomerQuery, notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
-import { fetchAllBusinessProducts } from '@/lib/chunkedQueryHelper'
+import { usePosCatalog } from '@/lib/posCatalogStore'
 
 // Pastel badge colors for product cards
 const getPastelBadge = (name: string) => {
@@ -42,30 +42,50 @@ const getPastelBadge = (name: string) => {
   return styles[Math.abs(hash) % styles.length]
 }
 
-export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void } = {}) {
+export default function POSWorkspace({
+  onBackToHub,
+  preloadedSession
+}: {
+  onBackToHub?: (updatedSession?: any) => void
+  preloadedSession?: {
+    activeShift?: any | null
+    cashierName?: string
+    accounts?: any[]
+    posRegisters?: any[]
+  }
+} = {}) {
   // Using singleton supabase client from @/lib/supabase
+  const { activeBusiness, userProfile: ctxProfile, bizLoading } = useUserContext()
 
   // Auth & Profile State
-  const [loadingInit, setLoadingInit] = useState(true)
-  const [businessId, setBusinessId] = useState('')
-  const [userProfile, setUserProfile] = useState<any>(null)
-  const [activeShift, setActiveShift] = useState<any | null>(null)
+  const [businessId, setBusinessId] = useState(activeBusiness?.id || '')
+  const [userProfile, setUserProfile] = useState<any>(ctxProfile || null)
+  const [activeShift, setActiveShift] = useState<any | null>(preloadedSession?.activeShift ?? null)
 
-  // Data State
-  const [products, setProducts] = useState<any[]>([])
-  const [categories, setCategories] = useState<any[]>([])
+  // Reactive POS Catalog Store (0ms instant access from L1 RAM / L2 sessionStorage + SWR)
+  const {
+    products,
+    categories,
+    loading: catalogLoading,
+    isSyncing: catalogSyncing,
+    refresh: refreshCatalog,
+    updateLocalStock
+  } = usePosCatalog(supabase, activeBusiness?.id)
+
+  // Data State (Hydrated from session handoff if available)
   const [customers, setCustomers] = useState<any[]>([])
-  const [accounts, setAccounts] = useState<any[]>([])
-  const [posRegisters, setPosRegisters] = useState<any[]>([])
+  const [accounts, setAccounts] = useState<any[]>(preloadedSession?.accounts ?? [])
+  const [posRegisters, setPosRegisters] = useState<any[]>(preloadedSession?.posRegisters ?? [])
   const [heldOrders, setHeldOrders] = useState<any[]>([])
   const [activeHoldId, setActiveHoldId] = useState<string | null>(null)
 
-  // Search & Filter State
+  // Search, Filter & Windowing State
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [activeTab, setActiveTab] = useState<'catalog' | 'keypad'>('catalog')
+  const [visibleProductCount, setVisibleProductCount] = useState<number>(60)
 
   // Debounce Search
   useEffect(() => {
@@ -140,7 +160,6 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
   const [checkingOut, setCheckingOut] = useState(false)
   const [loyaltySettings, setLoyaltySettings] = useState<LoyaltySettings | null>(null)
 
-  const { activeBusiness, userProfile: ctxProfile, bizLoading } = useUserContext()
   const { customers: dirCustomers, searchServer: searchCustomersServer } = useCustomerDirectory({
     businessId: activeBusiness?.id
   })
@@ -184,81 +203,85 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
     return () => clearTimeout(timer)
   }, [customerSearch, isCustomerDropdownOpen, filteredPosCustomers.length, searchCustomersServer])
 
-  // Initialize POS
-  useEffect(() => {
-    async function initPOS() {
-      if (!activeBusiness?.id) return
-      try {
-        setBusinessId(activeBusiness.id)
-        if (ctxProfile) setUserProfile(ctxProfile)
-        await loadCatalogAndCustomers(activeBusiness.id)
-        await checkActiveShift()
-      } catch (err) {
-        console.error('POS Init Error:', err)
-      } finally {
-        setLoadingInit(false)
+  // Non-blocking deferred loading of secondary POS features (PriceGuard, Hold, Loyalty, Metrics)
+  const loadSecondaryData = useCallback(async (bId: string) => {
+    try {
+      const promises: any[] = [
+        supabase.from('customer_metrics').select('customer_id, name, phone, loyalty_points, loyalty_tier').eq('business_id', bId).limit(100),
+        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', bId).eq('source_platform', 'POS').in('payment_status', ['partial', 'unpaid']).neq('status', 'cancelled'),
+        fetchLoyaltySettings(supabase, bId).catch(() => null),
+        fetch('/api/settings/pos').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        fetch('/api/pos/hold').then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      ]
+
+      const needAccounts = accounts.length === 0
+      const needRegisters = posRegisters.length === 0
+      const needShift = activeShift === null && !preloadedSession?.activeShift
+
+      if (needAccounts) {
+        promises.push(
+          supabase.from('accounts').select('id, code, name, type').eq('business_id', bId).in('type', ['ASSET', 'EQUITY']).order('code', { ascending: true })
+        )
       }
-    }
-    if (!bizLoading) {
-      initPOS()
-    }
-  }, [activeBusiness?.id, ctxProfile, bizLoading])
+      if (needRegisters) {
+        promises.push(
+          supabase.from('pos_registers').select('id, name, account_id').eq('business_id', bId).eq('status', 'active').order('name', { ascending: true })
+        )
+      }
+      if (needShift) {
+        promises.push(
+          fetch('/api/pos/shifts').then((r) => (r.ok ? r.json() : null)).catch(() => null)
+        )
+      }
 
-  const loadCatalogAndCustomers = async (bId: string) => {
-    // Jalankan query secara paralel (Performance Rule #2)
-    const [
-      prods,
-      { data: cats },
-      { data: custs },
-      { data: accs },
-      { data: regs },
-      { count: unpCount },
-      lSettings,
-      posSettingsRes,
-      holdRes
-    ] = await Promise.all([
-      fetchAllBusinessProducts(supabase, bId, {
-        selectWithVariants: '*, product_variants(*), product_modifiers(*)',
-        selectFallback: '*'
-      }),
-      supabase.from('categories').select('*').eq('business_id', bId).order('name', { ascending: true }),
-      supabase.from('customer_metrics').select('customer_id, name, phone, loyalty_points, loyalty_tier').eq('business_id', bId).limit(100),
-      supabase.from('accounts').select('id, code, name, type').eq('business_id', bId).in('type', ['ASSET', 'EQUITY']).order('code', { ascending: true }),
-      supabase.from('pos_registers').select('id, name, account_id').eq('business_id', bId).eq('status', 'active').order('name', { ascending: true }),
-      supabase.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', bId).eq('source_platform', 'POS').in('payment_status', ['partial', 'unpaid']).neq('status', 'cancelled'),
-      fetchLoyaltySettings(supabase, bId).catch(() => null),
-      fetch('/api/settings/pos').then((r) => (r.ok ? r.json() : null)).catch(() => null),
-      fetch('/api/pos/hold').then((r) => (r.ok ? r.json() : null)).catch(() => null)
-    ])
+      const results = await Promise.all(promises)
+      let idx = 0
+      const custs = results[idx++]?.data
+      const unpCount = results[idx++]?.count
+      const lSettings = results[idx++]
+      const posSettingsRes = results[idx++]
+      const holdRes = results[idx++]
 
-    setProducts(prods || [])
-    setCategories(cats || [])
-    if (holdRes?.heldOrders) {
-      setHeldOrders(holdRes.heldOrders)
-    }
-    if (posSettingsRes?.settings) {
-      setPriceGuardSettings(posSettingsRes.settings)
-    }
-    
-    if (custs) {
-      setCustomers(custs.map(c => ({
-        id: c.customer_id,
-        name: c.name,
-        phone: c.phone,
-        loyalty_points: Number(c.loyalty_points || 0),
-        loyalty_tier: c.loyalty_tier || 'Bronze'
-      })))
-    } else {
-      setCustomers([])
-    }
-    
-    setAccounts(accs || [])
-    setPosRegisters(regs || [])
-    setUnpaidOrdersCount(unpCount || 0)
-    setLoyaltySettings(lSettings || null)
-  }
+      if (custs) {
+        setCustomers(custs.map((c: any) => ({
+          id: c.customer_id,
+          name: c.name,
+          phone: c.phone,
+          loyalty_points: Number(c.loyalty_points || 0),
+          loyalty_tier: c.loyalty_tier || 'Bronze'
+        })))
+      }
+      if (unpCount !== undefined) setUnpaidOrdersCount(unpCount || 0)
+      if (lSettings) setLoyaltySettings(lSettings)
+      if (posSettingsRes?.settings) setPriceGuardSettings(posSettingsRes.settings)
+      if (holdRes?.heldOrders) setHeldOrders(holdRes.heldOrders)
 
-  const checkActiveShift = async () => {
+      if (needAccounts) {
+        const accs = results[idx++]?.data
+        if (accs) setAccounts(accs)
+      }
+      if (needRegisters) {
+        const regs = results[idx++]?.data
+        if (regs) setPosRegisters(regs)
+      }
+      if (needShift) {
+        const shiftData = results[idx++]
+        if (shiftData?.activeShift) setActiveShift(shiftData.activeShift)
+      }
+    } catch (err) {
+      console.warn('[POSWorkspace] Secondary data load warning:', err)
+    }
+  }, [accounts.length, posRegisters.length, activeShift, preloadedSession])
+
+  useEffect(() => {
+    if (!bizLoading && activeBusiness?.id) {
+      setBusinessId(activeBusiness.id)
+      if (ctxProfile) setUserProfile(ctxProfile)
+      loadSecondaryData(activeBusiness.id)
+    }
+  }, [bizLoading, activeBusiness?.id, ctxProfile, loadSecondaryData])
+
+  const checkActiveShift = useCallback(async () => {
     try {
       const res = await fetch('/api/pos/shifts')
       if (res.ok) {
@@ -268,24 +291,56 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
     } catch (e) {
       console.warn('Could not fetch active shift:', e)
     }
-  }
+  }, [])
 
-  // Filtered Products
+  const refreshAllPOSData = useCallback(async () => {
+    if (!businessId) return
+    await Promise.all([
+      refreshCatalog(),
+      loadSecondaryData(businessId)
+    ])
+  }, [businessId, refreshCatalog, loadSecondaryData])
+
+  // Filtered Products (Null-Safe for Empty Data / Sparse Schema)
   const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
+    const list = Array.isArray(products) ? products : []
+    const q = (debouncedSearch || '').trim().toLowerCase()
+    return list.filter((p) => {
+      if (!p) return false
+      const pName = (p.name || '').toLowerCase()
+      const pSku = (p.sku || '').toLowerCase()
       const matchSearch =
-        !debouncedSearch ||
-        p.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-        (p.sku && p.sku.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
+        !q ||
+        pName.includes(q) ||
+        pSku.includes(q) ||
         (Array.isArray(p.product_variants) && p.product_variants.some((v: any) =>
-          (v.name && v.name.toLowerCase().includes(debouncedSearch.toLowerCase())) ||
-          (v.sku && v.sku.toLowerCase().includes(debouncedSearch.toLowerCase()))
+          ((v?.name || '').toLowerCase().includes(q)) ||
+          ((v?.sku || '').toLowerCase().includes(q))
         ))
 
       const matchCategory = !selectedCategoryId || p.category_id === selectedCategoryId
       return matchSearch && matchCategory
     })
   }, [products, debouncedSearch, selectedCategoryId])
+
+  // Windowed Products for DOM Performance (Pilar 4: DOM Windowing)
+  useEffect(() => {
+    setVisibleProductCount(60)
+  }, [debouncedSearch, selectedCategoryId])
+
+  const visibleProducts = useMemo(() => {
+    return filteredProducts.slice(0, visibleProductCount)
+  }, [filteredProducts, visibleProductCount])
+
+  const handleCatalogScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget
+    if (target.scrollTop + target.clientHeight >= target.scrollHeight - 350) {
+      setVisibleProductCount((prev) => {
+        if (prev >= filteredProducts.length) return prev
+        return Math.min(prev + 60, filteredProducts.length)
+      })
+    }
+  }, [filteredProducts.length])
 
   // Cart Calculations
   const totalItemCount = useMemo(() => {
@@ -702,6 +757,17 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       setIsMobileCartOpen(false)
       setIsReceiptModalOpen(true)
       
+      // Optimistic local stock mutation in L1/L2 cache (Pilar 2 & 5)
+      if (typeof updateLocalStock === 'function') {
+        updateLocalStock(
+          itemsPayload.map((it: any) => ({
+            productId: it.product_id,
+            variantId: it.variant_id,
+            quantity: it.quantity
+          }))
+        )
+      }
+
       setCart([])
       setSelectedCustomer(null)
       setGlobalDiscountInput('')
@@ -760,15 +826,6 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
       alert(err.message || 'Terjadi kesalahan pada aplikasi kasir.')
       setCheckingOut(false)
     }
-  }
-
-  if (loadingInit) {
-    return (
-      <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-900 text-white">
-        <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <div className="text-sm font-semibold tracking-wide">Memuat Workspace ShapeUp POS...</div>
-      </div>
-    )
   }
 
   // Render Inner Cart Component (reusable for Desktop sidebar & Mobile bottom sheet)
@@ -1121,7 +1178,14 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
         <div className="flex items-center gap-3">
           {onBackToHub ? (
             <button
-              onClick={onBackToHub}
+              onClick={() =>
+                onBackToHub({
+                  activeShift,
+                  cashierName: userProfile?.full_name || 'Kasir',
+                  accounts,
+                  posRegisters
+                })
+              }
               className="px-2.5 py-1 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-700/60 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
               title="Kembali ke Hub Kasir"
             >
@@ -1286,9 +1350,9 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  Semua Kategori ({products.length})
+                  Semua Kategori ({(products || []).length})
                 </button>
-                {categories.map((c) => (
+                {(categories || []).map((c) => (
                   <button
                     key={c.id}
                     onClick={() => setSelectedCategoryId(c.id)}
@@ -1306,105 +1370,171 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           </div>
 
           {/* Product Items Display Area */}
-          <div className="flex-1 overflow-y-auto p-3 sm:p-5 pb-24 md:pb-5">
+          <div
+            className="flex-1 overflow-y-auto p-3 sm:p-5 pb-24 md:pb-5"
+            onScroll={handleCatalogScroll}
+          >
             {activeTab === 'catalog' ? (
-              filteredProducts.length === 0 ? (
+              catalogLoading && (products || []).length === 0 ? (
+                /* Instant App-Shell Skeleton Grid (Zero Black-Screen) */
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6 gap-3 sm:gap-3.5">
+                  {Array.from({ length: 12 }).map((_, idx) => (
+                    <div
+                      key={idx}
+                      className="bg-white rounded-3xl border border-slate-200/80 p-3.5 flex flex-col justify-between animate-pulse h-36"
+                    >
+                      <div>
+                        <div className="w-14 h-4 bg-slate-100 rounded-full mb-2"></div>
+                        <div className="w-3/4 h-4 bg-slate-100 rounded-lg mb-1.5"></div>
+                        <div className="w-1/2 h-3 bg-slate-100 rounded-lg"></div>
+                      </div>
+                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+                        <div className="w-16 h-4 bg-slate-100 rounded-md"></div>
+                        <div className="w-7 h-7 bg-slate-100 rounded-xl"></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : filteredProducts.length === 0 ? (
                 <div className="py-24 text-center text-slate-400 text-xs">
                   <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-3xl mx-auto mb-3">
-                    🔎
+                    {debouncedSearch ? '🔎' : '📦'}
                   </div>
-                  <p className="font-semibold text-slate-700 text-sm">Tidak ada produk ditemukan</p>
-                  <p className="text-slate-400 mt-1">Coba sesuaikan kata kunci pencarian atau kategori Anda.</p>
+                  <p className="font-semibold text-slate-700 text-sm">
+                    {debouncedSearch ? 'Tidak ada produk ditemukan' : 'Katalog Produk Kosong'}
+                  </p>
+                  <p className="text-slate-400 mt-1 max-w-sm mx-auto">
+                    {debouncedSearch
+                      ? 'Coba sesuaikan kata kunci pencarian atau kategori Anda.'
+                      : 'Belum ada produk aktif di unit bisnis ini, atau koneksi terputus.'}
+                  </p>
+                  {(products || []).length === 0 && (
+                    <button
+                      type="button"
+                      onClick={() => refreshCatalog()}
+                      disabled={catalogLoading}
+                      className="mt-4 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl font-bold text-xs transition inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                    >
+                      <span className={catalogLoading ? 'animate-spin inline-block' : ''}>🔄</span>
+                      <span>Muat Ulang Katalog</span>
+                    </button>
+                  )}
                 </div>
               ) : viewMode === 'grid' ? (
                 /* GRID VIEW */
-                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6 gap-3 sm:gap-3.5">
-                  {filteredProducts.map((p) => {
-                    const isOutOfStock = p.stock_type === 'tracked' && p.stock_quantity <= 0
-                    const badgeClass = getPastelBadge(p.name)
-                    return (
-                      <div
-                        key={p.id}
-                        onClick={() => !isOutOfStock && handleProductTap(p)}
-                        className={`group bg-white rounded-3xl border p-3.5 flex flex-col justify-between transition-all duration-200 cursor-pointer shadow-xs hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98] ${
-                          isOutOfStock ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200' : 'border-slate-200/90 hover:border-indigo-400'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between gap-1 mb-2">
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeClass} truncate max-w-[100px]`}>
-                              {p.sku || 'RETAIL'}
-                            </span>
-                            {Array.isArray(p.product_variants) && p.product_variants.length > 0 && (
-                              <span className="text-[9px] bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded-full border border-indigo-200/60">
-                                {p.product_variants.length} Varian
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6 gap-3 sm:gap-3.5">
+                    {visibleProducts.map((p) => {
+                      const isOutOfStock = p.stock_type === 'tracked' && p.stock_quantity <= 0
+                      const badgeClass = getPastelBadge(p.name)
+                      return (
+                        <div
+                          key={p.id}
+                          onClick={() => !isOutOfStock && handleProductTap(p)}
+                          className={`group bg-white rounded-3xl border p-3.5 flex flex-col justify-between transition-all duration-200 cursor-pointer shadow-xs hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98] ${
+                            isOutOfStock ? 'opacity-50 cursor-not-allowed bg-slate-50 border-slate-200' : 'border-slate-200/90 hover:border-indigo-400'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-1 mb-2">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeClass} truncate max-w-[100px]`}>
+                                {p.sku || 'RETAIL'}
                               </span>
-                            )}
-                            {isOutOfStock ? (
-                              <span className="text-[9px] bg-rose-100 text-rose-700 font-extrabold px-2 py-0.5 rounded-full">Habis</span>
-                            ) : p.stock_type === 'tracked' ? (
-                              <span className="text-[9px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
-                                Stok: {p.stock_quantity}
-                              </span>
-                            ) : null}
+                              {Array.isArray(p.product_variants) && p.product_variants.length > 0 && (
+                                <span className="text-[9px] bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded-full border border-indigo-200/60">
+                                  {p.product_variants.length} Varian
+                                </span>
+                              )}
+                              {isOutOfStock ? (
+                                <span className="text-[9px] bg-rose-100 text-rose-700 font-extrabold px-2 py-0.5 rounded-full">Habis</span>
+                              ) : p.stock_type === 'tracked' ? (
+                                <span className="text-[9px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
+                                  Stok: {p.stock_quantity}
+                                </span>
+                              ) : null}
+                            </div>
+                            <h4 className="font-bold text-xs sm:text-sm text-slate-900 line-clamp-2 leading-snug group-hover:text-indigo-600 transition">
+                              {p.name}
+                            </h4>
                           </div>
-                          <h4 className="font-bold text-xs sm:text-sm text-slate-900 line-clamp-2 leading-snug group-hover:text-indigo-600 transition">
-                            {p.name}
-                          </h4>
-                        </div>
 
-                        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                          <span className="text-xs sm:text-sm font-black text-slate-950">
-                            Rp {p.price.toLocaleString('id-ID')}
-                          </span>
-                          <span className="w-7 h-7 rounded-xl bg-indigo-50 text-indigo-600 font-black flex items-center justify-center text-xs group-hover:bg-indigo-600 group-hover:text-white transition shadow-2xs">
-                            +
-                          </span>
+                          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                            <span className="text-xs sm:text-sm font-black text-slate-950">
+                              Rp {p.price.toLocaleString('id-ID')}
+                            </span>
+                            <span className="w-7 h-7 rounded-xl bg-indigo-50 text-indigo-600 font-black flex items-center justify-center text-xs group-hover:bg-indigo-600 group-hover:text-white transition shadow-2xs">
+                              +
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    )
-                  })}
-                </div>
+                      )
+                    })}
+                  </div>
+                  {visibleProductCount < filteredProducts.length && (
+                    <div className="py-6 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setVisibleProductCount((prev) => Math.min(prev + 60, filteredProducts.length))}
+                        className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold rounded-2xl text-xs transition shadow-2xs hover:shadow-xs"
+                      >
+                        Menampilkan {visibleProducts.length} dari {filteredProducts.length} produk (Gulir ke bawah untuk memuat lebih banyak)
+                      </button>
+                    </div>
+                  )}
+                </>
               ) : (
                 /* LIST VIEW */
-                <div className="bg-white rounded-3xl border border-slate-200/90 overflow-hidden divide-y divide-slate-100 shadow-2xs">
-                  {filteredProducts.map((p) => {
-                    const isOutOfStock = p.stock_type === 'tracked' && p.stock_quantity <= 0
-                    return (
-                      <div
-                        key={p.id}
-                        onClick={() => !isOutOfStock && handleProductTap(p)}
-                        className={`p-3.5 sm:p-4 flex items-center justify-between hover:bg-indigo-50/40 transition cursor-pointer ${
-                          isOutOfStock ? 'opacity-50 cursor-not-allowed bg-slate-50' : ''
-                        }`}
-                      >
-                        <div className="space-y-1">
-                          <div className="font-bold text-xs sm:text-sm text-slate-900">{p.name}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">SKU: {p.sku || '-'}</div>
-                        </div>
+                <>
+                  <div className="bg-white rounded-3xl border border-slate-200/90 overflow-hidden divide-y divide-slate-100 shadow-2xs">
+                    {visibleProducts.map((p) => {
+                      const isOutOfStock = p.stock_type === 'tracked' && p.stock_quantity <= 0
+                      return (
+                        <div
+                          key={p.id}
+                          onClick={() => !isOutOfStock && handleProductTap(p)}
+                          className={`p-3.5 sm:p-4 flex items-center justify-between hover:bg-indigo-50/40 transition cursor-pointer ${
+                            isOutOfStock ? 'opacity-50 cursor-not-allowed bg-slate-50' : ''
+                          }`}
+                        >
+                          <div className="space-y-1">
+                            <div className="font-bold text-xs sm:text-sm text-slate-900">{p.name}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">SKU: {p.sku || '-'}</div>
+                          </div>
 
-                        <div className="flex items-center gap-3 sm:gap-4 text-right">
-                          {p.stock_type === 'tracked' && (
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                              isOutOfStock ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'
-                            }`}>
-                              Stok: {p.stock_quantity}
+                          <div className="flex items-center gap-3 sm:gap-4 text-right">
+                            {p.stock_type === 'tracked' && (
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                isOutOfStock ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                Stok: {p.stock_quantity}
+                              </span>
+                            )}
+                            <span className="text-xs sm:text-sm font-black text-slate-950">
+                              Rp {p.price.toLocaleString('id-ID')}
                             </span>
-                          )}
-                          <span className="text-xs sm:text-sm font-black text-slate-950">
-                            Rp {p.price.toLocaleString('id-ID')}
-                          </span>
-                          <button 
-                            disabled={isOutOfStock}
-                            className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition shadow-2xs"
-                          >
-                            + Tambah
-                          </button>
+                            <button
+                              disabled={isOutOfStock}
+                              className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition shadow-2xs"
+                            >
+                              + Tambah
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    )
-                  })}
-                </div>
+                      )
+                    })}
+                  </div>
+                  {visibleProductCount < filteredProducts.length && (
+                    <div className="py-6 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setVisibleProductCount((prev) => Math.min(prev + 60, filteredProducts.length))}
+                        className="px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold rounded-2xl text-xs transition shadow-2xs hover:shadow-xs"
+                      >
+                        Menampilkan {visibleProducts.length} dari {filteredProducts.length} produk (Gulir ke bawah untuk memuat lebih banyak)
+                      </button>
+                    </div>
+                  )}
+                </>
               )
             ) : (
               /* KEYPAD MODE */
@@ -1766,7 +1896,7 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
             setSelectedOrderForDetail(order)
           }}
           onRefundCompleted={() => {
-            if (businessId) loadCatalogAndCustomers(businessId)
+            refreshAllPOSData()
           }}
         />
       )}
@@ -1781,10 +1911,10 @@ export default function POSWorkspace({ onBackToHub }: { onBackToHub?: () => void
           businessName={activeBusiness?.name || 'ShapeUp Store'}
           cashierName={activeShift?.cashier_name || userProfile?.full_name || 'Kasir'}
           onRefundSuccess={() => {
-            if (businessId) loadCatalogAndCustomers(businessId)
+            refreshAllPOSData()
           }}
           onOrderUpdated={() => {
-            if (businessId) loadCatalogAndCustomers(businessId)
+            refreshAllPOSData()
           }}
         />
       )}
