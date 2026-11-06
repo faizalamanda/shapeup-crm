@@ -15,9 +15,9 @@ Gunakan `PageLayout` dari `@/components/ui/PageLayout` untuk halaman fitur baru.
 
 Lebar yang tersedia: `sm`, `md`, `lg`, `xl` (default), dan `full`. Pilih berdasarkan kepadatan konten; tabel atau workspace besar biasanya `xl`/`full`, sedangkan form tunggal biasanya `md`.
 
-Back perangkat/browser di desktop tetap mengikuti URL history. Pada viewport mobile atau PWA standalone, Back membawa pengguna ke `/onboarding`. Jika modal standar aktif, registry modal selalu menangani Back lebih dulu dan menutup modal teratas; halaman tidak boleh mendaftarkan listener `popstate` sendiri. Tombol Back di header mengikuti aturan yang sama. Ubah fallback dengan `mobileBackFallback` hanya bila onboarding tidak sesuai dengan alur fitur.
+Back perangkat/browser di desktop (mouse) tetap mengikuti linear URL history (`router.back()`). Pada perangkat sentuh (Mobile, iPad, Tablet Android) serta PWA standalone yang terdeteksi via W3C interaction queries (`isTouchOrStandaloneApp`), Back membawa pengguna kembali ke Halaman Utama (`/onboarding`). Jika modal aktif (baik 1 atau bertumpuk), registry modal (`useModalBackHandler`) selalu menangani Back lebih dulu dan menutup modal teratas satu per satu (LIFO); halaman tidak boleh mendaftarkan listener `popstate` sendiri. Tombol Back di header (`PageLayout`) mengikuti aturan yang sama. Ubah fallback dengan `mobileBackFallback` hanya bila onboarding tidak sesuai dengan alur fitur.
 
-Saat halaman membuka modal, gunakan `FullScreenModal` atau `useModalBackHandler`; jangan menambahkan kondisi modal ke halaman. Registry modal dan `useMobileBackToHome` sudah mengoordinasikan urutan Back untuk menghasilkan perilaku seperti aplikasi native.
+Saat halaman membuka modal dialog apapun, gunakan `FullScreenModal` atau daftarkan `useModalBackHandler(isOpen, onClose)`; jangan menambahkan kondisi modal ke halaman. Registry modal dan `useMobileBackToHome` sudah mengoordinasikan urutan Back untuk menghasilkan perilaku aplikasi native yang tangguh di semua ukuran perangkat.
 
 ## Rekomendasi world-class
 

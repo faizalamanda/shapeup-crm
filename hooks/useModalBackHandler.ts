@@ -9,7 +9,7 @@ interface ModalStackItem {
 
 // Global state for LIFO Modal Registry & Event Dispatching
 let modalStack: ModalStackItem[] = []
-let isProgrammaticBack = false
+let programmaticBackCount = 0
 let isListenersAttached = false
 
 /**
@@ -17,7 +17,7 @@ let isListenersAttached = false
  * while a programmatic `history.back()` removes a modal history entry.
  */
 export function isModalBackHandlingActive() {
-  return modalStack.length > 0 || isProgrammaticBack
+  return modalStack.length > 0 || programmaticBackCount > 0
 }
 
 /**
@@ -38,8 +38,8 @@ export function closeTopActiveModal() {
 }
 
 function handleGlobalPopState() {
-  if (isProgrammaticBack) {
-    isProgrammaticBack = false
+  if (programmaticBackCount > 0) {
+    programmaticBackCount--
     return
   }
 
@@ -84,8 +84,16 @@ export function useModalBackHandler(isOpen: boolean, onClose: () => void) {
     const modalId = Math.random().toString(36).substring(2, 9)
     const modalStateKey = `modal_open_${modalId}`
 
-    // Push dummy state to window.history
-    window.history.pushState({ modalStateKey }, '')
+    const hasExistingModalHistory = typeof window !== 'undefined' && Boolean(window.history.state?.modalStateKey)
+
+    if (hasExistingModalHistory && modalStack.length === 0) {
+      // Direct modal replacement transition (e.g. CashPaymentModal closing as PaymentSuccessView opens).
+      // Reuse existing history entry in-place to avoid back/push queue race condition.
+      window.history.replaceState({ modalStateKey }, '')
+    } else {
+      // Initial modal opening or nested modal: push dummy state to window.history
+      window.history.pushState({ modalStateKey }, '')
+    }
 
     const stackItem: ModalStackItem = {
       id: modalId,
@@ -98,11 +106,21 @@ export function useModalBackHandler(isOpen: boolean, onClose: () => void) {
       // Remove from global stack
       modalStack = modalStack.filter(item => item.id !== modalId)
 
-      // Clean up history entry if closed programmatically (X, backdrop, submit)
-      if (typeof window !== 'undefined' && window.history.state?.modalStateKey === modalStateKey) {
-        isProgrammaticBack = true
-        window.history.back()
-      }
+      // Use a brief timeout before performing programmatic history.back().
+      // This allows modal transitions (e.g. Payment -> Receipt) in the same render
+      // to mount their new state without their history entry being popped by a queued back().
+      setTimeout(() => {
+        if (typeof window === 'undefined') return
+
+        // If another modal has taken over or is still in the stack, do not pop
+        if (modalStack.length > 0) return
+
+        // Clean up history entry only if this specific modal is still at the top of history
+        if (window.history.state?.modalStateKey === modalStateKey) {
+          programmaticBackCount++
+          window.history.back()
+        }
+      }, 50)
     }
   }, [isOpen])
 }

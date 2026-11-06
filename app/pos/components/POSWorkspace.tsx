@@ -31,6 +31,7 @@ import { fetchLoyaltySettings } from '@/plugins/loyalty/helpers/loyaltyApi'
 import { LoyaltySettings, LoyaltyTier, DEFAULT_LOYALTY_SETTINGS, resolveTier, calculateEarnedPoints } from '@/plugins/loyalty/types'
 import { useCustomerDirectory, matchesCustomerQuery, notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
 import { usePosCatalog } from '@/lib/posCatalogStore'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 // Pastel badge colors for product cards
 const getPastelBadge = (name: string) => {
@@ -154,6 +155,7 @@ export default function POSWorkspace({
 
   // Mobile Drawer State
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
+  useModalBackHandler(isMobileCartOpen, () => setIsMobileCartOpen(false))
 
   // Modals
   const [selectedProductForVariant, setSelectedProductForVariant] = useState<any | null>(null)

@@ -10,7 +10,7 @@ Gunakan `FullScreenModal` dari `@/components/ui/FullScreenModal` sebagai outer s
 
 - **Mobile Viewport:** Selalu 100% full-screen (`h-[100dvh] w-screen`). Komponen ini otomatis menghormati area aman perangkat (*safe-area insets* untuk *notch* di atas dan *home bar* di bawah).
 - **Desktop Viewport:** Otomatis bertransformasi menjadi modal/card terpusat secara default (`desktopSize="md"`).
-- **Manajemen Navigasi Hardware (LIFO):** Saat `isOpen` bernilai `true`, shell mendaftarkan riwayat navigasi melalui `useModalBackHandler`. Tombol Back perangkat atau gestur usap menutup modal paling atas; tombol `Escape` menutup modal pada desktop.
+- **Manajemen Navigasi Hardware (LIFO - Universal Multi-Device):** Saat `isOpen` bernilai `true`, shell mendaftarkan riwayat navigasi melalui `useModalBackHandler`. Tombol Back perangkat, gestur usap tepi layar pada tablet/ponsel, maupun tombol `Escape` desktop menutup modal teratas secara berjenjang (**satu per satu / LIFO**). Jika ada 2 modal aktif bertumpuk, tekanan Back pertama hanya menutup modal paling atas sementara modal di bawahnya tetap aktif. Ketika seluruh modal telah tertutup, barulah penekanan Back berikutnya mengeksekusi navigasi halaman. Seluruh modal fitur (baik yang memakai `FullScreenModal` maupun dialog khusus seperti pemilih varian dan nota gantung) **wajib** mendaftarkan `useModalBackHandler(isOpen, onClose)`.
 - **Isolasi Scroll:** Penguncian scroll halaman luar ditangani terpusat melalui *reference counting* (`lockBodyScroll()`).
 
 > [!CAUTION]

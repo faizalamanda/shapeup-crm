@@ -405,6 +405,15 @@
       - Modal pembayaran langsung ditutup dan struk belanja langsung ditampilkan dalam **0 milidetik** (*Reality First*).
       - Sinkronisasi server berjalan di latar belakang (*fire-and-forget*); response server merekonsiliasi nomor nota secara mulus *in-place* tanpa kedipan (*zero flicker*).
 
+27. **Universal Touch-First Device Detection & LIFO Modal Back Navigation Standards:**
+    - **Pemisahan Input Modality vs Lebar Piksel Layar:** Sistem **DILARANG KERAS** mengasumsikan siapa pun yang layarnya $\ge 768\text{px}$ sebagai desktop mouse. Tablet (iPad Mini, iPad 10th Gen, iPad Pro, Galaxy Tab, tablet POS) adalah perangkat sentuh murni. Gunakan selalu `isTouchOrStandaloneApp()` dari `@/hooks/usePageBackNavigation` yang mengevaluasi kapabilitas sentuhan W3C (`pointer: coarse`, `'ontouchstart' in window`, `navigator.maxTouchPoints > 0`, dan `display-mode: standalone`).
+    - **Hierarki Navigasi Tombol Back:**
+      - **Prioritas Utama (LIFO Modal Stack):** Jika ada modal aktif di perangkat apa pun (Mobile, Tablet, maupun Desktop), tombol Back (hardware, swipe-gesture, browser back, Escape key, maupun UI Back `PageLayout`) **WAJIB** menutup modal aktif teratas terlebih dahulu (**satu per satu secara berjenjang / LIFO**) via `closeTopActiveModal()` di `@/hooks/useModalBackHandler`. Dilarang langsung melompat ke URL halaman sebelumnya saat modal masih terbuka.
+      - **Prioritas Kedua (Halaman Bersih / Tanpa Modal):**
+        - **Perangkat Sentuh (Mobile & Tablet) serta PWA:** Tombol Back keluar dari workspace aktif menuju Halaman Utama (`/onboarding`) untuk menjamin rasa aplikasi native terpadu tanpa tersesat.
+        - **Desktop PC (Mouse):** Mengikuti riwayat browser linear standar (`router.back()`).
+    - **Registrasi Wajib Semua Modal:** Seluruh komponen modal (baik yang menggunakan `FullScreenModal` maupun modal dialog mandiri seperti varian, hold order, print receipt, filter audiens) **WAJIB** mendaftarkan diri ke `useModalBackHandler(isOpen, onClose)` tepat di baris teratas komponen.
+
 
 
 

@@ -24,8 +24,8 @@ Semua modal fitur yang berfungsi sebagai layar kerja/detail (misal: Detail Pesan
 1. **Zero Manual Portals & Scroll Locks:**
    `FullScreenModal` sudah menangani portal ke `document.body`, `aria-modal`, fokus awal, Escape key desktop, serta body-scroll lock terpusat via *reference counting*. **DILARANG KERAS** memanggil `createPortal` atau memanipulasi `document.body.style.overflow` manual di pemakai.
 
-2. **LIFO Hardware Back Navigation Integration:**
-   Tombol Back perangkat / browser ditangani otomatis melalui `useModalBackHandler` dalam `FullScreenModal`. Menekan Back pada mobile selalu menutup modal aktif teratas lebih dahulu sebelum navigasi halaman berjalan. **DILARANG** menambahkan listener `popstate`, `history.pushState`, atau memanggil `window.history.back()` secara manual.
+2. **LIFO Hardware Back Navigation Integration (Universal Mobile, Tablet & Desktop):**
+   Tombol Back perangkat / browser ditangani otomatis melalui `useModalBackHandler` dalam `FullScreenModal` (dan modal kustom manapun). Ketika tombol Back ditekan pada perangkat apa pun (Mobile, Tablet, maupun Desktop), sistem selalu menutup modal aktif teratas terlebih dahulu (**satu per satu secara berjenjang / LIFO**) sebelum navigasi halaman berjalan. Jika terdapat dua modal bertumpuk (Modal A -> Modal B), Back pertama menutup Modal B, Back kedua menutup Modal A. **DILARANG** menambahkan listener `popstate`, `history.pushState`, atau memanggil `window.history.back()` secara manual. Modal mandiri (seperti pemilih varian, hold cart, struk preview) **WAJIB** mendaftarkan diri ke `useModalBackHandler(isOpen, onClose)`.
 
 3. **Thumb-Zone Sticky Footer (Aksi Utama):**
    Tombol aksi utama (seperti *Chat WhatsApp*, *Bayar Tagihan*, *Refund*, *Cetak Struk*, dan *Tutup*) **WAJIB** ditempatkan pada prop `footer`. Ini menjamin tombol aksi selalu lengket (*sticky*) di bawah layar mobile tepat di atas home bar, tanpa terkubur oleh scroll konten.
