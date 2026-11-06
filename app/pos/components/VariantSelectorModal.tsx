@@ -1,5 +1,6 @@
 "use client"
 import { useState, useMemo, useEffect } from 'react'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 export type VariantOption = {
   id: string
@@ -43,6 +44,8 @@ type Props = {
 }
 
 export default function VariantSelectorModal({ isOpen, onClose, product, onAddToCart }: Props) {
+  useModalBackHandler(isOpen, onClose)
+
   if (!isOpen || !product) return null
 
   // Resolve real database variants or props

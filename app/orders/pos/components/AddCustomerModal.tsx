@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import { notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 type Customer = {
   id: string
@@ -19,6 +20,7 @@ type AddCustomerModalProps = {
 }
 
 export default function AddCustomerModal({ isOpen, onClose, onSave, businessId }: AddCustomerModalProps) {
+  useModalBackHandler(isOpen, onClose)
   // Using singleton supabase client from @/lib/supabase
 
   const [mounted, setMounted] = useState(false)

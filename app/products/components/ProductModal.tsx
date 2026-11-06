@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 type Category = {
   id: string
@@ -184,6 +185,7 @@ function IngredientSearchCombobox({ options, selectedId, onSelect, placeholder =
 }
 
 export default function ProductModal({ isOpen, onClose, onSave, product, businessId }: ProductModalProps) {
+  useModalBackHandler(isOpen, onClose)
   // Using singleton supabase client from @/lib/supabase
 
   const [mounted, setMounted] = useState(false)

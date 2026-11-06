@@ -20,24 +20,39 @@ export function isModalBackHandlingActive() {
   return modalStack.length > 0 || isProgrammaticBack
 }
 
+/**
+ * Close ONLY the top-most active modal in the stack (LIFO).
+ * If there are multiple active modals, they close sequentially one by one.
+ */
+export function closeTopActiveModal() {
+  if (modalStack.length === 0) return false
+  const topModal = modalStack[modalStack.length - 1]
+  if (topModal) {
+    try {
+      topModal.onClose()
+    } catch (err) {
+      console.error('Error closing top modal on back:', err)
+    }
+  }
+  return true
+}
+
 function handleGlobalPopState() {
   if (isProgrammaticBack) {
     isProgrammaticBack = false
     return
   }
 
-  // Close ONLY the top-most active modal on smartphone/browser Back press
+  // Close ONLY the top-most active modal (LIFO) so nested modals close one by one
   if (modalStack.length > 0) {
-    const topModal = modalStack[modalStack.length - 1]
-    topModal.onClose()
+    closeTopActiveModal()
   }
 }
 
 function handleGlobalKeyDown(e: KeyboardEvent) {
-  // Support W3C WAI-ARIA Escape key dismissal for desktop modal dialogs
+  // Support W3C WAI-ARIA Escape key dismissal for desktop modal dialogs (one by one)
   if (e.key === 'Escape' && modalStack.length > 0) {
-    const topModal = modalStack[modalStack.length - 1]
-    topModal.onClose()
+    closeTopActiveModal()
   }
 }
 

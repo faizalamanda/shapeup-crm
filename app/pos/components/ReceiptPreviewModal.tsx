@@ -1,6 +1,7 @@
 "use client"
 import { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 import { 
   ReceiptData, 
   getPrinterAdapter, 
@@ -17,6 +18,7 @@ type Props = {
 }
 
 export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props) {
+  useModalBackHandler(isOpen, onClose)
   const [mounted, setMounted] = useState(false)
   const [paperSize, setPaperSize] = useState<PaperSize>(() => {
     if (typeof window !== 'undefined') {

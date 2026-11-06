@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { isModalBackHandlingActive } from '@/hooks/useModalBackHandler'
-import { isMobileOrStandaloneApp } from '@/hooks/usePageBackNavigation'
+import { isTouchOrStandaloneApp } from '@/hooks/usePageBackNavigation'
 
 /**
  * List of action/ID segment patterns that indicate a sub-page / form route
@@ -70,10 +70,10 @@ export function getParentPath(pathname: string): string | null {
 }
 
 /**
- * Hook to handle mobile / browser Back button like a native app on Mobile screens (< 768px or PWA).
- * On mobile/PWA, Back exits the current workspace to onboarding. Modal history
- * always has priority and is handled by its own LIFO modal registry.
- * Desktop preserves normal browser history.
+ * Hook to handle mobile / tablet / browser Back button like a native app on Touch devices or PWA.
+ * On Touch/PWA (Smartphones, iPads, Android Tablets), Back exits the current workspace to onboarding.
+ * Modal history always has priority and is handled by its own LIFO modal registry.
+ * Desktop PC (mouse) preserves normal linear browser history.
  */
 export function useMobileBackToHome() {
   const pathname = usePathname()
@@ -86,13 +86,14 @@ export function useMobileBackToHome() {
 
   useEffect(() => {
     const handlePopState = (event: PopStateEvent) => {
-      if (!isMobileOrStandaloneApp()) {
+      // `popstate` reaches this root listener before the modal listener. Yield
+      // while a modal owns the current transition, including X/submit cleanup, across all devices.
+      if (isModalBackHandlingActive()) {
         return
       }
 
-      // `popstate` reaches this root listener before the modal listener. Yield
-      // while a modal owns the current transition, including X/submit cleanup.
-      if (isModalBackHandlingActive()) {
+      // Desktop PC with mouse preserves standard browser history
+      if (!isTouchOrStandaloneApp()) {
         return
       }
 

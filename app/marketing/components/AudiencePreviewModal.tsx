@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 import {
   isCustomerMatchFilters,
   formatDateKeyID,
@@ -31,6 +32,7 @@ export default function AudiencePreviewModal({
   businessId,
   timezone = 'Asia/Jakarta',
 }: AudiencePreviewModalProps) {
+  useModalBackHandler(isOpen, onClose)
   const [previewList, setPreviewList] = useState<PreviewPerson[]>([])
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)

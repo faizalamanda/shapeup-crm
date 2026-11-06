@@ -1,6 +1,7 @@
 "use client"
 import { useState, useMemo } from 'react'
 import { formatDisplayDate } from '@/lib/timeUtils'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 type Props = {
   isOpen: boolean
@@ -23,6 +24,8 @@ export default function HoldModal({
   onPrintHoldOrder,
   onPrintHeldOrdersSummary
 }: Props) {
+  useModalBackHandler(isOpen, onClose)
+
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
