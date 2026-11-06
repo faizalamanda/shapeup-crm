@@ -56,6 +56,8 @@ export interface ReceiptData {
   orderNote?: string
   paperSize?: PaperSize
   receiptTitle?: string
+  queueNumber?: string | number
+  showQueueNumber?: boolean
   returnNumber?: string
   originalOrderNumber?: string
   returnReason?: string
@@ -283,6 +285,13 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
 
     <div class="divider"></div>
 
+    ${receipt.showQueueNumber && receipt.queueNumber ? `
+    <div style="text-align: center; margin: 4px 0 6px 0; padding: 4px 0; border: 1.5px solid #000; border-radius: 4px;">
+      <div style="font-size: 0.8em; font-weight: bold; letter-spacing: 1px;">NO. ANTREAN</div>
+      <div style="font-size: 1.6em; font-weight: 900; line-height: 1.1;">#${escapeHtml(String(receipt.queueNumber))}</div>
+    </div>
+    ` : ''}
+
     ${receipt.receiptTitle ? `
     <div style="text-align: center; font-weight: bold; letter-spacing: 0.5px; margin: 4px 0; border: 1px dashed #000; padding: 3px 0;">
       ${escapeHtml(receipt.receiptTitle)}
@@ -470,6 +479,17 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize?: PaperSiz
 
   // Divider
   writeText(divider + '\n')
+
+  // Optional Queue Number Banner (ESC/POS)
+  if (receipt.showQueueNumber && receipt.queueNumber) {
+    writeRaw(0x1B, 0x61, 0x01) // Center
+    writeText('NO. ANTREAN\n')
+    writeRaw(0x1D, 0x21, 0x11) // Double width & height
+    writeText(`#${receipt.queueNumber}\n`)
+    writeRaw(0x1D, 0x21, 0x00) // Normal
+    writeText(divider + '\n')
+    writeRaw(0x1B, 0x61, 0x00) // Left
+  }
 
   if (receipt.receiptTitle) {
     writeRaw(0x1B, 0x61, 0x01) // Center

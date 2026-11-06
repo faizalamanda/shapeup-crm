@@ -1,6 +1,7 @@
 import { getApiContext } from '@/lib/apiContext'
 import { resolveGuestCustomerId } from '@/lib/guestCustomer'
 import { syncOrderToLedger } from '@/lib/orderLedger'
+import { generatePosOrderNumber } from '@/lib/pos/orderNumberHelper'
 import { getPriceGuardSettings } from '@/lib/priceGuard/settings'
 import { evaluatePriceFloor } from '@/lib/priceGuard/resolvePriceFloor'
 import { NextResponse } from 'next/server'
@@ -204,8 +205,26 @@ export async function POST(req: Request) {
         ? 'paid' 
         : (totalPaid > 0 ? 'partial' : 'unpaid')
 
-    // 6. Format Line Items
-    const orderNumber = clientOrderNumber || ('POS-' + Date.now().toString().slice(-8))
+    // 6. Generate Atomic Sequential Order Number & Queue Number
+    let orderNumber = clientOrderNumber
+    let queueNumber = 1
+
+    const isLegacyRandom = typeof clientOrderNumber === 'string' && /^POS-\d{8}$/.test(clientOrderNumber)
+    if (!orderNumber || isLegacyRandom) {
+      const { data: bizData } = await (supabaseAdmin || supabase)
+        .from('businesses')
+        .select('timezone')
+        .eq('id', businessId)
+        .maybeSingle()
+      const businessTimezone = bizData?.timezone || 'Asia/Jakarta'
+
+      const gen = await generatePosOrderNumber(businessId, supabaseAdmin || supabase, {
+        timezone: businessTimezone,
+        prefix: 'POS'
+      })
+      orderNumber = gen.orderNumber
+      queueNumber = gen.queueNumber
+    }
     
     const lineItems = items.map((item: any, idx: number) => {
       const isCustom = String(item.id).startsWith('custom-')
@@ -250,6 +269,8 @@ export async function POST(req: Request) {
 
     const rawSourceData = {
       id: orderNumber,
+      queue_number: queueNumber,
+      legacy_order_number: isLegacyRandom ? clientOrderNumber : undefined,
       status: 'completed',
       currency: 'IDR',
       total: String(numGrandTotal),
@@ -374,6 +395,7 @@ export async function POST(req: Request) {
       success: true,
       order_id: order.id,
       order_number: orderNumber,
+      queue_number: queueNumber,
       payment_status: paymentStatus,
       amount_paid: totalPaid,
       outstanding: Math.max(0, numGrandTotal - totalPaid)

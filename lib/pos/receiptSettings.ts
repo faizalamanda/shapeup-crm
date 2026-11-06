@@ -11,6 +11,7 @@ export interface ReceiptSettings {
   autoPrintAfterPayment: boolean
   showItemNumbering: boolean
   showLoyaltyPoints: boolean
+  showQueueNumber?: boolean
 }
 
 export const RECEIPT_SETTINGS_STORAGE_KEY = 'shapeup_pos_receipt_settings'
@@ -28,7 +29,8 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
       connectionType: 'system',
       autoPrintAfterPayment: false,
       showItemNumbering: true,
-      showLoyaltyPoints: true
+      showLoyaltyPoints: true,
+      showQueueNumber: false
     }
   }
 
@@ -45,7 +47,8 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
         connectionType: parsed.connectionType || 'system',
         autoPrintAfterPayment: Boolean(parsed.autoPrintAfterPayment),
         showItemNumbering: parsed.showItemNumbering !== undefined ? Boolean(parsed.showItemNumbering) : true,
-        showLoyaltyPoints: parsed.showLoyaltyPoints !== undefined ? Boolean(parsed.showLoyaltyPoints) : true
+        showLoyaltyPoints: parsed.showLoyaltyPoints !== undefined ? Boolean(parsed.showLoyaltyPoints) : true,
+        showQueueNumber: Boolean(parsed.showQueueNumber)
       }
     }
   } catch (e) {
@@ -61,6 +64,7 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
     connectionType: 'system',
     autoPrintAfterPayment: false,
     showItemNumbering: true,
-    showLoyaltyPoints: true
+    showLoyaltyPoints: true,
+    showQueueNumber: false
   }
 }

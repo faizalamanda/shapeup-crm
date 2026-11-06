@@ -778,8 +778,38 @@ export default function POSWorkspace({
         note: item.note
       }))
 
-      // Optimistic UI: Generate Order Number locally
-      const orderNumber = 'POS-' + Date.now().toString().slice(-8)
+      const effectiveOrderNote = orderNote.trim() || undefined
+      const effectiveCustomerId = selectedCustomer?.id || 'guest'
+
+      // Post order to server with atomic sequential number generation
+      const res = await fetch('/api/pos/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_id: effectiveCustomerId,
+          items: itemsPayload,
+          payment_method: paymentInfo.method,
+          payments: paymentInfo.payments,
+          amount_paid: paymentInfo.amountPaid,
+          subtotal: subtotal,
+          discount_amount: discountAmount,
+          grand_total: grandTotal,
+          cash_received: paymentInfo.cashReceived,
+          change_amount: paymentInfo.changeAmount,
+          shift_id: activeShift?.id || null,
+          register_id: activeShift?.register_id || null,
+          order_note: effectiveOrderNote,
+          authorizations: Array.from(authorizations.values())
+        })
+      })
+
+      const result = await res.json().catch(() => null)
+      if (!res.ok || !result?.success) {
+        throw new Error(result?.error || 'Gagal menyimpan pesanan ke server.')
+      }
+
+      const assignedOrderNumber = result.order_number || ('POS-' + Date.now().toString().slice(-8))
+      const assignedQueueNumber = result.queue_number || undefined
 
       const paymentTitle = paymentInfo.isPartial 
         ? `Sebagian / Sisa Piutang (Rp ${paymentInfo.amountPaid.toLocaleString('id-ID')})`
@@ -813,10 +843,10 @@ export default function POSWorkspace({
         }
       }
 
-      // 1. Build Receipt immediately (Reality First: 0ms Latency via SSOT Builder)
-      const effectiveOrderNote = orderNote.trim() || undefined
+      // Build definitive Receipt with atomic order number
       const receipt = buildReceiptDataFromOrder({
-        order_number: orderNumber,
+        order_number: assignedOrderNumber,
+        queue_number: assignedQueueNumber,
         created_at: new Date().toISOString(),
         items: cart.map((i) => ({
           name: i.product.name,
@@ -845,21 +875,19 @@ export default function POSWorkspace({
         changeAmount: paymentInfo.changeAmount
       })
 
-      const effectiveCustomerId = selectedCustomer?.id || 'guest'
-
-      // 1. Instant Optimistic Action (0ms Latency for Customer & Cashier)
-      setLastCreatedOrderId(null)
+      // Action: Display receipt & clear local cart
+      setLastCreatedOrderId(result.order_id || null)
       setReceiptData(receipt)
       setIsPaymentModalOpen(false)
       setIsMobileCartOpen(false)
       setIsReceiptModalOpen(true)
       
-      // Optimistic local stock mutation in L1/L2 cache (Pilar 2 & 5)
+      // Optimistic local stock mutation in L1/L2 cache
       if (typeof updateLocalStock === 'function') {
         updateLocalStock(
           itemsPayload.map((it: any) => ({
-            productId: it.product_id,
-            variantId: it.variant_id,
+            productId: it.id,
+            variantId: it.variantId,
             quantity: it.quantity
           }))
         )
@@ -883,42 +911,6 @@ export default function POSWorkspace({
           body: JSON.stringify({ action: 'delete', hold_id: completedHoldId })
         }).catch((err) => console.error('[POS] Failed to cleanup completed hold:', err))
       }
-
-      // 2. Background Sync (Fire-and-Forget)
-      fetch('/api/pos/order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customer_id: effectiveCustomerId,
-          items: itemsPayload,
-          payment_method: paymentInfo.method,
-          payments: paymentInfo.payments,
-          amount_paid: paymentInfo.amountPaid,
-          subtotal: subtotal,
-          discount_amount: discountAmount,
-          grand_total: grandTotal,
-          order_number: orderNumber,
-          cash_received: paymentInfo.cashReceived,
-          change_amount: paymentInfo.changeAmount,
-          shift_id: activeShift?.id || null,
-          register_id: activeShift?.register_id || null,
-          order_note: effectiveOrderNote,
-          authorizations: Array.from(authorizations.values())
-        })
-      })
-      .then(async (res) => {
-        const result = await res.json().catch(() => null)
-        if (!res.ok) {
-          console.error(`[POS Sync Error] Pesanan #${orderNumber} gagal tersimpan:`, result?.error)
-          alert(`⚠️ Peringatan: Pesanan #${orderNumber} gagal disimpan ke server.\nPesan: ${result?.error || 'Server error'}`)
-        } else if (result?.order_id) {
-          setLastCreatedOrderId(result.order_id)
-        }
-      })
-      .catch((err) => {
-        console.error(`[POS Sync Error] Koneksi terputus untuk pesanan #${orderNumber}:`, err)
-        alert(`⚠️ Peringatan: Koneksi terputus. Pesanan #${orderNumber} gagal dikirim ke server.`)
-      })
     } catch (err: any) {
       alert(err.message || 'Terjadi kesalahan pada aplikasi kasir.')
       setCheckingOut(false)

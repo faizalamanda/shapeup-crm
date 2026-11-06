@@ -49,6 +49,7 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
   const [btStatusMsg, setBtStatusMsg] = useState<string | null>(null)
   const [autoPrintAfterPayment, setAutoPrintAfterPayment] = useState(false)
   const [showItemNumbering, setShowItemNumbering] = useState(true)
+  const [showQueueNumber, setShowQueueNumber] = useState(false)
   const [showLoyaltyPoints, setShowLoyaltyPoints] = useState(true)
   const [isLoyaltyProgramEnabled, setIsLoyaltyProgramEnabled] = useState(false)
   const [loadingLoyalty, setLoadingLoyalty] = useState(false)
@@ -66,6 +67,7 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
       setBtDeviceName(getActiveBluetoothDeviceName())
       setAutoPrintAfterPayment(s.autoPrintAfterPayment)
       setShowItemNumbering(s.showItemNumbering)
+      setShowQueueNumber(Boolean(s.showQueueNumber))
       setShowLoyaltyPoints(s.showLoyaltyPoints)
       setSaveSuccess(false)
       setBtStatusMsg(null)
@@ -157,7 +159,8 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
       connectionType,
       autoPrintAfterPayment,
       showItemNumbering,
-      showLoyaltyPoints
+      showLoyaltyPoints,
+      showQueueNumber
     }
 
     try {
@@ -182,6 +185,7 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
       connectionType,
       autoPrintAfterPayment,
       showItemNumbering,
+      showQueueNumber,
       showLoyaltyPoints: isLoyaltyProgramEnabled && showLoyaltyPoints
     })
   }, [
@@ -194,6 +198,7 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
     connectionType,
     autoPrintAfterPayment,
     showItemNumbering,
+    showQueueNumber,
     isLoyaltyProgramEnabled,
     showLoyaltyPoints
   ])
@@ -399,6 +404,25 @@ export default function ReceiptSettingsModal({ isOpen, onClose, defaultBusinessN
                 </label>
                 <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
                   Tampilkan nomor urut (1, 2, 3...) di sebelah kiri nama setiap item produk untuk memudahkan verifikasi daftar belanjaan.
+                </p>
+              </div>
+            </div>
+
+            {/* Toggle: Nomor Antrean Ringkas */}
+            <div className="flex items-start gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200/80">
+              <input
+                type="checkbox"
+                id="queueNumberCheckbox"
+                checked={showQueueNumber}
+                onChange={(e) => setShowQueueNumber(e.target.checked)}
+                className="mt-0.5 w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+              />
+              <div className="flex-1">
+                <label htmlFor="queueNumberCheckbox" className="font-semibold text-slate-800 cursor-pointer text-xs block">
+                  Cetak Nomor Antrean Ringkas (#001)
+                </label>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                  Mencetak nomor antrean harian dengan ukuran besar di atas struk. Berguna untuk memanggil nomor pesanan di meja kasir, dapur, atau barista (Default: Nonaktif).
                 </p>
               </div>
             </div>

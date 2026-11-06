@@ -388,6 +388,17 @@
     - **Session Storage Snapshot Resilience:**
       Data ringkasan transaksi terakhir (`orderNumber`, `grandTotal`, `changeAmount`, `customerName`, `paymentMethod`) disimpan ke `sessionStorage.setItem('su_last_pos_completed_order', ...)` untuk perlindungan state jika browser kasir tertutup secara paksa.
 
+26. **Atomic POS Order Numbering, Resilient Fallback & Dual-Layer Architecture Standards (Skill `pos-session-ledger`):**
+    - **Format Kanonikal Dokumen Kasir:** Format baku nomor nota kasir POS adalah `POS-YYYYMMDD-XXXX` (contoh: `POS-20261106-0001`). Dilarang keras menggunakan epoch timestamp terpotong (`Date.now().slice(-8)`) yang menghasilkan nomor acak tanpa tanggal kalender dan melanggar standar audit akuntansi/fiskal.
+    - **Concurrency Safety (Zero Collision / Anti-Race Condition):** Nomor nota kasir **WAJIB** dihasilkan di basis data menggunakan PostgreSQL Row-Level Exclusive Lock via tabel `public.business_counters` dan RPC `generate_pos_order_number()` (< 0.2ms). Dilarang menghitung `MAX(counter) + 1` naif di Node.js saat melayani banyak kasir bersamaan.
+    - **Arsitektur Dual-Layer (Nomor Dokumen vs Nomor Antrean):**
+      - *Nomor Dokumen Resmi* (`orders.order_number`): Kunci legal untuk audit pajak DJP, pencarian pesanan, dan Buku Besar Akuntansi.
+      - *Nomor Antrean Ringkas* (`queue_number`): Angka harian ringkas (`#1`, `#2`, `#42...`) untuk kenyamanan panggilan kasir, barista, atau dapur. Default sistem: **NONAKTIF (OFF)**, dapat diaktifkan kapan saja melalui modal Pengaturan Struk Kasir (`ReceiptSettingsModal`).
+    - **Resilient Fallback & Backward Compatibility:**
+      - Endpoint API POS (`/api/pos/order`) secara otomatis mendeteksi dan mengonversi format acak lawas (`POS-\d{8}`) ke nomor urut terpadu, serta menyimpan referensi asli di `raw_source_data.legacy_order_number`.
+      - Modul `orderNumberHelper.ts` menyertakan *resilient query fallback* otomatis jika database remote belum mengaplikasikan migrasi RPC, sehingga sistem bebas dari risiko *crash* (Zero Downtime).
+
+
 
 
 

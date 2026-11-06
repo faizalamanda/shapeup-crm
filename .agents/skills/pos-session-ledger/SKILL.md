@@ -844,6 +844,41 @@ Untuk menjamin aplikasi POS berjalan mulus tanpa lag di perangkat keras berspesi
    - Menghindari tumpukan lapisan transparan (`via-transparent`, `bg-emerald-500/5`) dan filter drop-shadow yang membebani memori render.
    - Menggunakan bayangan ringan standar (`shadow-xs`) dan border CSS murni (`border border-slate-200`) yang diakselerasi secara universal oleh seluruh peramban modern maupun warisan.
 
+---
+
+## 20. Atomic POS Order Numbering & Dual-Layer Architecture Standard
+
+### 20.1 Format Kanonikal Nomor Nota POS
+Dilarang keras menggunakan epoch timestamp terpotong (`Date.now().slice(-8)`) yang menghasilkan nomor acak tak terbaca. Format baku nomor nota kasir POS adalah:
+$$\text{POS}-\text{YYYYMMDD}-\text{XXXX}$$
+- **`POS`:** Prefiks dokumen penjualan kasir.
+- **`YYYYMMDD`:** Tanggal kalender sipil lokal unit bisnis (misal `20261106` untuk 6 November 2026).
+- **`XXXX`:** Nomor urut harian atomik yang ter-reset otomatis setiap hari (dimulai dari `0001` hingga `9999` atau lebih).
+
+### 20.2 Pencegahan Race Condition Multi-Kasir (Zero-Tolerance Collision)
+- **Tabel Counter Terisolasi (`public.business_counters`):**
+  Menggunakan skema partisi komposit `(business_id, counter_type, period_date)`.
+- **Atomic UPSERT Row Lock (< 0.2ms):**
+  Nomor urut dihasilkan via kernel PostgreSQL menggunakan statement:
+  ```sql
+  INSERT INTO public.business_counters (business_id, counter_type, period_date, last_val)
+  VALUES (p_business_id, 'pos_order', v_today, 1)
+  ON CONFLICT (business_id, counter_type, period_date)
+  DO UPDATE SET last_val = business_counters.last_val + 1, updated_at = NOW()
+  RETURNING last_val;
+  ```
+  Kernel PostgreSQL otomatis mengunci baris counter secara eksklusif. Transaksi paralel dari kasir lain akan mengantre di tingkat memori engine dan dijamin mendapatkan nomor urut monotonik yang presisi tanpa bentrok.
+
+### 20.3 Arsitektur Dual-Layer (Nomor Antrean Ringkas vs Nomor Nota Dokumen)
+- **Nomor Nota Dokumen (`orders.order_number`):** `POS-YYYYMMDD-0001` (Kunci hukum, audit fiskal perpajakan DJP, dan referensi Buku Besar Akuntansi).
+- **Nomor Antrean Ringkas (`queue_number`):** Angka urut harian ringkas (`#1`, `#2`, `#42...`) yang mudah dipanggil kasir, barista, atau staf dapur.
+- **Konfigurasi Default:**
+  - Nomor antrean harian ringkas **NONAKTIF (OFF)** secara default.
+  - Pemilik toko / manajer dapat mengaktifkannya kapan saja melalui modal **Pengaturan Struk Kasir** (`ReceiptSettingsModal` toggle: `Cetak Nomor Antrean Ringkas (#001)`).
+- **Keterangan Kasir & Register di Struk:**
+  Nama kasir (`cashierName`) dan register laci kasir dicetak jelas di blok metadata struk belanja tepat di bawah nomor nota dan tanggal transaksi.
+
+
 
 
 
