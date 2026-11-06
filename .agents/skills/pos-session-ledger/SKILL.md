@@ -817,6 +817,10 @@ Mengatasi paradoks tombol dan meminimalkan beban kognitif kasir (*Hick-Hyman Law
 3. **Pintasan Keyboard Terpadu:**
    - Tombol `Enter`: otomatis mencetak struk jika belum dicetak; otomatis membuka transaksi baru jika struk sudah dicetak.
    - Tombol `Escape`: langsung membuka transaksi baru.
+4. **Stabilitas State `hasPrinted` (Anti-Reset):**
+   - `useEffect` inisialisasi layar sukses (baca setting, reset `hasPrinted`, Auto-Print) **WAJIB** hanya bergantung pada `[isOpen, receipt]`. **DILARANG** memasukkan `handlePrint` (atau state yang berubah saat mencetak seperti `isPrinting`) ke dependency, karena setiap selesai cetak identitas `handlePrint` berubah → effect jalan ulang → `hasPrinted` ter-reset ke `false` (tombol kembali menjadi "Cetak Struk") dan Auto-Print tercetak berulang.
+   - Panggil `handlePrint` via `handlePrintRef.current`, gunakan `isPrintingRef` sebagai guard sinkronus, dan `autoPrintedReceiptRef` agar Auto-Print hanya terjadi **sekali per struk**.
+   - Jika `print()` mengembalikan `needsBluetoothReconnect: true`, tampilkan tombol **"🔄 Sambungkan Ulang Printer & Cetak"** (gesture eksplisit kasir → `requestAndConnectBluetoothPrinter()` → cetak).
 
 ### 19.6 Session Storage Snapshot & Transient State Recovery
 - Setiap kali transaksi berhasil diselesaikan, ringkasan transaksi disimpan ke `sessionStorage`:

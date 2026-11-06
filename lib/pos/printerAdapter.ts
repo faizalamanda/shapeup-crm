@@ -67,6 +67,12 @@ export interface ReceiptData {
 export interface PrintResult {
   success: boolean
   message?: string
+  /**
+   * Set when a previously paired Bluetooth printer could not be reached silently.
+   * UI should offer an explicit "Sambungkan Ulang" button (fresh user gesture)
+   * instead of auto-opening the device chooser.
+   */
+  needsBluetoothReconnect?: boolean
 }
 
 export interface PrinterStatus {
@@ -632,6 +638,28 @@ export function getActiveBluetoothDeviceId(): string | null {
   return localStorage.getItem('shapeup_pos_bt_id') || (activeBluetoothDevice?.id ?? null)
 }
 
+/** Devices that already have our 'gattserverdisconnected' listener attached (prevents listener leaks). */
+const devicesWithDisconnectListener = new WeakSet<object>()
+
+const GATT_CONNECT_TIMEOUT_MS = 8000
+const ADVERTISEMENT_WAIT_MS = 5000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timeout`)), ms)
+    promise.then(
+      (val) => {
+        clearTimeout(timer)
+        resolve(val)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      }
+    )
+  })
+}
+
 /**
  * Connects to device GATT and locates the first writable characteristic.
  */
@@ -640,7 +668,7 @@ async function connectGattAndFindWriteChar(device: any): Promise<any> {
 
   let server = device.gatt
   if (!server.connected) {
-    server = await device.gatt.connect()
+    server = await withTimeout(device.gatt.connect(), GATT_CONNECT_TIMEOUT_MS, 'GATT connect')
   }
 
   const services = await server.getPrimaryServices()
@@ -661,11 +689,13 @@ async function connectGattAndFindWriteChar(device: any): Promise<any> {
     if (writeChar) break
   }
 
-  if (writeChar) {
-    device.onadvertisementreceived = null
-    // Listen for disconnection to reset active write characteristic
+  if (writeChar && !devicesWithDisconnectListener.has(device)) {
+    devicesWithDisconnectListener.add(device)
+    // Listen for disconnection to reset active write characteristic (attached once per device)
     device.addEventListener('gattserverdisconnected', () => {
-      activeWriteCharacteristic = null
+      if (activeBluetoothDevice === device) {
+        activeWriteCharacteristic = null
+      }
     })
   }
 
@@ -673,8 +703,84 @@ async function connectGattAndFindWriteChar(device: any): Promise<any> {
 }
 
 /**
- * Attempts silent reconnection using getDevices() or existing device in memory.
- * Falls back to interactive requestDevice() only if interactive is true.
+ * Waits until the (previously permitted) device broadcasts a BLE advertisement.
+ *
+ * After a page reload / PWA restart, a BluetoothDevice returned by getDevices()
+ * is not considered "in range" by Chrome until an advertisement has been observed.
+ * Calling gatt.connect() before that typically fails, which previously caused
+ * the app to fall back to the pairing chooser. Returns true if an advertisement
+ * was received (or the API is unavailable and we should just try connecting).
+ */
+async function waitForAdvertisement(device: any, timeoutMs = ADVERTISEMENT_WAIT_MS): Promise<boolean> {
+  if (!device || typeof device.watchAdvertisements !== 'function') {
+    return true
+  }
+
+  const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false
+    const finish = (received: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      device.removeEventListener('advertisementreceived', onAdvertisement)
+      try {
+        abortController?.abort()
+      } catch {
+        // ignore
+      }
+      resolve(received)
+    }
+    const onAdvertisement = () => finish(true)
+    const timer = setTimeout(() => finish(false), timeoutMs)
+
+    device.addEventListener('advertisementreceived', onAdvertisement)
+    Promise.resolve(
+      abortController
+        ? device.watchAdvertisements({ signal: abortController.signal })
+        : device.watchAdvertisements()
+    ).catch((err: unknown) => {
+      console.warn('watchAdvertisements failed:', err)
+      // Still allow a direct connect attempt
+      finish(true)
+    })
+  })
+}
+
+/**
+ * Connects a known (already permitted) device:
+ * 1) direct GATT connect (fast path when the printer is awake & cached),
+ * 2) otherwise wait for an advertisement (printer waking from sleep / after reload) and retry.
+ */
+async function connectKnownDevice(device: any): Promise<any> {
+  try {
+    const writeChar = await connectGattAndFindWriteChar(device)
+    if (writeChar) return writeChar
+  } catch (e) {
+    console.warn('Direct GATT connect failed, waiting for advertisement:', e)
+  }
+
+  const seen = await waitForAdvertisement(device)
+  if (!seen) return null
+
+  try {
+    return await connectGattAndFindWriteChar(device)
+  } catch (e) {
+    console.warn('GATT connect after advertisement failed:', e)
+    return null
+  }
+}
+
+/** True if a Bluetooth printer was paired before on this device/browser. */
+export function hasPairedBluetoothPrinter(): boolean {
+  return Boolean(getActiveBluetoothDeviceId() || getActiveBluetoothDeviceName())
+}
+
+/**
+ * Attempts silent reconnection using the in-memory device or getDevices().
+ * Falls back to interactive requestDevice() only if interactive is true
+ * AND the printer has never been paired (per AGENTS.md "Zero Prompt" rule).
  */
 export async function ensureBluetoothPrinterConnection(interactive = true): Promise<{ success: boolean; deviceName?: string; error?: string }> {
   if (!isWebBluetoothSupported()) {
@@ -686,16 +792,12 @@ export async function ensureBluetoothPrinterConnection(interactive = true): Prom
     return { success: true, deviceName: activeBluetoothDevice.name || 'Bluetooth Printer' }
   }
 
-  // 2. Try reconnecting existing in-memory device if GATT dropped
+  // 2. Try reconnecting existing in-memory device if GATT dropped (e.g. printer idle sleep)
   if (activeBluetoothDevice?.gatt) {
-    try {
-      const writeChar = await connectGattAndFindWriteChar(activeBluetoothDevice)
-      if (writeChar) {
-        activeWriteCharacteristic = writeChar
-        return { success: true, deviceName: activeBluetoothDevice.name || 'Bluetooth Printer' }
-      }
-    } catch (e) {
-      console.warn('Reconnecting in-memory bluetooth device failed, trying getDevices:', e)
+    const writeChar = await connectKnownDevice(activeBluetoothDevice)
+    if (writeChar) {
+      activeWriteCharacteristic = writeChar
+      return { success: true, deviceName: activeBluetoothDevice.name || 'Bluetooth Printer' }
     }
   }
 
@@ -718,7 +820,7 @@ export async function ensureBluetoothPrinterConnection(interactive = true): Prom
         }
 
         if (matchedDevice) {
-          const writeChar = await connectGattAndFindWriteChar(matchedDevice)
+          const writeChar = await connectKnownDevice(matchedDevice)
           if (writeChar) {
             activeBluetoothDevice = matchedDevice
             activeWriteCharacteristic = writeChar
@@ -736,14 +838,27 @@ export async function ensureBluetoothPrinterConnection(interactive = true): Prom
     }
   }
 
-  // 4. If silent reconnection could not resolve and interactive is allowed, prompt user
-  if (interactive) {
+  // 4. Prompt only if allowed AND the printer has never been paired before
+  if (interactive && !hasPairedBluetoothPrinter()) {
     return requestAndConnectBluetoothPrinter()
   }
 
-  return { 
-    success: false, 
-    error: 'Printer Bluetooth belum terhubung. Pastikan printer dalam keadaan menyala dan dekat dengan perangkat.' 
+  return {
+    success: false,
+    error: 'Printer Bluetooth belum terhubung. Pastikan printer menyala dan dekat dengan tablet, lalu tekan "Sambungkan Ulang Printer".'
+  }
+}
+
+/**
+ * Warm-up: silently reconnect a previously paired printer in the background
+ * (e.g. when the POS page opens) so the first print is instant. Never prompts.
+ */
+export async function warmUpBluetoothPrinter(): Promise<void> {
+  if (typeof window === 'undefined' || !isWebBluetoothSupported() || !hasPairedBluetoothPrinter()) return
+  try {
+    await ensureBluetoothPrinterConnection(false)
+  } catch {
+    // Silent by design
   }
 }
 
@@ -917,32 +1032,41 @@ export class WebBluetoothPrinterAdapter implements PrinterAdapter {
   async print(receipt: ReceiptData, paperSize?: PaperSize): Promise<PrintResult> {
     const effectiveSize = paperSize || receipt.paperSize || '58mm'
 
-    // If Web Bluetooth is not supported in the browser, fallback safely to iframe print
+    // Zero Silent Fallback: never divert to the OS print dialog when Bluetooth is selected
     if (!isWebBluetoothSupported()) {
-      return printReceiptViaIframe(receipt, effectiveSize)
+      return {
+        success: false,
+        message: 'Web Bluetooth tidak didukung pada peramban ini. Gunakan Chrome pada Android/Komputer atau ganti koneksi ke Printer Sistem.'
+      }
     }
 
     try {
-      // 1. First attempt silent reconnection via getDevices() / in-memory GATT
-      let connRes = await ensureBluetoothPrinterConnection(false)
+      const hasPairedBefore = hasPairedBluetoothPrinter()
 
-      // 2. If silent reconnect failed, check if device was ever paired
-      const hasPairedBefore = Boolean(getActiveBluetoothDeviceId() || getActiveBluetoothDeviceName())
-      if (!connRes.success && hasPairedBefore) {
-        // Quick retry (e.g. printer waking up from BLE power-save sleep)
-        await new Promise((r) => setTimeout(r, 400))
-        connRes = await ensureBluetoothPrinterConnection(false)
-      }
+      if (!hasPairedBefore) {
+        // Never paired: open the chooser immediately while the click gesture is still fresh
+        const pairRes = await requestAndConnectBluetoothPrinter()
+        if (!pairRes.success || !activeWriteCharacteristic) {
+          return {
+            success: false,
+            message: pairRes.error || 'Printer Bluetooth belum dipasangkan.'
+          }
+        }
+      } else {
+        // Paired before: silent reconnect only (in-memory GATT → getDevices + watchAdvertisements). Zero prompt.
+        let connRes = await ensureBluetoothPrinterConnection(false)
+        if (!connRes.success || !activeWriteCharacteristic) {
+          // One more wake-up attempt for thermal printers in BLE idle sleep
+          await new Promise((r) => setTimeout(r, 400))
+          connRes = await ensureBluetoothPrinterConnection(false)
+        }
 
-      // 3. If still not connected and either never paired or silent wake-up failed, prompt interactive connection
-      if (!connRes.success || !activeWriteCharacteristic) {
-        connRes = await ensureBluetoothPrinterConnection(true)
-      }
-
-      if (!connRes.success || !activeWriteCharacteristic) {
-        return {
-          success: false,
-          message: connRes.error || 'Printer Bluetooth tidak terhubung. Pastikan printer menyala dan berada dalam jangkauan.'
+        if (!connRes.success || !activeWriteCharacteristic) {
+          return {
+            success: false,
+            needsBluetoothReconnect: true,
+            message: connRes.error || 'Printer Bluetooth tidak terhubung. Pastikan printer menyala dan berada dalam jangkauan.'
+          }
         }
       }
 
@@ -966,6 +1090,7 @@ export class WebBluetoothPrinterAdapter implements PrinterAdapter {
       console.warn('Web Bluetooth print error:', err)
       return {
         success: false,
+        needsBluetoothReconnect: hasPairedBluetoothPrinter(),
         message: 'Gagal mencetak via Bluetooth: ' + (err.message || 'Koneksi terputus')
       }
     }

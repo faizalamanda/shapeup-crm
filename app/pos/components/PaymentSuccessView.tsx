@@ -1,13 +1,15 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ReceiptData,
   getPrinterAdapter,
   PaperSize,
   ConnectionType,
-  generateReceiptHtml
+  generateReceiptHtml,
+  requestAndConnectBluetoothPrinter,
+  warmUpBluetoothPrinter
 } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from '@/lib/pos/receiptSettings'
 import { supabase } from '@/lib/supabase'
@@ -54,12 +56,22 @@ export default function PaymentSuccessView({
   const [isVoiding, setIsVoiding] = useState(false)
   const [printMessage, setPrintMessage] = useState<string | null>(null)
   const [showThermalPreview, setShowThermalPreview] = useState(false)
+  const [needsBtReconnect, setNeedsBtReconnect] = useState(false)
+  const [isReconnectingBt, setIsReconnectingBt] = useState(false)
+
+  // Synchronous guards (state updates are async and must not re-trigger effects)
+  const isPrintingRef = useRef(false)
+  const autoPrintedReceiptRef = useRef<ReceiptData | null>(null)
 
   // 1. Kiosk Armor: Handle Mobile/Browser Back Button without kicking user to /onboarding
   useModalBackHandler(isOpen, onClose)
 
   useEffect(() => {
     setMounted(true)
+    // Silently reconnect a previously paired Bluetooth printer when POS opens (never prompts)
+    if (getStoredReceiptSettings().connectionType === 'bluetooth') {
+      void warmUpBluetoothPrinter()
+    }
   }, [])
 
   // 2. Persist Last Completed Order Snapshot for State Resilience
@@ -92,9 +104,11 @@ export default function PaymentSuccessView({
   // Handle Print Action
   const handlePrint = useCallback(
     async (overrideConn?: ConnectionType, overrideSize?: PaperSize) => {
-      if (!receipt || isPrinting) return
+      if (!receipt || isPrintingRef.current) return
+      isPrintingRef.current = true
       setIsPrinting(true)
       setPrintMessage(null)
+      setNeedsBtReconnect(false)
       const effectiveConn = overrideConn || connectionType
       const effectiveSize = overrideSize || paperSize
 
@@ -105,19 +119,48 @@ export default function PaymentSuccessView({
           setHasPrinted(true)
           setPrintMessage(res.message || '✓ Struk berhasil dicetak.')
         } else {
+          setNeedsBtReconnect(Boolean(res.needsBluetoothReconnect))
           setPrintMessage(res.message || '⚠️ Gagal mencetak struk.')
         }
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err)
         setPrintMessage('Terjadi kesalahan pencetakan: ' + errorMsg)
       } finally {
+        isPrintingRef.current = false
         setIsPrinting(false)
       }
     },
-    [receipt, isPrinting, connectionType, paperSize]
+    [receipt, connectionType, paperSize]
   )
 
-  // Initial Load: Printer Settings & Optional Auto-print
+  // Latest handlePrint for effects that must NOT re-run when handlePrint identity changes
+  const handlePrintRef = useRef(handlePrint)
+  useEffect(() => {
+    handlePrintRef.current = handlePrint
+  }, [handlePrint])
+
+  // Explicit reconnect (fresh user gesture → device chooser allowed), then print immediately
+  const handleReconnectBluetooth = async () => {
+    if (isReconnectingBt) return
+    setIsReconnectingBt(true)
+    try {
+      // requestDevice() must be the first await to keep the click's user activation
+      const res = await requestAndConnectBluetoothPrinter()
+      if (res.success) {
+        setNeedsBtReconnect(false)
+        setConnectionType('bluetooth')
+        await handlePrint('bluetooth')
+      } else {
+        setPrintMessage(res.error || '⚠️ Gagal menyambungkan printer Bluetooth.')
+      }
+    } finally {
+      setIsReconnectingBt(false)
+    }
+  }
+
+  // Initial Load: Printer Settings & Optional Auto-print.
+  // Depends ONLY on [isOpen, receipt] so finishing a print never resets hasPrinted
+  // or triggers another auto-print (see skill pos-session-ledger §19.5).
   useEffect(() => {
     if (isOpen && receipt) {
       const settings = getStoredReceiptSettings(receipt.businessName)
@@ -126,12 +169,14 @@ export default function PaymentSuccessView({
       setPrintMessage(null)
       setShowThermalPreview(false)
       setHasPrinted(false)
+      setNeedsBtReconnect(false)
 
-      if (settings.autoPrintAfterPayment) {
-        handlePrint(settings.connectionType, settings.paperSize)
+      if (settings.autoPrintAfterPayment && autoPrintedReceiptRef.current !== receipt) {
+        autoPrintedReceiptRef.current = receipt
+        handlePrintRef.current(settings.connectionType, settings.paperSize)
       }
     }
-  }, [isOpen, receipt, handlePrint])
+  }, [isOpen, receipt])
 
   // Void Handler (Immediate reversal with confirmation)
   const handleVoid = async () => {
@@ -335,6 +380,18 @@ export default function PaymentSuccessView({
           >
             <span>{printMessage}</span>
           </div>
+        )}
+
+        {needsBtReconnect && !hasPrinted && (
+          <button
+            type="button"
+            onClick={handleReconnectBluetooth}
+            disabled={isReconnectingBt || isPrinting}
+            className="mt-2 w-full py-3 rounded-xl border border-blue-300 bg-blue-50 hover:bg-blue-100 text-blue-800 font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
+            title="Pilih ulang printer Bluetooth lalu cetak struk"
+          >
+            {isReconnectingBt ? 'Menyambungkan...' : '🔄 Sambungkan Ulang Printer & Cetak'}
+          </button>
         )}
 
         {/* Toggle & Drawer Pratinjau Kertas Thermal */}
