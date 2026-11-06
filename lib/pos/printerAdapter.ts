@@ -35,6 +35,7 @@ export interface ReceiptData {
   businessAddress?: string
   businessPhone?: string
   orderNumber: string
+  orderNumberLabel?: string
   date: string
   cashierName: string
   customerName?: string
@@ -296,7 +297,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
         <span>${escapeHtml(receipt.returnNumber)}</span>
       </div>` : ''}
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-        <span>${receipt.returnNumber ? 'Nota Asal:' : 'No. Invoice:'}</span>
+        <span>${receipt.orderNumberLabel || (receipt.returnNumber ? 'Nota Asal:' : 'No. Invoice:')}</span>
         <span>${escapeHtml(receipt.originalOrderNumber || receipt.orderNumber)}</span>
       </div>
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
@@ -347,7 +348,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
     <!-- Detail Pembayaran & Piutang -->
     <div style="margin: 4px 0;">
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-        <span>Metode Bayar:</span>
+        <span>${receipt.paymentStatus === 'unpaid' ? 'Status Transaksi:' : 'Metode Bayar:'}</span>
         <span style="text-transform: uppercase;">${escapeHtml(receipt.paymentMethod)}</span>
       </div>
       ${cashDetailsHtml}
@@ -470,9 +471,17 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize?: PaperSiz
   // Divider
   writeText(divider + '\n')
 
+  if (receipt.receiptTitle) {
+    writeRaw(0x1B, 0x61, 0x01) // Center
+    writeText(receipt.receiptTitle.toUpperCase() + '\n')
+    writeText(divider + '\n')
+    writeRaw(0x1B, 0x61, 0x00) // Left
+  }
+
   // 3. Metadata (Left align)
   writeRaw(0x1B, 0x61, 0x00) // Left
-  writeText(padColumns('No. Invoice:', receipt.orderNumber))
+  const invoiceLabel = receipt.orderNumberLabel || (receipt.returnNumber ? 'No. Retur:' : 'No. Invoice:')
+  writeText(padColumns(invoiceLabel, receipt.originalOrderNumber || receipt.orderNumber))
   writeText(padColumns('Tanggal:', receipt.date))
   writeText(padColumns('Kasir:', receipt.cashierName))
   if (receipt.customerName) {
@@ -520,7 +529,8 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize?: PaperSiz
   writeText(divider + '\n')
 
   // 6. Payment details
-  writeText(padColumns('Metode Bayar:', (receipt.paymentMethod || 'TUNAI').toUpperCase()))
+  const paymentMethodLabel = receipt.paymentStatus === 'unpaid' ? 'Status Transaksi:' : 'Metode Bayar:'
+  writeText(padColumns(paymentMethodLabel, (receipt.paymentMethod || 'TUNAI').toUpperCase()))
   if (receipt.cashReceived !== undefined && receipt.cashReceived > 0) {
     writeText(padColumns('Bayar Tunai:', receipt.cashReceived.toLocaleString('id-ID')))
     writeText(padColumns('Kembalian:', (receipt.changeAmount || 0).toLocaleString('id-ID')))

@@ -300,3 +300,131 @@ export function buildReturnReceiptData(
   }
 }
 
+/**
+ * Builds dedicated ReceiptData for a Held Order (Bill Sementara / Pre-bill).
+ */
+export function buildHoldOrderReceiptData(
+  heldOrder: any,
+  options: ReceiptBuildOptions = {}
+): ReceiptData {
+  const businessName = options.businessName || 'ShapeUp Store'
+  const settings = options.settings || getStoredReceiptSettings(businessName)
+  const timezone = options.timezone || DEFAULT_TIMEZONE
+
+  // Extract raw items from cart_json
+  let rawItems: any[] = []
+  if (Array.isArray(heldOrder.cart_json)) {
+    rawItems = heldOrder.cart_json
+  } else if (typeof heldOrder.cart_json === 'string') {
+    try {
+      const parsed = JSON.parse(heldOrder.cart_json)
+      if (Array.isArray(parsed)) rawItems = parsed
+    } catch {
+      rawItems = []
+    }
+  }
+
+  const receiptItems: ReceiptItem[] = rawItems.map((item: any) => {
+    const qty = Number(item.quantity || item.qty || 1)
+    const price = Number(item.price || item.finalPrice || 0)
+    const subtotal = Number(item.subtotal || item.total || (price * qty))
+
+    const rawName = item.name || item.product_name || item.product?.name || 'Produk'
+    const variantStr = (item.variant || item.variant_name || item.selectedVariant?.name || '').trim()
+
+    const displayName = (variantStr && !rawName.toLowerCase().includes(variantStr.toLowerCase()))
+      ? `${rawName} - ${variantStr}`
+      : rawName
+
+    return {
+      name: displayName,
+      quantity: qty,
+      price: price,
+      subtotal: subtotal,
+      discount: Number(item.discount || 0),
+      note: item.note || item.item_note || undefined
+    }
+  })
+
+  const calculatedSubtotal = receiptItems.reduce((acc, it) => acc + (it.subtotal || 0), 0)
+  const grandTotal = Number(heldOrder.grand_total ?? calculatedSubtotal)
+  const discountTotal = Math.max(0, calculatedSubtotal - grandTotal)
+  const shortId = (heldOrder.id || '').slice(0, 6).toUpperCase()
+
+  return {
+    businessName: settings.storeName || businessName,
+    businessAddress: settings.address || undefined,
+    businessPhone: settings.phone || undefined,
+    receiptTitle: 'BILL SEMENTARA (PRE-BILL)',
+    orderNumber: `#HLD-${shortId}`,
+    orderNumberLabel: 'No. Nota Hold:',
+    date: formatDisplayDate(heldOrder.created_at || new Date(), 'receipt', timezone),
+    cashierName: options.cashierName || 'Kasir',
+    customerName: heldOrder.customer_name || 'Pelanggan Walk-in',
+    showItemNumbering: true,
+    items: receiptItems,
+    subtotal: calculatedSubtotal,
+    discountTotal: discountTotal,
+    taxTotal: 0,
+    grandTotal: grandTotal,
+    paymentMethod: 'Belum Dibayar (Draft)',
+    paymentStatus: 'unpaid',
+    orderNote: heldOrder.note ? String(heldOrder.note).trim() : undefined,
+    note: '* INI BUKAN BUKTI PEMBAYARAN SAH *\nSilakan bawa nota ini ke kasir untuk menyelesaikan pembayaran.',
+    paperSize: options.paperSize || settings.paperSize || '58mm'
+  }
+}
+
+/**
+ * Builds dedicated ReceiptData for a Batch Summary of all Held Orders (Rekap Pesanan Ditahan).
+ */
+export function buildHeldOrdersSummaryReceiptData(
+  heldOrders: any[],
+  options: ReceiptBuildOptions = {}
+): ReceiptData {
+  const businessName = options.businessName || 'ShapeUp Store'
+  const settings = options.settings || getStoredReceiptSettings(businessName)
+  const timezone = options.timezone || DEFAULT_TIMEZONE
+
+  const totalHeldCount = heldOrders.length
+  const totalAmount = heldOrders.reduce((sum, h) => sum + Number(h.grand_total || 0), 0)
+
+  const items: ReceiptItem[] = heldOrders.map((h: any) => {
+    const shortId = `#HLD-${(h.id || '').slice(0, 6).toUpperCase()}`
+    const cust = h.customer_name || 'Walk-in'
+    const itemCount = h.total_items || (Array.isArray(h.cart_json) ? h.cart_json.length : 1)
+    const timeStr = formatDisplayDate(h.created_at, 'time', timezone)
+    const noteStr = h.note ? ` | Note: ${h.note}` : ''
+
+    return {
+      name: `${shortId} - ${cust}`,
+      variant: `${timeStr} (${itemCount} item)${noteStr}`,
+      quantity: 1,
+      price: Number(h.grand_total || 0),
+      subtotal: Number(h.grand_total || 0)
+    }
+  })
+
+  return {
+    businessName: settings.storeName || businessName,
+    businessAddress: settings.address || undefined,
+    businessPhone: settings.phone || undefined,
+    receiptTitle: 'DAFTAR TRANSAKSI DITAHAN (REKAP)',
+    orderNumber: `REKAP-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`,
+    orderNumberLabel: 'No. Rekap:',
+    date: formatDisplayDate(new Date(), 'receipt', timezone),
+    cashierName: options.cashierName || 'Kasir',
+    customerName: `${totalHeldCount} Pesanan Ditahan`,
+    showItemNumbering: true,
+    items: items,
+    subtotal: totalAmount,
+    discountTotal: 0,
+    taxTotal: 0,
+    grandTotal: totalAmount,
+    paymentMethod: 'DRAFT / HOLD',
+    paymentStatus: 'unpaid',
+    note: 'Laporan audit internal kasir.\nHarap periksa dan selesaikan pesanan tertahan sebelum pergantian/penutupan shift.',
+    paperSize: options.paperSize || settings.paperSize || '58mm'
+  }
+}
+

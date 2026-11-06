@@ -19,7 +19,11 @@ import PriceAuthorizationModal, { AuthorizationRecord } from './PriceAuthorizati
 import { PriceGuardSettings, DEFAULT_PRICE_GUARD_SETTINGS } from '@/lib/priceGuard/types'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from './ReceiptSettingsModal'
-import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
+import { 
+  buildReceiptDataFromOrder, 
+  buildHoldOrderReceiptData, 
+  buildHeldOrdersSummaryReceiptData 
+} from '@/lib/pos/receiptDataBuilder'
 import { useUserContext } from '@/components/UserContext'
 import { formatDisplayDate } from '@/lib/timeUtils'
 import { fetchLoyaltySettings } from '@/plugins/loyalty/helpers/loyaltyApi'
@@ -164,6 +168,8 @@ export default function POSWorkspace({
 
   // Receipt & Payment Data
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null)
+  const [previewReceipt, setPreviewReceipt] = useState<ReceiptData | null>(null)
+  const [isPreviewReceiptOpen, setIsPreviewReceiptOpen] = useState(false)
   const [lastCreatedOrderId, setLastCreatedOrderId] = useState<string | null>(null)
   const [checkingOut, setCheckingOut] = useState(false)
   const [loyaltySettings, setLoyaltySettings] = useState<LoyaltySettings | null>(null)
@@ -633,7 +639,7 @@ export default function POSWorkspace({
   }
 
   // Hold & Resume
-  const handleSaveHoldOrder = async () => {
+  const handleSaveHoldOrder = async (shouldPrint = false) => {
     if (cart.length === 0) return
     const currentTargetHoldId = activeHoldId
     try {
@@ -663,6 +669,10 @@ export default function POSWorkspace({
           }
           return [data.heldOrder, ...prev]
         })
+
+        if (shouldPrint) {
+          handlePrintHoldOrder(data.heldOrder)
+        }
       }
       setActiveHoldId(null)
       setCart([])
@@ -674,6 +684,26 @@ export default function POSWorkspace({
       alert(e.message || 'Gagal menahan transaksi.')
     }
   }
+
+  const handlePrintHoldOrder = useCallback((heldOrder: any) => {
+    const rData = buildHoldOrderReceiptData(heldOrder, {
+      businessName: activeBusiness?.name,
+      cashierName: activeShift?.cashier_name || userProfile?.full_name || 'Kasir',
+      timezone: activeBusiness?.timezone
+    })
+    setPreviewReceipt(rData)
+    setIsPreviewReceiptOpen(true)
+  }, [activeBusiness, activeShift, userProfile])
+
+  const handlePrintHeldOrdersSummary = useCallback((orders: any[]) => {
+    const rData = buildHeldOrdersSummaryReceiptData(orders, {
+      businessName: activeBusiness?.name,
+      cashierName: activeShift?.cashier_name || userProfile?.full_name || 'Kasir',
+      timezone: activeBusiness?.timezone
+    })
+    setPreviewReceipt(rData)
+    setIsPreviewReceiptOpen(true)
+  }, [activeBusiness, activeShift, userProfile])
 
   const handleResumeHoldOrder = (h: any) => {
     if (h.cart_json && Array.isArray(h.cart_json)) {
@@ -1837,6 +1867,17 @@ export default function POSWorkspace({
         onResumeCart={handleResumeHoldOrder}
         onDeleteHold={handleDeleteHoldOrder}
         timezone={activeBusiness?.timezone}
+        onPrintHoldOrder={handlePrintHoldOrder}
+        onPrintHeldOrdersSummary={handlePrintHeldOrdersSummary}
+      />
+
+      <ReceiptPreviewModal
+        isOpen={isPreviewReceiptOpen}
+        onClose={() => {
+          setIsPreviewReceiptOpen(false)
+          setPreviewReceipt(null)
+        }}
+        receipt={previewReceipt}
       />
 
       {/* Item Note Modal */}
