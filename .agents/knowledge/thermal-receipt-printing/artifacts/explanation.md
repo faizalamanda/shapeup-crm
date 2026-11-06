@@ -128,4 +128,73 @@ ShapeUp POS menegakkan aturan **Universal Normal Weight** (100% reguler/monoline
 - **Formatting:** Dibungkus dalam kotak bergaris putus-putus (`border: 1px dashed #777; background: #f7f7f7;` pada HTML, atau `Catatan: ${receipt.orderNote}\n` pada ESC/POS).
 - **Tujuan Operasional:** Memungkinkan barista, staf dapur (kitchen display/printer), atau bagian packing melihat instruksi meja/layanan (misal: *"Meja 04 - Bawa pulang"*) seketika saat pertama kali melihat struk.
 
+---
+
+## 7. Web Bluetooth Silent Auto-Reconnect & Zero-Prompt Post-Payment Architecture
+
+### 7.1 Masalah Pemicu (Incident Analysis)
+Pada sistem kasir POS sebelumnya:
+1. Kasir telah menghubungkan printer Bluetooth di modal pengaturan struk (`ReceiptSettingsModal.tsx`).
+2. Namun, objek perangkat Bluetooth hanya disimpan di memori RAM JavaScript modul (`activeBluetoothDevice = device`).
+3. Begitu halaman kasir di-refresh, berpindah rute, atau reload PWA:
+   - Variabel `activeBluetoothDevice` di memori kembali bernilai `null`.
+   - Hanya nama teks yang tersimpan di `localStorage` (`shapeup_pos_bt_name`), sedangkan browser tidak dapat menyambungkan koneksi hanya dari nama teks.
+   - Akibatnya, saat kasir menekan tombol "Cetak Struk" di `PaymentSuccessModal.tsx`, sistem mengeksekusi `(navigator as any).bluetooth.requestDevice()`.
+   - Browser selalu memunculkan pop-up pemilih perangkat (*device chooser prompt*), memaksa kasir **memilih printer Bluetooth lagi di setiap transaksi**.
+4. Terjadi *Race Condition* di `PaymentSuccessModal.tsx`:
+   - State `connectionType` diinisialisasi secara hardcoded ke `'system'`.
+   - Jika kasir mengaktifkan fitur *Auto-Print Setelah Pembayaran*, `handlePrint()` dieksekusi sebelum `useEffect` sempat menyetel state ke `'bluetooth'`.
+   - Akibatnya, modal memanggil `window.print()` bawaan OS/browser dan membuka dialog printer OS (*Destination: Pilih Printer*).
+5. *Silent Fallback Problem*:
+   - Jika printer thermal BLE masuk ke mode hemat daya (*idle sleep*), rekoneksi gagal dan kode lama diam-diam melempar proses cetak ke `printReceiptViaIframe()` (`window.print()`).
+
+### 7.2 Solusi Arsitektur (Zero-Prompt Pipeline)
+
+```
+[Kasir Selesaikan Pembayaran]
+              │
+              ▼
+    PaymentSuccessView (Full-Screen Stage View)
+              │
+              ├── State connectionType diinisialisasi sinkronus dari getStoredReceiptSettings()
+              │   (Zero race condition pada Auto-Print)
+              │
+              ▼
+   WebBluetoothPrinterAdapter.print(receipt, size)
+              │
+              ├── 1. Periksa koneksi aktif memori:
+              │      (activeBluetoothDevice.gatt.connected && activeWriteCharacteristic)
+              │      -> Jika valid, LANGSUNG KIRIM DATA (0ms overhead)
+              │
+              ├── 2. Jika koneksi memori terputus / halaman direfresh:
+              │      Panggil navigator.bluetooth.getDevices() secara senyap (tanpa pop-up).
+              │      Cocokkan dengan device.id (shapeup_pos_bt_id) yang disimpan di localStorage.
+              │
+              ├── 3. Temukan printer yang diizinkan sebelumnya:
+              │      activeBluetoothDevice = targetDevice
+              │      activeBluetoothDevice.gatt.connect()
+              │      Temukan writable characteristic
+              │
+              ├── 4. GATT Sleep Wakeup Handler:
+              │      Jika printer thermal mini sempat idle sleep, lakukan retry 400ms.
+              │
+              ├── 5. Send Chunked ESC/POS Payload:
+              │      Kirim 64 byte per chunk (20ms delay) -> 100% anti buffer overflow.
+              │
+              ▼
+   [Struk Dicetak Seketika (0.2s - 0.5s)]
+   (Tanpa pop-up browser, tanpa dialog OS, tanpa klik ekstra)
+```
+
+### 7.3 Standar Implementasi Wajib
+1. **Penyimpanan ID Perangkat (`shapeup_pos_bt_id`):**
+   Saat pairing awal berhasil di `requestAndConnectBluetoothPrinter()`, simpan `device.id` dan `device.name` ke `localStorage`. Saat kasir memutuskan koneksi, hapus kedua entri tersebut.
+2. **Silent Reconnection First (`ensureBluetoothPrinterConnection(false)`):**
+   Fungsi cetak wajib mendahulukan *silent reconnection* via `getDevices()`. Pop-up `requestDevice()` interaktif hanya boleh dibuka jika perangkat belum pernah dipasangkan sama sekali atau rekoneksi senyap gagal.
+3. **Pemberitahuan Error Eksplisit (No Silent OS Fallback):**
+   Jika printer Bluetooth mati atau kehabisan baterai, dilarang melempar diam-diam ke dialog cetak OS/browser. Tampilkan status merah informatif di layar (*"Printer Bluetooth tidak terhubung..."*).
+4. **Auto-Persist Pengaturan:**
+   Saat kasir berhasil menghubungkan Bluetooth di `ReceiptSettingsModal.tsx`, sistem wajib mengunci `connectionType: 'bluetooth'` ke `localStorage` secara otomatis agar tidak hilang jika kasir keluar tanpa menekan tombol simpan bawah.
+
+
 

@@ -217,8 +217,12 @@
 11. **Isolated & Dual-Mode Thermal Receipt Printing Standard (Zero Screen Clutter & Zero PWA Exit):**
    Pencetakan struk kasir thermal (POS) **DILARANG KERAS** memanggil `window.print()` langsung pada jendela browser utama yang sedang menampilkan modal atau elemen antarmuka layar.
    - **Arsitektur Dual-Mode:** Sistem mendukung dua metode koneksi terpadu melalui `printerAdapter.ts`:
-     - **Direct Web Bluetooth (BLE Instan):** Menggunakan Web Bluetooth API (`navigator.bluetooth`) dan generator biner ESC/POS murni untuk mencetak seketika (0.2s) dari dalam PWA tanpa keluar aplikasi dan tanpa memerlukan aplikasi perantara pihak ketiga (seperti RawBT) sehingga 100% bebas watermark. Dilengkapi auto-fallback ke printer sistem jika koneksi gagal/terputus.
+     - **Direct Web Bluetooth (BLE Instan):** Menggunakan Web Bluetooth API (`navigator.bluetooth`) dan generator biner ESC/POS murni untuk mencetak seketika (0.2s) dari dalam PWA tanpa keluar aplikasi dan tanpa memerlukan aplikasi perantara pihak ketiga (seperti RawBT) sehingga 100% bebas watermark.
+       - **Silent Background Auto-Reconnect (Zero Prompt):** Printer yang sudah pernah dihubungkan **DILARANG KERAS** memunculkan dialog pemilih perangkat (`navigator.bluetooth.requestDevice()`) saat mencetak struk pasca pembayaran. Sistem **WAJIB** menyimpan `device.id` (`shapeup_pos_bt_id`) ke `localStorage` dan menyambungkan kembali secara senyap via `navigator.bluetooth.getDevices()`. Dialog `requestDevice()` hanya boleh dibuka jika printer belum pernah dipasangkan sama sekali atau koneksi senyap gagal.
+       - **Zero Silent Fallback ke Dialog OS:** Jika koneksi Bluetooth gagal (printer mati/baterai habis), sistem **DILARANG KERAS** melempar secara diam-diam ke dialog cetak OS/browser (`window.print()`). Sistem wajib menampilkan pesan error informatif di layar (*"Printer Bluetooth tidak terhubung..."*).
+       - **GATT Sleep Wakeup Handler:** Menyertakan penanganan rekoneksi otomatis dengan jeda singkat (~400ms) untuk mengantisipasi printer thermal mini yang masuk ke mode hemat daya (*idle sleep*).
      - **Printer Sistem (Desktop USB / Fallback Spooler):** Menggunakan modul cetak terisolasi via *Hidden Iframe* (`printReceiptViaIframe()` dari `@/lib/pos/printerAdapter.ts`) dengan `@page { size: ...; margin: 0; }`. Sangat optimal untuk PC kasir dengan kabel USB (mendukung Kiosk Silent Print `--kiosk-printing`).
+   - **Synchronous Connection State Initialization:** Komponen modal cetak kasir (`PaymentSuccessModal.tsx` dan `ReceiptPreviewModal.tsx`) **WAJIB** menginisialisasi state `connectionType` secara sinkronus dari `getStoredReceiptSettings()`. Dilarang menggunakan default hardcoded `'system'` yang memicu *race condition* pada fitur *Auto-Print Setelah Pembayaran*.
    - **Standar Tipografi & Anti-Wrap:**
      - Menggunakan font Clean Modern Sans-Serif (`-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, ...`) menggantikan font monospace/Courier kaku agar hasil cetak tajam, rapat, dan modern.
      - **Dilarang menyertakan awalan `Rp `** pada baris harga item, subtotal, diskon, grand total, bayar, dan kembalian di kertas 58mm/80mm agar nominal harga tidak pernah patah baris (*wrapping*).
@@ -358,6 +362,24 @@
       - Jika kueri *chunked range* mengalami kendala jaringan atau kegagalan skema, sistem otomatis jatuh kembali (*graceful fallback*) ke kueri langsung standar (`limit 1000`).
       - Antarmuka kasir menyediakan tombol pemulihan mandiri **"🔄 Muat Ulang Katalog"** pada keadaan kosong jika terjadi *network drop*.
       - Seluruh pemfilteran string produk wajib menerapkan null-safety ketat: `(p.name || '').toLowerCase()`.
+
+25. **POS Payment Settlement, Full-Screen Completion Stage & Mobile Kiosk Armor Standards:**
+    - **Peralihan dari Modal Ephemeral ke Dedicated Full-Screen Completion Stage (`PaymentSuccessView.tsx`):**
+      Layar sukses pembayaran kasir wajib berupa tampilan *Full-Screen Stage* yang menutup seluruh viewport (`fixed inset-0 z-[1200] bg-slate-950`), bukan sekadar kotak dialog modal pop-up melayang di atas keranjang lama. Ini mengeliminasi *context leak*, *z-index stacking*, dan penutupan tidak sengaja.
+    - **Kiosk Armor Gestur Mobile (`overscroll-behavior: none`):**
+      Seluruh container kerja kasir (`POSWorkspace.tsx` dan `PaymentSuccessView.tsx`) **WAJIB** menyertakan CSS `overscroll-behavior: none` dan `touch-action: pan-y`. Dilarang membiarkan gestur tarik ke bawah (*pull-down*) memicu *pull-to-refresh* bawaan browser Android/iOS yang menghancurkan in-memory state kasir.
+    - **Intersep Tombol Back Mobile (Anti-Onboarding Redirection):**
+      Komponen `PaymentSuccessView` **WAJIB** mendaftarkan diri ke `useModalBackHandler(isOpen, onClose)`. Ketika kasir menekan tombol *Back* fisik perangkat, swipe-back, atau tombol kembali browser, sistem wajib mencegat event tersebut agar kasir menutup layar sukses dan kembali ke kasir bersih (transaksi baru), **DILARANG KERAS** membiarkan sinyal lolos ke `useMobileBackToHome()` yang melempar kasir keluar ke `/onboarding`.
+    - **Dynamic Post-Print Action Switcher (Hick-Hyman Law Ergonomics):**
+      - Sebelum struk dicetak: Tombol aksi menampilkan `[ Void ]`, `[ Lewati Struk ]`, dan `[ 🖨️ Cetak Struk (Enter) ]` (warna biru cerah).
+      - Segera setelah struk sukses dicetak (`hasPrinted = true`): Tombol aksi bertransformasi menjadi `[ Void ]`, `[ 🖨️ Cetak Ulang ]`, dan tombol dominan utama **`[ + Transaksi Baru (Enter ↵) ]`** (warna hijau emerald cerah dengan ukuran paling besar).
+      - Dilarang mempertahankan label ambigu `"Tanpa Struk"` setelah struk fisik tercetak.
+    - **Pintasan Keyboard Ergonomis:**
+      - Tekan `Enter` sebelum cetak: Memanggil fungsi cetak struk.
+      - Tekan `Enter` setelah cetak: Membuka transaksi baru.
+      - Tekan `Escape`: Membuka transaksi baru.
+    - **Session Storage Snapshot Resilience:**
+      Data ringkasan transaksi terakhir (`orderNumber`, `grandTotal`, `changeAmount`, `customerName`, `paymentMethod`) disimpan ke `sessionStorage.setItem('su_last_pos_completed_order', ...)` untuk perlindungan state jika browser kasir tertutup secara paksa.
 
 
 

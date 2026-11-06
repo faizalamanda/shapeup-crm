@@ -770,5 +770,67 @@ Mengadopsi pola sukses direktori pelanggan dengan 3 tingkatan penyimpanan:
 - **Optimistic Local Stock:** Sesaat setelah checkout kasir sukses, sistem langsung mengurangi saldo fisik produk dan varian terkait di `posCatalogStore` secara lokal ($0\text{ms}$), sehingga kartu produk langsung menampilkan sisa stok terbaru tanpa menunggu respon server.
 - **Self-Healing Fallback:** Jika kueri *chunked range* mengalami kendala jaringan atau kegagalan skema, sistem secara otomatis mengeksekusi *emergency legacy fallback* (kueri langsung tanpa varian) dan menyajikan tombol **"🔄 Muat Ulang Katalog"** pada antarmuka kasir jika katalog kosong.
 
+---
+
+## 19. POS Payment Settlement, Full-Screen Completion Stage & Mobile Kiosk Armor
+
+Sesuai standar operasional industri (Square POS, Toast, Shopify POS) dan teori rekayasa perangkat lunak *Finite State Machine* (David Harel, 1987), fase akhir checkout kasir di ShapeUp CRM mengadopsi arsitektur **Dedicated Full-Screen Completion Stage** yang menggantikan *modal dialog ephemeral*:
+
+### 19.1 FSM Lifecycle: Transisi State Deterministik
+Alur checkout kasir berpindah secara deterministik antar *Stage View*:
+$$\text{CATALOG / CART} \longrightarrow \text{PAYMENT TENDER} \longrightarrow \text{SETTLEMENT / CHANGE DUE} \longrightarrow \text{NEW SALE}$$
+- Mengeliminasi *context leak* dan *z-index stacking issues* yang sering terjadi saat modal pop-up mengapung di atas halaman keranjang yang sudah di-reset.
+- Menjamin kepemilikan konteks visual 100%: seluruh fokus layar dialokasikan untuk verifikasi uang kembalian dan pencetakan struk.
+
+### 19.2 Dedicated Full-Screen Completion View (`PaymentSuccessView.tsx`)
+- **Hero Centerpiece:** Menampilkan nominal **Uang Kembalian (*Change Due*)** dalam ukuran ekstra besar (`text-6xl` hingga `text-7xl font-mono font-black`) di tengah layar untuk meminimalkan potensi kasir salah menyerahkan uang fisik.
+- **Badge Uang Pas:** Menampilkan badge `✓ Uang Pas / Tidak Ada Kembalian` berwarna hijau jika nominal kembalian bernilai 0.
+- **Rincian Finansial Bersih:** Kartu ringkasan terpusat menampilkan Total Tagihan, Uang Diterima, Metode Pembayaran, dan Nama Pelanggan tanpa distraksi.
+
+### 19.3 Mobile Kiosk Armor (`overscroll-behavior: none`)
+- **Masalah Asal:** Pada perangkat mobile/tablet (Chrome, Safari, WebView), gestur mengusap ke bawah saat berada di posisi paling atas (`scrollTop === 0`) memicu fitur bawaan *Pull-To-Refresh*, me-reload halaman `/pos`, dan menghancurkan seluruh state in-memory kasir.
+- **Solusi Standar:** Kontainer kerja kasir (`POSWorkspace.tsx`) dan layar sukses (`PaymentSuccessView.tsx`) **WAJIB** dikunci dengan properti CSS:
+  ```css
+  overscroll-behavior: none;
+  touch-action: pan-y;
+  ```
+  Gestur usap ke bawah tidak akan pernah memicu *reload* browser sehingga data kembalian dan transaksi aman dari kehilangan state.
+
+### 19.4 Smart Back Interceptor (Anti-Onboarding Redirection)
+- **Masalah Asal:** Root layout `app/layout.tsx` menggunakan `useMobileBackToHome()` yang secara default me-redirect event `popstate` ke `/onboarding`. Jika modal sukses tidak terdaftar di stack, menekan tombol *Back* ponsel atau gestur *swipe-back* melempar kasir keluar dari POS ke onboarding.
+- **Solusi Standar:** Komponen `PaymentSuccessView` **WAJIB** mendaftarkan diri ke `useModalBackHandler(isOpen, onClose)`.
+  - Ketika kasir menekan tombol *Back* fisik perangkat, swipe-back, atau tombol kembali di browser, sinyal `popstate` dicegat secara lokal.
+  - Event langsung mengeksekusi `onClose()` (membuka kasir bersih untuk transaksi baru).
+  - Kasir tidak pernah terlempar keluar dari sistem kasir.
+
+### 19.5 Dynamic Action State Machine (Hick-Hyman Law)
+Mengatasi paradoks tombol dan meminimalkan beban kognitif kasir (*Hick-Hyman Law*):
+1. **Fase 1: Belum Dicetak (`hasPrinted = false`)**
+   - Kiri: `[ Void ]` (pembatalan darurat jika salah ketik).
+   - Tengah: `[ Lewati Struk ]` (untuk pelanggan yang tidak membutuhkan struk fisik).
+   - Kanan: `[ 🖨️ Cetak Struk (Enter) ]` (tombol primer biru menyala).
+2. **Fase 2: Selesai Dicetak (`hasPrinted = true`)**
+   - Kiri: `[ Void ]`.
+   - Tengah: `[ 🖨️ Cetak Ulang ]` (mencetak ulang salinan struk).
+   - Kanan: **`[ + Transaksi Baru (Enter ↵) ]`** (tombol primer hijau emerald raksasa, mengarahkan kasir langsung ke antrean berikutnya).
+3. **Pintasan Keyboard Terpadu:**
+   - Tombol `Enter`: otomatis mencetak struk jika belum dicetak; otomatis membuka transaksi baru jika struk sudah dicetak.
+   - Tombol `Escape`: langsung membuka transaksi baru.
+
+### 19.6 Session Storage Snapshot & Transient State Recovery
+- Setiap kali transaksi berhasil diselesaikan, ringkasan transaksi disimpan ke `sessionStorage`:
+  ```typescript
+  sessionStorage.setItem('su_last_pos_completed_order', JSON.stringify({
+    orderNumber: receipt.orderNumber,
+    grandTotal: receipt.grandTotal,
+    changeAmount: receipt.changeAmount,
+    customerName: receipt.customerName,
+    paymentMethod: receipt.paymentMethod,
+    timestamp: Date.now()
+  }))
+  ```
+- Melindungi data jika browser kasir tertutup secara tidak sengaja oleh pengguna atau sistem operasi Android.
+
+
 
 

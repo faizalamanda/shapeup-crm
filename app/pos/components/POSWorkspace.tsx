@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase'
 import VariantSelectorModal from './VariantSelectorModal'
 import CashPaymentModal, { type PaymentResult } from './CashPaymentModal'
 import ReceiptPreviewModal from './ReceiptPreviewModal'
-import PaymentSuccessModal from './PaymentSuccessModal'
+import PaymentSuccessView from './PaymentSuccessView'
 import ShiftModal from './ShiftModal'
 import HoldModal from './HoldModal'
 import AddCustomerModal from '../../orders/pos/components/AddCustomerModal'
@@ -1234,10 +1234,11 @@ export default function POSWorkspace({
 
   return (
     <div
-      className="h-screen w-full max-w-full flex flex-col bg-slate-100 text-slate-900 overflow-hidden font-sans fixed inset-0"
+      className="h-screen w-full max-w-full flex flex-col bg-slate-100 text-slate-900 overflow-hidden font-sans fixed inset-0 overscroll-none"
       style={{
         paddingLeft: 'env(safe-area-inset-left, 0px)',
         paddingRight: 'env(safe-area-inset-right, 0px)',
+        overscrollBehavior: 'none'
       }}
     >
       {/* Top Navbar Header */}
@@ -1810,7 +1811,7 @@ export default function POSWorkspace({
         onConfirmPayment={handleConfirmCheckout}
       />
 
-      <PaymentSuccessModal
+      <PaymentSuccessView
         isOpen={isReceiptModalOpen}
         onClose={() => setIsReceiptModalOpen(false)}
         receipt={receiptData}
