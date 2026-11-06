@@ -91,3 +91,21 @@ Jika RPC database belum diaplikasikan pada basis data staging/lokal:
 - **Default sistem: `false` (Nonaktif)** sesuai arahan pengguna.
 - Pemilik toko dapat mengaktifkan toggle *"Cetak Nomor Antrean Ringkas (#001)"* di modal `ReceiptSettingsModal` kapan saja.
 
+---
+
+## 6. 0ms Instant Optimistic Action & In-Place Reconciliation Standard
+
+### 6.1 Masalah Jeda Pemrosesan (*Processing Delay*)
+Jika kasir harus menunggu `await fetch('/api/pos/order')` sebelum modal pembayaran tertutup, kasir mengalami jeda 300–800ms (*processing lag*). Pada ritel cepat dan antrean panjang, jeda ini memicu frustrasi dan merusak ergonomi kasir.
+
+### 6.2 Pola 0ms Optimistik
+1. **Pembangkitan Monotonik di Memori (0ms):**
+   Fungsi `getNextOptimisticOrderNumber()` menghitung tanggal lokal `YYYYMMDD` dan menarik counter harian lokal dari `localStorage` (`shapeup_pos_counter_${bId}_${dStr}`).
+2. **Eksekusi Seketika (0ms):**
+   Modal bayar langsung ditutup, keranjang dikosongkan, dan struk belanja langsung dibuka seketika dalam **0 milidetik**.
+3. **Sinkronisasi Latar Belakang & Rekonsiliasi In-Place:**
+   `fetch('/api/pos/order')` berjalan di latar belakang (*fire-and-forget*). Ketika respons server tiba, `setReceiptData` merekonsiliasi nomor nota secara mulus *in-place* tanpa kedipan (*zero flicker*).
+4. **Pre-Warming Spekulatif:**
+   Saat `POSWorkspace` pertama kali dibuka, kueri non-blocking mengambil nomor nota tertinggi hari ini untuk mem-prewarm `localStorage` sebelum kasir melakukan checkout pertama.
+
+

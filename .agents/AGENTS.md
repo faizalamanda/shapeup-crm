@@ -397,6 +397,12 @@
     - **Resilient Fallback & Backward Compatibility:**
       - Endpoint API POS (`/api/pos/order`) secara otomatis mendeteksi dan mengonversi format acak lawas (`POS-\d{8}`) ke nomor urut terpadu, serta menyimpan referensi asli di `raw_source_data.legacy_order_number`.
       - Modul `orderNumberHelper.ts` menyertakan *resilient query fallback* otomatis jika database remote belum mengaplikasikan migrasi RPC, sehingga sistem bebas dari risiko *crash* (Zero Downtime).
+    - **0ms Instant Optimistic Action (Zero Checkout Delay):**
+      - Kasir **DILARANG KERAS** diblokir oleh `await fetch('/api/pos/order')` yang menimbulkan jeda pemrosesan 300–800ms.
+      - Antarmuka kasir `POSWorkspace.tsx` menghasilkan nomor optimistik tanggal hari ini (`POS-YYYYMMDD-XXXX`) seketika di memori melalui `getNextOptimisticOrderNumber()`.
+      - Modal pembayaran langsung ditutup dan struk belanja langsung ditampilkan dalam **0 milidetik** (*Reality First*).
+      - Sinkronisasi server berjalan di latar belakang (*fire-and-forget*); response server merekonsiliasi nomor nota secara mulus *in-place* tanpa kedipan (*zero flicker*).
+
 
 
 

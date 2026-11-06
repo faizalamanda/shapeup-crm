@@ -15,6 +15,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { getBusinessTimezone } from '@/lib/localzone'
 
 export interface PosOrderNumberResult {
   orderNumber: string
@@ -33,7 +34,7 @@ export async function generatePosOrderNumber(
     prefix?: string
   }
 ): Promise<PosOrderNumberResult> {
-  const timezone = options?.timezone || 'Asia/Jakarta'
+  const timezone = getBusinessTimezone(options?.timezone)
   const prefix = (options?.prefix || 'POS').trim()
 
   // 1. Try atomic database RPC (Primary Path: 100% Race-Condition Safe)

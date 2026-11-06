@@ -878,6 +878,17 @@ $$\text{POS}-\text{YYYYMMDD}-\text{XXXX}$$
 - **Keterangan Kasir & Register di Struk:**
   Nama kasir (`cashierName`) dan register laci kasir dicetak jelas di blok metadata struk belanja tepat di bawah nomor nota dan tanggal transaksi.
 
+### 20.4 0ms Instant Optimistic Action with Background Reconciliation (Zero Checkout Delay)
+- **Zero-Blocking Policy:** Kasir **DILARANG KERAS** diblokir oleh `await fetch('/api/pos/order')` saat menekan tombol *"Bayar"* yang menimbulkan jeda (*processing delay* 300–800ms).
+- **Client-Side Optimistic Date-Based Generator (0ms):**
+  - Klien menghasilkan nomor nota optimistik tanggal hari ini (`POS-YYYYMMDD-XXXX`) seketika di memori via `getNextOptimisticOrderNumber()`.
+  - Keranjang kasir langsung di-reset, modal pembayaran ditutup, dan struk belanja langsung ditampilkan seketika dalam **0 milidetik**.
+- **Background Sync & In-Place Seamless Reconciliation:**
+  - Permintaan ke server dieksekusi di latar belakang (*fire-and-forget*).
+  - Ketika response server tiba, `setLastCreatedOrderId` dan `setReceiptData` merekonsiliasi nomor nota secara mulus *in-place* tanpa kedipan (*zero flicker*).
+- **Speculative Counter Pre-Warming:** Saat `POSWorkspace` dimuat, sistem secara otomatis mem-prewarm nilai counter tertinggi hari ini dari Supabase ke `localStorage` di latar belakang secara *non-blocking*.
+
+
 
 
 

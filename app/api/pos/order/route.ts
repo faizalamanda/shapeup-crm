@@ -2,6 +2,7 @@ import { getApiContext } from '@/lib/apiContext'
 import { resolveGuestCustomerId } from '@/lib/guestCustomer'
 import { syncOrderToLedger } from '@/lib/orderLedger'
 import { generatePosOrderNumber } from '@/lib/pos/orderNumberHelper'
+import { getBusinessTimezone } from '@/lib/localzone'
 import { getPriceGuardSettings } from '@/lib/priceGuard/settings'
 import { evaluatePriceFloor } from '@/lib/priceGuard/resolvePriceFloor'
 import { NextResponse } from 'next/server'
@@ -205,26 +206,20 @@ export async function POST(req: Request) {
         ? 'paid' 
         : (totalPaid > 0 ? 'partial' : 'unpaid')
 
-    // 6. Generate Atomic Sequential Order Number & Queue Number
-    let orderNumber = clientOrderNumber
-    let queueNumber = 1
+    // 6. Generate Authoritative Atomic Sequential Order Number & Queue Number
+    const { data: bizData } = await (supabaseAdmin || supabase)
+      .from('businesses')
+      .select('timezone')
+      .eq('id', businessId)
+      .maybeSingle()
+    const businessTimezone = getBusinessTimezone(bizData?.timezone)
 
-    const isLegacyRandom = typeof clientOrderNumber === 'string' && /^POS-\d{8}$/.test(clientOrderNumber)
-    if (!orderNumber || isLegacyRandom) {
-      const { data: bizData } = await (supabaseAdmin || supabase)
-        .from('businesses')
-        .select('timezone')
-        .eq('id', businessId)
-        .maybeSingle()
-      const businessTimezone = bizData?.timezone || 'Asia/Jakarta'
-
-      const gen = await generatePosOrderNumber(businessId, supabaseAdmin || supabase, {
-        timezone: businessTimezone,
-        prefix: 'POS'
-      })
-      orderNumber = gen.orderNumber
-      queueNumber = gen.queueNumber
-    }
+    const gen = await generatePosOrderNumber(businessId, supabaseAdmin || supabase, {
+      timezone: businessTimezone,
+      prefix: 'POS'
+    })
+    const orderNumber = gen.orderNumber
+    const queueNumber = gen.queueNumber
     
     const lineItems = items.map((item: any, idx: number) => {
       const isCustom = String(item.id).startsWith('custom-')
@@ -270,7 +265,7 @@ export async function POST(req: Request) {
     const rawSourceData = {
       id: orderNumber,
       queue_number: queueNumber,
-      legacy_order_number: isLegacyRandom ? clientOrderNumber : undefined,
+      client_optimistic_number: clientOrderNumber || undefined,
       status: 'completed',
       currency: 'IDR',
       total: String(numGrandTotal),

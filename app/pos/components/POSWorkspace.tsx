@@ -26,6 +26,7 @@ import {
 } from '@/lib/pos/receiptDataBuilder'
 import { useUserContext } from '@/components/UserContext'
 import { formatDisplayDate } from '@/lib/timeUtils'
+import { getBusinessTimezone } from '@/lib/localzone'
 import { fetchLoyaltySettings } from '@/plugins/loyalty/helpers/loyaltyApi'
 import { LoyaltySettings, LoyaltyTier, DEFAULT_LOYALTY_SETTINGS, resolveTier, calculateEarnedPoints } from '@/plugins/loyalty/types'
 import { useCustomerDirectory, matchesCustomerQuery, notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
@@ -282,6 +283,40 @@ export default function POSWorkspace({
         const shiftData = results[idx++]
         if (shiftData?.activeShift) setActiveShift(shiftData.activeShift)
       }
+
+      // Pre-warm daily POS counter for 0ms optimistic order generation
+      try {
+        const now = new Date()
+        const tz = getBusinessTimezone(activeBusiness?.timezone)
+        let dStr = ''
+        try {
+          const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
+          dStr = formatter.format(now).replace(/-/g, '')
+        } catch {
+          dStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
+        }
+        const cKey = `shapeup_pos_counter_${bId}_${dStr}`
+        supabase
+          .from('orders')
+          .select('order_number')
+          .eq('business_id', bId)
+          .like('order_number', `POS-${dStr}-%`)
+          .order('order_number', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+          .then(({ data }) => {
+            if (data?.order_number) {
+              const suffix = data.order_number.replace(`POS-${dStr}-`, '')
+              const num = parseInt(suffix, 10)
+              if (!isNaN(num)) {
+                const cur = parseInt(localStorage.getItem(cKey) || '0', 10)
+                if (num > cur) {
+                  localStorage.setItem(cKey, String(num))
+                }
+              }
+            }
+          }, () => null)
+      } catch {}
     } catch (err) {
       console.warn('[POSWorkspace] Secondary data load warning:', err)
     }
@@ -761,9 +796,34 @@ export default function POSWorkspace({
     setActiveShift(null)
   }
 
-  // Checkout Execution
-  const handleConfirmCheckout = async (paymentInfo: PaymentResult) => {
-    setCheckingOut(true)
+  // Synchronous Optimistic Counter Generator (0ms)
+  const getNextOptimisticOrderNumber = (bId: string, tz?: string) => {
+    const timezone = getBusinessTimezone(tz)
+    const now = new Date()
+    let dStr = ''
+    try {
+      const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' })
+      dStr = formatter.format(now).replace(/-/g, '')
+    } catch {
+      dStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
+    }
+
+    const counterKey = `shapeup_pos_counter_${bId}_${dStr}`
+    let nextVal = 1
+    try {
+      const cur = parseInt(localStorage.getItem(counterKey) || '0', 10)
+      nextVal = cur + 1
+      localStorage.setItem(counterKey, String(nextVal))
+    } catch {
+      nextVal = 1
+    }
+
+    const orderNumber = `POS-${dStr}-${String(nextVal).padStart(4, '0')}`
+    return { orderNumber, queueNumber: nextVal, counterKey }
+  }
+
+  // Checkout Execution (0ms Instant Optimistic Action)
+  const handleConfirmCheckout = (paymentInfo: PaymentResult) => {
     try {
       const itemsPayload = cart.map((item) => ({
         id: item.product.id,
@@ -781,35 +841,9 @@ export default function POSWorkspace({
       const effectiveOrderNote = orderNote.trim() || undefined
       const effectiveCustomerId = selectedCustomer?.id || 'guest'
 
-      // Post order to server with atomic sequential number generation
-      const res = await fetch('/api/pos/order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customer_id: effectiveCustomerId,
-          items: itemsPayload,
-          payment_method: paymentInfo.method,
-          payments: paymentInfo.payments,
-          amount_paid: paymentInfo.amountPaid,
-          subtotal: subtotal,
-          discount_amount: discountAmount,
-          grand_total: grandTotal,
-          cash_received: paymentInfo.cashReceived,
-          change_amount: paymentInfo.changeAmount,
-          shift_id: activeShift?.id || null,
-          register_id: activeShift?.register_id || null,
-          order_note: effectiveOrderNote,
-          authorizations: Array.from(authorizations.values())
-        })
-      })
-
-      const result = await res.json().catch(() => null)
-      if (!res.ok || !result?.success) {
-        throw new Error(result?.error || 'Gagal menyimpan pesanan ke server.')
-      }
-
-      const assignedOrderNumber = result.order_number || ('POS-' + Date.now().toString().slice(-8))
-      const assignedQueueNumber = result.queue_number || undefined
+      // 1. Instant Optimistic Order Number & Queue Number Generation (0ms)
+      const { orderNumber: optimisticOrderNumber, queueNumber: optimisticQueueNumber, counterKey } =
+        getNextOptimisticOrderNumber(activeBusiness?.id || 'default', activeBusiness?.timezone)
 
       const paymentTitle = paymentInfo.isPartial 
         ? `Sebagian / Sisa Piutang (Rp ${paymentInfo.amountPaid.toLocaleString('id-ID')})`
@@ -843,10 +877,10 @@ export default function POSWorkspace({
         }
       }
 
-      // Build definitive Receipt with atomic order number
+      // 2. Build Receipt immediately (Reality First: 0ms Latency via SSOT Builder)
       const receipt = buildReceiptDataFromOrder({
-        order_number: assignedOrderNumber,
-        queue_number: assignedQueueNumber,
+        order_number: optimisticOrderNumber,
+        queue_number: optimisticQueueNumber,
         created_at: new Date().toISOString(),
         items: cart.map((i) => ({
           name: i.product.name,
@@ -875,14 +909,14 @@ export default function POSWorkspace({
         changeAmount: paymentInfo.changeAmount
       })
 
-      // Action: Display receipt & clear local cart
-      setLastCreatedOrderId(result.order_id || null)
+      // 3. Instant Optimistic Action (0ms Latency for Customer & Cashier)
+      setLastCreatedOrderId(null)
       setReceiptData(receipt)
       setIsPaymentModalOpen(false)
       setIsMobileCartOpen(false)
       setIsReceiptModalOpen(true)
       
-      // Optimistic local stock mutation in L1/L2 cache
+      // Optimistic local stock mutation in L1/L2 cache (Pilar 2 & 5)
       if (typeof updateLocalStock === 'function') {
         updateLocalStock(
           itemsPayload.map((it: any) => ({
@@ -911,6 +945,56 @@ export default function POSWorkspace({
           body: JSON.stringify({ action: 'delete', hold_id: completedHoldId })
         }).catch((err) => console.error('[POS] Failed to cleanup completed hold:', err))
       }
+
+      // 4. Background Sync (Fire-and-Forget without delaying the user)
+      fetch('/api/pos/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_id: effectiveCustomerId,
+          items: itemsPayload,
+          payment_method: paymentInfo.method,
+          payments: paymentInfo.payments,
+          amount_paid: paymentInfo.amountPaid,
+          subtotal: subtotal,
+          discount_amount: discountAmount,
+          grand_total: grandTotal,
+          order_number: optimisticOrderNumber,
+          cash_received: paymentInfo.cashReceived,
+          change_amount: paymentInfo.changeAmount,
+          shift_id: activeShift?.id || null,
+          register_id: activeShift?.register_id || null,
+          order_note: effectiveOrderNote,
+          authorizations: Array.from(authorizations.values())
+        })
+      })
+      .then(async (res) => {
+        const result = await res.json().catch(() => null)
+        if (!res.ok) {
+          console.error(`[POS Sync Error] Pesanan #${optimisticOrderNumber} gagal tersimpan:`, result?.error)
+          alert(`⚠️ Peringatan: Pesanan #${optimisticOrderNumber} gagal disimpan ke server.\nPesan: ${result?.error || 'Server error'}`)
+        } else if (result?.order_id) {
+          setLastCreatedOrderId(result.order_id)
+          // Seamless in-place reconciliation if server adjusted the order number
+          if (result.order_number && result.order_number !== optimisticOrderNumber) {
+            setReceiptData((prev) => prev ? {
+              ...prev,
+              orderNumber: result.order_number,
+              queueNumber: result.queue_number || prev.queueNumber
+            } : null)
+          }
+          if (result.queue_number) {
+            const cur = parseInt(localStorage.getItem(counterKey) || '0', 10)
+            if (result.queue_number > cur) {
+              localStorage.setItem(counterKey, String(result.queue_number))
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        console.error(`[POS Sync Error] Koneksi terputus untuk pesanan #${optimisticOrderNumber}:`, err)
+        alert(`⚠️ Peringatan: Koneksi terputus. Pesanan #${optimisticOrderNumber} gagal dikirim ke server.`)
+      })
     } catch (err: any) {
       alert(err.message || 'Terjadi kesalahan pada aplikasi kasir.')
       setCheckingOut(false)
