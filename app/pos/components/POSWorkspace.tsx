@@ -122,6 +122,7 @@ export default function POSWorkspace({
   const [globalDiscountInput, setGlobalDiscountInput] = useState<string>('')
   
   const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false)
+  useModalBackHandler(isCustomerDropdownOpen, () => setIsCustomerDropdownOpen(false))
   const [customerSearch, setCustomerSearch] = useState('')
 
   // Item edit modal state

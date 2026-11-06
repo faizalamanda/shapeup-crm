@@ -892,6 +892,28 @@ $$\text{POS}-\text{YYYYMMDD}-\text{XXXX}$$
   - Ketika response server tiba, `setLastCreatedOrderId` dan `setReceiptData` merekonsiliasi nomor nota secara mulus *in-place* tanpa kedipan (*zero flicker*).
 - **Speculative Counter Pre-Warming:** Saat `POSWorkspace` dimuat, sistem secara otomatis mem-prewarm nilai counter tertinggi hari ini dari Supabase ke `localStorage` di latar belakang secara *non-blocking*.
 
+---
+
+## 21. POS Modal Architecture & Sub-Modal LIFO Back Navigation Standards
+
+Setiap dialog, drawer, atau pop-up di dalam antarmuka POS (baik pada `POSHub`, `POSWorkspace`, maupun `CashPaymentModal`) **WAJIB** mematuhi protokol LIFO (*Last-In, First-Out*) navigasi tombol Back perangkat / browser.
+
+### 21.1 Aturan Penutupan Berjenjang (Strict LIFO Hierarchy)
+- **Tingkat 1 (Layar Induk):** Tekan Back di `POSWorkspace` kembali ke `POSHub`. Tekan Back di `POSHub` (pada tablet/ponsel layar sentuh) kembali ke `/onboarding`.
+- **Tingkat 2 (Modal Utama):** Modal utama (`CashPaymentModal`, `ShiftModal`, `HoldModal`, `ReceiptPreviewModal`, `POSOrderDetailModal`, `AddCustomerModal`, dsb.) **WAJIB** menggunakan `FullScreenModal` atau mendaftarkan `useModalBackHandler(isOpen, onClose)`.
+- **Tingkat 3 (Sub-Modal / Inner Dialog Pop-Up):**
+  Setiap pop-up sekunder di dalam modal utama (seperti: Keypad Numpad *New amount* di pembayaran, pop-up *Split Bill*, pop-up *Rincian Pesanan*, *Drawer Keranjang Mobile*, atau *Dropdown Pemilih Pelanggan*):
+  - **WAJIB** mendaftarkan `useModalBackHandler(isSubModalOpen, () => setIsSubModalOpen(false))` pada level komponen terkait.
+  - **DILARANG KERAS** membiarkan dialog anak hanya berupa markup conditional `isOpen && <div className="fixed inset-0...">` tanpa listener back handler!
+  - **Perilaku Tombol Back:** Saat sub-modal aktif dan kasir menekan Back di Android / tablet / browser, sistem **HANYA** menutup sub-modal tersebut. Modal utama di bawahnya **WAJIB TETAP TERBUKA** dan tidak boleh tertutup atau melompat rute ke onboarding.
+
+### 21.2 Checklist Audit Modal POS Baru
+Sebelum menyelesaikan pembuatan fitur baru di modul POS, jalankan checklist:
+1. Apakah ada komponen yang me-render overlay dialog (`fixed inset-0` atau drawer mengambang)?
+2. Apakah modal tersebut dibungkus `FullScreenModal`? Jika tidak (komponen kustom), apakah sudah ada baris `useModalBackHandler(isOpen, onClose)`?
+3. Apakah modal tersebut memiliki dialog anak / sub-modal (seperti konfirmasi void, PIN authorizer, keypad amount)? Jika ya, apakah dialog anak tersebut sudah memiliki `useModalBackHandler(isSubOpen, closeSub)` masing-masing?
+4. Uji simulasi: Buka Layar Kasir $\rightarrow$ Buka Pembayaran $\rightarrow$ Buka Edit Nominal $\rightarrow$ Tekan Back $\rightarrow$ *Hasil:* Hanya Edit Nominal yang tutup, Pembayaran tetap aktif. Tekan Back lagi $\rightarrow$ *Hasil:* Pembayaran tutup, Kasir tetap aktif. Tekan Back lagi $\rightarrow$ *Hasil:* Kembali ke POS Hub.
+
 
 
 

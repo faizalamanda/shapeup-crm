@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react'
 import POSHub from './components/POSHub'
 import POSWorkspace from './components/POSWorkspace'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 export interface PreloadedPOSSession {
   activeShift: any | null
@@ -28,6 +29,9 @@ export default function POSContainer() {
     }
     setCurrentView('hub')
   }, [])
+
+  // Manage LIFO back navigation so pressing Back in POS Workspace returns to POS Hub
+  useModalBackHandler(currentView === 'workspace', handleBackToHub)
 
   if (currentView === 'workspace') {
     return (

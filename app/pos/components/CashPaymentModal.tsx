@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { resolveBusinessTenders, type POSTender } from '@/lib/pos/tenderResolver'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
+import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 import {
   type KeypadTenderLine,
   calculatePaymentBalance,
@@ -129,6 +130,14 @@ export default function CashPaymentModal({
   const [modalTargetLine, setModalTargetLine] = useState<KeypadTenderLine | null>(null)
   const [modalInputValue, setModalInputValue] = useState<number>(0)
   const [isModalFirstTouch, setIsModalFirstTouch] = useState<boolean>(true)
+
+  // Sub-modal LIFO Back handlers so Back button closes the active dialog first without closing payment modal
+  useModalBackHandler(isAmountModalOpen, () => {
+    setIsAmountModalOpen(false)
+    setModalTargetLine(null)
+  })
+  useModalBackHandler(isSplitBillOpen, () => setIsSplitBillOpen(false))
+  useModalBackHandler(isReceiptDetailsOpen, () => setIsReceiptDetailsOpen(false))
 
   // 3. Akun Kas & Bank dan Metode Tender dari Pengaturan
   const [fetchedAccounts, setFetchedAccounts] = useState<CashBankAccount[]>([])

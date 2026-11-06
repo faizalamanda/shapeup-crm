@@ -51,6 +51,16 @@ Semua modal fitur yang berfungsi sebagai layar kerja/detail (misal: Detail Pesan
    Ketika smartphone dimiringkan secara horizontal (Lanskap), lebar layar melewati breakpoint `sm:` (>640px) sementara tinggi layar berkurang tajam ($\sim 350\text{px} - 400\text{px}$).
    `FullScreenModal` secara cerdas beradaptasi dari layar penuh menjadi modal card mengambang dengan batas tinggi dinamis `sm:max-h-[calc(100dvh-3rem)]`. Area konten tetap dapat digulir dengan mulus berkat `min-h-0 flex-1 overflow-y-auto overscroll-contain` tanpa pernah mendorong sticky footer atau header ke luar batas pandang layar.
 
+9. **Aturan Mutlak Sub-Modal & Dialog Pop-Up Bersarang (Nested LIFO Invariant):**
+   Setiap dialog pop-up sekunder, keypad numpad input nominal (seperti *New amount* di pembayaran), drawer geser (seperti *Keranjang Mobile* di POS), modal split bill, konfirmasi, atau popup rincian yang berada di dalam modal induk atau halaman:
+   - **WAJIB** memanggil `useModalBackHandler(isPopupOpen, () => setIsPopupOpen(false))` pada level komponen tempat state tersebut berada.
+   - **DILARANG KERAS** membiarkan popup/drawer hanya dikontrol oleh kondisi CSS/JSX (`isOpen && <div className="fixed inset-0...">`) tanpa mendaftarkan `useModalBackHandler`.
+   - **Hierarki Penutupan (Anti-Bypass):** Saat kasir menekan tombol Back saat popup anak (misal: keypad edit nominal) terbuka, sistem LIFO **HANYA** menutup popup anak tersebut. Modal induk (modal pembayaran) **WAJIB TETAP TERBUKA** di layar.
+   - **Checklist Audit AI / Developer:**
+     1. Apakah ada state `is...Open` yang merender overlay `fixed inset-0`?
+     2. Apakah sudah ada baris `useModalBackHandler(is...Open, onClose)` untuk state tersebut?
+     3. Uji: Buka modal induk -> Buka popup anak -> Tekan Back -> Pastikan hanya popup anak yang tertutup.
+
 ---
 
 Untuk contoh implementasi lengkap, batasan, dan studi kasus, baca [knowledge mobile modal UX](../../knowledge/mobile-modal-ux.md).

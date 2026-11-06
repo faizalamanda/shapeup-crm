@@ -162,3 +162,33 @@ Pada modal yang menampilkan daftar/tabel data bertransaksi (seperti Riwayat Tran
    Menggunakan `.toLocaleString()` atau `.toLocaleDateString()` mentah. Selalu gunakan helper `formatDisplayDate(date, mode, timezone)` dari `@/lib/timeUtils.ts`.
 6. **The Cramped Horizontal Table Trap on Mobile:**
    Memaksa tabel 8 kolom ditampilkan pada layar ponsel 360px. Kasir harus menggeser layar 500px ke kanan hanya untuk mencari tombol aksi. Gunakan teknik hybrid: tabel di desktop (`hidden md:block`), kartu interaktif di mobile (`block md:hidden`).
+
+---
+
+## 5. Sub-Modal & Inner Pop-Up Standard (Nested LIFO Invariant)
+
+Dalam modul interaktif seperti Kasir POS atau Checkout, modal sering kali membuka dialog pop-up sekunder di dalamnya (misalnya: keypad pop-up edit nominal *"New amount"*, pop-up *Split Bill*, *Rincian Pesanan*, *Drawer Keranjang Belanja*, atau *Dropdown Pemilih Pelanggan*).
+
+### Pola Implementasi Sub-Modal
+
+Setiap sub-modal atau dialog bersarang **WAJIB** mendaftarkan `useModalBackHandler` secara mandiri:
+
+```tsx
+// Di dalam CashPaymentModal.tsx
+const [isSplitBillOpen, setIsSplitBillOpen] = useState(false)
+const [isReceiptDetailsOpen, setIsReceiptDetailsOpen] = useState(false)
+const [isAmountModalOpen, setIsAmountModalOpen] = useState(false)
+
+// Registrasi Sub-Modal LIFO Back Handlers
+useModalBackHandler(isAmountModalOpen, () => setIsAmountModalOpen(false))
+useModalBackHandler(isSplitBillOpen, () => setIsSplitBillOpen(false))
+useModalBackHandler(isReceiptDetailsOpen, () => setIsReceiptDetailsOpen(false))
+```
+
+### Invarian LIFO:
+1. Ketika sub-modal aktif, `useModalBackHandler` mencatat entri teratas di tumpukan riwayat.
+2. Saat tombol Back ditekan (di HP Android, tombol browser, atau Back layout):
+   - **HANYA** sub-modal teratas yang tertutup.
+   - Modal induk di bawahnya (`CashPaymentModal`) tetap utuh tanpa kehilangan data input atau status transaksi.
+3. Penekanan tombol Back berikutnya barulah menutup modal induk secara bertahap.
+4. **DILARANG KERAS** membiarkan dialog/pop-up sekunder hanya dikontrol oleh conditional JSX `isOpen && <div className="fixed inset-0...">` tanpa mendaftarkan `useModalBackHandler`.
