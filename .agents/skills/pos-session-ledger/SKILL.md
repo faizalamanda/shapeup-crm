@@ -782,10 +782,11 @@ $$\text{CATALOG / CART} \longrightarrow \text{PAYMENT TENDER} \longrightarrow \t
 - Mengeliminasi *context leak* dan *z-index stacking issues* yang sering terjadi saat modal pop-up mengapung di atas halaman keranjang yang sudah di-reset.
 - Menjamin kepemilikan konteks visual 100%: seluruh fokus layar dialokasikan untuk verifikasi uang kembalian dan pencetakan struk.
 
-### 19.2 Dedicated Full-Screen Completion View (`PaymentSuccessView.tsx`)
-- **Hero Centerpiece:** Menampilkan nominal **Uang Kembalian (*Change Due*)** dalam ukuran ekstra besar (`text-6xl` hingga `text-7xl font-mono font-black`) di tengah layar untuk meminimalkan potensi kasir salah menyerahkan uang fisik.
-- **Badge Uang Pas:** Menampilkan badge `✓ Uang Pas / Tidak Ada Kembalian` berwarna hijau jika nominal kembalian bernilai 0.
-- **Rincian Finansial Bersih:** Kartu ringkasan terpusat menampilkan Total Tagihan, Uang Diterima, Metode Pembayaran, dan Nama Pelanggan tanpa distraksi.
+### 19.2 Dedicated Full-Screen Completion View (`PaymentSuccessView.tsx`) & Color Harmony
+- **Harmonisasi Warna POS Workspace:** Tampilan layar sukses menggunakan latar belakang `bg-slate-100`, navbar atas `bg-slate-900 text-white`, kartu rincian putih solid `bg-white border border-slate-200`, dan footer aksi bawah `bg-white border-t border-slate-200`, selaras 100% dengan antarmuka kerja kasir [`POSWorkspace.tsx`](file:///home/faiz-jazuli/shapeup-crm/app/pos/components/POSWorkspace.tsx) dan modal pembayaran [`CashPaymentModal.tsx`](file:///home/faiz-jazuli/shapeup-crm/app/pos/components/CashPaymentModal.tsx).
+- **Hero Centerpiece:** Menampilkan nominal **Uang Kembalian (*Change Due*)** dalam ukuran ekstra besar (`text-6xl` hingga `text-7xl font-mono font-black text-slate-950`) di tengah kartu putih untuk meminimalkan potensi kasir salah menyerahkan uang fisik.
+- **Badge Uang Pas:** Menampilkan badge solid `✓ Uang Pas / Tidak Ada Kembalian` berwarna hijau (`bg-emerald-100 text-emerald-800 border-emerald-300`) jika nominal kembalian bernilai 0.
+- **Rincian Finansial Bersih:** Kartu ringkasan terpusat menampilkan Total Tagihan, Uang Diterima, Metode Pembayaran, dan Nama Pelanggan dengan tipografi solid tanpa efek transparansi yang mengaburkan.
 
 ### 19.3 Mobile Kiosk Armor (`overscroll-behavior: none`)
 - **Masalah Asal:** Pada perangkat mobile/tablet (Chrome, Safari, WebView), gestur mengusap ke bawah saat berada di posisi paling atas (`scrollTop === 0`) memicu fitur bawaan *Pull-To-Refresh*, me-reload halaman `/pos`, dan menghancurkan seluruh state in-memory kasir.
@@ -830,6 +831,19 @@ Mengatasi paradoks tombol dan meminimalkan beban kognitif kasir (*Hick-Hyman Law
   }))
   ```
 - Melindungi data jika browser kasir tertutup secara tidak sengaja oleh pengguna atau sistem operasi Android.
+
+### 19.7 Legacy Device Compatibility Standard (Zero-Gradient & Solid Opaque Colors)
+Untuk menjamin aplikasi POS berjalan mulus tanpa lag di perangkat keras berspesifikasi rendah (tablet Android 7–9, peramban WebView lawas, mesin POS berbasis Android entry-level):
+1. **Dilarang Menggunakan Linear / Radial Gradients (`bg-gradient-to-*`):**
+   - GPU lawas (Mali-400/450, Adreno 300/400/500 series) sering mengalami cacat visual (*color banding*), lag *compositing*, atau bahkan menghasilkan layar hitam saat merender gradien kompleks.
+   - Diganti dengan warna latar belakang solid murni (`bg-white` untuk kartu dan `bg-slate-100` untuk kontainer layar penuh).
+2. **Dilarang Menggunakan `backdrop-blur-*` (`backdrop-filter`):**
+   - Efek blur latar belakang tidak didukung pada peramban Chromium sebelum versi 76 dan mengonsumsi daya komputasi GPU yang sangat masif, memicu pembekuan antarmuka (*UI freeze*).
+   - Diganti dengan elemen solid 100% *opaque* (`bg-slate-900` untuk navbar, `bg-white` untuk footer).
+3. **Dilarang Menggunakan Overlay Transparan Kompleks & Filter `drop-shadow-*`:**
+   - Menghindari tumpukan lapisan transparan (`via-transparent`, `bg-emerald-500/5`) dan filter drop-shadow yang membebani memori render.
+   - Menggunakan bayangan ringan standar (`shadow-xs`) dan border CSS murni (`border border-slate-200`) yang diakselerasi secara universal oleh seluruh peramban modern maupun warisan.
+
 
 
 

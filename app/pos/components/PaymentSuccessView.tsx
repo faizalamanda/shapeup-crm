@@ -222,24 +222,24 @@ export default function PaymentSuccessView({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[1200] flex flex-col bg-slate-950 text-slate-100 select-none overflow-y-auto no-print animate-in fade-in duration-200"
+      className="fixed inset-0 z-[1200] flex flex-col bg-slate-100 text-slate-900 select-none overflow-y-auto no-print font-sans"
       style={{
         overscrollBehavior: 'none',
         touchAction: 'pan-y'
       }}
     >
-      {/* ─── Kiosk Top Header ────────────────────────────────────────── */}
-      <header className="h-16 px-4 sm:px-8 border-b border-slate-850 flex items-center justify-between shrink-0 bg-slate-900/90 backdrop-blur-md">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-black flex items-center justify-center text-sm shadow-xs">
+      {/* ─── 1. Kiosk Top Header (Solid Slate-900) ──────────────────── */}
+      <header className="h-14 px-4 sm:px-6 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-900 text-white">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white font-black flex items-center justify-center text-sm">
             ✓
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-extrabold text-sm sm:text-base text-white tracking-wide">
+              <span className="font-bold text-sm sm:text-base text-white">
                 Pembayaran Sukses
               </span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 uppercase tracking-wider">
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-700 text-white uppercase tracking-wider">
                 Lunas
               </span>
             </div>
@@ -253,7 +253,7 @@ export default function PaymentSuccessView({
         <button
           type="button"
           onClick={onClose}
-          className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 border border-slate-700 cursor-pointer active:scale-95"
+          className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 border border-slate-700 cursor-pointer active:scale-95"
           title="Buka Transaksi Baru (Esc)"
         >
           <span>Transaksi Baru</span>
@@ -261,78 +261,76 @@ export default function PaymentSuccessView({
         </button>
       </header>
 
-      {/* ─── Center Hero Content (Kiosk Focus on Change Due) ────────── */}
-      <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col justify-center">
-        {/* Hero Uang Kembalian */}
-        <div className="text-center py-6 px-4 rounded-3xl bg-gradient-to-b from-slate-900/90 to-slate-900/40 border border-slate-800 shadow-2xl relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-tr from-emerald-500/5 via-transparent to-indigo-500/5 pointer-events-none" />
-
-          <span className="text-xs sm:text-sm font-bold tracking-widest text-slate-400 uppercase">
+      {/* ─── 2. Center Hero Content (Solid White Cards) ─────────────── */}
+      <main className="flex-1 max-w-xl w-full mx-auto px-4 py-6 sm:py-8 flex flex-col justify-center">
+        {/* Card Hero: Uang Kembalian */}
+        <div className="text-center py-6 px-4 rounded-2xl bg-white border border-slate-200 shadow-xs">
+          <span className="text-xs sm:text-sm font-bold tracking-wider text-slate-500 uppercase">
             Uang Kembalian
           </span>
 
-          <div className="mt-3 text-5xl sm:text-7xl font-black font-mono tracking-tight text-white select-all drop-shadow-sm">
+          <div className="mt-2 text-5xl sm:text-7xl font-black font-mono tracking-tight text-slate-950 select-all">
             {formatIDR(changeAmount)}
           </div>
 
           <div className="mt-3 flex items-center justify-center gap-2">
             {changeAmount === 0 ? (
-              <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-300 bg-emerald-950/80 border border-emerald-500/40 px-3.5 py-1 rounded-full shadow-xs">
+              <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-3.5 py-1 rounded-full">
                 <span>✓</span> Uang Pas / Tidak Ada Kembalian
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-300 bg-amber-950/60 border border-amber-500/40 px-3.5 py-1 rounded-full shadow-xs">
+              <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-900 bg-amber-100 border border-amber-300 px-3.5 py-1 rounded-full">
                 <span>💵</span> Serahkan Kembalian ke Pelanggan
               </span>
             )}
           </div>
         </div>
 
-        {/* Ringkasan Finansial & Data Pesanan */}
-        <div className="mt-6 p-5 sm:p-6 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-3.5 text-sm">
-          <div className="flex items-center justify-between text-slate-300">
-            <span>Total Tagihan:</span>
-            <span className="font-mono font-bold text-white text-base sm:text-lg">
+        {/* Card Rincian Tagihan & Transaksi */}
+        <div className="mt-4 p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3 text-sm text-slate-700">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-600">Total Tagihan:</span>
+            <span className="font-mono font-bold text-slate-950 text-base sm:text-lg">
               {formatIDR(balanceDue)}
             </span>
           </div>
 
-          <div className="flex items-center justify-between text-slate-300">
-            <span>Uang Diterima:</span>
-            <span className="font-mono font-bold text-white text-base sm:text-lg">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-600">Uang Diterima:</span>
+            <span className="font-mono font-bold text-slate-950 text-base sm:text-lg">
               {formatIDR(tenderedAmount)}
             </span>
           </div>
 
-          <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs sm:text-sm text-slate-400">
-            <span>Metode Pembayaran:</span>
-            <span className="font-semibold text-slate-200">
+          <div className="pt-3 border-t border-slate-200 flex items-center justify-between text-xs sm:text-sm">
+            <span className="text-slate-600">Metode Pembayaran:</span>
+            <span className="font-semibold text-slate-900">
               {receipt.paymentMethod || 'Tunai'}
             </span>
           </div>
 
           {receipt.customerName && receipt.customerName !== 'Pelanggan Umum' && (
-            <div className="flex items-center justify-between text-xs sm:text-sm text-slate-400">
-              <span>Pelanggan:</span>
-              <span className="font-semibold text-slate-200">{receipt.customerName}</span>
+            <div className="flex items-center justify-between text-xs sm:text-sm">
+              <span className="text-slate-600">Pelanggan:</span>
+              <span className="font-semibold text-slate-900">{receipt.customerName}</span>
             </div>
           )}
 
           {receipt.cashierName && (
-            <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
+            <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
               <span>Kasir:</span>
-              <span className="text-slate-400 font-medium">{receipt.cashierName}</span>
+              <span className="text-slate-700 font-medium">{receipt.cashierName}</span>
             </div>
           )}
         </div>
 
-        {/* Notifikasi Status Cetak / Error */}
+        {/* Alert Notifikasi Status Cetak */}
         {printMessage && (
           <div
-            className={`mt-4 p-3 rounded-xl text-xs sm:text-sm font-semibold text-center transition flex items-center justify-center gap-2 ${
+            className={`mt-3 p-3 rounded-xl text-xs sm:text-sm font-semibold text-center transition flex items-center justify-center gap-2 border ${
               printMessage.startsWith('✓')
-                ? 'bg-emerald-950/80 border border-emerald-500/50 text-emerald-300'
-                : 'bg-rose-950/80 border border-rose-500/50 text-rose-300'
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                : 'bg-rose-50 border-rose-300 text-rose-800'
             }`}
           >
             <span>{printMessage}</span>
@@ -340,24 +338,24 @@ export default function PaymentSuccessView({
         )}
 
         {/* Toggle & Drawer Pratinjau Kertas Thermal */}
-        <div className="mt-4 flex flex-col items-center">
+        <div className="mt-3 flex flex-col items-center">
           <button
             type="button"
             onClick={() => setShowThermalPreview((prev) => !prev)}
-            className="text-xs text-slate-400 hover:text-slate-200 transition font-medium cursor-pointer underline underline-offset-4 py-1"
+            className="text-xs text-slate-600 hover:text-slate-900 transition font-semibold cursor-pointer underline underline-offset-4 py-1"
           >
             {showThermalPreview ? '▲ Sembunyikan Pratinjau Kertas' : '▼ Lihat Pratinjau Kertas Struk'}
           </button>
 
           {showThermalPreview && (
-            <div className="mt-3 w-full p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3 animate-in fade-in">
-              <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800">
-                <span className="font-bold text-slate-300">Pratinjau Kertas Struk</span>
+            <div className="mt-2 w-full p-3 sm:p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
+              <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-200">
+                <span className="font-bold text-slate-800">Pratinjau Kertas Struk</span>
                 <div className="flex items-center gap-2">
                   <select
                     value={connectionType}
                     onChange={(e) => setConnectionType(e.target.value as ConnectionType)}
-                    className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-200 text-xs outline-none cursor-pointer"
+                    className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 text-xs outline-none cursor-pointer"
                   >
                     <option value="system">Sistem (OS/USB)</option>
                     <option value="bluetooth">Bluetooth</option>
@@ -365,7 +363,7 @@ export default function PaymentSuccessView({
                   <select
                     value={paperSize}
                     onChange={(e) => setPaperSize(e.target.value as PaperSize)}
-                    className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-200 text-xs outline-none cursor-pointer"
+                    className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 text-xs outline-none cursor-pointer"
                   >
                     <option value="58mm">Thermal 58mm</option>
                     <option value="80mm">Thermal 80mm</option>
@@ -373,11 +371,11 @@ export default function PaymentSuccessView({
                   </select>
                 </div>
               </div>
-              <div className="flex justify-center bg-slate-950/60 p-3 rounded-xl max-h-[320px] overflow-y-auto">
+              <div className="flex justify-center bg-slate-100 p-3 rounded-xl max-h-[320px] overflow-y-auto border border-slate-200">
                 <iframe
                   title="Pratinjau Struk Kasir"
                   srcDoc={receiptHtml}
-                  className={`bg-white rounded-lg shadow-md border border-gray-400 ${
+                  className={`bg-white rounded-lg shadow-xs border border-slate-300 ${
                     paperSize === '58mm' ? 'w-[236px]' : paperSize === '80mm' ? 'w-[320px]' : 'w-full'
                   } h-[420px]`}
                 />
@@ -387,15 +385,15 @@ export default function PaymentSuccessView({
         </div>
       </main>
 
-      {/* ─── Kiosk Action Bar (Thumb-Zone Ergonomics) ────────────────── */}
-      <footer className="shrink-0 border-t border-slate-800 bg-slate-900/95 backdrop-blur-md px-4 sm:px-8 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-        <div className="max-w-2xl mx-auto flex items-center gap-2 sm:gap-3">
+      {/* ─── 3. Kiosk Action Bar (Solid White Footer) ───────────────── */}
+      <footer className="shrink-0 border-t border-slate-200 bg-white px-4 sm:px-6 py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] shadow-xs">
+        <div className="max-w-xl mx-auto flex items-center gap-2 sm:gap-3">
           {/* Tombol 1: VOID (Kiri) */}
           <button
             type="button"
             onClick={handleVoid}
             disabled={isVoiding}
-            className="px-3 sm:px-4 py-3.5 rounded-xl border border-rose-900/40 bg-rose-950/20 hover:bg-rose-950/50 hover:border-rose-500/60 text-rose-300 font-bold text-xs sm:text-sm transition flex items-center justify-center shrink-0 cursor-pointer active:scale-95 disabled:opacity-50"
+            className="px-3 sm:px-4 py-3 rounded-xl border border-slate-300 bg-slate-50 hover:bg-rose-50 hover:border-rose-300 text-rose-700 font-bold text-xs sm:text-sm transition flex items-center justify-center shrink-0 cursor-pointer active:scale-95 disabled:opacity-50"
             title="Batalkan pesanan ini (Void)"
           >
             {isVoiding ? 'Membatalkan...' : 'Void'}
@@ -404,22 +402,22 @@ export default function PaymentSuccessView({
           {/* Dynamic Buttons Based on Print State */}
           {!hasPrinted ? (
             <>
-              {/* Tombol 2: Lewati Struk / Selesai */}
+              {/* Tombol 2: Lewati Struk */}
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-1 py-3.5 rounded-xl border border-slate-700 bg-slate-800/80 hover:bg-slate-700 text-slate-200 font-bold text-xs sm:text-sm transition flex items-center justify-center cursor-pointer active:scale-95"
+                className="flex-1 py-3 rounded-xl border border-slate-300 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs sm:text-sm transition flex items-center justify-center cursor-pointer active:scale-95"
                 title="Selesai dan kembali ke kasir tanpa cetak struk"
               >
                 Lewati Struk
               </button>
 
-              {/* Tombol 3: Cetak Struk (Primary Action) */}
+              {/* Tombol 3: Cetak Struk (Primary Blue) */}
               <button
                 type="button"
                 onClick={() => handlePrint()}
                 disabled={isPrinting}
-                className="flex-1 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-extrabold text-xs sm:text-sm shadow-lg shadow-blue-500/25 transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
+                className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-extrabold text-xs sm:text-sm shadow-sm transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
                 title="Cetak struk ke printer kasir (Tekan Enter)"
               >
                 {isPrinting ? (
@@ -427,7 +425,7 @@ export default function PaymentSuccessView({
                 ) : (
                   <>
                     <span>🖨️ Cetak Struk</span>
-                    <span className="text-[10px] bg-blue-700 px-1.5 py-0.5 rounded text-blue-100 hidden sm:inline">
+                    <span className="text-[10px] bg-blue-800 px-1.5 py-0.5 rounded text-white hidden sm:inline">
                       Enter
                     </span>
                   </>
@@ -441,21 +439,21 @@ export default function PaymentSuccessView({
                 type="button"
                 onClick={() => handlePrint()}
                 disabled={isPrinting}
-                className="flex-1 py-3.5 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs sm:text-sm transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50"
+                className="flex-1 py-3 rounded-xl border border-slate-300 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs sm:text-sm transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50"
                 title="Cetak ulang struk"
               >
                 <span>🖨️ Cetak Ulang</span>
               </button>
 
-              {/* Tombol 3: Transaksi Baru (Dominant Action) */}
+              {/* Tombol 3: Transaksi Baru (Dominant Green) */}
               <button
                 type="button"
                 onClick={onClose}
-                className="flex-[1.5] py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-black text-xs sm:text-base shadow-xl shadow-emerald-600/30 transition flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                className="flex-[1.5] py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-black text-xs sm:text-base shadow-sm transition flex items-center justify-center gap-2 cursor-pointer active:scale-95"
                 title="Mulai pesanan pelanggan baru (Tekan Enter atau Spasi)"
               >
                 <span>+ Transaksi Baru</span>
-                <span className="text-[11px] bg-emerald-700 px-1.5 py-0.5 rounded text-emerald-100 hidden sm:inline">
+                <span className="text-[11px] bg-emerald-800 px-1.5 py-0.5 rounded text-white hidden sm:inline">
                   Enter ↵
                 </span>
               </button>

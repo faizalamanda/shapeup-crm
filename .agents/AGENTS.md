@@ -365,14 +365,21 @@
 
 25. **POS Payment Settlement, Full-Screen Completion Stage & Mobile Kiosk Armor Standards:**
     - **Peralihan dari Modal Ephemeral ke Dedicated Full-Screen Completion Stage (`PaymentSuccessView.tsx`):**
-      Layar sukses pembayaran kasir wajib berupa tampilan *Full-Screen Stage* yang menutup seluruh viewport (`fixed inset-0 z-[1200] bg-slate-950`), bukan sekadar kotak dialog modal pop-up melayang di atas keranjang lama. Ini mengeliminasi *context leak*, *z-index stacking*, dan penutupan tidak sengaja.
+      Layar sukses pembayaran kasir wajib berupa tampilan *Full-Screen Stage* yang menutup seluruh viewport (`fixed inset-0 z-[1200] bg-slate-100 text-slate-900 font-sans`), bukan sekadar kotak dialog modal pop-up melayang di atas keranjang lama. Ini mengeliminasi *context leak*, *z-index stacking*, dan penutupan tidak sengaja.
+    - **Harmonisasi Desain & Kompatibilitas Perangkat Lawas (Zero-Gradient & Zero-Backdrop-Filter Standard):**
+      - Seluruh elemen visual layar sukses wajib selaras dengan tema utama POS Workspace: latar belakang luar `bg-slate-100`, navbar atas `bg-slate-900 text-white`, kartu kembalian & rincian pesanan berupa kartu putih solid `bg-white border border-slate-200 shadow-xs`, dan footer aksi bawah `bg-white border-t border-slate-200`.
+      - **DILARANG KERAS** menggunakan CSS modern berat yang tidak didukung atau menyebabkan rendering glitch / lag pada tablet kasir murah & Android lawas (Android 7–9 / WebView lama):
+        - Dilarang menggunakan `bg-gradient-to-*` (gradien linear/radial memicu *color banding* dan layar hitam pada GPU lawas).
+        - Dilarang menggunakan `backdrop-blur-*` (`backdrop-filter: blur(...)` memicu freeze UI dan tampilan kotak abu-abu kusam).
+        - Dilarang menggunakan overlay transparan bertingkat (`via-transparent`, `bg-emerald-500/5`) dan filter `drop-shadow-*`.
+      - Wajib menggunakan warna solid 100% *opaque*, box-shadow ringan (`shadow-xs`), dan border CSS standar yang didukung secara universal sejak Android 4.4+.
     - **Kiosk Armor Gestur Mobile (`overscroll-behavior: none`):**
       Seluruh container kerja kasir (`POSWorkspace.tsx` dan `PaymentSuccessView.tsx`) **WAJIB** menyertakan CSS `overscroll-behavior: none` dan `touch-action: pan-y`. Dilarang membiarkan gestur tarik ke bawah (*pull-down*) memicu *pull-to-refresh* bawaan browser Android/iOS yang menghancurkan in-memory state kasir.
     - **Intersep Tombol Back Mobile (Anti-Onboarding Redirection):**
       Komponen `PaymentSuccessView` **WAJIB** mendaftarkan diri ke `useModalBackHandler(isOpen, onClose)`. Ketika kasir menekan tombol *Back* fisik perangkat, swipe-back, atau tombol kembali browser, sistem wajib mencegat event tersebut agar kasir menutup layar sukses dan kembali ke kasir bersih (transaksi baru), **DILARANG KERAS** membiarkan sinyal lolos ke `useMobileBackToHome()` yang melempar kasir keluar ke `/onboarding`.
     - **Dynamic Post-Print Action Switcher (Hick-Hyman Law Ergonomics):**
-      - Sebelum struk dicetak: Tombol aksi menampilkan `[ Void ]`, `[ Lewati Struk ]`, dan `[ 🖨️ Cetak Struk (Enter) ]` (warna biru cerah).
-      - Segera setelah struk sukses dicetak (`hasPrinted = true`): Tombol aksi bertransformasi menjadi `[ Void ]`, `[ 🖨️ Cetak Ulang ]`, dan tombol dominan utama **`[ + Transaksi Baru (Enter ↵) ]`** (warna hijau emerald cerah dengan ukuran paling besar).
+      - Sebelum struk dicetak: Tombol aksi menampilkan `[ Void ]`, `[ Lewati Struk ]`, dan `[ 🖨️ Cetak Struk (Enter) ]` (warna solid Royal Blue `bg-blue-600 hover:bg-blue-700`).
+      - Segera setelah struk sukses dicetak (`hasPrinted = true`): Tombol aksi bertransformasi menjadi `[ Void ]`, `[ 🖨️ Cetak Ulang ]`, dan tombol dominan utama **`[ + Transaksi Baru (Enter ↵) ]`** (warna solid Emerald Green `bg-emerald-600 hover:bg-emerald-700` dengan ukuran paling besar).
       - Dilarang mempertahankan label ambigu `"Tanpa Struk"` setelah struk fisik tercetak.
     - **Pintasan Keyboard Ergonomis:**
       - Tekan `Enter` sebelum cetak: Memanggil fungsi cetak struk.

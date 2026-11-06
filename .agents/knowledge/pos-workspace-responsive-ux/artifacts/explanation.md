@@ -53,3 +53,15 @@ Pada aplikasi kasir POS tablet dan monitor desktop, dua kendala ergonomis utama 
 ### 2.5 Multiline Auto-Wrap & Full-Width Notes
 - Nama produk yang panjang menggunakan `line-clamp-2 break-words` agar kolom harga di sebelah kanan tetap rapat dan tidak terpotong.
 - Catatan khusus item (`item.note`) dipajang sebagai balok terpisah full-width di bawah harga dengan `break-words whitespace-normal` agar instruksi operasional panjang tampil utuh tanpa terpotong elipsis (`...`).
+
+### 2.6 Full-Screen Completion Stage & Legacy Device Solid-Color Standard (`PaymentSuccessView.tsx`)
+- **Harmonisasi Warna POS Workspace:** Tampilan akhir pembayaran kasir beralih dari modal pop-up menjadi *Full-Screen Stage* yang mengadopsi palet warna kerja kasir:
+  - Latar belakang luar: `bg-slate-100` (sama dengan background katalog kasir).
+  - Header atas: `bg-slate-900 text-white` (solid 100% opaque, identik dengan navbar kasir).
+  - Kartu Kembalian & Rincian Pesanan: `bg-white border border-slate-200 shadow-xs` dengan tipografi tajam `text-slate-950 font-black`.
+  - Footer aksi: `bg-white border-t border-slate-200 shadow-xs`.
+- **Legacy Device Compatibility (Zero-Gradient & Zero-Backdrop-Filter):**
+  - Meniadakan seluruh `bg-gradient-to-*` guna mencegah lag compositing GPU dan cacat visual (*color banding* atau layar hitam) pada tablet Android 7–9 dan GPU lawas.
+  - Meniadakan seluruh `backdrop-blur-*` (`backdrop-filter`) yang sering memicu *UI freeze* pada Chromium < 76 / Android WebView lama.
+  - Menggunakan warna solid murni dan box-shadow ringan standar yang terakselerasi secara universal di semua perangkat kasir.
+
