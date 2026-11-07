@@ -69,27 +69,32 @@ export default function PrintingDimensionModal({
 
   // Form State
   const [inputUnit, setInputUnit] = useState<'cm' | 'm'>('cm')
-  const [length, setLength] = useState<string>('200')
-  const [width, setWidth] = useState<string>('100')
-  const [quantity, setQuantity] = useState<number>(1)
+  const [length, setLength] = useState<string>('0')
+  const [width, setWidth] = useState<string>('0')
+  const [quantityInput, setQuantityInput] = useState<string>('1')
   const [note, setNote] = useState<string>('')
   const [selectedModifiers, setSelectedModifiers] = useState<Record<string, string[]>>({})
+
+  const quantity = useMemo(() => {
+    const val = parseInt(quantityInput, 10)
+    return isNaN(val) || val < 1 ? 1 : val
+  }, [quantityInput])
 
   // Initialize form when opened or product changes
   useEffect(() => {
     if (isOpen && product) {
       if (initialValues) {
-        setLength(String(initialValues.length ?? (initialValues.input_unit === 'm' ? '2' : '200')))
-        setWidth(String(initialValues.width ?? (initialValues.input_unit === 'm' ? '1' : '100')))
+        setLength(String(initialValues.length ?? 0))
+        setWidth(String(initialValues.width ?? 0))
         setInputUnit(initialValues.input_unit || 'cm')
-        setQuantity(initialValues.quantity && initialValues.quantity > 0 ? initialValues.quantity : 1)
+        setQuantityInput(String(initialValues.quantity && initialValues.quantity > 0 ? initialValues.quantity : 1))
         setNote(initialValues.note || '')
       } else {
-        // Defaults: 200 x 100 cm (or 2 x 1 m)
+        // Defaults: 0 x 0
         setInputUnit('cm')
-        setLength('200')
-        setWidth('100')
-        setQuantity(1)
+        setLength('0')
+        setWidth('0')
+        setQuantityInput('1')
         setNote('')
         setSelectedModifiers({})
       }
@@ -347,7 +352,8 @@ export default function PrintingDimensionModal({
                     min="0"
                     value={length}
                     onChange={(e) => setLength(e.target.value)}
-                    placeholder="200"
+                    onFocus={(e) => e.target.select()}
+                    placeholder="0"
                     className="w-full p-2.5 pr-10 border border-slate-300 rounded-xl text-sm font-black text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 bg-white"
                   />
                   <span className="absolute right-3 text-xs font-bold text-slate-400 select-none">
@@ -367,7 +373,8 @@ export default function PrintingDimensionModal({
                     min="0"
                     value={width}
                     onChange={(e) => setWidth(e.target.value)}
-                    placeholder="100"
+                    onFocus={(e) => e.target.select()}
+                    placeholder="0"
                     className="w-full p-2.5 pr-10 border border-slate-300 rounded-xl text-sm font-black text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 bg-white"
                   />
                   <span className="absolute right-3 text-xs font-bold text-slate-400 select-none">
@@ -476,41 +483,71 @@ export default function PrintingDimensionModal({
             </div>
           )}
 
-          {/* Quantity & Notes Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 border-t border-slate-100">
-            {/* Quantity */}
-            <div className="sm:col-span-1">
-              <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">
-                Jumlah Lembar *
-              </label>
-              <div className="flex items-center border border-slate-300 rounded-xl overflow-hidden bg-white">
-                <button
-                  type="button"
-                  onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  className="w-9 h-10 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-base flex items-center justify-center transition select-none cursor-pointer"
-                >
-                  -
-                </button>
-                <input
-                  type="number"
-                  min="1"
-                  value={quantity}
-                  onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="flex-1 text-center font-black text-slate-900 text-sm outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => setQuantity((q) => q + 1)}
-                  className="w-9 h-10 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-base flex items-center justify-center transition select-none cursor-pointer"
-                >
-                  +
-                </button>
+          {/* Quantity & Notes Section */}
+          <div className="space-y-3 pt-2 border-t border-slate-100">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 items-end">
+              {/* Quantity Stepper */}
+              <div>
+                <label className="block text-[11px] font-black text-slate-700 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                  <span>Jumlah Lembar *</span>
+                  <span className="text-[10px] text-indigo-600 font-bold">Qty Cetakan</span>
+                </label>
+                <div className="flex items-center bg-slate-50 border border-slate-300 rounded-xl p-1 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setQuantityInput((prev) => String(Math.max(1, (parseInt(prev, 10) || 1) - 1)))}
+                    disabled={quantity <= 1}
+                    className="w-10 h-10 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 disabled:opacity-40 flex items-center justify-center font-black text-lg transition shadow-2xs shrink-0 cursor-pointer active:scale-95 select-none"
+                    title="Kurangi 1 lembar"
+                  >
+                    −
+                  </button>
+                  <input
+                    type="number"
+                    min="1"
+                    value={quantityInput}
+                    onChange={(e) => setQuantityInput(e.target.value)}
+                    onBlur={() => setQuantityInput(String(quantity))}
+                    className="flex-1 min-w-0 text-center font-black text-slate-900 text-base bg-transparent outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setQuantityInput((prev) => String((parseInt(prev, 10) || 0) + 1))}
+                    className="w-10 h-10 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 flex items-center justify-center font-black text-lg transition shadow-2xs shrink-0 cursor-pointer active:scale-95 select-none"
+                    title="Tambah 1 lembar"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Qty Presets (1, 2, 3, 5, 10, 20) */}
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
+                  Pintasan Jumlah:
+                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {[1, 2, 3, 5, 10, 20].map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => setQuantityInput(String(q))}
+                      className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold transition cursor-pointer ${
+                        quantity === q
+                          ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-2xs ring-1 ring-indigo-500/20'
+                          : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600'
+                      }`}
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
             {/* Note / File Name */}
-            <div className="sm:col-span-2">
-              <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">
+            <div>
+              <label className="block text-[11px] font-black text-slate-700 uppercase tracking-wider mb-1.5">
                 Nama File Desain / Catatan Kerja
               </label>
               <input
@@ -518,7 +555,7 @@ export default function PrintingDimensionModal({
                 placeholder="Contoh: banner_kelurahan_final.pdf, ring 4 pojok..."
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 bg-white"
+                className="w-full p-2.5 border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 bg-white placeholder:text-slate-400 shadow-2xs"
               />
             </div>
           </div>
