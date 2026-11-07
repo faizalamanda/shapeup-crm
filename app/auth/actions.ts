@@ -3,6 +3,21 @@
 import { createClient } from '@/lib/supabaseServer'
 import { redirect } from 'next/navigation'
 
+async function getAppOrigin(): Promise<string> {
+  try {
+    const { headers } = await import('next/headers')
+    const headersList = await headers()
+    const host = headersList.get('x-forwarded-host') || headersList.get('host')
+    const forwardedProto = headersList.get('x-forwarded-proto')
+    const isLocal = !forwardedProto && (host?.includes('localhost') || host?.includes('127.0.0.1') || process.env.NODE_ENV === 'development')
+    const proto = forwardedProto || (isLocal ? 'http' : 'https')
+    if (host) {
+      return `${proto}://${host}`
+    }
+  } catch {}
+  return process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+}
+
 export async function loginAction(formData: FormData) {
   const rawEmail = formData.get('email') as string
   const password = formData.get('password') as string
@@ -20,23 +35,68 @@ export async function loginAction(formData: FormData) {
 
   if (error) {
     const errorMsg = error.message?.toLowerCase() || ''
-    if (errorMsg.includes('email not confirmed') || (error as any).code === 'email_not_confirmed') {
-      return { error: 'Akun belum dikonfirmasi. Silakan buka kotak masuk atau spam email Anda untuk mengklik tautan konfirmasi terlebih dahulu.' }
-    }
+    const isUnconfirmed = errorMsg.includes('email not confirmed') || (error as any).code === 'email_not_confirmed'
 
-    if (error.message === 'Invalid login credentials') {
-      // Check if user actually exists and is unconfirmed to provide clear feedback
-      try {
-        const { getAdminSupabase } = await import('@/lib/supabaseServer')
-        const admin = getAdminSupabase()
-        const { data: userData } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
-        const existingUser = userData?.users?.find(u => u.email?.toLowerCase() === email)
-        if (existingUser && !existingUser.email_confirmed_at) {
-          return { error: 'Akun belum dikonfirmasi. Silakan buka kotak masuk atau folder spam email Anda dan klik tautan verifikasi sebelum masuk.' }
+    if (isUnconfirmed || error.message === 'Invalid login credentials') {
+      let isActuallyUnconfirmed = isUnconfirmed
+      let targetEmail = email
+
+      if (!isActuallyUnconfirmed) {
+        // Check if user actually exists and is unconfirmed to provide clear feedback
+        try {
+          const { getAdminSupabase } = await import('@/lib/supabaseServer')
+          const admin = getAdminSupabase()
+          const { data: userData } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
+          const existingUser = userData?.users?.find(u => u.email?.toLowerCase() === email)
+          if (existingUser && !existingUser.email_confirmed_at) {
+            isActuallyUnconfirmed = true
+            targetEmail = (existingUser.email || email).trim().toLowerCase()
+          }
+        } catch (e) {
+          console.warn('[loginAction] Admin user check failed:', e)
         }
-      } catch {
-        // Fallback gracefully to generic error
       }
+
+      if (isActuallyUnconfirmed) {
+        // Otomatis kirim ulang email autentikasi/verifikasi
+        let alreadySent = false
+        try {
+          const origin = await getAppOrigin()
+          const { getAdminSupabase } = await import('@/lib/supabaseServer')
+          const admin = getAdminSupabase()
+          const resendClient = (admin && admin.auth) ? admin : supabase
+
+          const { error: resendErr } = await resendClient.auth.resend({
+            type: 'signup',
+            email: targetEmail,
+            options: {
+              emailRedirectTo: `${origin}/auth/callback`,
+            },
+          })
+          if (resendErr) {
+            const rMsg = resendErr.message?.toLowerCase() || ''
+            const rCode = (resendErr as any).code || ''
+            if (
+              rCode === 'over_email_send_rate_limit' ||
+              rMsg.includes('for security purposes') ||
+              rMsg.includes('60 seconds')
+            ) {
+              alreadySent = true
+            }
+          }
+        } catch (resendCatch) {
+          console.warn('[loginAction] Auto-resend verification error:', resendCatch)
+        }
+
+        return {
+          unconfirmed: true,
+          email: targetEmail,
+          error: alreadySent
+            ? 'Akun Anda belum dikonfirmasi. Tautan verifikasi baru saja dikirimkan sebelumnya. Harap periksa kotak masuk atau FOLDER SPAM email Anda.'
+            : 'Akun Anda belum dikonfirmasi. Tautan verifikasi baru telah otomatis kami kirimkan ke email Anda. Harap periksa kotak masuk atau FOLDER SPAM email Anda.',
+        }
+      }
+
       return { error: 'Email atau password salah.' }
     }
 
@@ -44,6 +104,53 @@ export async function loginAction(formData: FormData) {
   }
 
   return { success: true }
+}
+
+export async function resendVerificationAction(rawEmail: string) {
+  if (!rawEmail) {
+    return { error: 'Email harus diisi.' }
+  }
+  const email = rawEmail.trim().toLowerCase()
+  const supabase = await createClient()
+
+  try {
+    const origin = await getAppOrigin()
+    const { getAdminSupabase } = await import('@/lib/supabaseServer')
+    const admin = getAdminSupabase()
+    const resendClient = (admin && admin.auth) ? admin : supabase
+
+    const { error } = await resendClient.auth.resend({
+      type: 'signup',
+      email,
+      options: {
+        emailRedirectTo: `${origin}/auth/callback`,
+      },
+    })
+
+    if (error) {
+      const errorMsg = error.message?.toLowerCase() || ''
+      const errorCode = (error as any).code || ''
+      if (
+        errorCode === 'over_email_send_rate_limit' ||
+        errorMsg.includes('for security purposes') ||
+        errorMsg.includes('60 seconds')
+      ) {
+        return {
+          success: true,
+          alreadySent: true,
+          message: 'Tautan verifikasi sudah dikirimkan baru-baru ini. Silakan periksa kotak masuk atau FOLDER SPAM Anda.',
+        }
+      }
+      return { error: error.message }
+    }
+
+    return {
+      success: true,
+      message: 'Tautan verifikasi baru berhasil dikirim. Silakan periksa kotak masuk atau FOLDER SPAM Anda.',
+    }
+  } catch (err: any) {
+    return { error: err?.message || 'Gagal mengirim ulang tautan verifikasi.' }
+  }
 }
 
 export async function registerAction(formData: FormData) {
@@ -66,6 +173,7 @@ export async function registerAction(formData: FormData) {
 
   const email = rawEmail.trim().toLowerCase()
   const supabase = await createClient()
+  const origin = await getAppOrigin()
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -73,7 +181,7 @@ export async function registerAction(formData: FormData) {
       data: {
         full_name: fullName,
       },
-      emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/auth/callback`,
+      emailRedirectTo: `${origin}/auth/callback`,
     },
   })
 
@@ -83,6 +191,33 @@ export async function registerAction(formData: FormData) {
 
   // Supabase returns an empty identities array if a user with this email already exists
   if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+    try {
+      const { getAdminSupabase } = await import('@/lib/supabaseServer')
+      const admin = getAdminSupabase()
+      const { data: userData } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
+      const existingUser = userData?.users?.find(u => u.email?.toLowerCase() === email)
+      if (existingUser && !existingUser.email_confirmed_at) {
+        // Otomatis kirim ulang verifikasi ke pemilik email
+        try {
+          await supabase.auth.resend({
+            type: 'signup',
+            email,
+            options: {
+              emailRedirectTo: `${origin}/auth/callback`,
+            },
+          })
+        } catch (resendErr) {
+          console.warn('[registerAction] Resend to unconfirmed user warning:', resendErr)
+        }
+
+        return {
+          error: 'Email ini sudah terdaftar sebelumnya namun belum diverifikasi. Tautan verifikasi baru telah kami kirimkan ke email Anda. Harap periksa kotak masuk atau FOLDER SPAM / PROMOSI untuk mengaktifkan akun Anda.'
+        }
+      }
+    } catch (e) {
+      console.warn('[registerAction] Existing user check error:', e)
+    }
+
     return { error: 'Email ini sudah terdaftar. Silakan langsung masuk atau gunakan fitur Lupa Password jika Anda lupa kata sandi.' }
   }
 

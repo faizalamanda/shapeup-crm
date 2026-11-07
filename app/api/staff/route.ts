@@ -59,8 +59,31 @@ export async function GET(req: Request) {
 
       if (profileError) throw profileError
 
+      let targetProfileId = existingProfile?.id
+      let targetFullName = existingProfile?.full_name || ''
+      let isConfirmed = true
+
       if (!existingProfile) {
-        return NextResponse.json({ exists: false })
+        // Cek juga di auth.users jika akun auth ada tapi profile belum lengkap
+        try {
+          const { data: { users } } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 })
+          const existingAuthUser = users?.find(u => u.email?.toLowerCase() === trimmedEmail)
+          if (!existingAuthUser) {
+            return NextResponse.json({ exists: false })
+          }
+          targetProfileId = existingAuthUser.id
+          targetFullName = (existingAuthUser.user_metadata?.full_name as string) || ''
+          isConfirmed = !!existingAuthUser.email_confirmed_at
+        } catch {
+          return NextResponse.json({ exists: false })
+        }
+      } else {
+        try {
+          const { data: authUserData } = await supabaseAdmin.auth.admin.getUserById(existingProfile.id)
+          if (authUserData?.user && !authUserData.user.email_confirmed_at) {
+            isConfirmed = false
+          }
+        } catch {}
       }
 
       // Cek apakah sudah ditugaskan ke bisnis aktif ini
@@ -68,17 +91,18 @@ export async function GET(req: Request) {
         .from('business_staff')
         .select('id')
         .eq('business_id', adminProfile.active_business_id)
-        .eq('profile_id', existingProfile.id)
+        .eq('profile_id', targetProfileId)
         .maybeSingle()
 
       if (assignmentError) throw assignmentError
 
       return NextResponse.json({
         exists: true,
-        id: existingProfile.id,
-        full_name: existingProfile.full_name,
-        email: existingProfile.email,
-        alreadyInBusiness: !!existingAssignment
+        id: targetProfileId,
+        full_name: targetFullName,
+        email: trimmedEmail,
+        alreadyInBusiness: !!existingAssignment,
+        isConfirmed
       })
     }
 
@@ -146,11 +170,15 @@ export async function POST(req: Request) {
     }
 
     const trimmedEmail = email.trim().toLowerCase()
+    let requestOrigin = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+    try {
+      requestOrigin = new URL(req.url).origin || requestOrigin
+    } catch {}
 
     // 1. Fast-path lookup by email in profiles table (indexed query)
     let { data: existingProfile, error: fastProfileError } = await supabaseAdmin
       .from('profiles')
-      .select('id, business_id, email, full_name')
+      .select('id, business_id, email, full_name, active_business_id')
       .eq('email', trimmedEmail)
       .maybeSingle()
 
@@ -169,6 +197,15 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Staf dengan email ini sudah terdaftar di bisnis ini." }, { status: 400 })
       }
 
+      // Cek status verifikasi email di auth.users
+      let isConfirmed = true
+      try {
+        const { data: authUserData } = await supabaseAdmin.auth.admin.getUserById(existingProfile.id)
+        if (authUserData?.user && !authUserData.user.email_confirmed_at) {
+          isConfirmed = false
+        }
+      } catch {}
+
       // Tambahkan ke business_staff
       const { error: bsError } = await supabaseAdmin
         .from('business_staff')
@@ -181,19 +218,51 @@ export async function POST(req: Request) {
 
       if (bsError) throw bsError
 
-      // Jika business_id utamanya kosong, update dengan bisnis ini
+      // Update business_id dan active_business_id jika belum diset
+      const profileUpdates: any = {}
       if (!existingProfile.business_id) {
+        profileUpdates.business_id = adminProfile.active_business_id
+      }
+      if (!existingProfile.active_business_id) {
+        profileUpdates.active_business_id = adminProfile.active_business_id
+      }
+      if (Object.keys(profileUpdates).length > 0) {
         await supabaseAdmin
           .from('profiles')
-          .update({ business_id: adminProfile.active_business_id })
+          .update(profileUpdates)
           .eq('id', existingProfile.id)
       }
 
-      return NextResponse.json({ success: true, message: "Staf yang ada berhasil ditambahkan ke unit bisnis ini." })
+      let resendMsg = ''
+      if (!isConfirmed) {
+        // Otomatis kirim tautan verifikasi ke pemilik email
+        try {
+          await supabaseAdmin.auth.resend({
+            type: 'signup',
+            email: trimmedEmail,
+            options: {
+              emailRedirectTo: `${requestOrigin}/auth/callback`,
+            },
+          })
+        } catch (resendErr) {
+          console.warn('[POST /api/staff] Resend verification to existing profile warning:', resendErr)
+        }
+        resendMsg = ` Email ini sudah terdaftar namun belum diverifikasi. Tautan verifikasi baru telah dikirimkan ke ${trimmedEmail} (ingatkan staf untuk memeriksa folder SPAM).`
+      }
+
+      return NextResponse.json({ 
+        success: true, 
+        isConfirmed,
+        message: isConfirmed 
+          ? "Staf yang ada berhasil ditambahkan ke unit bisnis ini." 
+          : `Staf berhasil ditambahkan.${resendMsg}`
+      })
     }
 
     // 2. Jika belum terdaftar, buat User Baru di Auth Supabase
     let targetUserId: string | null = null
+    let isExistingAuthUnconfirmed = false
+
     const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
       email: trimmedEmail,
       password,
@@ -208,6 +277,34 @@ export async function POST(req: Request) {
         const existingAuthUser = users?.find(u => u.email?.toLowerCase() === trimmedEmail)
         if (existingAuthUser) {
           targetUserId = existingAuthUser.id
+
+          // Proteksi ganda: cek apakah sudah terdaftar di business_staff
+          const { data: alreadyAssigned } = await supabaseAdmin
+            .from('business_staff')
+            .select('id')
+            .eq('business_id', adminProfile.active_business_id)
+            .eq('profile_id', targetUserId)
+            .maybeSingle()
+
+          if (alreadyAssigned) {
+            return NextResponse.json({ error: "Staf dengan email ini sudah terdaftar di bisnis ini." }, { status: 400 })
+          }
+
+          if (!existingAuthUser.email_confirmed_at) {
+            isExistingAuthUnconfirmed = true
+            // Otomatis kirim ulang verifikasi ke pemilik email
+            try {
+              await supabaseAdmin.auth.resend({
+                type: 'signup',
+                email: trimmedEmail,
+                options: {
+                  emailRedirectTo: `${requestOrigin}/auth/callback`,
+                },
+              })
+            } catch (resendErr) {
+              console.warn('[POST /api/staff] Resend verification to existing auth user warning:', resendErr)
+            }
+          }
         } else {
           throw createError
         }
@@ -244,7 +341,13 @@ export async function POST(req: Request) {
 
     if (bsError) throw bsError
 
-    return NextResponse.json({ success: true, message: "Staff berhasil didaftarkan" })
+    return NextResponse.json({ 
+      success: true, 
+      isConfirmed: !isExistingAuthUnconfirmed,
+      message: isExistingAuthUnconfirmed
+        ? `Staff berhasil didaftarkan. Email (${trimmedEmail}) sudah terdaftar sebelumnya namun belum diverifikasi. Tautan verifikasi baru telah dikirimkan ke email staf (ingatkan untuk periksa folder SPAM).`
+        : "Staff berhasil didaftarkan" 
+    })
 
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })

@@ -47,6 +47,7 @@ export default function StaffSettings() {
   const [checkingEmail, setCheckingEmail] = useState(false)
   const [emailExists, setEmailExists] = useState<boolean | null>(null)
   const [emailAlreadyInBusiness, setEmailAlreadyInBusiness] = useState<boolean | null>(null)
+  const [emailConfirmed, setEmailConfirmed] = useState<boolean | null>(null)
   const [existingUserName, setExistingUserName] = useState('')
 
   // Edit Modal State
@@ -159,6 +160,7 @@ export default function StaffSettings() {
     if (!email || !email.includes('@')) {
       setEmailExists(null)
       setEmailAlreadyInBusiness(null)
+      setEmailConfirmed(null)
       setExistingUserName('')
       return
     }
@@ -172,11 +174,15 @@ export default function StaffSettings() {
           if (data.exists) {
             setEmailExists(true)
             setEmailAlreadyInBusiness(data.alreadyInBusiness)
+            setEmailConfirmed(data.isConfirmed !== false)
             setExistingUserName(data.full_name || '')
-            setName(data.full_name || '')
+            if (data.full_name) {
+              setName(data.full_name)
+            }
           } else {
             setEmailExists(false)
             setEmailAlreadyInBusiness(false)
+            setEmailConfirmed(null)
             setExistingUserName('')
           }
         }
@@ -220,18 +226,19 @@ export default function StaffSettings() {
       
       if (res.ok) {
         setCreateMessage({ 
-          text: emailExists 
+          text: result.message || (emailExists 
             ? 'Staf yang ada berhasil ditambahkan ke unit bisnis ini!' 
-            : 'Akun Staff berhasil dibuat!', 
+            : 'Akun Staff berhasil dibuat!'), 
           type: 'success' 
         })
         setEmail(''); setPassword(''); setName(''); setRole('staff'); setPermissions([])
-        setEmailExists(null); setEmailAlreadyInBusiness(null); setExistingUserName('')
+        setEmailExists(null); setEmailAlreadyInBusiness(null); setEmailConfirmed(null); setExistingUserName('')
         fetchStaff()
+        const closeDelay = result.isConfirmed === false ? 4500 : 1800
         setTimeout(() => {
           setIsModalOpen(false)
           setCreateMessage({ text: '', type: '' })
-        }, 1500)
+        }, closeDelay)
       } else {
         setCreateMessage({ text: result.error || "Gagal membuat staff", type: 'error' })
       }
@@ -945,15 +952,19 @@ export default function StaffSettings() {
                     </div>
 
                     {emailExists === true && (
-                      <div className={`mt-2 p-2.5 rounded-lg text-xs font-medium ${
+                      <div className={`mt-2 p-2.5 rounded-lg text-xs font-medium leading-relaxed ${
                         emailAlreadyInBusiness
                           ? 'bg-red-50 text-red-700 border border-red-200'
-                          : 'bg-green-50 text-green-700 border border-green-200'
+                          : emailConfirmed === false
+                            ? 'bg-amber-50 text-amber-900 border border-amber-200'
+                            : 'bg-green-50 text-green-700 border border-green-200'
                       }`}>
                         {emailAlreadyInBusiness ? (
                           <span>⚠️ Email ini sudah terdaftar sebagai staf di bisnis ini.</span>
+                        ) : emailConfirmed === false ? (
+                          <span>⚠️ Terdaftar sebagai "{existingUserName || email}", <strong>namun email belum diverifikasi</strong>. Tautan verifikasi baru akan otomatis dikirimkan ke email staf saat disimpan (ingatkan staf untuk memeriksa folder Spam).</span>
                         ) : (
-                          <span>💡 Terdaftar sebagai "{existingUserName}". Staf akan ditambahkan ke unit ini.</span>
+                          <span>💡 Terdaftar sebagai "{existingUserName || email}". Staf akan ditambahkan ke unit ini.</span>
                         )}
                       </div>
                     )}

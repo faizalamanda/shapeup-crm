@@ -1,6 +1,6 @@
 "use client"
 import { useState, useEffect, Suspense } from 'react'
-import { loginAction } from '@/app/auth/actions'
+import { loginAction, resendVerificationAction } from '@/app/auth/actions'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
@@ -11,6 +11,11 @@ function LoginForm() {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+  const [unconfirmedEmail, setUnconfirmedEmail] = useState<string | null>(null)
+  const [unconfirmedMsg, setUnconfirmedMsg] = useState<string | null>(null)
+  const [resendCooldown, setResendCooldown] = useState(0)
+  const [resendLoading, setResendLoading] = useState(false)
+  const [resendNotice, setResendNotice] = useState<string | null>(null)
   const searchParams = useSearchParams()
 
   useEffect(() => {
@@ -20,10 +25,46 @@ function LoginForm() {
     }
   }, [searchParams])
 
+  useEffect(() => {
+    if (resendCooldown <= 0) return
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [resendCooldown > 0])
+
+  const handleResend = async () => {
+    if (!unconfirmedEmail || resendCooldown > 0 || resendLoading) return
+    setResendLoading(true)
+    setResendNotice(null)
+    try {
+      const res = await resendVerificationAction(unconfirmedEmail)
+      if (res?.error) {
+        setResendNotice(`Gagal: ${res.error}`)
+      } else {
+        setResendNotice(res?.message || 'Tautan verifikasi baru berhasil dikirim!')
+        setResendCooldown(60)
+      }
+    } catch (err: any) {
+      setResendNotice(err?.message || 'Gagal mengirim ulang tautan verifikasi.')
+    } finally {
+      setResendLoading(false)
+    }
+  }
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setErrorMsg('')
+    setUnconfirmedEmail(null)
+    setUnconfirmedMsg(null)
+    setResendNotice(null)
 
     try {
       const formData = new FormData()
@@ -31,6 +72,14 @@ function LoginForm() {
       formData.append('password', password)
 
       const res = await loginAction(formData)
+
+      if (res?.unconfirmed) {
+        setUnconfirmedEmail(res.email || email)
+        setUnconfirmedMsg(res.error || 'Akun Anda belum dikonfirmasi.')
+        setResendCooldown(60)
+        setLoading(false)
+        return
+      }
 
       if (res?.error) {
         setErrorMsg(res.error === 'Invalid login credentials' ? 'Email atau password salah.' : res.error)
@@ -63,6 +112,14 @@ function LoginForm() {
       }
     } catch (err: any) {
       console.error('[Login] Login error:', err)
+      // Deteksi versi usang saat deploy (deployment skew)
+      if (err?.message?.includes('Server Action') || err?.message?.includes('was not found on the server')) {
+        setErrorMsg('Aplikasi baru saja diperbarui di server. Memuat ulang halaman...')
+        setTimeout(() => {
+          window.location.reload()
+        }, 1200)
+        return
+      }
       setErrorMsg(err?.message || 'Terjadi kesalahan saat masuk. Silakan coba lagi.')
       setLoading(false)
     }
@@ -158,7 +215,63 @@ function LoginForm() {
           </button>
         </form>
 
-        {errorMsg && (
+        {unconfirmedEmail && (
+          <div className="mt-6 p-5 rounded-2xl bg-amber-50/90 border border-amber-200 text-amber-950 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-600 text-lg shrink-0 mt-0.5">
+                ✉️
+              </div>
+              <div className="flex-1 text-left">
+                <h4 className="font-extrabold text-sm text-amber-950 mb-1">
+                  Akun Belum Dikonfirmasi
+                </h4>
+                <p className="text-xs text-amber-900 leading-relaxed font-medium">
+                  {unconfirmedMsg || (
+                    <>Tautan aktivasi baru telah otomatis dikirimkan ke <strong>{unconfirmedEmail}</strong>.</>
+                  )}
+                </p>
+
+                <div className="mt-3 p-3 bg-white/80 rounded-xl border border-amber-200/70 text-xs text-amber-900 shadow-xs">
+                  <div className="text-amber-950 flex items-center gap-1.5 mb-1 font-bold">
+                    <span>⚠️</span>
+                    <span>PENTING: Periksa Folder Spam</span>
+                  </div>
+                  <p className="text-amber-800/90 leading-relaxed">
+                    Jika tidak ada di Kotak Masuk (Inbox), silakan periksa folder <strong>Spam</strong>, <strong>Junk</strong>, atau tab <strong>Promosi</strong> email Anda, lalu klik tautan tersebut untuk mengaktifkan akun.
+                  </p>
+                </div>
+
+                {resendNotice && (
+                  <div className="mt-2.5 text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl">
+                    {resendNotice}
+                  </div>
+                )}
+
+                <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={handleResend}
+                    disabled={resendCooldown > 0 || resendLoading}
+                    className="text-xs font-bold px-3.5 py-2 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-xl transition-all disabled:opacity-50 disabled:pointer-events-none flex items-center gap-1.5 shadow-sm shadow-amber-200"
+                  >
+                    {resendLoading ? (
+                      'Mengirim...'
+                    ) : resendCooldown > 0 ? (
+                      `Kirim Ulang (${resendCooldown}s)`
+                    ) : (
+                      'Kirim Ulang Email'
+                    )}
+                  </button>
+                  <span className="text-[11px] text-amber-700/80 font-medium">
+                    {resendCooldown > 0 ? 'Tunggu 1 menit sebelum meminta lagi' : 'Belum menerima email?'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {errorMsg && !unconfirmedEmail && (
           <div className="mt-6 p-4 rounded-2xl text-sm font-bold text-center bg-red-50 text-red-600 border border-red-100">
             {errorMsg}
           </div>
