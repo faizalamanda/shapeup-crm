@@ -74,9 +74,19 @@ export async function printSingleKitchenTicket(
   settings?: KitchenSettings
 ): Promise<PrintResult> {
   const kSettings = settings || getStoredKitchenSettings(ticket.paperSize)
-  const effectiveConn = connectionType || (typeof window !== 'undefined' && localStorage.getItem('shapeup_pos_receipt_settings')
-    ? (JSON.parse(localStorage.getItem('shapeup_pos_receipt_settings') || '{}').connectionType || 'system')
-    : 'system')
+  
+  // Resolve station printer connection: specific station preference overrides global cashier connection
+  let effectiveConn: ConnectionType = 'system'
+  if (ticket.printerConnectionType === 'bluetooth') {
+    effectiveConn = 'bluetooth'
+  } else if (ticket.printerConnectionType === 'system') {
+    effectiveConn = 'system'
+  } else {
+    // 'same_as_cashier' fallback to cashier settings
+    effectiveConn = connectionType || (typeof window !== 'undefined' && localStorage.getItem('shapeup_pos_receipt_settings')
+      ? (JSON.parse(localStorage.getItem('shapeup_pos_receipt_settings') || '{}').connectionType || 'system')
+      : 'system')
+  }
 
   if (effectiveConn === 'bluetooth') {
     try {
@@ -98,8 +108,8 @@ export async function printSingleKitchenTicket(
 
       // Encode ESC/POS payload with buzzer & cut options
       const payload = encodeKitchenTicketToEscPos(ticket, {
-        soundBuzzer: kSettings.soundBuzzer,
-        autoCut: kSettings.autoCutPaper
+        soundBuzzer: ticket.soundBuzzer ?? kSettings.soundBuzzer,
+        autoCut: ticket.autoCut ?? kSettings.autoCutPaper
       })
 
       // Access active characteristic via global hook if present, or fallback

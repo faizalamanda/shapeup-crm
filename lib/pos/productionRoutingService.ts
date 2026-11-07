@@ -12,6 +12,11 @@ export interface ProductionStation {
   name: string
   code?: string | null
   icon: string
+  printer_device_id?: string | null
+  printer_connection_type?: 'same_as_cashier' | 'system' | 'bluetooth' | 'lan'
+  printer_name?: string | null
+  sound_buzzer?: boolean
+  auto_cut?: boolean
   paper_size?: PaperSize
   is_active?: boolean
   is_default?: boolean
@@ -136,6 +141,11 @@ export function routeItemsToProductionStations(
         globalOrderNote: extractedNote || undefined,
         items: itemsForStation,
         paperSize: st.paper_size || '58mm',
+        printerDeviceId: st.printer_device_id || null,
+        printerConnectionType: st.printer_connection_type || 'same_as_cashier',
+        printerName: st.printer_name || null,
+        soundBuzzer: st.sound_buzzer ?? true,
+        autoCut: st.auto_cut ?? true,
         isReprint: options.isReprint,
         ticketKind: options.ticketKind || 'NEW'
       })

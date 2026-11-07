@@ -37,6 +37,11 @@ export interface KitchenTicketData {
   paperSize: PaperSize
   isReprint?: boolean
   ticketKind?: 'NEW' | 'ADD-ON' | 'HOLD'
+  printerDeviceId?: string | null
+  printerConnectionType?: 'same_as_cashier' | 'system' | 'bluetooth' | 'lan'
+  printerName?: string | null
+  soundBuzzer?: boolean
+  autoCut?: boolean
 }
 
 /**

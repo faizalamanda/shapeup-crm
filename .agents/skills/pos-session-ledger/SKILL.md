@@ -85,6 +85,19 @@ Sistem memisahkan dua konsep pemecahan secara tegas dan mendukung keduanya secar
   - **Glif Fungsional vs Ikon Dekoratif:** Simbol kategori pembayaran (`💵`, `📱`, `💳`, `🏦`) diizinkan murni sebagai penanda fungsional cepat (*glanceable tender category glyphs*) pada tombol kasir, namun dilarang menumpuk emoji kartun dekoratif non-fungsional (`✓`, `⏳`, `🎉`, dll) yang membuat antarmuka sesak.
   - **Hirarki Tipografi Monokrom:** Penegasan informasi menggunakan ketebalan teks (`slate-950`), kontras angka nominal, dan badge status fungsional (Emerald untuk `LUNAS`, Amber/Rose untuk `BELUM LUNAS` / `SISA PIUTANG`).
 
+### 2.6 Standar Arsitektur Pemilih Varian & Modifier POS (`VariantSelectorModal`)
+Ketika kasir memilih produk yang memiliki varian atau modifier, antarmuka membuka modal pemilih varian berstandar ERP:
+1. **Intelligent Multi-Attribute Dimensional Breakdown:**
+   - Varian dengan format hyphen multi-dimensi (contoh: `"Hitam - XL"`, `"Merah - M"`, `"Matcha - Less Ice"`) secara otomatis didekonstruksi menjadi pil pemilih terpisah (Dimensi 1: *Warna*, Dimensi 2: *Ukuran*, Dimensi 3: *Suhu/Es*).
+   - Seluruh operasi string wajib menerapkan pengamanan kenihilan (`v?.name && typeof v.name === 'string'`) sebelum melakukan `split(' - ')` atau `.trim()` guna mencegah error runtime tipe data.
+2. **Aturan Mutlak React Hooks (Zero Early Return Crash):**
+   - **DILARANG KERAS** meletakkan `if (!isOpen || !product) return null` sebelum hooks (`useMemo`, `useState`, `useEffect`). Guard return wajib diletakkan di baris paling bawah tepat sebelum me-return JSX.
+   - Semua memoization wajib dirancang *defensive* terhadap kondisi `product === null` (fallback ke array kosong `[]`).
+3. **On-The-Fly DB Variant Fetching Fallback:**
+   - Jika suatu produk memiliki flag `has_variants = true` namun array relasi varian lokal belum lengkap di cache/katalog POS, modal wajib secara otomatis menjalankan kueri asinkronus ke tabel `product_variants` dengan indikator loading (`isLoadingVariants`) sehingga kasir tidak pernah mengalami dialog kosong atau macet.
+4. **Flat Cart & Thermal Receipt Presentation:**
+   - Nama produk bervarian disimpan secara linier sebaris (`${rawName} - ${variantName}`) tanpa bullet list bertingkat untuk menghemat kertas struk kasir 30%–50% dan mempercepat pembacaan staf barista/dapur.
+
 ---
 
 ## 3. Pure Append-Only Void & Refund (Zero DELETE Policy)

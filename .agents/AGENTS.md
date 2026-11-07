@@ -166,6 +166,13 @@
      }
      ```
 
+2. **Rules of Hooks Invariant in Modals & Conditional Dialogs:**
+   - **DILARANG KERAS** meletakkan *early return* (`if (!isOpen) return null`, `if (!product) return null`) di atas deklarasi React Hooks (`useState`, `useEffect`, `useMemo`, `useCallback`, `useRef`).
+   - **WAJIB** memanggil seluruh React Hooks di bagian paling atas komponen secara konsisten dan tanpa syarat (*unconditional execution*). Pengecekan guard `if (!isOpen || !item) return null` **WAJIB DILETAKKAN DI PALING BAWAH** tepat sebelum me-return JSX antarmuka.
+   - **Dampak Pelanggaran:** Saat modal tertutup (`isOpen = false`), komponen berhenti di baris *early return* (hanya mendaftarkan 1 hook awal). Begitu modal dibuka (`isOpen = true`), React mengeksekusi puluhan hook baru di bawahnya sehingga memicu crash fatal runtime: `"Rendered more hooks than during the previous render"` dan menampilkan error Next.js `"Application error: a client-side exception has occurred"`.
+   - **Null-Safety pada State & Memoization:** Karena Hooks berjalan bahkan saat modal tertutup (`product === null`), seluruh kalkulasi memoization (`useMemo`) wajib menyertakan fallback kenihilan (`if (!product) return []`, `v?.name || ''`, `Number(v?.price ?? product?.price ?? 0)`).
+   - **Dynamic Variant Resolution in POS:** Jika produk memiliki penanda `has_variants: true` namun array varian lokal belum lengkap di cache/katalog POS, modal varian wajib menyediakan sinkronisasi *on-the-fly fetch* otomatis ke tabel `product_variants` dengan state loading tanpa merusak UI kasir.
+
 ## Localization & Date Formatting
 
 1. **Database-Driven Timezone (Strict):** **DILARANG KERAS** menggunakan metode format tanggal bawaan JavaScript secara mentah (seperti `.toLocaleString()`, `.toLocaleDateString()`, `.toLocaleTimeString()`) pada komponen UI, karena ini mengacu pada waktu lokal browser perangkat pengguna.

@@ -18,6 +18,7 @@ export default function ProductionStationsModal({ isOpen, onClose, onStationsUpd
   const [posMode, setPosMode] = useState<PosMode>('retail')
   const [stations, setStations] = useState<ProductionStation[]>([])
   const [categories, setCategories] = useState<Array<{ id: string; name: string; production_station_id?: string | null }>>([])
+  const [registeredPrinters, setRegisteredPrinters] = useState<any[]>([])
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
 
   // Sub-dialog state: Adding or Editing a Station
@@ -27,6 +28,11 @@ export default function ProductionStationsModal({ isOpen, onClose, onStationsUpd
   const [stationCode, setStationCode] = useState('')
   const [stationIcon, setStationIcon] = useState('🍳')
   const [stationPaperSize, setStationPaperSize] = useState<PaperSize>('58mm')
+  const [stationPrinterConn, setStationPrinterConn] = useState<'same_as_cashier' | 'system' | 'bluetooth' | 'lan'>('same_as_cashier')
+  const [stationPrinterDeviceId, setStationPrinterDeviceId] = useState<string | null>(null)
+  const [stationPrinterName, setStationPrinterName] = useState('')
+  const [stationSoundBuzzer, setStationSoundBuzzer] = useState(true)
+  const [stationAutoCut, setStationAutoCut] = useState(true)
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([])
   const [isSavingStation, setIsSavingStation] = useState(false)
 
@@ -46,6 +52,7 @@ export default function ProductionStationsModal({ isOpen, onClose, onStationsUpd
       if (res.ok && data) {
         setStations(data.stations || [])
         setCategories(data.categories || [])
+        setRegisteredPrinters(data.printers || [])
         setPosMode(data.posMode || (data.industry === 'fnb' ? 'fnb' : 'retail'))
       }
     } catch (err: any) {
@@ -78,6 +85,11 @@ export default function ProductionStationsModal({ isOpen, onClose, onStationsUpd
     setStationCode('')
     setStationIcon('🍳')
     setStationPaperSize('58mm')
+    setStationPrinterConn('same_as_cashier')
+    setStationPrinterDeviceId(null)
+    setStationPrinterName('')
+    setStationSoundBuzzer(true)
+    setStationAutoCut(true)
     setSelectedCategoryIds([])
     setIsEditingStation(true)
   }
@@ -88,6 +100,11 @@ export default function ProductionStationsModal({ isOpen, onClose, onStationsUpd
     setStationCode(st.code || '')
     setStationIcon(st.icon || '🍳')
     setStationPaperSize(st.paper_size || '58mm')
+    setStationPrinterConn(st.printer_connection_type || 'same_as_cashier')
+    setStationPrinterDeviceId(st.printer_device_id || null)
+    setStationPrinterName(st.printer_name || '')
+    setStationSoundBuzzer(st.sound_buzzer ?? true)
+    setStationAutoCut(st.auto_cut ?? true)
 
     // Find categories mapped to this station
     const mappedIds = categories
@@ -116,6 +133,11 @@ export default function ProductionStationsModal({ isOpen, onClose, onStationsUpd
           code: stationCode.trim().toUpperCase() || undefined,
           icon: stationIcon,
           paper_size: stationPaperSize,
+          printer_connection_type: stationPrinterConn,
+          printer_device_id: stationPrinterDeviceId || undefined,
+          printer_name: stationPrinterName.trim() || undefined,
+          sound_buzzer: stationSoundBuzzer,
+          auto_cut: stationAutoCut,
           category_ids: selectedCategoryIds
         })
       })
@@ -329,6 +351,28 @@ export default function ProductionStationsModal({ isOpen, onClose, onStationsUpd
                           </div>
                         </div>
 
+                        {/* Info Printer Target Stasiun */}
+                        <div className="flex items-center gap-2 text-[11px] bg-slate-50/80 px-2.5 py-1.5 rounded-lg border border-slate-100">
+                          <span className="text-xs">
+                            {st.printer_connection_type === 'bluetooth' ? '📶' : '🖨️'}
+                          </span>
+                          <div className="flex-1 truncate">
+                            <span className="font-semibold text-slate-700">
+                              {st.printer_connection_type === 'bluetooth'
+                                ? `Bluetooth: ${st.printer_name || 'Direct BLE'}`
+                                : st.printer_connection_type === 'system'
+                                ? `Printer Sistem: ${st.printer_name || 'Driver OS'}`
+                                : st.printer_connection_type === 'lan'
+                                ? `Jaringan LAN: ${st.printer_name || 'ESC/POS'}`
+                                : 'Printer Kasir (Default)'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 text-[10px] text-slate-400 font-mono">
+                            {st.sound_buzzer && <span title="Buzzer Aktif">🔔</span>}
+                            {st.auto_cut && <span title="Auto-Cut Aktif">✂️</span>}
+                          </div>
+                        </div>
+
                         {/* Mapped Categories Badges */}
                         <div className="pt-2 border-t border-slate-100">
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
@@ -449,6 +493,138 @@ export default function ProductionStationsModal({ isOpen, onClose, onStationsUpd
                       {ic}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Pengaturan Printer Target Stasiun */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="block font-bold text-slate-850 uppercase tracking-wide text-[11px]">
+                    🖨️ Printer Target untuk Stasiun Ini
+                  </label>
+                  <span className="text-[10px] text-slate-500 font-medium">Multi-Printer Routing</span>
+                </div>
+
+                {/* Pilihan Metode Koneksi Printer */}
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStationPrinterConn('same_as_cashier')
+                      setStationPrinterDeviceId(null)
+                    }}
+                    className={`p-2 rounded-xl border text-left transition flex flex-col justify-between ${
+                      stationPrinterConn === 'same_as_cashier'
+                        ? 'bg-indigo-50/90 border-indigo-600 text-indigo-950 font-bold ring-1 ring-indigo-500'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span className="text-sm mb-0.5">🖨️</span>
+                    <span className="text-[11px] block leading-tight">Printer Kasir</span>
+                    <span className="text-[9px] text-slate-500 font-normal">Sama dg kasir</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStationPrinterConn('system')}
+                    className={`p-2 rounded-xl border text-left transition flex flex-col justify-between ${
+                      stationPrinterConn === 'system'
+                        ? 'bg-indigo-50/90 border-indigo-600 text-indigo-950 font-bold ring-1 ring-indigo-500'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span className="text-sm mb-0.5">🖥️</span>
+                    <span className="text-[11px] block leading-tight">Printer Sistem</span>
+                    <span className="text-[9px] text-slate-500 font-normal">USB / Dialog OS</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStationPrinterConn('bluetooth')}
+                    className={`p-2 rounded-xl border text-left transition flex flex-col justify-between ${
+                      stationPrinterConn === 'bluetooth'
+                        ? 'bg-indigo-50/90 border-indigo-600 text-indigo-950 font-bold ring-1 ring-indigo-500'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span className="text-sm mb-0.5">📶</span>
+                    <span className="text-[11px] block leading-tight">Bluetooth</span>
+                    <span className="text-[9px] text-slate-500 font-normal">Direct BLE Dapur</span>
+                  </button>
+                </div>
+
+                {/* Nama / Identitas Printer Stasiun (Jika terpisah dari kasir) */}
+                {stationPrinterConn !== 'same_as_cashier' && (
+                  <div className="pt-2 border-t border-slate-200/80 space-y-2">
+                    {registeredPrinters.length > 0 && (
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                          Pilih dari Perangkat Terdaftar:
+                        </label>
+                        <select
+                          value={stationPrinterDeviceId || ''}
+                          onChange={(e) => {
+                            const id = e.target.value
+                            setStationPrinterDeviceId(id || null)
+                            const found = registeredPrinters.find(p => p.id === id)
+                            if (found) {
+                              setStationPrinterName(found.name)
+                              if (found.paper_size) setStationPaperSize(found.paper_size as PaperSize)
+                            }
+                          }}
+                          className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-none"
+                        >
+                          <option value="">-- Buat / Ketik Nama Printer Baru --</option>
+                          {registeredPrinters.map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ({p.connection_type.toUpperCase()} - {p.paper_size})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                        Nama / Alias Printer Stasiun:
+                      </label>
+                      <input
+                        type="text"
+                        value={stationPrinterName}
+                        onChange={e => setStationPrinterName(e.target.value)}
+                        placeholder={stationPrinterConn === 'bluetooth' ? 'Contoh: POS-58 Dapur, RPP02N Bar' : 'Contoh: Epson TM-T82 Dapur, Printer USB Bar'}
+                        className="w-full px-3 py-1.5 border border-slate-200 rounded-lg bg-white font-medium text-xs focus:ring-2 focus:ring-slate-900 outline-none"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        {stationPrinterConn === 'bluetooth' 
+                          ? 'Perangkat Bluetooth printer yang dialokasikan khusus untuk stasiun ini.'
+                          : 'Nama printer di dialog cetak sistem komputer kasir.'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Hardware Signals: Buzzer & Auto-Cut */}
+                <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between gap-3 text-[11px]">
+                  <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-700 select-none">
+                    <input
+                      type="checkbox"
+                      checked={stationSoundBuzzer}
+                      onChange={e => setStationSoundBuzzer(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <span>🔔 Alarm Buzzer (Beep 2x)</span>
+                  </label>
+
+                  <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-700 select-none">
+                    <input
+                      type="checkbox"
+                      checked={stationAutoCut}
+                      onChange={e => setStationAutoCut(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <span>✂️ Potong Kertas</span>
+                  </label>
                 </div>
               </div>
 

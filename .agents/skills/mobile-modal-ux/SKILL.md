@@ -61,6 +61,11 @@ Semua modal fitur yang berfungsi sebagai layar kerja/detail (misal: Detail Pesan
      2. Apakah sudah ada baris `useModalBackHandler(is...Open, onClose)` untuk state tersebut?
      3. Uji: Buka modal induk -> Buka popup anak -> Tekan Back -> Pastikan hanya popup anak yang tertutup.
 
+10. **Aturan Mutlak Urutan React Hooks pada Modal (Unconditional Hooks Invariant):**
+    - **DILARANG KERAS** menempatkan *early return* (`if (!isOpen) return null`, `if (!product) return null`) mendahului deklarasi React Hooks (`useMemo`, `useState`, `useEffect`, `useRef`, `useCallback`).
+    - **WAJIB** menempatkan semua Hooks di bagian paling atas badan fungsi komponen modal. Guard `if (!isOpen || !data) return null` **HANYA BOLEH DILETAKKAN DI PALING BAWAH** tepat sebelum sintaks pengembalian elemen JSX.
+    - **Pencegahan Crash "Client-Side Exception":** Pelanggaran aturan urutan Hooks menyebabkan Next.js / React melempar fatal exception `Rendered more hooks than during the previous render` saat modal yang semula tertutup dibuka oleh pengguna. Seluruh kalkulasi data di dalam `useMemo` saat modal tertutup (`data === null`) wajib dilengkapi proteksi fallback kenihilan (`if (!data) return []`).
+
 ---
 
 Untuk contoh implementasi lengkap, batasan, dan studi kasus, baca [knowledge mobile modal UX](../../knowledge/mobile-modal-ux.md).

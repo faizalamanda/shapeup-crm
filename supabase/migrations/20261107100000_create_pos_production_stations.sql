@@ -9,6 +9,10 @@ CREATE TABLE IF NOT EXISTS public.pos_production_stations (
     code TEXT,
     icon TEXT NOT NULL DEFAULT '🍳',
     printer_device_id UUID,
+    printer_connection_type TEXT NOT NULL DEFAULT 'same_as_cashier', -- 'same_as_cashier', 'system', 'bluetooth', 'lan'
+    printer_name TEXT,
+    sound_buzzer BOOLEAN NOT NULL DEFAULT true,
+    auto_cut BOOLEAN NOT NULL DEFAULT true,
     paper_size TEXT NOT NULL DEFAULT '58mm',
     is_active BOOLEAN NOT NULL DEFAULT true,
     is_default BOOLEAN NOT NULL DEFAULT false,
@@ -19,8 +23,22 @@ CREATE TABLE IF NOT EXISTS public.pos_production_stations (
     CONSTRAINT pos_production_stations_pkey PRIMARY KEY (id),
     CONSTRAINT pos_production_stations_business_fkey FOREIGN KEY (business_id) REFERENCES public.businesses(id) ON DELETE CASCADE,
     CONSTRAINT pos_production_stations_printer_fkey FOREIGN KEY (printer_device_id) REFERENCES public.pos_printer_devices(id) ON DELETE SET NULL,
-    CONSTRAINT pos_production_stations_paper_check CHECK (paper_size IN ('58mm', '80mm'))
+    CONSTRAINT pos_production_stations_paper_check CHECK (paper_size IN ('58mm', '80mm')),
+    CONSTRAINT pos_production_stations_conn_check CHECK (printer_connection_type IN ('same_as_cashier', 'system', 'bluetooth', 'lan'))
 );
+
+-- Idempotent column additions for existing tables
+ALTER TABLE public.pos_production_stations 
+ADD COLUMN IF NOT EXISTS printer_connection_type TEXT NOT NULL DEFAULT 'same_as_cashier';
+
+ALTER TABLE public.pos_production_stations 
+ADD COLUMN IF NOT EXISTS printer_name TEXT DEFAULT NULL;
+
+ALTER TABLE public.pos_production_stations 
+ADD COLUMN IF NOT EXISTS sound_buzzer BOOLEAN NOT NULL DEFAULT true;
+
+ALTER TABLE public.pos_production_stations 
+ADD COLUMN IF NOT EXISTS auto_cut BOOLEAN NOT NULL DEFAULT true;
 
 -- Index for performant querying by business and sort order
 CREATE INDEX IF NOT EXISTS idx_pos_production_stations_biz 

@@ -54,9 +54,17 @@ export async function GET(req: Request) {
       .eq('id', businessId)
       .maybeSingle()
 
+    // 4. Fetch registered printer devices for selection
+    const { data: printers } = await dbClient
+      .from('pos_printer_devices')
+      .select('id, name, connection_type, paper_size, address, is_default')
+      .eq('business_id', businessId)
+      .order('name', { ascending: true })
+
     return NextResponse.json({
       stations: stations || [],
       categories: categories || [],
+      printers: printers || [],
       posMode: biz?.pos_mode || 'retail',
       industry: biz?.industry || 'retail'
     })
@@ -133,6 +141,11 @@ export async function POST(req: Request) {
       code,
       icon = '🍳',
       paper_size = '58mm',
+      printer_device_id,
+      printer_connection_type = 'same_as_cashier',
+      printer_name,
+      sound_buzzer = true,
+      auto_cut = true,
       is_active = true,
       category_ids = []
     } = body
@@ -143,18 +156,30 @@ export async function POST(req: Request) {
     }
 
     const stationId = isUuid(rawId) ? rawId : undefined
+    const cleanPrinterId = isUuid(printer_device_id) ? printer_device_id : null
     let savedStation: any = null
+
+    const stationPayload: Record<string, any> = {
+      name: cleanName,
+      code: code ? String(code).trim().toUpperCase() : null,
+      icon: String(icon || '🍳'),
+      paper_size: paper_size === '80mm' ? '80mm' : '58mm',
+      printer_device_id: cleanPrinterId,
+      printer_connection_type: ['same_as_cashier', 'system', 'bluetooth', 'lan'].includes(printer_connection_type) 
+        ? printer_connection_type 
+        : 'same_as_cashier',
+      printer_name: printer_name ? String(printer_name).trim() : null,
+      sound_buzzer: Boolean(sound_buzzer),
+      auto_cut: Boolean(auto_cut),
+      is_active: Boolean(is_active)
+    }
 
     if (stationId) {
       // Update existing station
-      const { data, error: updErr } = await dbClient
+      let { data, error: updErr } = await dbClient
         .from('pos_production_stations')
         .update({
-          name: cleanName,
-          code: code ? String(code).trim().toUpperCase() : null,
-          icon: String(icon || '🍳'),
-          paper_size: paper_size === '80mm' ? '80mm' : '58mm',
-          is_active: Boolean(is_active),
+          ...stationPayload,
           updated_at: new Date().toISOString()
         })
         .eq('id', stationId)
@@ -162,24 +187,60 @@ export async function POST(req: Request) {
         .select()
         .single()
 
+      // Resilient fallback if extra columns not yet in DB
+      if (updErr && updErr.message?.includes('does not exist')) {
+        const { data: fallbackData, error: fbErr } = await dbClient
+          .from('pos_production_stations')
+          .update({
+            name: cleanName,
+            code: code ? String(code).trim().toUpperCase() : null,
+            icon: String(icon || '🍳'),
+            paper_size: paper_size === '80mm' ? '80mm' : '58mm',
+            printer_device_id: cleanPrinterId,
+            is_active: Boolean(is_active),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', stationId)
+          .eq('business_id', businessId)
+          .select()
+          .single()
+        data = fallbackData
+        updErr = fbErr
+      }
+
       if (updErr) {
         return NextResponse.json({ error: 'Gagal memperbarui stasiun: ' + updErr.message }, { status: 500 })
       }
       savedStation = data
     } else {
       // Insert new station
-      const { data, error: insErr } = await dbClient
+      let { data, error: insErr } = await dbClient
         .from('pos_production_stations')
         .insert({
           business_id: businessId,
-          name: cleanName,
-          code: code ? String(code).trim().toUpperCase() : null,
-          icon: String(icon || '🍳'),
-          paper_size: paper_size === '80mm' ? '80mm' : '58mm',
-          is_active: Boolean(is_active)
+          ...stationPayload
         })
         .select()
         .single()
+
+      // Resilient fallback if extra columns not yet in DB
+      if (insErr && insErr.message?.includes('does not exist')) {
+        const { data: fallbackData, error: fbErr } = await dbClient
+          .from('pos_production_stations')
+          .insert({
+            business_id: businessId,
+            name: cleanName,
+            code: code ? String(code).trim().toUpperCase() : null,
+            icon: String(icon || '🍳'),
+            paper_size: paper_size === '80mm' ? '80mm' : '58mm',
+            printer_device_id: cleanPrinterId,
+            is_active: Boolean(is_active)
+          })
+          .select()
+          .single()
+        data = fallbackData
+        insErr = fbErr
+      }
 
       if (insErr) {
         return NextResponse.json({ error: 'Gagal menambahkan stasiun: ' + insErr.message }, { status: 500 })

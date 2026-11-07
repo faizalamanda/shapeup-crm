@@ -192,3 +192,88 @@ useModalBackHandler(isReceiptDetailsOpen, () => setIsReceiptDetailsOpen(false))
    - Modal induk di bawahnya (`CashPaymentModal`) tetap utuh tanpa kehilangan data input atau status transaksi.
 3. Penekanan tombol Back berikutnya barulah menutup modal induk secara bertahap.
 4. **DILARANG KERAS** membiarkan dialog/pop-up sekunder hanya dikontrol oleh conditional JSX `isOpen && <div className="fixed inset-0...">` tanpa mendaftarkan `useModalBackHandler`.
+
+---
+
+## 6. Aturan Mutlak React Hooks pada Modal (Unconditional Hooks Invariant)
+
+Salah satu penyebab paling sering dari error produksi Next.js **"Application error: a client-side exception has occurred"** adalah penempatan *early return* sebelum deklarasi React Hooks.
+
+### 6.1 Jebakan Early Return (Anti-Pattern)
+
+```tsx
+// ❌ ANTI-PATTERN: Early return memutus eksekusi hook saat modal tertutup!
+export default function VariantSelectorModal({ isOpen, onClose, product }: Props) {
+  useModalBackHandler(isOpen, onClose)
+
+  if (!isOpen || !product) return null // 💥 BAHAYA FATAL!
+
+  const variants = useMemo(() => { ... }, [product])
+  const [selectedVariant, setSelectedVariant] = useState(null)
+  useEffect(() => { ... }, [product])
+
+  return <div>...</div>
+}
+```
+
+**Mekanisme Terjadinya Crash:**
+1. **Saat Render Pertama (Modal Tertutup):** `isOpen === false` atau `product === null`. Komponen langsung mengeksekusi `return null` di baris 5. React hanya mendaftarkan 1 hook (`useModalBackHandler`).
+2. **Saat Pengguna Membuka Modal:** `isOpen` menjadi `true`. Komponen me-render ulang. Melewati baris `return null` dan mengeksekusi `useMemo`, `useState`, `useEffect`.
+3. **Reaksi React:** React mendeteksi hook baru dipanggil secara ilegal di tengah siklus hidup komponen dan langsung melempar exception:
+   `Error: Rendered more hooks than during the previous render.`
+   Aplikasi langsung crash total dengan layar putih error Vercel.
+
+---
+
+### 6.2 Pola Solusi yang Wajib Diikuti
+
+Semua hook **WAJIB** dideklarasikan tanpa syarat (*unconditionally*) di bagian atas, dan guard `return null` diposisikan di baris paling akhir sebelum JSX:
+
+```tsx
+// ✅ POLA BENAR & AMAN (Unconditional Hooks + Defensive Memoization):
+export default function VariantSelectorModal({ isOpen, onClose, product, onAddToCart }: Props) {
+  // 1. Hardware Back Integration
+  useModalBackHandler(isOpen, onClose)
+
+  // 2. State & Hooks dipanggil tanpa syarat
+  const [fetchedVariants, setFetchedVariants] = useState<VariantOption[]>([])
+  const [selectedVariant, setSelectedVariant] = useState<VariantOption | null>(null)
+  const [note, setNote] = useState('')
+
+  // 3. Memoization dengan perlindungan kenihilan (Safe if product is null)
+  const variants = useMemo(() => {
+    if (!product) return []
+    const raw = product.product_variants || product.variants
+    if (Array.isArray(raw) && raw.length > 0) {
+      return raw.map((v) => ({
+        id: v?.id || '',
+        name: v?.name || '',
+        price: Number(v?.price ?? product?.price ?? 0),
+      }))
+    }
+    return fetchedVariants
+  }, [product, fetchedVariants])
+
+  // 4. Sinkronisasi state saat modal terbuka
+  useEffect(() => {
+    if (isOpen && product) {
+      setSelectedVariant(variants[0] || null)
+      setNote('')
+    } else {
+      setSelectedVariant(null)
+      setNote('')
+    }
+  }, [isOpen, product, variants])
+
+  // 5. GUARD RETURN ditaruh di paling bawah setelah SEMUA hook tereksekusi
+  if (!isOpen || !product) return null
+
+  // 6. Render JSX aman
+  return (
+    <div className="fixed inset-0 z-50 ...">
+      <h3>{product.name}</h3>
+      {/* ... */}
+    </div>
+  )
+}
+```
