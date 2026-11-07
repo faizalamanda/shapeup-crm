@@ -5,12 +5,16 @@ import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { formatDisplayDate } from '@/lib/timeUtils'
 import { ReceiptData, ReceiptLoyaltyInfo } from '@/lib/pos/printerAdapter'
 import ReceiptPreviewModal from './ReceiptPreviewModal'
+import KitchenTicketPreviewModal from './KitchenTicketPreviewModal'
 import { getStoredReceiptSettings } from './ReceiptSettingsModal'
+import { getStoredKitchenSettings } from '@/lib/pos/kitchenSettings'
+import { buildKitchenTicketsFromItems, KitchenTicketData } from '@/lib/pos/kitchenTicketBuilder'
 import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
 import CashPaymentModal, { type PaymentResult } from './CashPaymentModal'
 import POSReturnModal from './POSReturnModal'
 import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
+import { resolvePosMode } from '@/lib/pos/posMode'
 
 type Props = {
   isOpen: boolean
@@ -51,6 +55,7 @@ export default function POSOrderDetailModal({
 }: Props) {
   // ─── 1. ALL HOOKS UNCONDITIONALLY AT TOP (ZERO REACT HOOKS VIOLATIONS) ──────
   const { activeBusiness } = useUserContext()
+  const posMode = useMemo(() => resolvePosMode(activeBusiness), [activeBusiness])
   const [currentOrder, setCurrentOrder] = useState<any | null>(order)
   const effectiveBusinessId = businessId || currentOrder?.business_id || activeBusiness?.id
   const [payments, setPayments] = useState<PaymentRecord[]>([])
@@ -60,6 +65,8 @@ export default function POSOrderDetailModal({
 
   const [isReceiptPreviewOpen, setIsReceiptPreviewOpen] = useState(false)
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null)
+  const [kitchenTickets, setKitchenTickets] = useState<KitchenTicketData[]>([])
+  const [isKitchenModalOpen, setIsKitchenModalOpen] = useState(false)
   const [processingRefund, setProcessingRefund] = useState(false)
   const [refundError, setRefundError] = useState<string | null>(null)
 
@@ -273,6 +280,43 @@ export default function POSOrderDetailModal({
     setIsReceiptPreviewOpen(true)
   }
 
+  // ─── HANDLER: PRINT KITCHEN CHIT ─────────────────────────────────────────────
+  const handleOpenKitchenTicket = () => {
+    if (!currentOrder) return
+
+    let rawItems: any[] = []
+    if (Array.isArray(currentOrder.items)) rawItems = currentOrder.items
+    else if (Array.isArray(currentOrder.items_json)) rawItems = currentOrder.items_json
+    else if (Array.isArray(currentOrder.line_items)) rawItems = currentOrder.line_items
+
+    const kSettings = getStoredKitchenSettings()
+    const tickets = buildKitchenTicketsFromItems(
+      rawItems,
+      {
+        orderNumber: currentOrder.order_number,
+        customerName: currentOrder.customer?.name || currentOrder.customer_name || 'Pelanggan',
+        orderNote: currentOrder.order_note || currentOrder.customer_note || currentOrder.notes,
+        queueNumber: currentOrder.queue_number,
+        createdAt: currentOrder.created_at
+      },
+      {
+        businessName,
+        settings: kSettings,
+        cashierName,
+        isReprint: true,
+        ticketKind: 'NEW'
+      }
+    )
+
+    if (tickets.length === 0) {
+      alert('Tidak ada item menu untuk dicetak ke dapur.')
+      return
+    }
+
+    setKitchenTickets(tickets)
+    setIsKitchenModalOpen(true)
+  }
+
   // ─── HANDLER: REFUND ORDER ──────────────────────────────────────────────────
   const handleRefund = async () => {
     if (!currentOrder) return
@@ -459,10 +503,20 @@ export default function POSOrderDetailModal({
             </div>
 
             <div className="flex items-center gap-2">
+              {posMode.enableProductionTickets && (
+                <button
+                  type="button"
+                  onClick={handleOpenKitchenTicket}
+                  className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold rounded-xl text-xs border border-amber-200 transition flex items-center gap-1.5 cursor-pointer"
+                  title="Cetak ulang nota dapur untuk pesanan ini"
+                >
+                  <span>🍳 Nota Dapur</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleOpenReceipt}
-                className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-xs border border-indigo-200 transition flex items-center gap-1.5"
+                className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-xs border border-indigo-200 transition flex items-center gap-1.5 cursor-pointer"
                 title="Cetak ulang struk nota ini ke printer thermal"
               >
                 <span>🖨️ Cetak Struk</span>
@@ -857,6 +911,16 @@ export default function POSOrderDetailModal({
           }}
         />
       )}
+
+      {/* Modal Preview & Cetak Nota Dapur */}
+      <KitchenTicketPreviewModal
+        isOpen={isKitchenModalOpen}
+        onClose={() => {
+          setIsKitchenModalOpen(false)
+          setKitchenTickets([])
+        }}
+        tickets={kitchenTickets}
+      />
     </>
   )
 }

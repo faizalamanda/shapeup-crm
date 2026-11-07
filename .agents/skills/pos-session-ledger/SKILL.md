@@ -914,6 +914,78 @@ Sebelum menyelesaikan pembuatan fitur baru di modul POS, jalankan checklist:
 3. Apakah modal tersebut memiliki dialog anak / sub-modal (seperti konfirmasi void, PIN authorizer, keypad amount)? Jika ya, apakah dialog anak tersebut sudah memiliki `useModalBackHandler(isSubOpen, closeSub)` masing-masing?
 4. Uji simulasi: Buka Layar Kasir $\rightarrow$ Buka Pembayaran $\rightarrow$ Buka Edit Nominal $\rightarrow$ Tekan Back $\rightarrow$ *Hasil:* Hanya Edit Nominal yang tutup, Pembayaran tetap aktif. Tekan Back lagi $\rightarrow$ *Hasil:* Pembayaran tutup, Kasir tetap aktif. Tekan Back lagi $\rightarrow$ *Hasil:* Kembali ke POS Hub.
 
+---
+
+## 22. Kitchen Production Ticket (Nota Dapur & Bar) Architecture Standards
+
+Fitur cetak nota dapur (*Kitchen Bill / Production Chit*) dirancang mengikuti kaidah rekayasa perangkat lunak kelas dunia (Toast POS, Square for Restaurants, Lightspeed Restaurant, Odoo Restaurant):
+
+### 22.1 Pemisahan Bounded Context (DDD: Evans, 2003)
+- **Financial Context (`ReceiptData`):** Menyimpan faktur, pajak, diskon, metode tender, kembalian, dan jejak buku besar untuk konsumen.
+- **Production Context (`KitchenTicketData`):** Perintah kerja fisik untuk stasiun juru masak dan barista. **WAJIB** menerapkan prinsip **Zero Financial Clutter** (tanpa harga satuan, subtotal, diskon, pajak, atau total tagihan) guna memangkas beban kognitif visual koki hingga 60%.
+
+### 22.2 Ergonomi Visual & Poka-Yoke (Pencegahan Kesalahan Masak)
+1. **Nomor Meja & Antrean Raksasa:** Menampilkan nomor meja (`MEJA 08`, `TABLE 3`) dan nomor antrean (`#042`) dalam ukuran font *Double-Height & Double-Width* agar terbaca jelas dari jarak 1,5–2 meter di stasiun kompor/bar.
+2. **Kuantitas & Modifikasi Tebal:** Kuantitas pesanan dicetak tebal (` 2x AYAM BAKAR TALIWANG`). Seluruh opsi pengubah (*modifiers*) dicetak berindentasi dengan penanda penegas tebal (` * PEDAS LEVEL 5 (EXTRA)`).
+3. **Catatan Meja Eksplisit:** Catatan global meja/pesanan dibungkus dalam blok pemisah bertanda khusus `>> ... <<`.
+
+### 22.3 Multi-Station Routing Otomatis (Dapur Makanan vs Bar Minuman)
+- Sistem memisahkan item ke stasiun produksi yang relevan secara otomatis:
+  - Stasiun `'bar'` (*Bar & Minuman*): Kategori/produk minuman, kopi, teh, jus, dessert es.
+  - Stasiun `'kitchen'` (*Dapur Utama*): Kategori/produk makanan, lauk, nasi, snack panas.
+- Pengguna dapat menyesuaikan pemetaan stasiun untuk setiap kategori menu di menu pengaturan struk POS.
+- Pada format gabungan (*single station*), sistem menyatukan seluruh item dalam satu nota dapur komprehensif.
+
+### 22.4 Alur Operasional Hibrida (Hybrid Execution)
+1. **Model Makan Dulu, Bayar Nanti (Table Service / Held Orders):**
+   - Kasir/waiter dapat mencetak nota dapur langsung dari keranjang sebelum membayar (`🍳 Dapur`).
+   - Kasir dapat mencetak ulang nota dapur untuk pesanan meja yang sedang ditahan (`HoldModal.tsx`).
+   - **Auto-Print on Hold:** Jika diaktifkan di pengaturan, nota dapur otomatis terkirim dan dicetak seketika saat kasir menekan tombol *Hold* tanpa perlu menekan tombol cetak dapur lagi.
+2. **Model Bayar Dulu, Baru Masak (Fast Food / Upfront Cashier):**
+   - Pada layar sukses pembayaran (`PaymentSuccessView.tsx`), tersedia tombol cetak nota dapur terpisah.
+   - **Auto-Print on Payment:** Jika diaktifkan di pengaturan, nota dapur langsung dicetak otomatis ke printer dapur seketika setelah kasir menyelesaikan transaksi pembayaran tanpa perlu sentuhan tombol tambahan.
+3. **Riwayat Detail Pesanan:** Staf dapat mencetak ulang nota dapur untuk pesanan lampau dari modal detail pesanan (`POSOrderDetailModal.tsx`).
+
+### 22.5 Sinyal Perangkat Keras Printer (Buzzer & Auto-Cut)
+- Pada transmisi printer ESC/POS fisik:
+  - **Hardware Buzzer / Beeper:** Mengirimkan sinyal alarm akustik (`0x1B, 0x42, 0x02, 0x02`) agar koki langsung waspada saat pesanan baru keluar dari printer.
+  - **Auto-Cut Paper:** Mengirimkan komando pemotong kertas otomatis (`0x1D, 0x56, 0x41, 0x03`) dengan feed 3 baris.
+
+### 22.6 Zero-Clutter Retail Fashion Mode & Existing Customer Defaults
+- **Isolasi Alur Retail Fashion (Zero Visual Clutter):**
+  Untuk mencegah kebingungan kasir toko baju/retail, sistem menerapkan resolver mode POS (`resolvePosMode(activeBusiness)`).
+  Jika `pos_mode === 'retail'` (atau industri retail/fashion), seluruh tombol nota dapur (`enableProductionTickets = false`) disembunyikan 100% dari:
+  1. Header Keranjang Kasir (`POSWorkspace.tsx`)
+  2. Dialog Tahan Pesanan (`HoldModal.tsx`)
+  3. Layar Sukses Pembayaran (`PaymentSuccessView.tsx`)
+  4. Rincian Detail Transaksi (`POSOrderDetailModal.tsx`)
+- **Nilai Baku Pelanggan Existing (Default):**
+  - Seluruh toko/bisnis yang sudah terdaftar diatur ke mode **`'retail'`** secara baku.
+  - Daftar stasiun kustom di database **dibiarkan kosong (*empty list*)** secara baku.
+  - Toko kuliner (F&B) dapat beralih ke mode F&B kapan saja melalui menu pengaturan struk POS atau dialog stasiun produksi.
+
+---
+
+## 23. Database-Driven Custom Production Stations & Relational Category Routing (Open-Closed Principle)
+
+Untuk mendukung fleksibilitas operasional bisnis skala besar tanpa mengubah (*hardcode*) modul kasir utama setiap kali ada stasiun baru, sistem menerapkan arsitektur *Headless Category Routing*:
+
+### 23.1 Skema Basis Data 3NF (`pos_production_stations` & `categories`)
+1. **Tabel Stasiun Produksi (`pos_production_stations`):**
+   - Menyimpan entitas stasiun fisik/logis per unit bisnis: `id`, `business_id`, `name`, `code`, `icon`, `paper_size` (`'58mm'` | `'80mm'`), `is_active`, `sort_order`.
+   - Terisolasi dengan kebijakan RLS multi-tenant union (`owner_id UNION business_staff OR active_business_id`).
+2. **Relasi Kategori ke Stasiun (`categories.production_station_id`):**
+   - Kolom foreign key `categories.production_station_id REFERENCES pos_production_stations(id) ON DELETE SET NULL`.
+   - Mengadopsi prinsip normalisasi 3NF: Produk tidak perlu menyimpan stasiun secara berulang; cukup kategori produk yang mengindikasikan stasiun tujuan.
+
+### 23.2 Headless Routing Service (`productionRoutingService.ts`)
+- Fungsi terisolasi `routeItemsToProductionStations(items, stations, categories)` memproses item pesanan:
+  - Mengelompokkan item ke `station_id` yang sesuai.
+  - Item tanpa pemetaan stasiun (seperti produk pakaian, tas, aksesoris) otomatis diabaikan (*excluded*) dari pencetakan tiket masak sehingga tidak memboroskan kertas printer.
+- Modul ini berdiri sendiri (*decoupled*) dan dapat dikonsumsi oleh POS Worker, UI kasir, KDS (*Kitchen Display System*), maupun API background job tanpa merusak modul existing.
+
+
+
 
 
 

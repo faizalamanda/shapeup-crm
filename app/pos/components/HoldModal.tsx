@@ -12,6 +12,7 @@ type Props = {
   timezone?: string
   onPrintHoldOrder?: (heldOrder: any) => void
   onPrintHeldOrdersSummary?: (heldOrders: any[]) => void
+  onPrintKitchenTicket?: (heldOrder: any) => void
 }
 
 export default function HoldModal({
@@ -22,7 +23,8 @@ export default function HoldModal({
   onDeleteHold,
   timezone,
   onPrintHoldOrder,
-  onPrintHeldOrdersSummary
+  onPrintHeldOrdersSummary,
+  onPrintKitchenTicket
 }: Props) {
   useModalBackHandler(isOpen, onClose)
 
@@ -195,6 +197,19 @@ export default function HoldModal({
 
                     {/* Action buttons */}
                     <div className="flex items-center gap-1">
+                      {onPrintKitchenTicket && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onPrintKitchenTicket(h)
+                          }}
+                          title="Cetak Nota Dapur &amp; Bar (Kitchen Chit)"
+                          className="p-2 text-gray-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition cursor-pointer"
+                        >
+                          🍳
+                        </button>
+                      )}
                       {onPrintHoldOrder && (
                         <button
                           type="button"

@@ -8,6 +8,11 @@ import ReceiptPreviewModal from './ReceiptPreviewModal'
 import PaymentSuccessView from './PaymentSuccessView'
 import ShiftModal from './ShiftModal'
 import HoldModal from './HoldModal'
+import KitchenTicketPreviewModal from './KitchenTicketPreviewModal'
+import { getStoredKitchenSettings } from '@/lib/pos/kitchenSettings'
+import { buildKitchenTicketsFromItems, KitchenTicketData } from '@/lib/pos/kitchenTicketBuilder'
+import { dispatchAllKitchenTickets } from '@/lib/pos/kitchenPrinterDispatcher'
+import { resolvePosMode } from '@/lib/pos/posMode'
 import AddCustomerModal from '../../orders/pos/components/AddCustomerModal'
 import OrderHistoryModal from '../../orders/pos/components/OrderHistoryModal'
 import POSOrderDetailModal from './POSOrderDetailModal'
@@ -67,6 +72,7 @@ export default function POSWorkspace({
   const [businessId, setBusinessId] = useState(activeBusiness?.id || '')
   const [userProfile, setUserProfile] = useState<any>(ctxProfile || null)
   const [activeShift, setActiveShift] = useState<any | null>(preloadedSession?.activeShift ?? null)
+  const posMode = useMemo(() => resolvePosMode(activeBusiness), [activeBusiness])
 
   // Reactive POS Catalog Store (0ms instant access from L1 RAM / L2 sessionStorage + SWR)
   const {
@@ -174,6 +180,8 @@ export default function POSWorkspace({
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null)
   const [previewReceipt, setPreviewReceipt] = useState<ReceiptData | null>(null)
   const [isPreviewReceiptOpen, setIsPreviewReceiptOpen] = useState(false)
+  const [kitchenPreviewTickets, setKitchenPreviewTickets] = useState<KitchenTicketData[]>([])
+  const [isKitchenPreviewOpen, setIsKitchenPreviewOpen] = useState(false)
   const [lastCreatedOrderId, setLastCreatedOrderId] = useState<string | null>(null)
   const [checkingOut, setCheckingOut] = useState(false)
   const [loyaltySettings, setLoyaltySettings] = useState<LoyaltySettings | null>(null)
@@ -711,6 +719,15 @@ export default function POSWorkspace({
         if (shouldPrint) {
           handlePrintHoldOrder(data.heldOrder)
         }
+
+        // Auto-print kitchen ticket if enabled in settings and POS is in F&B mode
+        if (posMode.enableProductionTickets) {
+          const rSettings = getStoredReceiptSettings(activeBusiness?.name)
+          const kSettings = getStoredKitchenSettings(rSettings.paperSize)
+          if (kSettings.enabled && kSettings.autoPrintOnHold) {
+            handlePrintKitchenFromHeldOrder(data.heldOrder, true)
+          }
+        }
       }
       setActiveHoldId(null)
       setCart([])
@@ -741,6 +758,91 @@ export default function POSWorkspace({
     })
     setPreviewReceipt(rData)
     setIsPreviewReceiptOpen(true)
+  }, [activeBusiness, activeShift, userProfile])
+
+  // Kitchen Production Printing (from Cart directly)
+  const handlePrintKitchenFromCart = useCallback(() => {
+    if (!cart || cart.length === 0) return
+
+    const rSettings = getStoredReceiptSettings(activeBusiness?.name)
+    const kSettings = getStoredKitchenSettings(rSettings.paperSize)
+    const effectiveNote = orderNote.trim() || undefined
+
+    const tickets = buildKitchenTicketsFromItems(
+      cart,
+      {
+        orderNumber: activeHoldId ? `#HLD-${activeHoldId.slice(0, 6).toUpperCase()}` : 'POS-DRAFT',
+        customerName: selectedCustomer?.name || 'Walk-in',
+        orderNote: effectiveNote,
+        createdAt: new Date(),
+        orderType: 'DINE-IN'
+      },
+      {
+        businessName: activeBusiness?.name,
+        settings: kSettings,
+        fallbackPaperSize: rSettings.paperSize,
+        cashierName: activeShift?.cashier_name || userProfile?.full_name || 'Kasir',
+        ticketKind: activeHoldId ? 'HOLD' : 'NEW'
+      }
+    )
+
+    if (tickets.length === 0) {
+      alert('Tidak ada item menu untuk dicetak ke dapur.')
+      return
+    }
+
+    setKitchenPreviewTickets(tickets)
+    setIsKitchenPreviewOpen(true)
+  }, [cart, orderNote, activeHoldId, selectedCustomer, activeBusiness, activeShift, userProfile])
+
+  // Kitchen Production Printing (from Held Order)
+  const handlePrintKitchenFromHeldOrder = useCallback(async (heldOrder: any, isAuto = false) => {
+    if (!heldOrder) return
+
+    let rawItems: any[] = []
+    if (Array.isArray(heldOrder.cart_json)) {
+      rawItems = heldOrder.cart_json
+    } else if (typeof heldOrder.cart_json === 'string') {
+      try {
+        const parsed = JSON.parse(heldOrder.cart_json)
+        if (Array.isArray(parsed)) rawItems = parsed
+      } catch {
+        rawItems = []
+      }
+    }
+
+    if (rawItems.length === 0) return
+
+    const rSettings = getStoredReceiptSettings(activeBusiness?.name)
+    const kSettings = getStoredKitchenSettings(rSettings.paperSize)
+    const effectiveNote = (heldOrder.note || '').trim() || undefined
+
+    const tickets = buildKitchenTicketsFromItems(
+      rawItems,
+      {
+        orderNumber: `#HLD-${(heldOrder.id || '').slice(0, 6).toUpperCase()}`,
+        customerName: heldOrder.customer_name || 'Walk-in',
+        orderNote: effectiveNote,
+        createdAt: heldOrder.created_at || new Date(),
+        orderType: 'DINE-IN'
+      },
+      {
+        businessName: activeBusiness?.name,
+        settings: kSettings,
+        fallbackPaperSize: rSettings.paperSize,
+        cashierName: activeShift?.cashier_name || userProfile?.full_name || 'Kasir',
+        ticketKind: 'HOLD'
+      }
+    )
+
+    if (tickets.length === 0) return
+
+    if (isAuto) {
+      void dispatchAllKitchenTickets(tickets, rSettings.connectionType, kSettings)
+    } else {
+      setKitchenPreviewTickets(tickets)
+      setIsKitchenPreviewOpen(true)
+    }
   }, [activeBusiness, activeShift, userProfile])
 
   const handleResumeHoldOrder = (h: any) => {
@@ -1310,6 +1412,18 @@ export default function POSWorkspace({
             <span>⏸️</span>
             <span>{activeHoldId ? 'Update Hold' : 'Hold'}</span>
           </button>
+          {posMode.enableProductionTickets && (
+            <button
+              type="button"
+              onClick={handlePrintKitchenFromCart}
+              disabled={cart.length === 0}
+              className="py-2.5 px-3 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold rounded-xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0 flex items-center gap-1 cursor-pointer shadow-2xs"
+              title="Kirim Instruksi &amp; Cetak Nota Dapur / Bar"
+            >
+              <span>🍳</span>
+              <span>Dapur</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -1948,6 +2062,7 @@ export default function POSWorkspace({
         timezone={activeBusiness?.timezone}
         onPrintHoldOrder={handlePrintHoldOrder}
         onPrintHeldOrdersSummary={handlePrintHeldOrdersSummary}
+        onPrintKitchenTicket={posMode.enableProductionTickets ? (h) => handlePrintKitchenFromHeldOrder(h, false) : undefined}
       />
 
       <ReceiptPreviewModal
@@ -1957,6 +2072,15 @@ export default function POSWorkspace({
           setPreviewReceipt(null)
         }}
         receipt={previewReceipt}
+      />
+
+      <KitchenTicketPreviewModal
+        isOpen={isKitchenPreviewOpen}
+        onClose={() => {
+          setIsKitchenPreviewOpen(false)
+          setKitchenPreviewTickets([])
+        }}
+        tickets={kitchenPreviewTickets}
       />
 
       {/* Item Note Modal */}

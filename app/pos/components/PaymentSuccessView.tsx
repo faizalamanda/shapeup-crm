@@ -12,6 +12,12 @@ import {
   warmUpBluetoothPrinter
 } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from '@/lib/pos/receiptSettings'
+import { getStoredKitchenSettings } from '@/lib/pos/kitchenSettings'
+import { buildKitchenTicketsFromItems, KitchenTicketData } from '@/lib/pos/kitchenTicketBuilder'
+import { dispatchAllKitchenTickets } from '@/lib/pos/kitchenPrinterDispatcher'
+import KitchenTicketPreviewModal from './KitchenTicketPreviewModal'
+import { resolvePosMode } from '@/lib/pos/posMode'
+import { useUserContext } from '@/components/UserContext'
 import { supabase } from '@/lib/supabase'
 import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
@@ -37,6 +43,9 @@ export default function PaymentSuccessView({
   orderId,
   onVoidSuccess
 }: Props) {
+  const { activeBusiness } = useUserContext()
+  const posMode = useMemo(() => resolvePosMode(activeBusiness), [activeBusiness])
+
   const [mounted, setMounted] = useState(false)
   const [paperSize, setPaperSize] = useState<PaperSize>(() => {
     if (typeof window !== 'undefined') {
@@ -53,6 +62,8 @@ export default function PaymentSuccessView({
 
   const [isPrinting, setIsPrinting] = useState(false)
   const [hasPrinted, setHasPrinted] = useState(false)
+  const [isPrintingKitchen, setIsPrintingKitchen] = useState(false)
+  const [hasPrintedKitchen, setHasPrintedKitchen] = useState(false)
   const [isVoiding, setIsVoiding] = useState(false)
   const [printMessage, setPrintMessage] = useState<string | null>(null)
   const [showThermalPreview, setShowThermalPreview] = useState(false)
@@ -62,6 +73,7 @@ export default function PaymentSuccessView({
   // Synchronous guards (state updates are async and must not re-trigger effects)
   const isPrintingRef = useRef(false)
   const autoPrintedReceiptRef = useRef<ReceiptData | null>(null)
+  const autoPrintedKitchenRef = useRef<ReceiptData | null>(null)
 
   // 1. Kiosk Armor: Handle Mobile/Browser Back Button without kicking user to /onboarding
   useModalBackHandler(isOpen, onClose)
@@ -158,6 +170,48 @@ export default function PaymentSuccessView({
     }
   }
 
+  // Handle Kitchen Printing (Production Chits)
+  const handlePrintKitchen = useCallback(async (isAuto = false) => {
+    if (!receipt || isPrintingKitchen) return
+    setIsPrintingKitchen(true)
+
+    try {
+      const kSettings = getStoredKitchenSettings(paperSize)
+      const tickets = buildKitchenTicketsFromItems(
+        receipt.items,
+        {
+          orderNumber: receipt.orderNumber,
+          customerName: receipt.customerName,
+          orderNote: receipt.orderNote || receipt.note,
+          queueNumber: receipt.queueNumber,
+          createdAt: new Date()
+        },
+        {
+          businessName: receipt.businessName,
+          settings: kSettings,
+          fallbackPaperSize: paperSize,
+          cashierName: receipt.cashierName
+        }
+      )
+
+      if (tickets.length === 0) {
+        if (!isAuto) {
+          setPrintMessage('⚠️ Tidak ada item pesanan untuk dapur.')
+        }
+        setIsPrintingKitchen(false)
+        return
+      }
+
+      const res = await dispatchAllKitchenTickets(tickets, connectionType, kSettings)
+      setHasPrintedKitchen(true)
+      setPrintMessage(res.message)
+    } catch (err: any) {
+      setPrintMessage('Gagal cetak dapur: ' + (err.message || 'Terjadi kesalahan'))
+    } finally {
+      setIsPrintingKitchen(false)
+    }
+  }, [receipt, isPrintingKitchen, paperSize, connectionType])
+
   // Initial Load: Printer Settings & Optional Auto-print.
   // Depends ONLY on [isOpen, receipt] so finishing a print never resets hasPrinted
   // or triggers another auto-print (see skill pos-session-ledger §19.5).
@@ -169,14 +223,26 @@ export default function PaymentSuccessView({
       setPrintMessage(null)
       setShowThermalPreview(false)
       setHasPrinted(false)
+      setHasPrintedKitchen(false)
       setNeedsBtReconnect(false)
 
       if (settings.autoPrintAfterPayment && autoPrintedReceiptRef.current !== receipt) {
         autoPrintedReceiptRef.current = receipt
         handlePrintRef.current(settings.connectionType, settings.paperSize)
       }
+
+      // Check auto-print for kitchen tickets (hanya jika mode F&B / aktif produksi)
+      if (posMode.enableProductionTickets) {
+        const kSettings = getStoredKitchenSettings(settings.paperSize)
+        if (kSettings.enabled && kSettings.autoPrintOnPayment && autoPrintedKitchenRef.current !== receipt) {
+          autoPrintedKitchenRef.current = receipt
+          setTimeout(() => {
+            handlePrintKitchen(true)
+          }, 750)
+        }
+      }
     }
-  }, [isOpen, receipt])
+  }, [isOpen, receipt, handlePrintKitchen])
 
   // Void Handler (Immediate reversal with confirmation)
   const handleVoid = async () => {
@@ -459,6 +525,20 @@ export default function PaymentSuccessView({
           {/* Dynamic Buttons Based on Print State */}
           {!hasPrinted ? (
             <>
+              {/* Tombol Nota Dapur (Khusus Mode F&B / Produksi) */}
+              {posMode.enableProductionTickets && (
+                <button
+                  type="button"
+                  onClick={() => handlePrintKitchen()}
+                  disabled={isPrintingKitchen}
+                  title="Cetak Nota Dapur &amp; Bar untuk Koki/Barista"
+                  className="py-3 px-3 sm:px-4 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold text-xs sm:text-sm transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50 shrink-0"
+                >
+                  <span>🍳</span>
+                  <span className="hidden sm:inline">{isPrintingKitchen ? 'Mengirim...' : hasPrintedKitchen ? 'Dapur Terkirim ✓' : 'Nota Dapur'}</span>
+                </button>
+              )}
+
               {/* Tombol 2: Lewati Struk */}
               <button
                 type="button"
@@ -491,6 +571,20 @@ export default function PaymentSuccessView({
             </>
           ) : (
             <>
+              {/* Tombol Nota Dapur (Khusus Mode F&B / Produksi) */}
+              {posMode.enableProductionTickets && (
+                <button
+                  type="button"
+                  onClick={() => handlePrintKitchen()}
+                  disabled={isPrintingKitchen}
+                  title="Cetak Nota Dapur &amp; Bar untuk Koki/Barista"
+                  className="py-3 px-3 sm:px-4 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold text-xs sm:text-sm transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50 shrink-0"
+                >
+                  <span>🍳</span>
+                  <span className="hidden sm:inline">{isPrintingKitchen ? 'Mengirim...' : hasPrintedKitchen ? 'Dapur Terkirim ✓' : 'Nota Dapur'}</span>
+                </button>
+              )}
+
               {/* Tombol 2: Cetak Ulang Struk */}
               <button
                 type="button"
