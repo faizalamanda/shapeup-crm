@@ -1,7 +1,7 @@
 // ShapeUp POS Kitchen & Bar Printer Settings & Multi-Station Mapping
 import { PaperSize } from './printerAdapter'
 
-export type KitchenStationId = 'kitchen' | 'bar'
+export type KitchenStationId = string
 
 export interface KitchenStationDefinition {
   id: KitchenStationId

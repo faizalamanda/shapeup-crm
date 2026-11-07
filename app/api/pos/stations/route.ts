@@ -107,6 +107,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, posMode: mode })
     }
 
+    // 1b. Update Category Production Station Mapping
+    if (action === 'update_category_station') {
+      const { category_id, station_id } = body
+      if (!isUuid(category_id)) {
+        return NextResponse.json({ error: 'ID kategori tidak valid' }, { status: 400 })
+      }
+      const targetStationId = isUuid(station_id) ? station_id : null
+
+      const { error: catErr } = await dbClient
+        .from('categories')
+        .update({ production_station_id: targetStationId })
+        .eq('id', category_id)
+        .eq('business_id', businessId)
+
+      if (catErr) {
+        return NextResponse.json({ error: 'Gagal memperbarui stasiun kategori: ' + catErr.message }, { status: 500 })
+      }
+
+      return NextResponse.json({ success: true, category_id, station_id: targetStationId })
+    }
+
     // 2. Delete station
     if (action === 'delete') {
       const stationId = body.id

@@ -123,7 +123,109 @@ export function buildKitchenTicketsFromItems(
     baseOrderInfo.orderType?.toUpperCase() === 'TAKEAWAY' || extractedNote.toLowerCase().includes('takeaway') || extractedNote.toLowerCase().includes('bungkus')
   ) ? 'TAKEAWAY' : 'DINE-IN'
 
-  // 1. Normalize items and assign stations
+  // 0. Check if Modular Production Stations exist (Database / Cache)
+  let modularStations: any[] = (options as any).stations || []
+  const catStationMap = new Map<string, string>()
+
+  if (modularStations.length === 0 && typeof window !== 'undefined') {
+    try {
+      const cachedStations = localStorage.getItem('shapeup_pos_stations')
+      if (cachedStations) {
+        const parsed = JSON.parse(cachedStations)
+        if (Array.isArray(parsed) && parsed.length > 0) modularStations = parsed
+      }
+      const cachedMap = localStorage.getItem('shapeup_pos_cat_map')
+      if (cachedMap) {
+        const parsed = JSON.parse(cachedMap)
+        Object.entries(parsed).forEach(([catId, stId]) => {
+          if (catId && stId) catStationMap.set(catId, String(stId))
+        })
+      }
+    } catch {}
+  }
+
+  if (modularStations.length > 0 && catStationMap.size > 0) {
+    const stationBuckets = new Map<string, KitchenTicketItem[]>()
+    for (const st of modularStations) {
+      if (st.is_active !== false) stationBuckets.set(st.id, [])
+    }
+
+    for (const item of rawItems) {
+      const qty = Number(item.quantity || item.qty || 1)
+      if (qty <= 0) continue
+
+      const catId = item.category_id || item.product?.category_id || item.product?.category?.id
+      if (!catId) continue
+
+      const targetStationId = catStationMap.get(catId)
+      if (!targetStationId || !stationBuckets.has(targetStationId)) continue
+
+      const rawName = item.name || item.product_name || item.product?.name || 'Item Menu'
+      const variantStr = (item.variant || item.variant_name || item.selectedVariant?.name || '').trim()
+      const displayName = (variantStr && !rawName.toLowerCase().includes(variantStr.toLowerCase()))
+        ? `${rawName} - ${variantStr}`
+        : rawName
+
+      let modifiersList: Array<{ group?: string; option: string }> = []
+      if (Array.isArray(item.selectedModifiers)) {
+        modifiersList = item.selectedModifiers.map((m: any) => ({
+          group: m.group_name || m.group,
+          option: m.option_name || m.name || m.option || String(m)
+        }))
+      }
+
+      let itemNote = item.note || item.item_note || undefined
+      if (item.dimension_spec && item.dimension_spec.billable_area) {
+        const areaNote = `Luas: ${item.dimension_spec.billable_area} ${item.dimension_spec.area_unit}`
+        itemNote = itemNote ? `${areaNote} • ${itemNote}` : areaNote
+      }
+
+      stationBuckets.get(targetStationId)!.push({
+        name: displayName,
+        quantity: qty,
+        modifiers: modifiersList.length > 0 ? modifiersList : undefined,
+        note: itemNote,
+        station: targetStationId
+      })
+    }
+
+    const modularTickets: KitchenTicketData[] = []
+    for (const st of modularStations) {
+      const itemsForSt = stationBuckets.get(st.id) || []
+      if (itemsForSt.length > 0) {
+        modularTickets.push({
+          stationId: st.id,
+          stationName: st.name,
+          stationLabel: (st.code || st.name).toUpperCase(),
+          stationIcon: st.icon || '🍳',
+          businessName,
+          orderNumber,
+          queueNumber: effectiveQueue,
+          tableNumber: detectedTable,
+          orderType,
+          timestamp: dateStr,
+          cashierOrServer: options.cashierName || 'Kasir / Waiter',
+          customerName: baseOrderInfo.customerName || 'Pelanggan',
+          globalOrderNote: extractedNote || undefined,
+          items: itemsForSt,
+          paperSize: st.paper_size || effectivePaperSize,
+          printerDeviceId: st.printer_device_id || null,
+          printerConnectionType: st.printer_connection_type || 'same_as_cashier',
+          printerName: st.printer_name || null,
+          soundBuzzer: st.sound_buzzer ?? true,
+          autoCut: st.auto_cut ?? true,
+          isReprint: options.isReprint,
+          ticketKind: options.ticketKind || 'NEW'
+        })
+      }
+    }
+
+    if (modularTickets.length > 0) {
+      return modularTickets
+    }
+  }
+
+  // 1. Normalize items and assign stations (Fallback)
   const normalizedItems: KitchenTicketItem[] = []
 
   for (const item of rawItems) {

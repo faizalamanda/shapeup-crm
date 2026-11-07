@@ -862,7 +862,49 @@ export async function warmUpBluetoothPrinter(): Promise<void> {
   }
 }
 
-export async function requestAndConnectBluetoothPrinter(): Promise<{ success: boolean; deviceName?: string; error?: string }> {
+export async function getSystemPrinters(): Promise<{
+  supported: boolean
+  printers: Array<{ name: string; isDefault?: boolean }>
+  error?: string
+}> {
+  if (typeof window === 'undefined') {
+    return { supported: false, printers: [] }
+  }
+
+  // 1. Try window.queryLocalPrinters (Chromium Web Printing API)
+  if ('queryLocalPrinters' in window && typeof (window as any).queryLocalPrinters === 'function') {
+    try {
+      const list = await (window as any).queryLocalPrinters()
+      const formatted = (list || []).map((p: any) => ({
+        name: p.name || 'Printer Lokal Komputer',
+        isDefault: Boolean(p.isDefault)
+      }))
+      return { supported: true, printers: formatted }
+    } catch (err: any) {
+      console.warn('[PrinterAdapter] queryLocalPrinters error:', err)
+      return { supported: false, printers: [], error: err.message }
+    }
+  }
+
+  // 2. Try navigator.printers if available
+  if ('printers' in navigator && typeof (navigator as any).printers?.getPrinters === 'function') {
+    try {
+      const list = await (navigator as any).printers.getPrinters()
+      const formatted = (list || []).map((p: any) => ({
+        name: p.name || 'Printer Lokal Komputer',
+        isDefault: Boolean(p.isDefault)
+      }))
+      return { supported: true, printers: formatted }
+    } catch (err: any) {
+      console.warn('[PrinterAdapter] navigator.printers error:', err)
+      return { supported: false, printers: [], error: err.message }
+    }
+  }
+
+  return { supported: false, printers: [] }
+}
+
+export async function requestAndConnectBluetoothPrinter(): Promise<{ success: boolean; deviceName?: string; deviceId?: string; error?: string }> {
   if (!isWebBluetoothSupported()) {
     return { success: false, error: 'Web Bluetooth tidak didukung pada peramban ini. Pastikan menggunakan Chrome pada Android atau Komputer.' }
   }
@@ -890,10 +932,162 @@ export async function requestAndConnectBluetoothPrinter(): Promise<{ success: bo
       localStorage.setItem('shapeup_pos_bt_id', device.id)
     }
 
-    return { success: true, deviceName: name }
+    return { success: true, deviceName: name, deviceId: device.id }
   } catch (err: any) {
     return { success: false, error: err.message || 'Gagal menghubungkan printer bluetooth' }
   }
+}
+
+export async function sendBluetoothRawBytes(payload: Uint8Array): Promise<PrintResult> {
+  if (typeof window === 'undefined' || !isWebBluetoothSupported()) {
+    return { success: false, message: 'Web Bluetooth tidak didukung pada peramban ini.' }
+  }
+
+  try {
+    const hasPaired = hasPairedBluetoothPrinter()
+    if (!hasPaired) {
+      const pairRes = await requestAndConnectBluetoothPrinter()
+      if (!pairRes.success) {
+        return { success: false, message: pairRes.error || 'Printer Bluetooth belum dipasangkan.' }
+      }
+    }
+
+    const connRes = await ensureBluetoothPrinterConnection(false)
+    if (!connRes.success || !activeWriteCharacteristic) {
+      return { success: false, message: connRes.error || 'Printer Bluetooth tidak terhubung.' }
+    }
+
+    const CHUNK_SIZE = 64
+    for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
+      const chunk = payload.slice(i, i + CHUNK_SIZE)
+      if (activeWriteCharacteristic.properties.write) {
+        await activeWriteCharacteristic.writeValueWithResponse(chunk)
+      } else {
+        await activeWriteCharacteristic.writeValueWithoutResponse(chunk)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    return { success: true, message: 'Data cetak berhasil dikirim via Bluetooth.' }
+  } catch (err: any) {
+    return { success: false, message: 'Gagal mengirim data ke printer Bluetooth: ' + (err.message || 'Error') }
+  }
+}
+
+export async function testPrintStationTicket(options: {
+  stationName: string
+  connectionType: 'system' | 'bluetooth' | 'same_as_cashier' | 'lan'
+  printerName?: string
+  paperSize?: PaperSize
+  soundBuzzer?: boolean
+  autoCut?: boolean
+}): Promise<PrintResult> {
+  const effectiveSize = options.paperSize || '58mm'
+  const is58mm = effectiveSize === '58mm'
+
+  if (options.connectionType === 'bluetooth') {
+    const nowStr = new Date().toLocaleTimeString('id-ID')
+    const sampleChitText = [
+      '\x1B\x40', // ESC @ init
+      '\x1B\x61\x01', // Center
+      '\x1D\x21\x11', // Double height & width
+      `[STASIUN: ${options.stationName.toUpperCase()}]\n`,
+      '\x1D\x21\x00', // Normal
+      `Printer: ${options.printerName || 'Bluetooth Thermal'}\n`,
+      `Waktu Uji: ${nowStr}\n`,
+      '--------------------------------\n',
+      '\x1B\x61\x00', // Left
+      '1x TES KONEKSI STASIUN PRODUKSI\n',
+      '   * Status: TERHUBUNG (OK)\n',
+      '   * Routing Menu: AKTIF\n',
+      '--------------------------------\n',
+      '\x1B\x61\x01',
+      'SHAPEUP POS KITCHEN DISPATCHER\n\n\n'
+    ]
+
+    if (options.soundBuzzer) {
+      sampleChitText.push('\x1B\x42\x02\x02') // Beep 2x
+    }
+    if (options.autoCut) {
+      sampleChitText.push('\x1D\x56\x41\x03') // Cut
+    }
+
+    const encoder = new TextEncoder()
+    const payload = encoder.encode(sampleChitText.join(''))
+    return sendBluetoothRawBytes(payload)
+  }
+
+  // System print iframe
+  if (typeof window === 'undefined') {
+    return { success: false, message: 'Window tidak tersedia' }
+  }
+
+  return new Promise((resolve) => {
+    try {
+      let iframe = document.getElementById('pos-station-test-print-iframe') as HTMLIFrameElement | null
+      if (!iframe) {
+        iframe = document.createElement('iframe')
+        iframe.id = 'pos-station-test-print-iframe'
+        iframe.setAttribute('style', 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;')
+        document.body.appendChild(iframe)
+      }
+
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
+      if (!iframeDoc) {
+        resolve({ success: false, message: 'Gagal mengakses printer sistem' })
+        return
+      }
+
+      const width = is58mm ? '48mm' : '72mm'
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Uji Cetak Stasiun ${options.stationName}</title>
+  <style>
+    @page { size: ${is58mm ? '58mm auto' : '80mm auto'}; margin: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; width: ${width}; margin: 0 auto; padding: 4mm 2mm; font-size: 12px; }
+    .center { text-align: center; }
+    .bold { font-weight: bold; }
+    .border { border-top: 1px dashed #000; border-bottom: 1px dashed #000; margin: 6px 0; padding: 4px 0; }
+  </style>
+</head>
+<body>
+  <div class="center bold" style="font-size: 15px;">[STASIUN: ${options.stationName.toUpperCase()}]</div>
+  <div class="center" style="font-size: 11px;">Printer Sistem: ${options.printerName || 'Default Komputer'}</div>
+  <div class="center" style="font-size: 10px;">${new Date().toLocaleString('id-ID')}</div>
+  <div class="border">
+    <div><b>1x UJI COBA PRINTER SISTEM</b></div>
+    <div style="font-size: 11px;">• Status: SIAP MENCETAK TIKET</div>
+    <div style="font-size: 11px;">• Kertas: Thermal ${effectiveSize}</div>
+    ${options.soundBuzzer ? '<div style="font-size: 10px;">• Buzzer: Aktif 🔔</div>' : ''}
+    ${options.autoCut ? '<div style="font-size: 10px;">• Auto-Cut: Aktif ✂️</div>' : ''}
+  </div>
+  <div class="center" style="font-size: 10px; margin-top: 8px;">SHAPEUP POS - STASIUN PRODUKSI</div>
+</body>
+</html>`
+
+      iframeDoc.open()
+      iframeDoc.write(html)
+      iframeDoc.close()
+
+      setTimeout(() => {
+        try {
+          if (iframe && iframe.contentWindow) {
+            iframe.contentWindow.focus()
+            iframe.contentWindow.print()
+            resolve({ success: true, message: `Uji cetak stasiun ${options.stationName} dikirim ke printer.` })
+          } else {
+            resolve({ success: false, message: 'Gagal memicu cetak' })
+          }
+        } catch (e: any) {
+          resolve({ success: false, message: e.message || 'Error cetak' })
+        }
+      }, 300)
+    } catch (err: any) {
+      resolve({ success: false, message: err.message || 'Gagal membuat dokumen cetak' })
+    }
+  })
 }
 
 export async function disconnectBluetoothPrinter(): Promise<void> {

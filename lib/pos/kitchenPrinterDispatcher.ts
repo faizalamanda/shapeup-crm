@@ -12,7 +12,8 @@ import {
 import {
   hasPairedBluetoothPrinter,
   requestAndConnectBluetoothPrinter,
-  ensureBluetoothPrinterConnection
+  ensureBluetoothPrinterConnection,
+  sendBluetoothRawBytes
 } from './printerAdapter'
 
 // Dynamic reference to active BLE write characteristic from printerAdapter
@@ -112,11 +113,12 @@ export async function printSingleKitchenTicket(
         autoCut: ticket.autoCut ?? kSettings.autoCutPaper
       })
 
-      // Access active characteristic via global hook if present, or fallback
-      // Since activeWriteCharacteristic is private in printerAdapter, we can safely
-      // dispatch raw bytes through the shared adapter or iframe.
-      // If direct bluetooth transmission is active, printerAdapter handles it.
-      // For cross-module safety, we invoke iframe print if characteristic is not directly exposed.
+      // Send ESC/POS bytes directly over Web Bluetooth
+      const sendRes = await sendBluetoothRawBytes(payload)
+      if (sendRes.success) {
+        return sendRes
+      }
+      console.warn('[KitchenPrinter] Direct bluetooth transmission failed, falling back to iframe print:', sendRes.message)
       return printKitchenTicketViaIframe(ticket)
     } catch (err: any) {
       console.warn('[KitchenPrinter] Bluetooth exception, falling back to iframe:', err)

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import SettingsLayout from '@/components/SettingsLayout'
 import { useUserContext } from '@/components/UserContext'
 import Link from 'next/link'
+import POSPrinterProductionManager from '@/app/pos/components/POSPrinterProductionManager'
 
 interface ApproverItem {
   user_id: string
@@ -38,8 +39,8 @@ export default function POSSettingsPage() {
   const [selectedApproverIds, setSelectedApproverIds] = useState<Set<string>>(new Set())
   const [resettingUserId, setResettingUserId] = useState<string | null>(null)
 
-  // Active Tab: 'tenders' | 'protection' | 'returns'
-  const [activeTab, setActiveTab] = useState<'tenders' | 'protection' | 'returns'>('tenders')
+  // Active Tab: 'tenders' | 'protection' | 'returns' | 'printers'
+  const [activeTab, setActiveTab] = useState<'tenders' | 'protection' | 'returns' | 'printers'>('tenders')
 
   // Return Policy State
   const [returnWindowDays, setReturnWindowDays] = useState(0)
@@ -407,7 +408,19 @@ export default function POSSettingsPage() {
             }`}
           >
             <span>↩️</span>
-            <span>Kebijakan Retur & Refund</span>
+            <span>Kebijakan Retur &amp; Refund</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('printers')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+              activeTab === 'printers'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-100 border border-[#E2E2DC]'
+            }`}
+          >
+            <span>🖨️</span>
+            <span>Printer &amp; Stasiun Produksi</span>
           </button>
         </div>
 
@@ -1014,6 +1027,27 @@ export default function POSSettingsPage() {
                 </div>
               </form>
             )}
+          </div>
+        )}
+
+        {/* ── TAB 4: PRINTER & STASIUN PRODUKSI ── */}
+        {activeTab === 'printers' && (
+          <div className="bg-white border border-[#E2E2DC] rounded-2xl shadow-xs p-6 md:p-8 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E2E2DC] pb-5">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-600 font-extrabold flex items-center justify-center text-2xl">
+                  🖨️
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-[#1C1C1A]">Printer POS &amp; Pemetaan Stasiun Produksi</h2>
+                  <p className="text-xs text-[#6B6B63]">
+                    Ambil data printer dari komputer kasir, pairing printer thermal Bluetooth, dan petakan ke stasiun dapur/bar.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <POSPrinterProductionManager />
           </div>
         )}
       </div>

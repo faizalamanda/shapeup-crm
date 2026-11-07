@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { 
   PaperSize, 
@@ -32,7 +32,8 @@ import {
   generateKitchenTicketHtml,
   KitchenTicketData
 } from '@/lib/pos/kitchenTicketBuilder'
-import { resolvePosMode } from '@/lib/pos/posMode'
+import { resolvePosMode, PosModeResolution } from '@/lib/pos/posMode'
+import { ProductionStation } from '@/lib/pos/productionRoutingService'
 import ProductionStationsModal from './ProductionStationsModal'
 
 export { type ReceiptSettings, getStoredReceiptSettings }
@@ -56,8 +57,10 @@ export default function ReceiptSettingsModal({
 }: Props) {
   const { activeBusiness } = useUserContext()
   const targetBizId = businessId || activeBusiness?.id
-  const posMode = useMemo(() => resolvePosMode(activeBusiness), [activeBusiness])
+  const [currentPosMode, setCurrentPosMode] = useState<PosModeResolution>(() => resolvePosMode(activeBusiness))
+  const posMode = currentPosMode
   const [showStationsModal, setShowStationsModal] = useState(false)
+  const [modularStations, setModularStations] = useState<ProductionStation[]>([])
 
   const [mainTab, setMainTab] = useState<'receipt' | 'kitchen'>('receipt')
 
@@ -89,20 +92,89 @@ export default function ReceiptSettingsModal({
   const [categoryStationMap, setCategoryStationMap] = useState<Record<string, KitchenStationId>>({})
   const [loadedCategories, setLoadedCategories] = useState<any[]>(categories || [])
 
-  useEffect(() => {
-    if (isOpen && targetBizId && (!categories || categories.length === 0)) {
-      supabase
-        .from('categories')
-        .select('id, name')
-        .eq('business_id', targetBizId)
-        .order('name')
-        .then(({ data }) => {
-          if (data && data.length > 0) setLoadedCategories(data)
-        })
-    } else if (categories && categories.length > 0) {
-      setLoadedCategories(categories)
+  const loadModularStationsAndCategories = useCallback(async () => {
+    try {
+      const res = await fetch('/api/pos/stations')
+      const data = await res.json().catch(() => null)
+      if (res.ok && data) {
+        setModularStations(data.stations || [])
+        if (Array.isArray(data.categories) && data.categories.length > 0) {
+          setLoadedCategories(data.categories)
+        }
+        if (data.posMode) {
+          const resolved = resolvePosMode(activeBusiness, data.posMode)
+          setCurrentPosMode(resolved)
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load stations in ReceiptSettingsModal:', e)
     }
-  }, [isOpen, targetBizId, categories])
+  }, [activeBusiness])
+
+  const handleSwitchToFnb = async () => {
+    const newMode = resolvePosMode(activeBusiness, 'fnb')
+    setCurrentPosMode(newMode)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('shapeup_pos_mode', 'fnb')
+      try {
+        const raw = localStorage.getItem('su_cached_active_biz')
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          parsed.pos_mode = 'fnb'
+          localStorage.setItem('su_cached_active_biz', JSON.stringify(parsed))
+        }
+      } catch {}
+    }
+    try {
+      await fetch('/api/pos/stations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_pos_mode', pos_mode: 'fnb' })
+      })
+    } catch (e) {
+      console.warn('Failed updating mode to F&B:', e)
+    }
+  }
+
+  const handleCategoryStationChange = async (categoryId: string, stationId: string) => {
+    const targetStationId = stationId || null
+    setLoadedCategories(prev =>
+      prev.map(c => c.id === categoryId ? { ...c, production_station_id: targetStationId } : c)
+    )
+
+    if (typeof window !== 'undefined') {
+      try {
+        const rawMap = localStorage.getItem('shapeup_pos_cat_map')
+        const current = rawMap ? JSON.parse(rawMap) : {}
+        if (targetStationId) {
+          current[categoryId] = targetStationId
+        } else {
+          delete current[categoryId]
+        }
+        localStorage.setItem('shapeup_pos_cat_map', JSON.stringify(current))
+      } catch {}
+    }
+
+    try {
+      await fetch('/api/pos/stations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_category_station',
+          category_id: categoryId,
+          station_id: targetStationId
+        })
+      })
+    } catch (err: any) {
+      console.error('Failed to update category station:', err)
+    }
+  }
+
+  useEffect(() => {
+    if (isOpen) {
+      loadModularStationsAndCategories()
+    }
+  }, [isOpen, loadModularStationsAndCategories])
 
   useEffect(() => {
     if (isOpen) {
@@ -643,7 +715,7 @@ export default function ReceiptSettingsModal({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowStationsModal(true)}
+                  onClick={handleSwitchToFnb}
                   className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold rounded-lg text-xs whitespace-nowrap shadow-sm cursor-pointer transition"
                 >
                   Ganti ke Mode F&amp;B
@@ -750,61 +822,65 @@ export default function ReceiptSettingsModal({
               </div>
             </div>
 
-            {/* Station Routing */}
+            {/* Modular Production Station Routing */}
             <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-              <span className="block font-bold text-slate-800 uppercase tracking-wider text-[11px]">
-                🔀 Pemisahan Stasiun Masak (Multi-Station Routing)
-              </span>
-
-              <div className="flex items-start gap-2.5">
-                <input
-                  type="checkbox"
-                  id="kitchenSeparateCheckbox"
-                  checked={kitchenSeparateStations}
-                  onChange={(e) => setKitchenSeparateStations(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
-                />
-                <div className="flex-1">
-                  <label htmlFor="kitchenSeparateCheckbox" className="font-semibold text-slate-800 cursor-pointer text-xs block">
-                    Pisahkan Tiket Dapur Makanan &amp; Bar Minuman
-                  </label>
-                  <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                    Jika dicentang, pesanan makanan akan dicetak pada nota <b>[DAPUR UTAMA]</b> dan pesanan minuman pada nota <b>[BAR &amp; MINUMAN]</b>. Jika tidak, keduanya digabung dalam 1 nota dapur.
-                  </p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="block font-bold text-slate-800 uppercase tracking-wider text-[11px]">
+                    🔀 Pemetaan Kategori Menu ke Stasiun Produksi (Modular &amp; Terelasi)
+                  </span>
+                  <span className="text-[11px] text-slate-500 block">
+                    Setiap kategori produk langsung terhubung ke stasiun kerja kustom Anda di database.
+                  </span>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowStationsModal(true)}
+                  className="px-2.5 py-1 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold rounded-lg text-[10px] transition cursor-pointer"
+                >
+                  ⚙️ Kelola Stasiun (+ Baru)
+                </button>
               </div>
 
-              {/* Category Mapping Table (if categories exist) */}
-              {kitchenSeparateStations && loadedCategories && loadedCategories.length > 0 && (
-                <div className="pt-2 border-t border-slate-200/80 space-y-2">
-                  <span className="font-bold text-[11px] text-slate-700 block">
-                    Pemetaan Kategori Menu ke Stasiun:
-                  </span>
-                  <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
-                    {loadedCategories.map((c: any) => {
-                      const currentStation = categoryStationMap[c.id] || (
-                        c.name?.toLowerCase().includes('minum') || c.name?.toLowerCase().includes('drink') || c.name?.toLowerCase().includes('kopi')
-                          ? 'bar'
-                          : 'kitchen'
-                      )
-                      return (
-                        <div key={c.id} className="flex items-center justify-between bg-white px-3 py-1.5 rounded-lg border border-slate-200">
-                          <span className="font-medium text-slate-800 truncate max-w-[150px]">{c.name}</span>
-                          <select
-                            value={currentStation}
-                            onChange={(e) => {
-                              const val = e.target.value as KitchenStationId
-                              setCategoryStationMap(prev => ({ ...prev, [c.id]: val }))
-                            }}
-                            className="text-[11px] font-bold py-1 px-2 border border-slate-200 rounded-md bg-slate-50 text-slate-700 focus:outline-none"
-                          >
-                            <option value="kitchen">🍳 Dapur Makanan</option>
-                            <option value="bar">🍹 Bar Minuman</option>
-                          </select>
-                        </div>
-                      )
-                    })}
-                  </div>
+              {modularStations.length === 0 ? (
+                <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-xl text-center space-y-2">
+                  <div className="text-xl">☕ 🍳</div>
+                  <div className="font-bold text-amber-900 text-xs">Belum ada stasiun produksi modular yang dibuat</div>
+                  <p className="text-[11px] text-amber-800 leading-relaxed max-w-sm mx-auto">
+                    Seluruh stasiun dibuat secara modular. Klik tombol di bawah untuk membuat stasiun kerja cabang Anda (misal: <i>Dapur Utama, Barista Minuman, Grill, dll.</i>).
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowStationsModal(true)}
+                    className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-xs transition cursor-pointer"
+                  >
+                    + Buat Stasiun Produksi Sekarang
+                  </button>
+                </div>
+              ) : loadedCategories.length === 0 ? (
+                <p className="text-slate-400 italic text-[11px]">Belum ada kategori produk di unit bisnis ini.</p>
+              ) : (
+                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                  {loadedCategories.map((c: any) => {
+                    const currentStationId = c.production_station_id || ''
+                    return (
+                      <div key={c.id} className="flex items-center justify-between bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+                        <span className="font-medium text-slate-800 truncate max-w-[150px]">{c.name}</span>
+                        <select
+                          value={currentStationId}
+                          onChange={(e) => handleCategoryStationChange(c.id, e.target.value)}
+                          className="text-[11px] font-bold py-1 px-2 border border-slate-200 rounded-md bg-slate-50 text-slate-700 focus:outline-none"
+                        >
+                          <option value="">-- Tidak Dialirkan (Hanya Kasir) --</option>
+                          {modularStations.map((st) => (
+                            <option key={st.id} value={st.id}>
+                              {st.icon} {st.name} {st.code ? `[${st.code}]` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -864,7 +940,8 @@ export default function ReceiptSettingsModal({
         isOpen={showStationsModal}
         onClose={() => setShowStationsModal(false)}
         onStationsUpdated={() => {
-          // Callback setelah stasiun atau mode POS diperbarui
+          loadModularStationsAndCategories()
+          setCurrentPosMode(resolvePosMode(activeBusiness))
         }}
       />
     </FullScreenModal>

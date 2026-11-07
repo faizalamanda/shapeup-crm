@@ -29,7 +29,24 @@ export function resolvePosMode(business?: any, localOverrideMode?: PosMode | nul
     }
   }
 
-  // 2. Business pos_mode column from database
+  // 2. Persistent local storage mode if user explicitly switched it
+  if (typeof window !== 'undefined') {
+    try {
+      const savedLocal = localStorage.getItem('shapeup_pos_mode') as PosMode
+      if (savedLocal && (savedLocal === 'retail' || savedLocal === 'fnb' || savedLocal === 'custom')) {
+        const isRetail = savedLocal === 'retail'
+        const isFnb = savedLocal === 'fnb'
+        return {
+          mode: savedLocal,
+          isRetail,
+          isFnb,
+          enableProductionTickets: !isRetail
+        }
+      }
+    } catch {}
+  }
+
+  // 3. Business pos_mode column from database
   const bizPosMode = (business?.pos_mode as PosMode) || undefined
   if (bizPosMode && (bizPosMode === 'retail' || bizPosMode === 'fnb' || bizPosMode === 'custom')) {
     const isRetail = bizPosMode === 'retail'
@@ -42,7 +59,7 @@ export function resolvePosMode(business?: any, localOverrideMode?: PosMode | nul
     }
   }
 
-  // 3. Smart Fallback via business.industry
+  // 4. Smart Fallback via business.industry
   const industry = (business?.industry || '').toLowerCase().trim()
   if (FNB_INDUSTRIES.some(ind => industry.includes(ind))) {
     return {
