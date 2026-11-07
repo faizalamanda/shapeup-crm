@@ -27,6 +27,10 @@ export interface PosCatalogItem {
   stock_type: string
   category_id?: string | null
   type?: string
+  unit?: string
+  pricing_type?: string
+  min_area?: number
+  min_price?: number
   has_variants?: boolean
   prevent_below_hpp?: boolean
   product_variants?: any[]
@@ -54,10 +58,10 @@ const BROADCAST_CHANNEL_NAME = 'shapeup_pos_catalog_sync_v2'
 const CUSTOM_EVENT_NAME = 'shapeup:pos_catalog_updated'
 
 export const POS_SLIM_PRODUCT_SELECT_VARIANTS =
-  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, prevent_below_hpp, product_variants(*), product_modifiers(*)'
+  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, unit, pricing_type, min_area, min_price, prevent_below_hpp, product_variants(*), product_modifiers(*)'
 
 export const POS_SLIM_PRODUCT_SELECT_VARIANTS_ONLY =
-  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, prevent_below_hpp, product_variants(*)'
+  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, unit, pricing_type, min_area, min_price, prevent_below_hpp, product_variants(*)'
 
 export const POS_SLIM_PRODUCT_SELECT_FALLBACK =
   'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, prevent_below_hpp'

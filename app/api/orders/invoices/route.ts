@@ -324,6 +324,7 @@ export async function POST(req: Request) {
         subtotal: String(price * qty),
         product_id: prodId,
         variant_id: varId,
+        ...(item.dimension_spec ? { dimension_spec: item.dimension_spec } : {}),
         ...(costPrice !== undefined ? { cost_price: costPrice } : {})
       }
     })

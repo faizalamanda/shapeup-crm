@@ -22,6 +22,9 @@ type Product = {
   stock_type: 'tracked' | 'available' | 'unavailable'
   stock_quantity: number
   unit?: string
+  pricing_type?: 'standard' | 'area'
+  min_area?: number
+  min_price?: number
   hpp_type?: 'fixed' | 'variable'
   prevent_below_hpp?: boolean
 }
@@ -56,6 +59,8 @@ type ProductModalProps = {
 
 const COMMON_UNITS = [
   'pcs',
+  'm2',
+  'cm2',
   'gram',
   'kg',
   'ml',
@@ -206,6 +211,9 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
   const [stockQuantity, setStockQuantity] = useState<number>(0)
   const [unit, setUnit] = useState<string>('pcs')
   const [customUnit, setCustomUnit] = useState<string>('')
+  const [pricingType, setPricingType] = useState<'standard' | 'area'>('standard')
+  const [minArea, setMinArea] = useState<number>(0)
+  const [minPrice, setMinPrice] = useState<number>(0)
   const [hppType, setHppType] = useState<'fixed' | 'variable'>('fixed')
   const [preventBelowHpp, setPreventBelowHpp] = useState(false)
   const [globalPriceGuardEnabled, setGlobalPriceGuardEnabled] = useState(false)
@@ -309,6 +317,9 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         }
 
         setHppType(product.hpp_type || 'fixed')
+        setPricingType(product.pricing_type || 'standard')
+        setMinArea(Number(product.min_area) || 0)
+        setMinPrice(Number(product.min_price) || 0)
         setPreventBelowHpp(Boolean((product as any)?.prevent_below_hpp))
         setShowNewCategoryInput(false)
         setNewCategoryName('')
@@ -335,6 +346,9 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         setUnit('pcs')
         setCustomUnit('')
         setHppType('fixed')
+        setPricingType('standard')
+        setMinArea(0)
+        setMinPrice(0)
         setPreventBelowHpp(false)
         setRecipeRows([])
         setVariantRows([])
@@ -627,6 +641,9 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
           ? (variantRows.length > 0 ? variantRows.reduce((sum, v) => sum + (Number(v.stock_quantity) || 0), 0) : Number(stockQuantity))
           : 0,
         unit: effectiveUnit,
+        pricing_type: pricingType,
+        min_area: Number(minArea) || 0,
+        min_price: Number(minPrice) || 0,
         hpp_type: hppType,
         prevent_below_hpp: globalPriceGuardEnabled ? true : preventBelowHpp,
         updated_at: new Date().toISOString()
@@ -655,12 +672,15 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
 
       let res = await executeSave(productPayload)
 
-      // Fallback if DB schema cache doesn't have hpp_type, unit, or prevent_below_hpp columns yet
-      if (res.error && res.error.message && (res.error.message.includes('schema cache') || res.error.message.includes('prevent_below_hpp'))) {
+      // Fallback if DB schema cache doesn't have hpp_type, unit, pricing_type, or prevent_below_hpp columns yet
+      if (res.error && res.error.message && (res.error.message.includes('schema cache') || res.error.message.includes('prevent_below_hpp') || res.error.message.includes('pricing_type') || res.error.message.includes('min_area') || res.error.message.includes('column'))) {
         console.warn('PostgREST schema cache fallback triggered:', res.error.message)
         const fallbackPayload = { ...productPayload }
         delete fallbackPayload.hpp_type
         delete fallbackPayload.unit
+        delete fallbackPayload.pricing_type
+        delete fallbackPayload.min_area
+        delete fallbackPayload.min_price
         delete fallbackPayload.prevent_below_hpp
         res = await executeSave(fallbackPayload)
       }
@@ -868,6 +888,85 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                       <span>Jasa/Layanan</span>
                     </button>
                   </div>
+                </div>
+
+                {/* Skema Penetapan Harga */}
+                <div>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Skema Harga</label>
+                    <span className="text-[10px] font-bold text-slate-500">
+                      {pricingType === 'area' ? '📐 Percetakan / Luas (P × L)' : '📌 Standar (Per Pcs/Unit)'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPricingType('standard')
+                        if (unit === 'm2' || unit === 'cm2') setUnit('pcs')
+                      }}
+                      className={`py-2 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 ${
+                        pricingType === 'standard'
+                          ? 'border-indigo-600 bg-indigo-50/80 text-indigo-700 shadow-xs ring-1 ring-indigo-600/30'
+                          : 'border-slate-200 hover:bg-white text-slate-600'
+                      }`}
+                    >
+                      <span>📌</span>
+                      <span>Standar / Tetap</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPricingType('area')
+                        if (unit !== 'm2' && unit !== 'cm2') setUnit('m2')
+                      }}
+                      className={`py-2 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 ${
+                        pricingType === 'area'
+                          ? 'border-indigo-600 bg-indigo-50/80 text-indigo-700 shadow-xs ring-1 ring-indigo-600/30'
+                          : 'border-slate-200 hover:bg-white text-slate-600'
+                      }`}
+                    >
+                      <span>📐</span>
+                      <span>Percetakan (P × L)</span>
+                    </button>
+                  </div>
+                  {pricingType === 'area' && (
+                    <div className="mt-2.5 p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2 text-xs">
+                      <p className="text-[11px] text-indigo-900 font-medium leading-relaxed">
+                        ✨ <strong>Mode Percetakan Aktif:</strong> Saat kasir memilih produk ini di POS, akan muncul pop-up untuk mengisi <strong>Panjang × Lebar</strong> dan harga akan otomatis dihitung berdasarkan luas.
+                      </p>
+                      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-indigo-200/60">
+                        <div>
+                          <label className="block text-[10px] font-bold text-indigo-950 uppercase">Luas Minimum Order</label>
+                          <div className="flex items-center gap-1 mt-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              className="w-full p-2 border border-indigo-300 rounded-lg text-xs font-bold text-slate-800 bg-white outline-none focus:ring-1 focus:ring-indigo-500"
+                              placeholder="0 (tanpa batas)"
+                              value={minArea === 0 ? '' : minArea}
+                              onChange={e => setMinArea(e.target.value === '' ? 0 : Number(e.target.value))}
+                            />
+                            <span className="text-[11px] font-bold text-indigo-700 shrink-0">{unit}</span>
+                          </div>
+                          <span className="text-[9px] text-indigo-600">Contoh: 1 (min 1 {unit})</span>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-indigo-950 uppercase">Tarif Dihitung Per</label>
+                          <select
+                            className="w-full mt-1 p-2 border border-indigo-300 rounded-lg text-xs font-bold text-slate-800 bg-white outline-none focus:ring-1 focus:ring-indigo-500"
+                            value={unit}
+                            onChange={e => setUnit(e.target.value)}
+                          >
+                            <option value="m2">m² (Meter Persegi)</option>
+                            <option value="cm2">cm² (Centimeter Persegi)</option>
+                          </select>
+                          <span className="text-[9px] text-indigo-600">Satuan dasar harga</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Nama Produk */}
@@ -1119,7 +1218,9 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                 {hppType === 'fixed' ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
                     <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Harga Jual (Rp) *</label>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                        Harga Jual {pricingType === 'area' ? `(Rp / ${unit})` : '(Rp)'} *
+                      </label>
                       <input
                         type="number"
                         min="0"
@@ -1131,7 +1232,9 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">HPP / Harga Modal Beli (Rp)</label>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                        HPP / Modal {pricingType === 'area' ? `(Rp / ${unit})` : '(Rp)'}
+                      </label>
                       <input
                         type="number"
                         min="0"
@@ -1149,7 +1252,9 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                     {/* Prices Banner */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Harga Jual (Rp) *</label>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                          Harga Jual {pricingType === 'area' ? `(Rp / ${unit})` : '(Rp)'} *
+                        </label>
                         <input
                           type="number"
                           min="0"

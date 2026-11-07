@@ -146,12 +146,18 @@ export function buildKitchenTicketsFromItems(
       }))
     }
 
+    let itemNote = item.note || item.item_note || undefined
+    if (item.dimension_spec && item.dimension_spec.billable_area) {
+      const areaNote = `Luas: ${item.dimension_spec.billable_area} ${item.dimension_spec.area_unit}`
+      itemNote = itemNote ? `${areaNote} • ${itemNote}` : areaNote
+    }
+
     normalizedItems.push({
       name: displayName,
       variant: undefined,
       quantity: qty,
       modifiers: modifiersList.length > 0 ? modifiersList : undefined,
-      note: item.note || item.item_note || undefined,
+      note: itemNote,
       station
     })
   }

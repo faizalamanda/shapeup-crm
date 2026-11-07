@@ -100,6 +100,12 @@ export async function POST(req: Request) {
     const priceGuardSettings = await getPriceGuardSettings(businessId, ctx.supabaseAdmin)
     const lineItemsForGuard = items.map((item: any) => {
       const dbProd = productMap.get(item.id)
+      const areaMultiplier = Number(item.dimension_spec?.billable_area || 0)
+      const baseCostPrice = Number(dbProd?.cost_price || 0)
+      const effectiveCostPrice = areaMultiplier > 0
+        ? Math.round(areaMultiplier * baseCostPrice)
+        : baseCostPrice
+
       return {
         id: item.id,
         name: dbProd?.name || item.name,
@@ -107,7 +113,7 @@ export async function POST(req: Request) {
         discount: Number(item.discount || 0),
         quantity: Number(item.quantity || 1),
         isCustom: String(item.id).startsWith('custom-'),
-        costPrice: Number(dbProd?.cost_price || 0),
+        costPrice: effectiveCostPrice,
         preventBelowHpp: Boolean(dbProd?.prevent_below_hpp)
       }
     })
@@ -234,6 +240,12 @@ export async function POST(req: Request) {
       const metaData: any[] = []
       if (item.discount > 0) metaData.push({ key: 'Discount', value: String(item.discount) })
       if (variantName) metaData.push({ key: 'Variant', value: variantName })
+      if (item.dimension_spec) {
+        metaData.push({
+          key: 'Dimensi',
+          value: `${item.dimension_spec.length} × ${item.dimension_spec.width} ${item.dimension_spec.input_unit} (${item.dimension_spec.billable_area} ${item.dimension_spec.area_unit})`
+        })
+      }
       if (item.modifiers && Array.isArray(item.modifiers) && item.modifiers.length > 0) {
         metaData.push({ key: 'Modifiers', value: item.modifiers.map((m: any) => `${m.group}: ${m.name}`).join(', ') })
       }
@@ -247,6 +259,7 @@ export async function POST(req: Request) {
         variation_id: item.variantId || item.variant_id || item.variation_id || 0,
         variant_name: variantName,
         cost_price: Number(item.costPrice || item.cost_price || productMap.get(item.id)?.cost_price || 0),
+        dimension_spec: item.dimension_spec || null,
         modifiers: item.modifiers || [],
         note: item.note || '',
         quantity: item.quantity,

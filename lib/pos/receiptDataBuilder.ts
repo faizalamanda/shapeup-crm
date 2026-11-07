@@ -56,6 +56,12 @@ export function buildReceiptDataFromOrder(order: any, options: ReceiptBuildOptio
       ? `${rawName} - ${variantStr}`
       : rawName
 
+    let itemNote = item.note || item.item_note || undefined
+    if (item.dimension_spec && item.dimension_spec.billable_area) {
+      const areaNote = `Luas: ${item.dimension_spec.billable_area} ${item.dimension_spec.area_unit}`
+      itemNote = itemNote ? `${areaNote} • ${itemNote}` : areaNote
+    }
+
     return {
       name: displayName,
       variant: undefined, // Dikosongkan agar cetak struk flat / tidak bertingkat
@@ -63,7 +69,7 @@ export function buildReceiptDataFromOrder(order: any, options: ReceiptBuildOptio
       price: price,
       subtotal: subtotal,
       discount: Number(item.discount || 0),
-      note: item.note || item.item_note || undefined
+      note: itemNote
     }
   })
 
@@ -340,13 +346,19 @@ export function buildHoldOrderReceiptData(
       ? `${rawName} - ${variantStr}`
       : rawName
 
+    let itemNote = item.note || item.item_note || undefined
+    if (item.dimension_spec && item.dimension_spec.billable_area) {
+      const areaNote = `Luas: ${item.dimension_spec.billable_area} ${item.dimension_spec.area_unit}`
+      itemNote = itemNote ? `${areaNote} • ${itemNote}` : areaNote
+    }
+
     return {
       name: displayName,
       quantity: qty,
       price: price,
       subtotal: subtotal,
       discount: Number(item.discount || 0),
-      note: item.note || item.item_note || undefined
+      note: itemNote
     }
   })
 

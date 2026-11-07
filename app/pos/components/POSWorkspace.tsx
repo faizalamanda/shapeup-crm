@@ -20,6 +20,7 @@ import ItemNoteModal from './ItemNoteModal'
 import OrderNoteModal from './OrderNoteModal'
 import GlobalDiscountModal from './GlobalDiscountModal'
 import CartItemEditModal from './CartItemEditModal'
+import PrintingDimensionModal from './PrintingDimensionModal'
 import PriceAuthorizationModal, { AuthorizationRecord } from './PriceAuthorizationModal'
 import { PriceGuardSettings, DEFAULT_PRICE_GUARD_SETTINGS } from '@/lib/priceGuard/types'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
@@ -167,6 +168,9 @@ export default function POSWorkspace({
   // Modals
   const [selectedProductForVariant, setSelectedProductForVariant] = useState<any | null>(null)
   const [isVariantModalOpen, setIsVariantModalOpen] = useState(false)
+  const [selectedProductForDimension, setSelectedProductForDimension] = useState<any | null>(null)
+  const [editingDimensionItemIndex, setEditingDimensionItemIndex] = useState<number | null>(null)
+  const [isDimensionModalOpen, setIsDimensionModalOpen] = useState(false)
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false)
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false)
@@ -542,6 +546,16 @@ export default function POSWorkspace({
   // Product Tap Action
   const handleProductTap = (p: any) => {
     if (p.stock_type === 'unavailable') return
+
+    // Printing / Area-based Dimension Products (Meter / CM persegi)
+    const isDimensionProduct = p.pricing_type === 'area' || p.unit === 'm2' || p.unit === 'cm2'
+    if (isDimensionProduct) {
+      setSelectedProductForDimension(p)
+      setEditingDimensionItemIndex(null)
+      setIsDimensionModalOpen(true)
+      return
+    }
+
     const hasVariants = (Array.isArray(p.product_variants) && p.product_variants.length > 0) || p.has_variants
     const hasModifiers = (Array.isArray(p.product_modifiers) && p.product_modifiers.length > 0) || p.type === 'fnb'
     if (hasVariants || hasModifiers) {
@@ -603,6 +617,59 @@ export default function POSWorkspace({
         }
       ]
     })
+  }
+
+  const handleAddDimensionItem = (itemData: any) => {
+    setCart((prev) => {
+      // If editing an existing item in cart
+      if (
+        editingDimensionItemIndex !== null &&
+        editingDimensionItemIndex >= 0 &&
+        editingDimensionItemIndex < prev.length
+      ) {
+        const copy = [...prev]
+        copy[editingDimensionItemIndex] = {
+          ...copy[editingDimensionItemIndex],
+          product: itemData.product,
+          quantity: itemData.quantity,
+          finalPrice: itemData.finalPrice,
+          note: itemData.note,
+          dimension_spec: itemData.dimension_spec,
+          selectedModifiers: itemData.selectedModifiers
+        }
+        return copy
+      }
+
+      // Check if identical dimension item already exists
+      const existingIdx = prev.findIndex((item) =>
+        item.product.id === itemData.product.id &&
+        item.dimension_spec?.length === itemData.dimension_spec?.length &&
+        item.dimension_spec?.width === itemData.dimension_spec?.width &&
+        item.dimension_spec?.input_unit === itemData.dimension_spec?.input_unit &&
+        (item.note || '') === (itemData.note || '') &&
+        JSON.stringify(item.selectedModifiers || []) === JSON.stringify(itemData.selectedModifiers || [])
+      )
+
+      if (existingIdx > -1) {
+        const copy = [...prev]
+        copy[existingIdx].quantity += itemData.quantity
+        return copy
+      }
+
+      return [
+        ...prev,
+        {
+          product: itemData.product,
+          quantity: itemData.quantity,
+          finalPrice: itemData.finalPrice,
+          discount: 0,
+          note: itemData.note,
+          dimension_spec: itemData.dimension_spec,
+          selectedModifiers: itemData.selectedModifiers
+        }
+      ]
+    })
+    setEditingDimensionItemIndex(null)
   }
 
   const handleUpdateQty = (index: number, delta: number) => {
@@ -940,7 +1007,8 @@ export default function POSWorkspace({
         variantName: item.selectedVariant?.name,
         costPrice: item.selectedVariant?.cost_price || item.product.cost_price || 0,
         modifiers: item.selectedModifiers,
-        note: item.note
+        note: item.note,
+        dimension_spec: item.dimension_spec
       }))
 
       const effectiveOrderNote = orderNote.trim() || undefined
@@ -994,7 +1062,8 @@ export default function POSWorkspace({
           price: i.finalPrice,
           subtotal: i.finalPrice * i.quantity,
           discount: i.discount,
-          note: i.note
+          note: i.note,
+          dimension_spec: i.dimension_spec
         })),
         customer: selectedCustomer,
         subtotal: subtotal,
@@ -1239,6 +1308,11 @@ export default function POSWorkspace({
                           {item.selectedVariant.name}
                         </span>
                       )}
+                      {item.dimension_spec && (
+                        <span className="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-200 font-bold px-1.5 py-0.2 rounded shrink-0">
+                          📐 {item.dimension_spec.length}×{item.dimension_spec.width} {item.dimension_spec.input_unit} ({item.dimension_spec.billable_area} {item.dimension_spec.area_unit})
+                        </span>
+                      )}
                       {isItemPriceViolation(item) && (
                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
                           authorizations.has(`item_${idx}`) || item.authorization
@@ -1251,10 +1325,16 @@ export default function POSWorkspace({
                     </div>
 
                     {/* Sub-line: Unit Price & Discount */}
-                    {(item.quantity > 1 || item.discount > 0) && (
-                      <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
-                        {item.quantity > 1 && (
-                          <span className="font-medium text-slate-600">@Rp {netItemPrice.toLocaleString('id-ID')}</span>
+                    {(item.quantity > 1 || item.discount > 0 || item.dimension_spec) && (
+                      <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5 flex-wrap">
+                        {item.dimension_spec ? (
+                          <span className="font-semibold text-indigo-700">
+                            @Rp {netItemPrice.toLocaleString('id-ID')} / lembar ({item.dimension_spec.billable_area} {item.dimension_spec.area_unit})
+                          </span>
+                        ) : (
+                          item.quantity > 1 && (
+                            <span className="font-medium text-slate-600">@Rp {netItemPrice.toLocaleString('id-ID')}</span>
+                          )
                         )}
                         {item.discount > 0 && (
                           <span className="text-rose-600 font-semibold">
@@ -1792,6 +1872,11 @@ export default function POSWorkspace({
                                       {p.product_variants.length} Varian
                                     </span>
                                   )}
+                                  {p.pricing_type === 'area' && (
+                                    <span className="text-[9px] bg-indigo-100 text-indigo-800 font-bold px-2 py-0.5 rounded-full border border-indigo-200">
+                                      📐 P × L
+                                    </span>
+                                  )}
                                   {isOutOfStock ? (
                                     <span className="text-[9px] bg-rose-100 text-rose-700 font-extrabold px-2 py-0.5 rounded-full">Habis</span>
                                   ) : p.stock_type === 'tracked' ? (
@@ -1806,9 +1891,16 @@ export default function POSWorkspace({
                               </div>
 
                               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                                <span className="text-xs sm:text-sm font-black text-slate-950">
-                                  Rp {p.price.toLocaleString('id-ID')}
-                                </span>
+                                <div className="flex flex-col">
+                                  <span className="text-xs sm:text-sm font-black text-slate-950">
+                                    Rp {p.price.toLocaleString('id-ID')}
+                                  </span>
+                                  {p.pricing_type === 'area' && (
+                                    <span className="text-[10px] text-indigo-600 font-bold">
+                                      / {p.unit || 'm²'}
+                                    </span>
+                                  )}
+                                </div>
                                 <span className="w-7 h-7 rounded-xl bg-indigo-50 text-indigo-600 font-black flex items-center justify-center text-xs group-hover:bg-indigo-600 group-hover:text-white transition shadow-2xs">
                                   +
                                 </span>
@@ -1856,6 +1948,11 @@ export default function POSWorkspace({
                                       🎯 Sama Persis
                                     </span>
                                   )}
+                                  {p.pricing_type === 'area' && (
+                                    <span className="text-[9px] bg-indigo-100 text-indigo-800 font-bold px-1.5 py-0.5 rounded-full border border-indigo-200">
+                                      📐 P × L
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="text-[10px] text-slate-400 font-mono">SKU: {p.sku || '-'}</div>
                               </div>
@@ -1868,9 +1965,16 @@ export default function POSWorkspace({
                                     Stok: {p.stock_quantity}
                                   </span>
                                 )}
-                                <span className="text-xs sm:text-sm font-black text-slate-950">
-                                  Rp {p.price.toLocaleString('id-ID')}
-                                </span>
+                                <div className="flex flex-col items-end">
+                                  <span className="text-xs sm:text-sm font-black text-slate-950">
+                                    Rp {p.price.toLocaleString('id-ID')}
+                                  </span>
+                                  {p.pricing_type === 'area' && (
+                                    <span className="text-[10px] text-indigo-600 font-bold">
+                                      / {p.unit || 'm²'}
+                                    </span>
+                                  )}
+                                </div>
                                 <button
                                   disabled={isOutOfStock}
                                   className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition shadow-2xs"
@@ -2012,6 +2116,27 @@ export default function POSWorkspace({
         onClose={() => setIsVariantModalOpen(false)}
         product={selectedProductForVariant}
         onAddToCart={handleAddVariantItem}
+      />
+
+      <PrintingDimensionModal
+        isOpen={isDimensionModalOpen}
+        onClose={() => {
+          setIsDimensionModalOpen(false)
+          setEditingDimensionItemIndex(null)
+        }}
+        product={selectedProductForDimension}
+        initialValues={
+          editingDimensionItemIndex !== null && cart[editingDimensionItemIndex]?.dimension_spec
+            ? {
+                length: cart[editingDimensionItemIndex].dimension_spec.length,
+                width: cart[editingDimensionItemIndex].dimension_spec.width,
+                input_unit: cart[editingDimensionItemIndex].dimension_spec.input_unit,
+                quantity: cart[editingDimensionItemIndex].quantity,
+                note: cart[editingDimensionItemIndex].note
+              }
+            : null
+        }
+        onAddToCart={handleAddDimensionItem}
       />
 
       <CashPaymentModal
@@ -2157,6 +2282,15 @@ export default function POSWorkspace({
         isOpen={editingCartItemIndex !== null}
         onClose={() => setEditingCartItemIndex(null)}
         item={editingCartItemIndex !== null ? cart[editingCartItemIndex] : null}
+        onEditDimensions={() => {
+          if (editingCartItemIndex !== null) {
+            const currentItem = cart[editingCartItemIndex]
+            setSelectedProductForDimension(currentItem.product)
+            setEditingDimensionItemIndex(editingCartItemIndex)
+            setEditingCartItemIndex(null)
+            setIsDimensionModalOpen(true)
+          }
+        }}
         isGuarded={editingCartItemIndex !== null ? isItemGuarded(cart[editingCartItemIndex]) : false}
         costPrice={editingCartItemIndex !== null ? getItemCostPrice(cart[editingCartItemIndex]) : 0}
         allowOverride={Boolean(priceGuardSettings.require_approver_pin || priceGuardSettings.require_reason)}

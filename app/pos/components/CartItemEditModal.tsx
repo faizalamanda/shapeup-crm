@@ -6,6 +6,7 @@ import { FullScreenModal } from '@/components/ui/FullScreenModal'
 interface CartItemData {
   product: { id?: string; name: string; price?: number; cost_price?: number; prevent_below_hpp?: boolean }
   selectedVariant?: { id?: string; name: string; price?: number; cost_price?: number }
+  dimension_spec?: any
   finalPrice: number
   discount?: number
   quantity: number
@@ -33,6 +34,7 @@ interface Props {
     note: string
   }) => void
   onRemove: () => void
+  onEditDimensions?: () => void
 }
 
 export default function CartItemEditModal({
@@ -46,6 +48,7 @@ export default function CartItemEditModal({
   onRequestAuthorization,
   onSave,
   onRemove,
+  onEditDimensions,
 }: Props) {
   const [quantity, setQuantity] = useState<number>(1)
   const [finalPrice, setFinalPrice] = useState<number>(0)
@@ -186,6 +189,29 @@ export default function CartItemEditModal({
       }
     >
       <div className="space-y-3.5">
+        {/* Dimension Specification Info (Printing Service) */}
+        {item.dimension_spec && (
+          <div className="p-3 bg-indigo-50/90 border border-indigo-200 rounded-xl flex items-center justify-between gap-3 text-xs">
+            <div className="min-w-0">
+              <span className="font-black text-indigo-950 block truncate">
+                📐 {item.dimension_spec.length} × {item.dimension_spec.width} {item.dimension_spec.input_unit} ({item.dimension_spec.billable_area} {item.dimension_spec.area_unit})
+              </span>
+              <span className="text-[11px] text-indigo-700 block mt-0.5">
+                Tarif dasar: Rp {Number(item.dimension_spec.rate_per_unit || 0).toLocaleString('id-ID')} / {item.dimension_spec.area_unit}
+              </span>
+            </div>
+            {onEditDimensions && (
+              <button
+                type="button"
+                onClick={onEditDimensions}
+                className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs transition shrink-0 cursor-pointer shadow-2xs"
+              >
+                Ubah Ukuran
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Quantity Stepper */}
         <div className="space-y-1">
           <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
