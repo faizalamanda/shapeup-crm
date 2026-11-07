@@ -1,6 +1,7 @@
 "use client"
 import { useState, useMemo, useEffect } from 'react'
 import { useModalBackHandler } from '@/hooks/useModalBackHandler'
+import { supabase } from '@/lib/supabase'
 
 export type VariantOption = {
   id: string
@@ -33,6 +34,7 @@ type Props = {
     product_variants?: any[]
     modifiers?: ModifierGroup[]
     product_modifiers?: any[]
+    has_variants?: boolean
   } | null
   onAddToCart: (item: {
     product: any
@@ -46,30 +48,81 @@ type Props = {
 export default function VariantSelectorModal({ isOpen, onClose, product, onAddToCart }: Props) {
   useModalBackHandler(isOpen, onClose)
 
-  if (!isOpen || !product) return null
+  // Fallback state if variants need on-the-fly fetch
+  const [fetchedVariants, setFetchedVariants] = useState<VariantOption[]>([])
+  const [isLoadingVariants, setIsLoadingVariants] = useState(false)
+
+  // Fetch variants from DB if product indicates has_variants but product_variants is empty
+  useEffect(() => {
+    if (!isOpen || !product?.id) {
+      setFetchedVariants([])
+      setIsLoadingVariants(false)
+      return
+    }
+
+    const raw = (product as any).product_variants || product.variants
+    const hasPreloaded = Array.isArray(raw) && raw.length > 0
+
+    if (!hasPreloaded && product.has_variants) {
+      let active = true
+      setIsLoadingVariants(true)
+      supabase
+        .from('product_variants')
+        .select('id, name, sku, price, cost_price, stock_quantity')
+        .eq('product_id', product.id)
+        .order('name', { ascending: true })
+        .then(({ data, error }) => {
+          if (!active) return
+          setIsLoadingVariants(false)
+          if (!error && data && data.length > 0) {
+            setFetchedVariants(
+              data.map((v: any) => ({
+                id: v.id,
+                name: v.name || '',
+                price: Number(v.price ?? product.price ?? 0),
+                costPrice: Number(v.cost_price ?? 0),
+                stockQuantity: Number(v.stock_quantity ?? 0)
+              }))
+            )
+          }
+        })
+      return () => {
+        active = false
+      }
+    } else {
+      setFetchedVariants([])
+      setIsLoadingVariants(false)
+    }
+  }, [isOpen, product])
 
   // Resolve real database variants or props
   const variants: VariantOption[] = useMemo(() => {
+    if (!product) return []
     const raw = (product as any).product_variants || product.variants
     if (Array.isArray(raw) && raw.length > 0) {
       return raw.map((v: any) => ({
-        id: v.id,
-        name: v.name,
-        price: Number(v.price ?? product.price),
-        costPrice: Number(v.cost_price ?? 0),
-        stockQuantity: Number(v.stock_quantity ?? 0)
+        id: v?.id || '',
+        name: v?.name || '',
+        price: Number(v?.price ?? product.price ?? 0),
+        costPrice: Number(v?.cost_price ?? 0),
+        stockQuantity: Number(v?.stock_quantity ?? 0)
       }))
     }
+    if (fetchedVariants.length > 0) {
+      return fetchedVariants
+    }
     return []
-  }, [product])
+  }, [product, fetchedVariants])
 
   // Resolve real database modifiers or props
   const modifierGroups: ModifierGroup[] = useMemo(() => {
+    if (!product) return []
     const raw = (product as any).product_modifiers || product.modifiers
     if (Array.isArray(raw) && raw.length > 0) {
-      if (raw[0].group_name) {
+      if (raw[0]?.group_name) {
         const map: Record<string, ModifierGroup> = {}
         for (const m of raw) {
+          if (!m) continue
           const gName = m.group_name || 'Kustomisasi'
           if (!map[gName]) {
             map[gName] = {
@@ -80,8 +133,8 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
             }
           }
           map[gName].options.push({
-            id: m.id,
-            name: m.option_name,
+            id: m.id || '',
+            name: m.option_name || '',
             priceExtra: Number(m.price_extra || 0)
           })
         }
@@ -94,34 +147,50 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
 
   // Check if variants follow the multi-attribute hyphen pattern (e.g. "Hitam - XL")
   const isMultiAttribute = useMemo(() => {
-    return variants.length > 1 && variants.every(v => v.name.includes(' - '))
+    return (
+      variants.length > 1 &&
+      variants.every((v) => typeof v?.name === 'string' && v.name.includes(' - '))
+    )
   }, [variants])
 
   // Extract unique attribute dimensions
   const attributeDimensions = useMemo(() => {
-    if (!isMultiAttribute) return []
-    const sampleParts = variants[0].name.split(' - ')
+    if (!isMultiAttribute || variants.length === 0 || !variants[0]?.name) return []
+    const sampleParts = (variants[0].name || '').split(' - ')
     const numDimensions = sampleParts.length
 
     const dims: Array<{ label: string; values: string[] }> = []
     for (let i = 0; i < numDimensions; i++) {
-      const uniqueValues = Array.from(new Set(variants.map(v => {
-        const parts = v.name.split(' - ')
-        return parts[i]?.trim() || ''
-      }).filter(Boolean)))
+      const uniqueValues = Array.from(
+        new Set(
+          variants
+            .map((v) => {
+              const parts = (v?.name || '').split(' - ')
+              return parts[i]?.trim() || ''
+            })
+            .filter(Boolean)
+        )
+      )
 
       // Intelligent Auto-Naming for Group Labels
       let detectedLabel = `Pilihan Atribut ${i + 1}`
-      const lowerVals = uniqueValues.map(v => v.toLowerCase())
-      const sizeKeywords = ['s', 'm', 'l', 'xl', 'xxl', 'xxxl', 'all size', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', 'small', 'medium', 'large']
-      const colorKeywords = ['hitam', 'putih', 'merah', 'biru', 'kuning', 'hijau', 'navy', 'abu', 'cokelat', 'maroon', 'pink', 'gold', 'silver', 'black', 'white', 'red', 'blue', 'green', 'cream', 'beige']
+      const lowerVals = uniqueValues.map((v) => v.toLowerCase())
+      const sizeKeywords = [
+        's', 'm', 'l', 'xl', 'xxl', 'xxxl', 'all size',
+        '28', '29', '30', '31', '32', '33', '34', '35', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45',
+        'small', 'medium', 'large'
+      ]
+      const colorKeywords = [
+        'hitam', 'putih', 'merah', 'biru', 'kuning', 'hijau', 'navy', 'abu', 'cokelat', 'maroon', 'pink', 'gold', 'silver',
+        'black', 'white', 'red', 'blue', 'green', 'cream', 'beige'
+      ]
       const tempKeywords = ['panas', 'dingin', 'hangat', 'hot', 'ice', 'iced', 'less ice', 'normal ice', 'no ice']
 
-      if (lowerVals.some(v => colorKeywords.includes(v))) {
+      if (lowerVals.some((v) => colorKeywords.includes(v))) {
         detectedLabel = 'Warna'
-      } else if (lowerVals.some(v => sizeKeywords.includes(v))) {
+      } else if (lowerVals.some((v) => sizeKeywords.includes(v))) {
         detectedLabel = 'Ukuran / Size'
-      } else if (lowerVals.some(v => tempKeywords.includes(v))) {
+      } else if (lowerVals.some((v) => tempKeywords.includes(v))) {
         detectedLabel = 'Suhu / Es'
       } else {
         detectedLabel = i === 0 ? 'Tipe / Atribut 1' : `Pilihan Atribut ${i + 1}`
@@ -136,29 +205,26 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
   }, [variants, isMultiAttribute])
 
   const [selectedAttrValues, setSelectedAttrValues] = useState<Record<number, string>>({})
-
-  useEffect(() => {
-    if (isMultiAttribute && attributeDimensions.length > 0) {
-      const initialAttrs: Record<number, string> = {}
-      attributeDimensions.forEach((dim, idx) => {
-        initialAttrs[idx] = dim.values[0] || ''
-      })
-      setSelectedAttrValues(initialAttrs)
-      const targetName = attributeDimensions.map((_, i) => initialAttrs[i]).filter(Boolean).join(' - ')
-      const found = variants.find(v => v.name.trim() === targetName)
-      if (found) setSelectedVariant(found)
-    }
-  }, [isMultiAttribute, attributeDimensions, variants])
-
-  const [selectedVariant, setSelectedVariant] = useState<VariantOption | null>(variants[0] || null)
+  const [selectedVariant, setSelectedVariant] = useState<VariantOption | null>(null)
   const [selectedModifiers, setSelectedModifiers] = useState<Record<string, { group: string; name: string; priceExtra: number }>>({})
   const [note, setNote] = useState('')
 
+  // Sync state when modal opens or product/variants change
   useEffect(() => {
-    if (product) {
-      if (!isMultiAttribute) {
+    if (isOpen && product) {
+      if (isMultiAttribute && attributeDimensions.length > 0) {
+        const initialAttrs: Record<number, string> = {}
+        attributeDimensions.forEach((dim, idx) => {
+          initialAttrs[idx] = dim.values[0] || ''
+        })
+        setSelectedAttrValues(initialAttrs)
+        const targetName = attributeDimensions.map((_, i) => initialAttrs[i]).filter(Boolean).join(' - ')
+        const found = variants.find((v) => (v?.name || '').trim() === targetName)
+        setSelectedVariant(found || variants[0] || null)
+      } else {
         setSelectedVariant(variants[0] || null)
       }
+
       const initialMods: Record<string, { group: string; name: string; priceExtra: number }> = {}
       for (const g of modifierGroups) {
         if (g.required && g.options.length > 0) {
@@ -167,16 +233,21 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
       }
       setSelectedModifiers(initialMods)
       setNote('')
+    } else {
+      setSelectedVariant(null)
+      setSelectedModifiers({})
+      setNote('')
+      setSelectedAttrValues({})
     }
-  }, [product, variants, modifierGroups, isMultiAttribute])
+  }, [isOpen, product, variants, modifierGroups, isMultiAttribute, attributeDimensions])
 
   // Calculate final unit price
-  const extraTotal = Object.values(selectedModifiers).reduce((acc, m) => acc + m.priceExtra, 0)
-  const basePrice = selectedVariant ? selectedVariant.price : product.price
+  const extraTotal = Object.values(selectedModifiers).reduce((acc, m) => acc + (m?.priceExtra || 0), 0)
+  const basePrice = selectedVariant ? Number(selectedVariant.price || 0) : Number(product?.price || 0)
   const finalPrice = basePrice + extraTotal
 
   const handleToggleModifier = (group: ModifierGroup, opt: { id: string; name: string; priceExtra: number }) => {
-    setSelectedModifiers(prev => {
+    setSelectedModifiers((prev) => {
       const copy = { ...prev }
       if (copy[group.id]?.name === opt.name && !group.required) {
         delete copy[group.id]
@@ -188,6 +259,7 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
   }
 
   const handleConfirm = () => {
+    if (!product) return
     onAddToCart({
       product,
       selectedVariant: selectedVariant || undefined,
@@ -197,6 +269,9 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
     })
     onClose()
   }
+
+  // All Hooks have run unconditionally above. Early return guard is safe here.
+  if (!isOpen || !product) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4">
@@ -217,8 +292,16 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
 
         {/* Content Body */}
         <div className="p-5 overflow-y-auto space-y-6 flex-1 text-sm">
+          {/* Loading state for on-the-fly variant fetch */}
+          {isLoadingVariants && (
+            <div className="py-8 flex flex-col items-center justify-center gap-2 text-gray-400">
+              <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+              <p className="text-xs">Memuat varian produk...</p>
+            </div>
+          )}
+
           {/* Varian Selection */}
-          {variants.length > 0 && (
+          {!isLoadingVariants && variants.length > 0 && (
             <div>
               {isMultiAttribute ? (
                 /* Multi-Attribute Chip Selector (e.g. Warna -> Ukuran) */
@@ -239,7 +322,7 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
                                 const updated = { ...selectedAttrValues, [dimIdx]: val }
                                 setSelectedAttrValues(updated)
                                 const targetName = attributeDimensions.map((_, i) => updated[i]).filter(Boolean).join(' - ')
-                                const found = variants.find(v => v.name.trim() === targetName)
+                                const found = variants.find(v => (v?.name || '').trim() === targetName)
                                 if (found) setSelectedVariant(found)
                               }}
                               className={`px-3.5 py-2 rounded-xl text-xs font-bold transition border ${
