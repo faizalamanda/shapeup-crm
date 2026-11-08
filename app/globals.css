@@ -57,11 +57,15 @@ html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   scroll-behavior: smooth;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 body {
   background: var(--su-bg);
   color: var(--su-text);
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 /* Prevent background container scroll when any modal locks body scroll */

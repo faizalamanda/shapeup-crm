@@ -1293,7 +1293,7 @@ export default function POSWorkspace({
               <div 
                 key={idx} 
                 onClick={() => setEditingCartItemIndex(idx)}
-                className="py-2.5 px-3 hover:bg-slate-50/80 transition cursor-pointer flex flex-col gap-1.5 group text-xs select-none"
+                className="py-2.5 px-2.5 sm:px-3 hover:bg-slate-50/80 transition cursor-pointer flex flex-col gap-1.5 group text-xs select-none"
                 title="Ketuk baris untuk ubah kuantitas, harga, diskon, atau catatan"
               >
                 {/* Top Row: Product Info on Left, Qty + Price + Pencil on Right */}
@@ -1380,9 +1380,9 @@ export default function POSWorkspace({
       </div>
 
       {/* Cart Summary & Checkout Footer (Moka-style Clean Receipt Bill) */}
-      <div className="p-3 sm:p-3.5 border-t border-slate-200 bg-white space-y-2.5 shrink-0 shadow-lg min-w-0">
+      <div className="p-2.5 sm:p-3 border-t border-slate-200 bg-white space-y-2 shrink-0 shadow-lg min-w-0">
         {/* Bill Summary Rows */}
-        <div className="space-y-2 text-xs">
+        <div className="space-y-1.5 sm:space-y-2 text-xs">
           {/* Order Note (Shopee / Meja / Dapur) */}
           <div className="flex justify-between items-center text-slate-600">
             <span className="font-medium text-slate-600 flex items-center gap-1.5">
@@ -1394,7 +1394,7 @@ export default function POSWorkspace({
                 <button
                   type="button"
                   onClick={() => setIsOrderNoteModalOpen(true)}
-                  className="font-semibold text-amber-900 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 text-xs hover:bg-amber-100 transition truncate max-w-[150px] cursor-pointer"
+                  className="font-semibold text-amber-900 bg-amber-50 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg border border-amber-200 text-xs hover:bg-amber-100 transition truncate max-w-[130px] cursor-pointer"
                   title="Klik untuk ubah catatan pesanan"
                 >
                   "{orderNote}"
@@ -1412,7 +1412,7 @@ export default function POSWorkspace({
               <button
                 type="button"
                 onClick={() => setIsOrderNoteModalOpen(true)}
-                className="px-2.5 py-1 bg-slate-100 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 font-semibold rounded-lg text-xs transition flex items-center gap-1 cursor-pointer"
+                className="px-2 py-0.5 sm:px-2.5 sm:py-1 bg-slate-100 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 font-semibold rounded-lg text-xs transition flex items-center gap-1 cursor-pointer"
               >
                 <span>+ Catatan</span>
               </button>
@@ -1430,7 +1430,7 @@ export default function POSWorkspace({
                 <button
                   type="button"
                   onClick={() => setIsDiscountModalOpen(true)}
-                  className="font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-xs hover:bg-emerald-100 transition cursor-pointer"
+                  className="font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg border border-emerald-200 text-xs hover:bg-emerald-100 transition cursor-pointer"
                   title="Klik untuk ubah diskon global"
                 >
                   -Rp {globalDiscountAmount.toLocaleString('id-ID')} {globalDiscountType === 'percent' && `(${globalDiscountInput}%)`}
@@ -1455,7 +1455,7 @@ export default function POSWorkspace({
               <button
                 type="button"
                 onClick={() => setIsDiscountModalOpen(true)}
-                className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-bold rounded-lg text-xs transition flex items-center gap-1 cursor-pointer shadow-2xs"
+                className="px-2 py-0.5 sm:px-2.5 sm:py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-bold rounded-lg text-xs transition flex items-center gap-1 cursor-pointer shadow-2xs"
               >
                 <span>+ Diskon Global</span>
               </button>
@@ -1463,14 +1463,14 @@ export default function POSWorkspace({
           </div>
 
           {/* Subtotal */}
-          <div className="flex justify-between items-center text-slate-600 pt-1.5 border-t border-slate-100">
+          <div className="flex justify-between items-center text-slate-600 pt-1 border-t border-slate-100">
             <span>Sub-Total ({totalItemCount} item)</span>
-            <span className="font-semibold text-slate-800">Rp {subtotal.toLocaleString('id-ID')}</span>
+            <span className="font-bold text-slate-800">Rp {subtotal.toLocaleString('id-ID')}</span>
           </div>
         </div>
 
         {/* Action Buttons: Hold + Pay with Total */}
-        <div className="flex items-center gap-2 pt-0.5">
+        <div className="flex items-center gap-1.5 sm:gap-2 pt-0.5">
           <button
             type="button"
             onClick={() => {
@@ -1482,7 +1482,7 @@ export default function POSWorkspace({
               handleSaveHoldOrder()
             }}
             disabled={cart.length === 0}
-            className={`py-2.5 px-3 border font-bold rounded-xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0 flex items-center gap-1 cursor-pointer ${
+            className={`py-2 sm:py-2.5 px-2.5 sm:px-3 border font-bold rounded-xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0 flex items-center gap-1 cursor-pointer ${
               activeHoldId
                 ? 'border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 shadow-2xs'
                 : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700'
@@ -1490,14 +1490,14 @@ export default function POSWorkspace({
             title={activeHoldId ? 'Perbarui Transaksi Ditahan (Update Hold)' : 'Simpan Pesanan Sementara (Hold)'}
           >
             <span>⏸️</span>
-            <span>{activeHoldId ? 'Update Hold' : 'Hold'}</span>
+            <span>{activeHoldId ? 'Update' : 'Hold'}</span>
           </button>
           {posMode.enableProductionTickets && (
             <button
               type="button"
               onClick={handlePrintKitchenFromCart}
               disabled={cart.length === 0}
-              className="py-2.5 px-3 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold rounded-xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0 flex items-center gap-1 cursor-pointer shadow-2xs"
+              className="py-2 sm:py-2.5 px-2.5 sm:px-3 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold rounded-xl text-xs transition disabled:opacity-40 active:scale-95 shrink-0 flex items-center gap-1 cursor-pointer shadow-2xs"
               title="Kirim Instruksi &amp; Cetak Nota Dapur / Bar"
             >
               <span>🍳</span>
@@ -1519,14 +1519,14 @@ export default function POSWorkspace({
               setIsPaymentModalOpen(true)
             }}
             disabled={cart.length === 0}
-            className={`flex-1 min-w-0 py-3 px-3.5 font-extrabold rounded-xl text-xs sm:text-sm transition shadow-md active:scale-[0.99] disabled:opacity-40 disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none flex items-center justify-between gap-1 text-white cursor-pointer ${
+            className={`flex-1 min-w-0 py-2.5 sm:py-3 px-3 sm:px-3.5 font-extrabold rounded-xl text-xs sm:text-sm transition shadow-md active:scale-[0.99] disabled:opacity-40 disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none flex items-center justify-between gap-1 text-white cursor-pointer ${
               !activeShift
                 ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/20'
                 : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 shadow-blue-500/25'
             }`}
           >
             <span className="truncate">{!activeShift ? 'Buka Shift Dulu 🔑' : 'Bayar'}</span>
-            <span className="font-black bg-blue-800/50 text-white px-2.5 py-1 rounded-lg text-xs sm:text-sm tracking-tight shrink-0 whitespace-nowrap">
+            <span className="font-black bg-blue-800/50 text-white px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg text-xs sm:text-sm tracking-tight shrink-0 whitespace-nowrap">
               Rp {grandTotal.toLocaleString('id-ID')} →
             </span>
           </button>
@@ -1537,7 +1537,7 @@ export default function POSWorkspace({
 
   return (
     <div
-      className="h-screen w-full max-w-full flex flex-col bg-slate-100 text-slate-900 overflow-hidden font-sans fixed inset-0 overscroll-none"
+      className="h-[100dvh] max-h-[100dvh] w-full max-w-full flex flex-col bg-slate-100 text-slate-900 overflow-hidden font-sans fixed inset-0 overscroll-none"
       style={{
         paddingLeft: 'env(safe-area-inset-left, 0px)',
         paddingRight: 'env(safe-area-inset-right, 0px)',
@@ -1545,8 +1545,8 @@ export default function POSWorkspace({
       }}
     >
       {/* Top Navbar Header */}
-      <header className="h-14 bg-slate-900 text-white px-4 flex items-center justify-between shrink-0 shadow-md z-20">
-        <div className="flex items-center gap-3">
+      <header className="h-14 bg-slate-900 text-white px-3 sm:px-4 flex items-center justify-between shrink-0 shadow-md z-20 min-w-0 overflow-hidden">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 truncate">
           {onBackToHub ? (
             <button
               onClick={() =>
@@ -1557,7 +1557,7 @@ export default function POSWorkspace({
                   posRegisters
                 })
               }
-              className="px-2.5 py-1 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-700/60 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
+              className="px-2.5 py-1 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-700/60 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition shadow-sm shrink-0"
               title="Kembali ke Hub Kasir"
             >
               <span>←</span> <span>Hub Kasir</span>
@@ -1565,43 +1565,44 @@ export default function POSWorkspace({
           ) : (
             <Link
               href="/dashboard"
-              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold flex items-center gap-1 transition"
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold flex items-center gap-1 transition shrink-0"
             >
               <span>←</span> <span className="hidden sm:inline">CRM</span>
             </Link>
           )}
-          <div className="h-4 w-px bg-slate-700 hidden sm:block"></div>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-500 to-violet-500 text-white font-black flex items-center justify-center text-xs shadow-md">
+          <div className="h-4 w-px bg-slate-700 hidden sm:block shrink-0"></div>
+          <div className="flex items-center gap-2 min-w-0 truncate">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-500 to-violet-500 text-white font-black flex items-center justify-center text-xs shadow-md shrink-0">
               POS
             </div>
-            <div>
-              <h1 className="font-bold text-sm leading-tight text-white">{userProfile?.full_name ? `${userProfile.full_name}'s POS` : 'ShapeUp POS'}</h1>
-              <p className="text-[10px] text-slate-400 leading-none">Workspace Transaksi Kasir</p>
+            <div className="min-w-0 truncate">
+              <h1 className="font-bold text-sm leading-tight text-white truncate">{userProfile?.full_name ? `${userProfile.full_name}'s POS` : 'ShapeUp POS'}</h1>
+              <p className="text-[10px] text-slate-400 leading-none truncate">Workspace Transaksi Kasir</p>
             </div>
           </div>
         </div>
 
         {/* Top Header Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button
             onClick={() => setIsShiftModalOpen(true)}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold border flex items-center gap-1.5 transition ${
+            className={`px-2.5 sm:px-3 py-1.5 rounded-full text-xs font-semibold border flex items-center gap-1.5 transition shrink-0 ${
               activeShift
                 ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700'
                 : 'bg-amber-950/80 text-amber-300 border-amber-700'
             }`}
           >
             <span className={`w-2 h-2 rounded-full ${activeShift ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
-            <span className="hidden sm:inline">{activeShift ? `Shift: ${activeShift.cashier_name}` : 'Buka Shift'}</span>
-            <span className="sm:hidden">{activeShift ? 'Shift' : 'Buka'}</span>
+            <span className="hidden md:inline">{activeShift ? `Shift: ${activeShift.cashier_name}` : 'Buka Shift'}</span>
+            <span className="md:hidden">{activeShift ? 'Shift' : 'Buka'}</span>
           </button>
 
           <button
             onClick={() => setIsHoldModalOpen(true)}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition relative"
+            className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition relative shrink-0"
           >
-            <span>📥 Draft</span>
+            <span>📥</span>
+            <span className="hidden sm:inline">Draft</span>
             {heldOrders.length > 0 && (
               <span className="w-4.5 h-4.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black flex items-center justify-center">
                 {heldOrders.length}
@@ -1611,11 +1612,12 @@ export default function POSWorkspace({
 
           <button
             onClick={() => setIsOrderHistoryOpen(true)}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition relative"
+            className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition relative shrink-0"
             title="Pusat Layanan Nota: Pelunasan Piutang, Tukar Ukuran, dan Refund"
           >
             <span>📋</span>
-            <span className="hidden sm:inline">Layanan Nota</span>
+            <span className="hidden xl:inline">Layanan Nota</span>
+            <span className="hidden sm:inline xl:hidden">Nota</span>
             {unpaidOrdersCount > 0 && (
               <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black flex items-center justify-center animate-pulse">
                 {unpaidOrdersCount}
@@ -2052,8 +2054,8 @@ export default function POSWorkspace({
           </div>
         </div>
 
-        {/* DESKTOP & TABLET CART PANEL (Responsive scaling: 330px on tablet up to 420px on 2xl screens) */}
-        <div className="hidden md:flex md:w-[330px] lg:w-[360px] xl:w-[390px] 2xl:w-[420px] shrink-0 border-l border-slate-200 min-w-0 overflow-hidden">
+        {/* DESKTOP & TABLET CART PANEL (Responsive scaling: 300px on tablet up to 420px on 2xl screens) */}
+        <div className="hidden md:flex md:w-[300px] lg:w-[330px] xl:w-[370px] 2xl:w-[420px] shrink-0 border-l border-slate-200 min-w-0 overflow-hidden">
           {renderCartContent()}
         </div>
 
