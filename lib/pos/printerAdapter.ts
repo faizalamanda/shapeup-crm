@@ -610,6 +610,19 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize?: PaperSiz
 // ==========================================
 // Bluetooth Helper & Device Management
 // ==========================================
+export interface BluetoothDeviceSession {
+  deviceId: string
+  deviceName: string
+  device: any
+  writeChar: any
+  serviceUuid?: string
+  charUuid?: string
+  lastActive: number
+}
+
+// Multi-Device Connection Pool: Map<deviceIdOrName, BluetoothDeviceSession>
+const bluetoothPool = new Map<string, BluetoothDeviceSession>()
+
 let activeBluetoothDevice: any = null
 let activeWriteCharacteristic: any = null
 let isConnectingGatt = false
@@ -624,6 +637,41 @@ if (typeof window !== 'undefined') {
     cachedServiceUuid = localStorage.getItem('shapeup_pos_bt_service_uuid') || null
     cachedCharUuid = localStorage.getItem('shapeup_pos_bt_char_uuid') || null
   } catch {}
+}
+
+function registerInPool(device: any, writeChar: any, serviceUuid?: string, charUuid?: string): BluetoothDeviceSession {
+  const deviceId = device.id || 'bt-default'
+  const deviceName = device.name || 'Bluetooth Thermal Printer'
+  const session: BluetoothDeviceSession = {
+    deviceId,
+    deviceName,
+    device,
+    writeChar,
+    serviceUuid,
+    charUuid,
+    lastActive: Date.now()
+  }
+  bluetoothPool.set(deviceId, session)
+  bluetoothPool.set(deviceName, session)
+  return session
+}
+
+export function getActiveBluetoothSession(targetIdOrName?: string): BluetoothDeviceSession | null {
+  if (targetIdOrName && bluetoothPool.has(targetIdOrName)) {
+    return bluetoothPool.get(targetIdOrName)!
+  }
+  if (activeBluetoothDevice && activeWriteCharacteristic) {
+    return {
+      deviceId: activeBluetoothDevice.id || 'bt-default',
+      deviceName: activeBluetoothDevice.name || 'Bluetooth Printer',
+      device: activeBluetoothDevice,
+      writeChar: activeWriteCharacteristic,
+      serviceUuid: cachedServiceUuid || undefined,
+      charUuid: cachedCharUuid || undefined,
+      lastActive: Date.now()
+    }
+  }
+  return null
 }
 
 export const THERMAL_PRINTER_SERVICES = [
@@ -688,10 +736,20 @@ function safeTeardownGatt(device: any) {
 }
 
 /**
+ * Checks if current page is within a POS or cashier-facing printing route.
+ */
+function isPosContext(): boolean {
+  if (typeof window === 'undefined') return false
+  const path = window.location.pathname
+  return path.startsWith('/pos') || path.startsWith('/orders')
+}
+
+/**
  * Schedules a silent auto-reconnect attempt in the background when disconnected.
  */
 function scheduleSilentAutoReconnect(delayMs = 1000) {
   if (typeof window === 'undefined' || !isWebBluetoothSupported() || !hasPairedBluetoothPrinter()) return
+  if (!isPosContext()) return
   if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
     // If screen is off / tab hidden, do not reconnect now.
     // The visibilitychange listener will auto-reconnect as soon as screen turns on!
@@ -713,32 +771,64 @@ function scheduleSilentAutoReconnect(delayMs = 1000) {
 }
 
 /**
- * Starts a 25-second heartbeat ping (ESC/POS DLE EOT 1) to keep the printer
- * firmware from going into deep sleep during idle periods at the cashier counter.
+ * Starts a staggered round-robin heartbeat ping (ESC/POS DLE EOT 1) across all
+ * active printers in the pool (Kasir, Dapur, Bar) to keep them from deep sleep.
  */
 export function startBluetoothHeartbeat(): void {
   if (typeof window === 'undefined') return
   stopBluetoothHeartbeat()
 
+  let roundRobinIndex = 0
   heartbeatTimer = setInterval(async () => {
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
-    if (!activeBluetoothDevice?.gatt?.connected || !activeWriteCharacteristic) return
+    if (!isPosContext()) {
+      stopBluetoothHeartbeat()
+      return
+    }
+
+    // Collect all unique connected sessions from pool
+    const activeSessions = Array.from(new Set(Array.from(bluetoothPool.values()))).filter(
+      (s) => s.device?.gatt?.connected && s.writeChar
+    )
+
+    // Fallback: if pool is empty but activeBluetoothDevice exists
+    if (activeSessions.length === 0) {
+      if (activeBluetoothDevice?.gatt?.connected && activeWriteCharacteristic) {
+        activeSessions.push({
+          deviceId: activeBluetoothDevice.id || 'default',
+          deviceName: activeBluetoothDevice.name || 'Bluetooth Printer',
+          device: activeBluetoothDevice,
+          writeChar: activeWriteCharacteristic,
+          lastActive: Date.now()
+        })
+      } else {
+        return
+      }
+    }
+
+    // Staggered Round-Robin: Ping one peripheral per tick (every 12s)
+    const session = activeSessions[roundRobinIndex % activeSessions.length]
+    roundRobinIndex++
 
     try {
       // ESC/POS DLE EOT 1 (0x10, 0x04, 0x01) - Real-time status transmission.
       // 3 bytes, non-printing, non-feeding. Resets peripheral BLE idle timer.
       const ping = new Uint8Array([0x10, 0x04, 0x01])
-      if (activeWriteCharacteristic.properties.writeWithoutResponse) {
-        await activeWriteCharacteristic.writeValueWithoutResponse(ping)
-      } else if (activeWriteCharacteristic.properties.write) {
-        await activeWriteCharacteristic.writeValueWithResponse(ping)
+      if (session.writeChar.properties.writeWithoutResponse) {
+        await session.writeChar.writeValueWithoutResponse(ping)
+      } else if (session.writeChar.properties.write) {
+        await session.writeChar.writeValueWithResponse(ping)
       }
+      session.lastActive = Date.now()
     } catch (err) {
-      console.warn('[PrinterAdapter] Heartbeat failed, triggering auto-reconnect:', err)
-      activeWriteCharacteristic = null
+      console.warn(`[PrinterAdapter] Heartbeat failed for ${session.deviceName}:`, err)
+      session.writeChar = null
+      if (session.device === activeBluetoothDevice) {
+        activeWriteCharacteristic = null
+      }
       scheduleSilentAutoReconnect(500)
     }
-  }, 25000)
+  }, 12000)
 }
 
 export function stopBluetoothHeartbeat(): void {
@@ -914,8 +1004,17 @@ export function hasPairedBluetoothPrinter(): boolean {
  * Attempts silent reconnection using the in-memory device or getDevices().
  * Falls back to interactive requestDevice() ONLY if interactive is true
  * AND the printer has never been paired before (per AGENTS.md "Zero Prompt" rule).
+ * 
+ * Multi-Device & Fallback Resilient:
+ * - If targetDeviceId/targetDeviceName is specified, targets that specific printer.
+ * - If target printer is offline/unreachable, gracefully falls back to primary cashier printer.
+ * - Never prompts chooser for previously paired devices.
  */
-export async function ensureBluetoothPrinterConnection(interactive = true): Promise<{ success: boolean; deviceName?: string; error?: string }> {
+export async function ensureBluetoothPrinterConnection(
+  interactive = true,
+  targetDeviceId?: string,
+  targetDeviceName?: string
+): Promise<{ success: boolean; deviceName?: string; deviceId?: string; isFallback?: boolean; error?: string }> {
   if (!isWebBluetoothSupported()) {
     return { success: false, error: 'Web Bluetooth tidak didukung pada peramban ini. Gunakan Chrome pada Android atau Komputer.' }
   }
@@ -929,20 +1028,38 @@ export async function ensureBluetoothPrinterConnection(interactive = true): Prom
     }
   }
 
-  // 1. Check if existing memory connection is still healthy
-  if (activeBluetoothDevice?.gatt?.connected && activeWriteCharacteristic) {
-    return { success: true, deviceName: activeBluetoothDevice.name || 'Bluetooth Printer' }
+  const lookupKey = targetDeviceId || targetDeviceName
+
+  // 1. Fast check if requested target (or default) is already alive in connection pool
+  if (lookupKey && bluetoothPool.has(lookupKey)) {
+    const existing = bluetoothPool.get(lookupKey)!
+    if (existing.device?.gatt?.connected && existing.writeChar) {
+      return { success: true, deviceName: existing.deviceName, deviceId: existing.deviceId }
+    }
+  } else if (!lookupKey && activeBluetoothDevice?.gatt?.connected && activeWriteCharacteristic) {
+    return { success: true, deviceName: activeBluetoothDevice.name || 'Bluetooth Printer', deviceId: activeBluetoothDevice.id }
   }
 
   isConnectingGatt = true
   try {
-    // 2. Try reconnecting existing in-memory device if GATT dropped (e.g. printer idle sleep)
-    if (activeBluetoothDevice?.gatt) {
-      const writeChar = await connectKnownDevice(activeBluetoothDevice)
+    // 2. Try reconnecting in-memory candidate device
+    let candidateDevice: any = null
+    if (lookupKey && bluetoothPool.has(lookupKey)) {
+      candidateDevice = bluetoothPool.get(lookupKey)?.device
+    } else if (!lookupKey && activeBluetoothDevice?.gatt) {
+      candidateDevice = activeBluetoothDevice
+    }
+
+    if (candidateDevice?.gatt) {
+      const writeChar = await connectKnownDevice(candidateDevice)
       if (writeChar) {
-        activeWriteCharacteristic = writeChar
+        const session = registerInPool(candidateDevice, writeChar)
+        if (!lookupKey || candidateDevice === activeBluetoothDevice) {
+          activeBluetoothDevice = candidateDevice
+          activeWriteCharacteristic = writeChar
+        }
         startBluetoothHeartbeat()
-        return { success: true, deviceName: activeBluetoothDevice.name || 'Bluetooth Printer' }
+        return { success: true, deviceName: session.deviceName, deviceId: session.deviceId }
       }
     }
 
@@ -950,32 +1067,39 @@ export async function ensureBluetoothPrinterConnection(interactive = true): Prom
     const navBt = (navigator as any).bluetooth
     if (navBt && typeof navBt.getDevices === 'function') {
       try {
-        const savedId = getActiveBluetoothDeviceId()
-        const savedName = getActiveBluetoothDeviceName()
         const permittedDevices: any[] = await navBt.getDevices()
-
         if (permittedDevices && permittedDevices.length > 0) {
-          let matchedDevice = permittedDevices.find((d: any) => savedId && d.id === savedId)
-          if (!matchedDevice && savedName) {
-            matchedDevice = permittedDevices.find((d: any) => d.name === savedName)
+          let matchedDevice: any = null
+
+          if (targetDeviceId) {
+            matchedDevice = permittedDevices.find((d: any) => d.id === targetDeviceId)
           }
-          // Fallback: if only 1 device was previously authorized and we have a saved printer setting, use it
-          if (!matchedDevice && (savedId || savedName) && permittedDevices.length === 1) {
-            matchedDevice = permittedDevices[0]
+          if (!matchedDevice && targetDeviceName) {
+            matchedDevice = permittedDevices.find((d: any) => d.name === targetDeviceName)
+          }
+
+          // If no specific target was requested (legacy / cashier call), use saved ID or Name
+          if (!matchedDevice && !lookupKey) {
+            const savedId = getActiveBluetoothDeviceId()
+            const savedName = getActiveBluetoothDeviceName()
+            if (savedId) matchedDevice = permittedDevices.find((d: any) => d.id === savedId)
+            if (!matchedDevice && savedName) matchedDevice = permittedDevices.find((d: any) => d.name === savedName)
+            if (!matchedDevice && permittedDevices.length === 1) matchedDevice = permittedDevices[0]
           }
 
           if (matchedDevice) {
             const writeChar = await connectKnownDevice(matchedDevice)
             if (writeChar) {
-              activeBluetoothDevice = matchedDevice
-              activeWriteCharacteristic = writeChar
-              const name = matchedDevice.name || savedName || 'Bluetooth Thermal Printer'
-              localStorage.setItem('shapeup_pos_bt_name', name)
-              if (matchedDevice.id) {
-                localStorage.setItem('shapeup_pos_bt_id', matchedDevice.id)
+              const session = registerInPool(matchedDevice, writeChar)
+              if (!lookupKey || matchedDevice === activeBluetoothDevice || (!activeBluetoothDevice && permittedDevices.length === 1)) {
+                activeBluetoothDevice = matchedDevice
+                activeWriteCharacteristic = writeChar
+                const name = matchedDevice.name || 'Bluetooth Thermal Printer'
+                localStorage.setItem('shapeup_pos_bt_name', name)
+                if (matchedDevice.id) localStorage.setItem('shapeup_pos_bt_id', matchedDevice.id)
               }
               startBluetoothHeartbeat()
-              return { success: true, deviceName: name }
+              return { success: true, deviceName: session.deviceName, deviceId: session.deviceId }
             }
           }
         }
@@ -984,15 +1108,26 @@ export async function ensureBluetoothPrinterConnection(interactive = true): Prom
       }
     }
 
-    // 4. Prompt only if allowed AND the printer has never been paired before.
-    // If it was already paired before, NEVER show the chooser uninvited!
+    // 4. RESILIENT FALLBACK: If specific station printer (e.g. Dapur) is unreachable,
+    // fallback gracefully to primary cashier printer if it is connected!
+    if (lookupKey && activeBluetoothDevice?.gatt?.connected && activeWriteCharacteristic) {
+      console.warn(`[PrinterAdapter] Specific target printer "${lookupKey}" unavailable. Gracefully falling back to primary cashier printer.`)
+      return {
+        success: true,
+        deviceName: activeBluetoothDevice.name || 'Printer Kasir (Fallback)',
+        deviceId: activeBluetoothDevice.id,
+        isFallback: true
+      }
+    }
+
+    // 5. Prompt ONLY if allowed AND the printer has never been paired before
     if (interactive && !hasPairedBluetoothPrinter()) {
       return requestAndConnectBluetoothPrinter()
     }
 
     return {
       success: false,
-      error: 'Printer Bluetooth belum terhubung. Pastikan printer menyala dan dekat dengan tablet, lalu tekan "Sambungkan Ulang Printer".'
+      error: `Printer Bluetooth ${targetDeviceName ? `"${targetDeviceName}" ` : ''}belum terhubung. Pastikan printer menyala di dekat tablet.`
     }
   } finally {
     isConnectingGatt = false
@@ -1000,13 +1135,29 @@ export async function ensureBluetoothPrinterConnection(interactive = true): Prom
 }
 
 /**
- * Warm-up: silently reconnect a previously paired printer in the background
- * (e.g. when the POS page opens or screen wakes up) so the first print is instant. Never prompts.
+ * Warm-up: silently reconnect all registered printers (cashier + station printers)
+ * in the background so all prints are instant. Never prompts.
  */
 export async function warmUpBluetoothPrinter(): Promise<void> {
   if (typeof window === 'undefined' || !isWebBluetoothSupported() || !hasPairedBluetoothPrinter()) return
   try {
+    // 1. Warm up primary cashier printer
     await ensureBluetoothPrinterConnection(false)
+
+    // 2. Warm up other station bluetooth printers from cached stations
+    try {
+      const cachedStations = localStorage.getItem('shapeup_pos_stations')
+      if (cachedStations) {
+        const stations = JSON.parse(cachedStations)
+        if (Array.isArray(stations)) {
+          for (const st of stations) {
+            if (st.printer_connection_type === 'bluetooth' && (st.printer_device_id || st.printer_name)) {
+              void ensureBluetoothPrinterConnection(false, st.printer_device_id, st.printer_name).catch(() => {})
+            }
+          }
+        }
+      }
+    } catch {}
   } catch {
     // Silent by design
   }
@@ -1024,8 +1175,8 @@ export function initBluetoothLifecycleListeners(): void {
 
   const handleWakeUp = () => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-      if (hasPairedBluetoothPrinter()) {
-        console.log('[PrinterAdapter] Screen on / tab visible: Proactively warming up Bluetooth printer...')
+      if (hasPairedBluetoothPrinter() && isPosContext()) {
+        console.log('[PrinterAdapter] Screen on / tab visible in POS: Proactively warming up Bluetooth printer...')
         void warmUpBluetoothPrinter()
         startBluetoothHeartbeat()
       }
@@ -1036,13 +1187,13 @@ export function initBluetoothLifecycleListeners(): void {
 
   document.addEventListener('visibilitychange', handleWakeUp)
   window.addEventListener('focus', () => {
-    if (hasPairedBluetoothPrinter() && (!activeBluetoothDevice?.gatt?.connected || !activeWriteCharacteristic)) {
+    if (hasPairedBluetoothPrinter() && isPosContext() && (!activeBluetoothDevice?.gatt?.connected || !activeWriteCharacteristic)) {
       void warmUpBluetoothPrinter()
     }
   })
 
-  // Start heartbeat if already connected
-  if (hasPairedBluetoothPrinter()) {
+  // Start heartbeat only if already in POS context
+  if (hasPairedBluetoothPrinter() && isPosContext()) {
     startBluetoothHeartbeat()
   }
 }
@@ -1129,7 +1280,11 @@ export async function requestAndConnectBluetoothPrinter(): Promise<{ success: bo
   }
 }
 
-export async function sendBluetoothRawBytes(payload: Uint8Array): Promise<PrintResult> {
+export async function sendBluetoothRawBytes(
+  payload: Uint8Array,
+  targetDeviceId?: string,
+  targetDeviceName?: string
+): Promise<PrintResult> {
   if (typeof window === 'undefined' || !isWebBluetoothSupported()) {
     return { success: false, message: 'Web Bluetooth tidak didukung pada peramban ini.' }
   }
@@ -1143,29 +1298,46 @@ export async function sendBluetoothRawBytes(payload: Uint8Array): Promise<PrintR
       }
     }
 
-    let connRes = await ensureBluetoothPrinterConnection(false)
-    if (!connRes.success || !activeWriteCharacteristic) {
+    let connRes = await ensureBluetoothPrinterConnection(false, targetDeviceId, targetDeviceName)
+    if (!connRes.success) {
       // One quick retry for sleeping peripheral
       await new Promise((r) => setTimeout(r, 350))
-      connRes = await ensureBluetoothPrinterConnection(false)
+      connRes = await ensureBluetoothPrinterConnection(false, targetDeviceId, targetDeviceName)
     }
 
-    if (!connRes.success || !activeWriteCharacteristic) {
+    if (!connRes.success) {
       return { success: false, message: connRes.error || 'Printer Bluetooth tidak terhubung.' }
+    }
+
+    // Resolve target write characteristic from pool session or primary active
+    let charToSend = activeWriteCharacteristic
+    const lookupKey = targetDeviceId || targetDeviceName
+    if (lookupKey && bluetoothPool.has(lookupKey)) {
+      const session = bluetoothPool.get(lookupKey)
+      if (session?.writeChar) charToSend = session.writeChar
+    }
+
+    if (!charToSend) {
+      return { success: false, message: 'Karakteristik cetak printer tidak tersedia.' }
     }
 
     const CHUNK_SIZE = 64
     for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
       const chunk = payload.slice(i, i + CHUNK_SIZE)
-      if (activeWriteCharacteristic.properties.write) {
-        await activeWriteCharacteristic.writeValueWithResponse(chunk)
+      if (charToSend.properties.write) {
+        await charToSend.writeValueWithResponse(chunk)
       } else {
-        await activeWriteCharacteristic.writeValueWithoutResponse(chunk)
+        await charToSend.writeValueWithoutResponse(chunk)
       }
       await new Promise((resolve) => setTimeout(resolve, 20))
     }
 
-    return { success: true, message: 'Data cetak berhasil dikirim via Bluetooth.' }
+    return {
+      success: true,
+      message: connRes.isFallback
+        ? `Data cetak dialihkan ke ${connRes.deviceName} (Fallback)`
+        : 'Data cetak berhasil dikirim via Bluetooth.'
+    }
   } catch (err: any) {
     return { success: false, message: 'Gagal mengirim data ke printer Bluetooth: ' + (err.message || 'Error') }
   }
@@ -1211,7 +1383,7 @@ export async function testPrintStationTicket(options: {
 
     const encoder = new TextEncoder()
     const payload = encoder.encode(sampleChitText.join(''))
-    return sendBluetoothRawBytes(payload)
+    return sendBluetoothRawBytes(payload, undefined, options.printerName)
   }
 
   // System print iframe

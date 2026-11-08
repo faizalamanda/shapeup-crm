@@ -91,6 +91,9 @@ export async function printSingleKitchenTicket(
 
   if (effectiveConn === 'bluetooth') {
     try {
+      const targetDeviceId = ticket.printerDeviceId || undefined
+      const targetDeviceName = ticket.printerName || undefined
+
       const hasPaired = hasPairedBluetoothPrinter()
       if (!hasPaired) {
         const pairRes = await requestAndConnectBluetoothPrinter()
@@ -101,7 +104,7 @@ export async function printSingleKitchenTicket(
         }
       }
 
-      const connRes = await ensureBluetoothPrinterConnection(false)
+      const connRes = await ensureBluetoothPrinterConnection(false, targetDeviceId, targetDeviceName)
       if (!connRes.success) {
         console.warn('[KitchenPrinter] Silent reconnect failed, falling back to system print.')
         return printKitchenTicketViaIframe(ticket)
@@ -113,8 +116,8 @@ export async function printSingleKitchenTicket(
         autoCut: ticket.autoCut ?? kSettings.autoCutPaper
       })
 
-      // Send ESC/POS bytes directly over Web Bluetooth
-      const sendRes = await sendBluetoothRawBytes(payload)
+      // Send ESC/POS bytes directly over Web Bluetooth (to target station printer, or fallback)
+      const sendRes = await sendBluetoothRawBytes(payload, targetDeviceId, targetDeviceName)
       if (sendRes.success) {
         return sendRes
       }
