@@ -96,15 +96,41 @@ export async function POST(req: Request) {
       dbProducts.forEach(p => productMap.set(p.id, p))
     }
 
+    // Resolve variants for accurate HPP validation
+    const variantIds = Array.from(new Set(
+      items
+        .map((i: any) => i.variantId || i.variant_id)
+        .filter((vid: any) => isUuid(vid))
+    ))
+    const variantMap = new Map<string, any>()
+    if (variantIds.length > 0) {
+      const { data: dbVariants } = await supabase
+        .from('product_variants')
+        .select('id, product_id, cost_price, price')
+        .in('id', variantIds)
+      if (Array.isArray(dbVariants)) {
+        dbVariants.forEach((v) => variantMap.set(v.id, v))
+      }
+    }
+
     // 3a. Enforce Price Guard Server-Side
     const priceGuardSettings = await getPriceGuardSettings(businessId, ctx.supabaseAdmin)
     const lineItemsForGuard = items.map((item: any) => {
       const dbProd = productMap.get(item.id)
+      const varId = item.variantId || item.variant_id
+      const dbVar = varId ? variantMap.get(varId) : null
       const areaMultiplier = Number(item.dimension_spec?.billable_area || 0)
-      const baseCostPrice = Number(dbProd?.cost_price || 0)
+
+      const rawCostPrice = Number(
+        (dbVar?.cost_price && Number(dbVar.cost_price) > 0)
+          ? dbVar.cost_price
+          : (Number(item.costPrice || 0) > 0
+              ? item.costPrice
+              : (dbProd?.cost_price || 0))
+      )
       const effectiveCostPrice = areaMultiplier > 0
-        ? Math.round(areaMultiplier * baseCostPrice)
-        : baseCostPrice
+        ? Math.round(areaMultiplier * rawCostPrice)
+        : rawCostPrice
 
       return {
         id: item.id,

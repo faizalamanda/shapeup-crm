@@ -503,7 +503,12 @@ export default function POSWorkspace({
   }
 
   const getItemCostPrice = (item: any) => {
-    return Number(item?.selectedVariant?.cost_price ?? item?.product?.cost_price ?? 0)
+    return Number(
+      item?.selectedVariant?.cost_price ??
+      item?.selectedVariant?.costPrice ??
+      item?.product?.cost_price ??
+      0
+    )
   }
 
   const isItemPriceViolation = (item: any) => {
@@ -1005,7 +1010,12 @@ export default function POSWorkspace({
         discount: item.discount || 0,
         variantId: item.selectedVariant?.id,
         variantName: item.selectedVariant?.name,
-        costPrice: item.selectedVariant?.cost_price || item.product.cost_price || 0,
+        costPrice: Number(
+          item.selectedVariant?.cost_price ??
+          item.selectedVariant?.costPrice ??
+          item.product?.cost_price ??
+          0
+        ),
         modifiers: item.selectedModifiers,
         note: item.note,
         dimension_spec: item.dimension_spec

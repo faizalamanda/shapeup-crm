@@ -8,6 +8,7 @@ export type VariantOption = {
   name: string
   price: number
   costPrice?: number
+  cost_price?: number
   stockQuantity?: number
 }
 
@@ -80,7 +81,8 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
                 id: v.id,
                 name: v.name || '',
                 price: Number(v.price ?? product.price ?? 0),
-                costPrice: Number(v.cost_price ?? 0),
+                costPrice: Number(v.cost_price ?? v.costPrice ?? 0),
+                cost_price: Number(v.cost_price ?? v.costPrice ?? 0),
                 stockQuantity: Number(v.stock_quantity ?? 0)
               }))
             )
@@ -104,7 +106,8 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
         id: v?.id || '',
         name: v?.name || '',
         price: Number(v?.price ?? product.price ?? 0),
-        costPrice: Number(v?.cost_price ?? 0),
+        costPrice: Number(v?.cost_price ?? v?.costPrice ?? 0),
+        cost_price: Number(v?.cost_price ?? v?.costPrice ?? 0),
         stockQuantity: Number(v?.stock_quantity ?? 0)
       }))
     }
@@ -260,9 +263,15 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
 
   const handleConfirm = () => {
     if (!product) return
+    const resolvedVariant = selectedVariant ? {
+      ...selectedVariant,
+      cost_price: Number(selectedVariant.cost_price ?? selectedVariant.costPrice ?? 0),
+      costPrice: Number(selectedVariant.costPrice ?? selectedVariant.cost_price ?? 0)
+    } : undefined
+
     onAddToCart({
       product,
-      selectedVariant: selectedVariant || undefined,
+      selectedVariant: resolvedVariant,
       selectedModifiers: Object.values(selectedModifiers),
       note,
       finalPrice

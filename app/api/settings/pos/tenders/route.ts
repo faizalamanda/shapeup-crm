@@ -10,7 +10,9 @@ async function checkOwnerOrAdmin(businessId: string, userId: string, adminClient
   ])
 
   const isOwner = bizRes.data?.owner_id === userId
-  const isAdmin = isOwner || staffRes.data?.role === 'admin'
+  const staffRole = staffRes.data?.role
+  const staffPerms: string[] = Array.isArray(staffRes.data?.permissions) ? staffRes.data.permissions : []
+  const isAdmin = isOwner || staffRole === 'admin' || staffPerms.includes('full_access')
   return { isOwner, isAdmin, ownerId: bizRes.data?.owner_id }
 }
 

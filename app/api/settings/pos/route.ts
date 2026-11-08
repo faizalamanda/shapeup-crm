@@ -10,8 +10,11 @@ async function checkOwnerOrAdmin(businessId: string, userId: string, adminClient
   ])
 
   const isOwner = bizRes.data?.owner_id === userId
-  const isAdmin = isOwner || staffRes.data?.role === 'admin'
-  return { isOwner, isAdmin, ownerId: bizRes.data?.owner_id }
+  const isStaff = Boolean(staffRes.data)
+  const staffRole = staffRes.data?.role
+  const staffPerms: string[] = Array.isArray(staffRes.data?.permissions) ? staffRes.data.permissions : []
+  const isAdmin = isOwner || staffRole === 'admin' || staffPerms.includes('full_access')
+  return { isOwner, isAdmin, isStaff, ownerId: bizRes.data?.owner_id }
 }
 
 // GET: Fetch POS Price Guard settings and list of approvers
@@ -25,9 +28,9 @@ export async function GET() {
       return NextResponse.json({ error: 'Unit bisnis aktif tidak ditemukan' }, { status: 400 })
     }
 
-    const { isAdmin, ownerId } = await checkOwnerOrAdmin(businessId, user.id, supabaseAdmin)
-    if (!isAdmin) {
-      return NextResponse.json({ error: 'Akses ditolak. Hanya Pemilik atau Admin yang dapat mengakses Pengaturan POS.' }, { status: 403 })
+    const { isOwner, isAdmin, isStaff, ownerId } = await checkOwnerOrAdmin(businessId, user.id, supabaseAdmin)
+    if (!isOwner && !isStaff) {
+      return NextResponse.json({ error: 'Akses ditolak. Anda bukan anggota dari unit bisnis ini.' }, { status: 403 })
     }
 
     // 1. Fetch current price guard settings

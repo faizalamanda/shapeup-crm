@@ -5,7 +5,7 @@ import { FullScreenModal } from '@/components/ui/FullScreenModal'
 
 interface CartItemData {
   product: { id?: string; name: string; price?: number; cost_price?: number; prevent_below_hpp?: boolean }
-  selectedVariant?: { id?: string; name: string; price?: number; cost_price?: number }
+  selectedVariant?: { id?: string; name: string; price?: number; cost_price?: number; costPrice?: number }
   dimension_spec?: any
   finalPrice: number
   discount?: number
@@ -78,11 +78,17 @@ export default function CartItemEditModal({
   const netUnitPrice = Math.max(0, finalPrice - discount)
   const itemTotal = netUnitPrice * quantity
 
+  const effectiveCostPrice = Number(
+    costPrice > 0
+      ? costPrice
+      : (item?.selectedVariant?.cost_price ?? item?.selectedVariant?.costPrice ?? item?.product?.cost_price ?? 0)
+  )
+
   // Evaluasi batas harga (internal boolean only, numeric costPrice is NEVER shown)
   const isBelowCost = Boolean(
     isGuarded &&
-    costPrice > 0 &&
-    netUnitPrice < costPrice
+    effectiveCostPrice > 0 &&
+    netUnitPrice < effectiveCostPrice
   )
 
   // Evaluasi otorisasi: jika harga bersih diturunkan lebih rendah dari harga yang telah disetujui sebelumnya,
