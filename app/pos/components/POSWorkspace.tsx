@@ -1384,10 +1384,10 @@ export default function POSWorkspace({
         {/* Bill Summary Rows */}
         <div className="space-y-1.5 sm:space-y-2 text-xs">
           {/* Order Note (Shopee / Meja / Dapur) */}
-          <div className="flex justify-between items-center text-slate-600">
-            <span className="font-medium text-slate-600 flex items-center gap-1.5">
+          <div className="flex justify-between items-center text-slate-600 gap-1.5 min-w-0">
+            <span className="font-medium text-slate-600 flex items-center gap-1.5 shrink-0">
               <span>📝</span>
-              <span>Catatan Pesanan</span>
+              <span>Catatan</span>
             </span>
             {orderNote ? (
               <div className="flex items-center gap-1.5 min-w-0">
@@ -1412,7 +1412,7 @@ export default function POSWorkspace({
               <button
                 type="button"
                 onClick={() => setIsOrderNoteModalOpen(true)}
-                className="px-2 py-0.5 sm:px-2.5 sm:py-1 bg-slate-100 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 font-semibold rounded-lg text-xs transition flex items-center gap-1 cursor-pointer"
+                className="px-2 py-0.5 sm:px-2.5 sm:py-1 bg-slate-100 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 font-semibold rounded-lg text-xs transition flex items-center gap-1 cursor-pointer shrink-0"
               >
                 <span>+ Catatan</span>
               </button>
@@ -1420,17 +1420,17 @@ export default function POSWorkspace({
           </div>
 
           {/* Global Discount */}
-          <div className="flex justify-between items-center text-slate-600">
-            <span className="font-medium text-slate-600 flex items-center gap-1.5">
+          <div className="flex justify-between items-center text-slate-600 gap-1.5 min-w-0">
+            <span className="font-medium text-slate-600 flex items-center gap-1.5 shrink-0">
               <span>🏷️</span>
-              <span>Diskon Global</span>
+              <span>Diskon</span>
             </span>
             {globalDiscountAmount > 0 ? (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 min-w-0">
                 <button
                   type="button"
                   onClick={() => setIsDiscountModalOpen(true)}
-                  className="font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg border border-emerald-200 text-xs hover:bg-emerald-100 transition cursor-pointer"
+                  className="font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg border border-emerald-200 text-xs hover:bg-emerald-100 transition cursor-pointer truncate max-w-[130px]"
                   title="Klik untuk ubah diskon global"
                 >
                   -Rp {globalDiscountAmount.toLocaleString('id-ID')} {globalDiscountType === 'percent' && `(${globalDiscountInput}%)`}
@@ -1445,7 +1445,7 @@ export default function POSWorkspace({
                       return copy
                     })
                   }}
-                  className="text-emerald-600 hover:text-rose-600 font-bold text-xs p-1 cursor-pointer"
+                  className="text-emerald-600 hover:text-rose-600 font-bold text-xs p-1 cursor-pointer shrink-0"
                   title="Hapus Diskon Global"
                 >
                   ✕
@@ -1455,9 +1455,9 @@ export default function POSWorkspace({
               <button
                 type="button"
                 onClick={() => setIsDiscountModalOpen(true)}
-                className="px-2 py-0.5 sm:px-2.5 sm:py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-bold rounded-lg text-xs transition flex items-center gap-1 cursor-pointer shadow-2xs"
+                className="px-2 py-0.5 sm:px-2.5 sm:py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-bold rounded-lg text-xs transition flex items-center gap-1 cursor-pointer shadow-2xs shrink-0"
               >
-                <span>+ Diskon Global</span>
+                <span>+ Diskon</span>
               </button>
             )}
           </div>
@@ -1539,8 +1539,7 @@ export default function POSWorkspace({
     <div
       className="h-[100dvh] max-h-[100dvh] w-full max-w-full flex flex-col bg-slate-100 text-slate-900 overflow-hidden font-sans fixed inset-0 overscroll-none"
       style={{
-        paddingLeft: 'env(safe-area-inset-left, 0px)',
-        paddingRight: 'env(safe-area-inset-right, 0px)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         overscrollBehavior: 'none'
       }}
     >
@@ -2054,8 +2053,8 @@ export default function POSWorkspace({
           </div>
         </div>
 
-        {/* DESKTOP & TABLET CART PANEL (Responsive scaling: 300px on tablet up to 420px on 2xl screens) */}
-        <div className="hidden md:flex flex-col md:w-[300px] lg:w-[330px] xl:w-[370px] 2xl:w-[420px] shrink-0 border-l border-slate-200 min-w-0 overflow-hidden">
+        {/* DESKTOP & TABLET CART PANEL (Responsive scaling: 280px on tablet up to 420px on 2xl screens) */}
+        <div className="hidden md:flex flex-col md:w-[280px] lg:w-[320px] xl:w-[360px] 2xl:w-[420px] shrink-0 border-l border-slate-200 min-w-0 overflow-hidden">
           {renderCartContent()}
         </div>
 
