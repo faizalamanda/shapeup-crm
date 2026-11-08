@@ -1177,7 +1177,7 @@ export default function POSWorkspace({
 
   // Render Inner Cart Component (reusable for Desktop sidebar & Mobile bottom sheet)
   const renderCartContent = () => (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full w-full bg-white">
       {/* Customer Header */}
       <div className="p-3 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between gap-2 min-w-0">
         <div className="relative flex-1 min-w-0">
@@ -2055,7 +2055,7 @@ export default function POSWorkspace({
         </div>
 
         {/* DESKTOP & TABLET CART PANEL (Responsive scaling: 300px on tablet up to 420px on 2xl screens) */}
-        <div className="hidden md:flex md:w-[300px] lg:w-[330px] xl:w-[370px] 2xl:w-[420px] shrink-0 border-l border-slate-200 min-w-0 overflow-hidden">
+        <div className="hidden md:flex flex-col md:w-[300px] lg:w-[330px] xl:w-[370px] 2xl:w-[420px] shrink-0 border-l border-slate-200 min-w-0 overflow-hidden">
           {renderCartContent()}
         </div>
 
@@ -2104,7 +2104,7 @@ export default function POSWorkspace({
                   ✕
                 </button>
               </div>
-              <div className="flex-1 overflow-hidden">
+              <div className="flex-1 w-full overflow-hidden">
                 {renderCartContent()}
               </div>
             </div>
