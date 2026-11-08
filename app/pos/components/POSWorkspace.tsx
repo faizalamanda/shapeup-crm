@@ -23,7 +23,7 @@ import CartItemEditModal from './CartItemEditModal'
 import PrintingDimensionModal from './PrintingDimensionModal'
 import PriceAuthorizationModal, { AuthorizationRecord } from './PriceAuthorizationModal'
 import { PriceGuardSettings, DEFAULT_PRICE_GUARD_SETTINGS } from '@/lib/priceGuard/types'
-import { ReceiptData } from '@/lib/pos/printerAdapter'
+import { ReceiptData, warmUpBluetoothPrinter } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from './ReceiptSettingsModal'
 import { 
   buildReceiptDataFromOrder, 
@@ -232,6 +232,44 @@ export default function POSWorkspace({
     }, 250)
     return () => clearTimeout(timer)
   }, [customerSearch, isCustomerDropdownOpen, filteredPosCustomers.length, searchCustomersServer])
+
+  // Proactive Bluetooth Warm-up & Screen Wake Lock for POS counter resilience
+  useEffect(() => {
+    void warmUpBluetoothPrinter()
+
+    let wakeLockSentinel: any = null
+    const acquireWakeLock = async () => {
+      if (typeof window !== 'undefined' && 'wakeLock' in navigator && typeof (navigator as any).wakeLock?.request === 'function') {
+        try {
+          if (document.visibilityState === 'visible') {
+            wakeLockSentinel = await (navigator as any).wakeLock.request('screen')
+          }
+        } catch {
+          // Ignored if user OS or battery saver policy rejects
+        }
+      }
+    }
+
+    void acquireWakeLock()
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void acquireWakeLock()
+        void warmUpBluetoothPrinter()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility)
+      if (wakeLockSentinel) {
+        try {
+          wakeLockSentinel.release()
+        } catch {}
+      }
+    }
+  }, [])
 
   // Non-blocking deferred loading of secondary POS features (PriceGuard, Hold, Loyalty, Metrics)
   const loadSecondaryData = useCallback(async (bId: string) => {

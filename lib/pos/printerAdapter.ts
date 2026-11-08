@@ -612,6 +612,19 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize?: PaperSiz
 // ==========================================
 let activeBluetoothDevice: any = null
 let activeWriteCharacteristic: any = null
+let isConnectingGatt = false
+let reconnectTimer: any = null
+let heartbeatTimer: any = null
+let cachedServiceUuid: string | null = null
+let cachedCharUuid: string | null = null
+
+// Restore cached service & char UUIDs from storage if present
+if (typeof window !== 'undefined') {
+  try {
+    cachedServiceUuid = localStorage.getItem('shapeup_pos_bt_service_uuid') || null
+    cachedCharUuid = localStorage.getItem('shapeup_pos_bt_char_uuid') || null
+  } catch {}
+}
 
 export const THERMAL_PRINTER_SERVICES = [
   '000018f0-0000-1000-8000-00805f9b34fb',
@@ -641,8 +654,8 @@ export function getActiveBluetoothDeviceId(): string | null {
 /** Devices that already have our 'gattserverdisconnected' listener attached (prevents listener leaks). */
 const devicesWithDisconnectListener = new WeakSet<object>()
 
-const GATT_CONNECT_TIMEOUT_MS = 8000
-const ADVERTISEMENT_WAIT_MS = 5000
+const GATT_CONNECT_TIMEOUT_MS = 6000
+const ADVERTISEMENT_WAIT_MS = 1500
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -661,41 +674,150 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 /**
+ * Safely disconnects the existing GATT server handle to prevent Android GATT_ERROR 133
+ */
+function safeTeardownGatt(device: any) {
+  if (!device || !device.gatt) return
+  try {
+    if (!device.gatt.connected) {
+      device.gatt.disconnect()
+    }
+  } catch {
+    // Ignore teardown errors
+  }
+}
+
+/**
+ * Schedules a silent auto-reconnect attempt in the background when disconnected.
+ */
+function scheduleSilentAutoReconnect(delayMs = 1000) {
+  if (typeof window === 'undefined' || !isWebBluetoothSupported() || !hasPairedBluetoothPrinter()) return
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+    // If screen is off / tab hidden, do not reconnect now.
+    // The visibilitychange listener will auto-reconnect as soon as screen turns on!
+    return
+  }
+
+  if (reconnectTimer) clearTimeout(reconnectTimer)
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null
+    try {
+      if (!activeBluetoothDevice?.gatt?.connected || !activeWriteCharacteristic) {
+        console.log('[PrinterAdapter] Attempting background silent auto-reconnect...')
+        await ensureBluetoothPrinterConnection(false)
+      }
+    } catch {
+      // Silent
+    }
+  }, delayMs)
+}
+
+/**
+ * Starts a 25-second heartbeat ping (ESC/POS DLE EOT 1) to keep the printer
+ * firmware from going into deep sleep during idle periods at the cashier counter.
+ */
+export function startBluetoothHeartbeat(): void {
+  if (typeof window === 'undefined') return
+  stopBluetoothHeartbeat()
+
+  heartbeatTimer = setInterval(async () => {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+    if (!activeBluetoothDevice?.gatt?.connected || !activeWriteCharacteristic) return
+
+    try {
+      // ESC/POS DLE EOT 1 (0x10, 0x04, 0x01) - Real-time status transmission.
+      // 3 bytes, non-printing, non-feeding. Resets peripheral BLE idle timer.
+      const ping = new Uint8Array([0x10, 0x04, 0x01])
+      if (activeWriteCharacteristic.properties.writeWithoutResponse) {
+        await activeWriteCharacteristic.writeValueWithoutResponse(ping)
+      } else if (activeWriteCharacteristic.properties.write) {
+        await activeWriteCharacteristic.writeValueWithResponse(ping)
+      }
+    } catch (err) {
+      console.warn('[PrinterAdapter] Heartbeat failed, triggering auto-reconnect:', err)
+      activeWriteCharacteristic = null
+      scheduleSilentAutoReconnect(500)
+    }
+  }, 25000)
+}
+
+export function stopBluetoothHeartbeat(): void {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer)
+    heartbeatTimer = null
+  }
+}
+
+/**
  * Connects to device GATT and locates the first writable characteristic.
+ * Protected with clean teardown, service/char cache, and auto-reconnect trigger on disconnect.
  */
 async function connectGattAndFindWriteChar(device: any): Promise<any> {
   if (!device || !device.gatt) return null
+
+  // Fast return if already connected
+  if (device.gatt.connected && activeWriteCharacteristic && activeBluetoothDevice === device) {
+    return activeWriteCharacteristic
+  }
+
+  // Teardown stale disconnected handle to prevent Android Error 133
+  safeTeardownGatt(device)
 
   let server = device.gatt
   if (!server.connected) {
     server = await withTimeout(device.gatt.connect(), GATT_CONNECT_TIMEOUT_MS, 'GATT connect')
   }
 
-  const services = await server.getPrimaryServices()
   let writeChar: any = null
 
-  for (const service of services) {
+  // 1. Fast path: check cached service & characteristic first (15-30ms)
+  if (cachedServiceUuid && cachedCharUuid) {
     try {
-      const chars = await service.getCharacteristics()
-      for (const char of chars) {
-        if (char.properties.write || char.properties.writeWithoutResponse) {
-          writeChar = char
-          break
-        }
+      const s = await server.getPrimaryService(cachedServiceUuid)
+      const c = await s.getCharacteristic(cachedCharUuid)
+      if (c && (c.properties.write || c.properties.writeWithoutResponse)) {
+        writeChar = c
       }
     } catch {
-      // Continue to next service if characteristic reading is restricted
+      // Fallback to service scanning if cached char invalid
     }
-    if (writeChar) break
+  }
+
+  // 2. Full scan if cached characteristic was not found
+  if (!writeChar) {
+    const services = await server.getPrimaryServices()
+    for (const service of services) {
+      try {
+        const chars = await service.getCharacteristics()
+        for (const char of chars) {
+          if (char.properties.write || char.properties.writeWithoutResponse) {
+            writeChar = char
+            cachedServiceUuid = service.uuid
+            cachedCharUuid = char.uuid
+            try {
+              localStorage.setItem('shapeup_pos_bt_service_uuid', service.uuid)
+              localStorage.setItem('shapeup_pos_bt_char_uuid', char.uuid)
+            } catch {}
+            break
+          }
+        }
+      } catch {
+        // Continue to next service
+      }
+      if (writeChar) break
+    }
   }
 
   if (writeChar && !devicesWithDisconnectListener.has(device)) {
     devicesWithDisconnectListener.add(device)
-    // Listen for disconnection to reset active write characteristic (attached once per device)
+    // Listen for disconnection to reset active write characteristic and schedule immediate auto-reconnect
     device.addEventListener('gattserverdisconnected', () => {
+      console.warn('[PrinterAdapter] Bluetooth GATT disconnected.')
       if (activeBluetoothDevice === device) {
         activeWriteCharacteristic = null
       }
+      // Schedule silent auto-reconnect if document is visible
+      scheduleSilentAutoReconnect()
     })
   }
 
@@ -704,12 +826,6 @@ async function connectGattAndFindWriteChar(device: any): Promise<any> {
 
 /**
  * Waits until the (previously permitted) device broadcasts a BLE advertisement.
- *
- * After a page reload / PWA restart, a BluetoothDevice returned by getDevices()
- * is not considered "in range" by Chrome until an advertisement has been observed.
- * Calling gatt.connect() before that typically fails, which previously caused
- * the app to fall back to the pairing chooser. Returns true if an advertisement
- * was received (or the API is unavailable and we should just try connecting).
  */
 async function waitForAdvertisement(device: any, timeoutMs = ADVERTISEMENT_WAIT_MS): Promise<boolean> {
   if (!device || typeof device.watchAdvertisements !== 'function') {
@@ -750,26 +866,43 @@ async function waitForAdvertisement(device: any, timeoutMs = ADVERTISEMENT_WAIT_
 
 /**
  * Connects a known (already permitted) device:
- * 1) direct GATT connect (fast path when the printer is awake & cached),
- * 2) otherwise wait for an advertisement (printer waking from sleep / after reload) and retry.
+ * 1) Direct GATT connect (fast path)
+ * 2) Immediate fast retry with clean teardown (resolves Android Error 133)
+ * 3) If supported, short advertisement wait (max 1500ms) as fallback.
  */
 async function connectKnownDevice(device: any): Promise<any> {
+  // Attempt 1: Direct connect
   try {
     const writeChar = await connectGattAndFindWriteChar(device)
     if (writeChar) return writeChar
   } catch (e) {
-    console.warn('Direct GATT connect failed, waiting for advertisement:', e)
+    console.warn('[PrinterAdapter] Direct connect attempt 1 failed:', e)
   }
 
-  const seen = await waitForAdvertisement(device)
-  if (!seen) return null
-
+  // Attempt 2: Clean teardown + quick retry after 250ms
+  await new Promise((r) => setTimeout(r, 250))
+  safeTeardownGatt(device)
   try {
-    return await connectGattAndFindWriteChar(device)
+    const writeChar = await connectGattAndFindWriteChar(device)
+    if (writeChar) return writeChar
   } catch (e) {
-    console.warn('GATT connect after advertisement failed:', e)
-    return null
+    console.warn('[PrinterAdapter] Direct connect attempt 2 failed:', e)
   }
+
+  // Attempt 3: If device supports watchAdvertisements, wait briefly (1500ms)
+  if (typeof device.watchAdvertisements === 'function') {
+    const seen = await waitForAdvertisement(device, 1500)
+    if (seen) {
+      safeTeardownGatt(device)
+      try {
+        return await connectGattAndFindWriteChar(device)
+      } catch (e) {
+        console.warn('[PrinterAdapter] GATT connect after advertisement failed:', e)
+      }
+    }
+  }
+
+  return null
 }
 
 /** True if a Bluetooth printer was paired before on this device/browser. */
@@ -779,12 +912,21 @@ export function hasPairedBluetoothPrinter(): boolean {
 
 /**
  * Attempts silent reconnection using the in-memory device or getDevices().
- * Falls back to interactive requestDevice() only if interactive is true
- * AND the printer has never been paired (per AGENTS.md "Zero Prompt" rule).
+ * Falls back to interactive requestDevice() ONLY if interactive is true
+ * AND the printer has never been paired before (per AGENTS.md "Zero Prompt" rule).
  */
 export async function ensureBluetoothPrinterConnection(interactive = true): Promise<{ success: boolean; deviceName?: string; error?: string }> {
   if (!isWebBluetoothSupported()) {
     return { success: false, error: 'Web Bluetooth tidak didukung pada peramban ini. Gunakan Chrome pada Android atau Komputer.' }
+  }
+
+  // Mutex check: prevent re-entrant simultaneous connect attempts
+  if (isConnectingGatt) {
+    let waitCount = 0
+    while (isConnectingGatt && waitCount < 15) {
+      await new Promise((r) => setTimeout(r, 200))
+      waitCount++
+    }
   }
 
   // 1. Check if existing memory connection is still healthy
@@ -792,66 +934,74 @@ export async function ensureBluetoothPrinterConnection(interactive = true): Prom
     return { success: true, deviceName: activeBluetoothDevice.name || 'Bluetooth Printer' }
   }
 
-  // 2. Try reconnecting existing in-memory device if GATT dropped (e.g. printer idle sleep)
-  if (activeBluetoothDevice?.gatt) {
-    const writeChar = await connectKnownDevice(activeBluetoothDevice)
-    if (writeChar) {
-      activeWriteCharacteristic = writeChar
-      return { success: true, deviceName: activeBluetoothDevice.name || 'Bluetooth Printer' }
+  isConnectingGatt = true
+  try {
+    // 2. Try reconnecting existing in-memory device if GATT dropped (e.g. printer idle sleep)
+    if (activeBluetoothDevice?.gatt) {
+      const writeChar = await connectKnownDevice(activeBluetoothDevice)
+      if (writeChar) {
+        activeWriteCharacteristic = writeChar
+        startBluetoothHeartbeat()
+        return { success: true, deviceName: activeBluetoothDevice.name || 'Bluetooth Printer' }
+      }
     }
-  }
 
-  // 3. Silent reconnect via navigator.bluetooth.getDevices() (No popup required)
-  const navBt = (navigator as any).bluetooth
-  if (navBt && typeof navBt.getDevices === 'function') {
-    try {
-      const savedId = getActiveBluetoothDeviceId()
-      const savedName = getActiveBluetoothDeviceName()
-      const permittedDevices: any[] = await navBt.getDevices()
+    // 3. Silent reconnect via navigator.bluetooth.getDevices() (No popup required)
+    const navBt = (navigator as any).bluetooth
+    if (navBt && typeof navBt.getDevices === 'function') {
+      try {
+        const savedId = getActiveBluetoothDeviceId()
+        const savedName = getActiveBluetoothDeviceName()
+        const permittedDevices: any[] = await navBt.getDevices()
 
-      if (permittedDevices && permittedDevices.length > 0) {
-        let matchedDevice = permittedDevices.find((d: any) => savedId && d.id === savedId)
-        if (!matchedDevice && savedName) {
-          matchedDevice = permittedDevices.find((d: any) => d.name === savedName)
-        }
-        // Fallback: if only 1 device was previously authorized and we have a saved printer setting, use it
-        if (!matchedDevice && (savedId || savedName) && permittedDevices.length === 1) {
-          matchedDevice = permittedDevices[0]
-        }
+        if (permittedDevices && permittedDevices.length > 0) {
+          let matchedDevice = permittedDevices.find((d: any) => savedId && d.id === savedId)
+          if (!matchedDevice && savedName) {
+            matchedDevice = permittedDevices.find((d: any) => d.name === savedName)
+          }
+          // Fallback: if only 1 device was previously authorized and we have a saved printer setting, use it
+          if (!matchedDevice && (savedId || savedName) && permittedDevices.length === 1) {
+            matchedDevice = permittedDevices[0]
+          }
 
-        if (matchedDevice) {
-          const writeChar = await connectKnownDevice(matchedDevice)
-          if (writeChar) {
-            activeBluetoothDevice = matchedDevice
-            activeWriteCharacteristic = writeChar
-            const name = matchedDevice.name || savedName || 'Bluetooth Thermal Printer'
-            localStorage.setItem('shapeup_pos_bt_name', name)
-            if (matchedDevice.id) {
-              localStorage.setItem('shapeup_pos_bt_id', matchedDevice.id)
+          if (matchedDevice) {
+            const writeChar = await connectKnownDevice(matchedDevice)
+            if (writeChar) {
+              activeBluetoothDevice = matchedDevice
+              activeWriteCharacteristic = writeChar
+              const name = matchedDevice.name || savedName || 'Bluetooth Thermal Printer'
+              localStorage.setItem('shapeup_pos_bt_name', name)
+              if (matchedDevice.id) {
+                localStorage.setItem('shapeup_pos_bt_id', matchedDevice.id)
+              }
+              startBluetoothHeartbeat()
+              return { success: true, deviceName: name }
             }
-            return { success: true, deviceName: name }
           }
         }
+      } catch (err) {
+        console.warn('Silent bluetooth reconnection failed:', err)
       }
-    } catch (err) {
-      console.warn('Silent bluetooth reconnection failed:', err)
     }
-  }
 
-  // 4. Prompt only if allowed AND the printer has never been paired before
-  if (interactive && !hasPairedBluetoothPrinter()) {
-    return requestAndConnectBluetoothPrinter()
-  }
+    // 4. Prompt only if allowed AND the printer has never been paired before.
+    // If it was already paired before, NEVER show the chooser uninvited!
+    if (interactive && !hasPairedBluetoothPrinter()) {
+      return requestAndConnectBluetoothPrinter()
+    }
 
-  return {
-    success: false,
-    error: 'Printer Bluetooth belum terhubung. Pastikan printer menyala dan dekat dengan tablet, lalu tekan "Sambungkan Ulang Printer".'
+    return {
+      success: false,
+      error: 'Printer Bluetooth belum terhubung. Pastikan printer menyala dan dekat dengan tablet, lalu tekan "Sambungkan Ulang Printer".'
+    }
+  } finally {
+    isConnectingGatt = false
   }
 }
 
 /**
  * Warm-up: silently reconnect a previously paired printer in the background
- * (e.g. when the POS page opens) so the first print is instant. Never prompts.
+ * (e.g. when the POS page opens or screen wakes up) so the first print is instant. Never prompts.
  */
 export async function warmUpBluetoothPrinter(): Promise<void> {
   if (typeof window === 'undefined' || !isWebBluetoothSupported() || !hasPairedBluetoothPrinter()) return
@@ -860,6 +1010,46 @@ export async function warmUpBluetoothPrinter(): Promise<void> {
   } catch {
     // Silent by design
   }
+}
+
+/**
+ * Automatically initializes visibility & focus listeners so that the instant
+ * the user turns on the screen ("layar hidup") or focuses the tab, the printer
+ * is reconnected silently BEFORE the user clicks "Cetak".
+ */
+let lifecycleListenersAttached = false
+export function initBluetoothLifecycleListeners(): void {
+  if (typeof window === 'undefined' || lifecycleListenersAttached) return
+  lifecycleListenersAttached = true
+
+  const handleWakeUp = () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      if (hasPairedBluetoothPrinter()) {
+        console.log('[PrinterAdapter] Screen on / tab visible: Proactively warming up Bluetooth printer...')
+        void warmUpBluetoothPrinter()
+        startBluetoothHeartbeat()
+      }
+    } else {
+      stopBluetoothHeartbeat()
+    }
+  }
+
+  document.addEventListener('visibilitychange', handleWakeUp)
+  window.addEventListener('focus', () => {
+    if (hasPairedBluetoothPrinter() && (!activeBluetoothDevice?.gatt?.connected || !activeWriteCharacteristic)) {
+      void warmUpBluetoothPrinter()
+    }
+  })
+
+  // Start heartbeat if already connected
+  if (hasPairedBluetoothPrinter()) {
+    startBluetoothHeartbeat()
+  }
+}
+
+// Auto-run on module load in client environment
+if (typeof window !== 'undefined') {
+  initBluetoothLifecycleListeners()
 }
 
 export async function getSystemPrinters(): Promise<{
@@ -931,6 +1121,7 @@ export async function requestAndConnectBluetoothPrinter(): Promise<{ success: bo
     if (device.id) {
       localStorage.setItem('shapeup_pos_bt_id', device.id)
     }
+    startBluetoothHeartbeat()
 
     return { success: true, deviceName: name, deviceId: device.id }
   } catch (err: any) {
@@ -952,7 +1143,13 @@ export async function sendBluetoothRawBytes(payload: Uint8Array): Promise<PrintR
       }
     }
 
-    const connRes = await ensureBluetoothPrinterConnection(false)
+    let connRes = await ensureBluetoothPrinterConnection(false)
+    if (!connRes.success || !activeWriteCharacteristic) {
+      // One quick retry for sleeping peripheral
+      await new Promise((r) => setTimeout(r, 350))
+      connRes = await ensureBluetoothPrinterConnection(false)
+    }
+
     if (!connRes.success || !activeWriteCharacteristic) {
       return { success: false, message: connRes.error || 'Printer Bluetooth tidak terhubung.' }
     }
@@ -1091,14 +1288,25 @@ export async function testPrintStationTicket(options: {
 }
 
 export async function disconnectBluetoothPrinter(): Promise<void> {
+  stopBluetoothHeartbeat()
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
   if (activeBluetoothDevice && activeBluetoothDevice.gatt?.connected) {
-    activeBluetoothDevice.gatt.disconnect()
+    try {
+      activeBluetoothDevice.gatt.disconnect()
+    } catch {}
   }
   activeBluetoothDevice = null
   activeWriteCharacteristic = null
+  cachedServiceUuid = null
+  cachedCharUuid = null
   if (typeof window !== 'undefined') {
     localStorage.removeItem('shapeup_pos_bt_name')
     localStorage.removeItem('shapeup_pos_bt_id')
+    localStorage.removeItem('shapeup_pos_bt_service_uuid')
+    localStorage.removeItem('shapeup_pos_bt_char_uuid')
   }
 }
 

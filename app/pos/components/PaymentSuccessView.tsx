@@ -9,6 +9,8 @@ import {
   ConnectionType,
   generateReceiptHtml,
   requestAndConnectBluetoothPrinter,
+  ensureBluetoothPrinterConnection,
+  hasPairedBluetoothPrinter,
   warmUpBluetoothPrinter
 } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from '@/lib/pos/receiptSettings'
@@ -151,19 +153,36 @@ export default function PaymentSuccessView({
     handlePrintRef.current = handlePrint
   }, [handlePrint])
 
-  // Explicit reconnect (fresh user gesture → device chooser allowed), then print immediately
+  // Reconnect printer without forcing pairing chooser if already permitted
   const handleReconnectBluetooth = async () => {
     if (isReconnectingBt) return
     setIsReconnectingBt(true)
+    setPrintMessage(null)
     try {
-      // requestDevice() must be the first await to keep the click's user activation
-      const res = await requestAndConnectBluetoothPrinter()
+      const hasPaired = hasPairedBluetoothPrinter()
+      let res: { success: boolean; deviceName?: string; error?: string } = { success: false }
+
+      // 1. If previously paired, attempt silent reconnection first (Zero Chooser Prompt)
+      if (hasPaired) {
+        res = await ensureBluetoothPrinterConnection(false)
+        if (!res.success) {
+          // Retry once with 350ms delay to give peripheral time to wake up
+          await new Promise((r) => setTimeout(r, 350))
+          res = await ensureBluetoothPrinterConnection(false)
+        }
+      }
+
+      // 2. Only show the pairing chooser dialog if the device was NEVER paired before
+      if (!res.success && !hasPaired) {
+        res = await requestAndConnectBluetoothPrinter()
+      }
+
       if (res.success) {
         setNeedsBtReconnect(false)
         setConnectionType('bluetooth')
         await handlePrint('bluetooth')
       } else {
-        setPrintMessage(res.error || '⚠️ Gagal menyambungkan printer Bluetooth.')
+        setPrintMessage(res.error || '⚠️ Gagal menyambungkan printer Bluetooth. Pastikan printer menyala di dekat kasir.')
       }
     } finally {
       setIsReconnectingBt(false)
