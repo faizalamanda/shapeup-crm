@@ -2,6 +2,7 @@
 import { ReceiptData, ReceiptItem, ReceiptLoyaltyInfo, PaperSize } from './printerAdapter'
 import { getStoredReceiptSettings, ReceiptSettings } from './receiptSettings'
 import { formatDisplayDate, DEFAULT_TIMEZONE } from '@/lib/timeUtils'
+import { base64ToUint8Array } from './imageDither'
 
 export interface ReceiptBuildOptions {
   businessName?: string
@@ -146,6 +147,10 @@ export function buildReceiptDataFromOrder(order: any, options: ReceiptBuildOptio
     queueNumber: order.queue_number || raw.queue_number || (options as any).queueNumber,
     showQueueNumber: Boolean(settings.showQueueNumber),
     showItemNumbering: settings.showItemNumbering,
+    showLogo: Boolean(settings.showLogo),
+    logoUrl: settings.logoUrl || undefined,
+    logoBase64: settings.logoBase64 || undefined,
+    logoEscPosBytes: settings.logoEscPosData ? base64ToUint8Array(settings.logoEscPosData) : undefined,
     loyaltyInfo: settings.showLoyaltyPoints && options.loyaltyInfo ? options.loyaltyInfo : undefined,
     items: items,
     subtotal: subtotal,
@@ -179,6 +184,10 @@ export function buildSampleReceiptData(settings: ReceiptSettings): ReceiptData {
     queueNumber: 42,
     showQueueNumber: Boolean(settings.showQueueNumber),
     showItemNumbering: settings.showItemNumbering,
+    showLogo: Boolean(settings.showLogo),
+    logoUrl: settings.logoUrl || undefined,
+    logoBase64: settings.logoBase64 || undefined,
+    logoEscPosBytes: settings.logoEscPosData ? base64ToUint8Array(settings.logoEscPosData) : undefined,
     loyaltyInfo: settings.showLoyaltyPoints ? {
       tierName: 'Gold Member',
       tierBadge: '🥇',
@@ -305,6 +314,10 @@ export function buildReturnReceiptData(
     grandTotal: Number(returnDoc.refund_total || returnDoc.credit_value || 0),
     paymentMethod: refundBreakdown.length > 0 ? refundBreakdown.map((r: any) => r.method).join(', ') : 'REFUND',
     refundBreakdown,
+    showLogo: Boolean(settings.showLogo),
+    logoUrl: settings.logoUrl || undefined,
+    logoBase64: settings.logoBase64 || undefined,
+    logoEscPosBytes: settings.logoEscPosData ? base64ToUint8Array(settings.logoEscPosData) : undefined,
     note: settings.footerNote || 'Nota bukti retur / penukaran barang resmi.',
     paperSize: options.paperSize || settings.paperSize || '58mm'
   }
@@ -378,6 +391,10 @@ export function buildHoldOrderReceiptData(
     cashierName: options.cashierName || 'Kasir',
     customerName: heldOrder.customer_name || 'Pelanggan Walk-in',
     showItemNumbering: true,
+    showLogo: Boolean(settings.showLogo),
+    logoUrl: settings.logoUrl || undefined,
+    logoBase64: settings.logoBase64 || undefined,
+    logoEscPosBytes: settings.logoEscPosData ? base64ToUint8Array(settings.logoEscPosData) : undefined,
     items: receiptItems,
     subtotal: calculatedSubtotal,
     discountTotal: discountTotal,

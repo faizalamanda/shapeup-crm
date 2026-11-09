@@ -196,5 +196,38 @@ Pada sistem kasir POS sebelumnya:
 4. **Auto-Persist Pengaturan:**
    Saat kasir berhasil menghubungkan Bluetooth di `ReceiptSettingsModal.tsx`, sistem wajib mengunci `connectionType: 'bluetooth'` ke `localStorage` secara otomatis agar tidak hilang jika kasir keluar tanpa menekan tombol simpan bawah.
 
+---
+
+## 8. Monochrome Logo Processing & Dual-Pipeline Hardware Parity (Floyd-Steinberg & ESC/POS GS v 0)
+
+### 8.1 Problem Statement: Keterbatasan Fisik Kepala Pemanas Termal
+Printer kasir termal bekerja dengan kepala pemanas biner 203 DPI (8 dots/mm) tanpa level abu-abu fisik. Jika logo bisnis berwarna/grayscale dicetak langsung tanpa pemrosesan biner:
+1. Warna solid gelap dan terang sering kali saling menimpa menjadi kotak hitam pekat (*black box*), menutupi nama toko dan menghabiskan gulungan kertas.
+2. Warna pastel atau gradasi pudar/hilang total.
+3. Dimensi lebar gambar sembarang merusak format memori printer BLE murah (kebutuhan alignment 8-bit / kelipatan 8 dot).
+
+### 8.2 Solusi Arsitektur: Client-Side Dithering & Dual Rendering Pipeline
+Sistem mengimplementasikan modul binarisasi terisolasi di `@/lib/pos/imageDither.ts` (`processLogoForThermal`):
+1. **Penskalaan Proporsional & Byte-Alignment:**
+   - Lebar target: maksimum 320 dot (kertas 58mm) atau 480 dot (kertas 80mm).
+   - Tinggi target: maksimum 140 dot.
+   - **8-Dot Alignment:** Lebar piksel dipotong ke kelipatan 8 (`Math.floor(width / 8) * 8`) agar tepat memenuhi batas bita horizontal ESC/POS ($xL = \text{width} / 8$).
+2. **Penanganan Transparansi (Alpha Channel):**
+   - Piksel dengan alpha $< 128$ (latar belakang transparan PNG/WebP) otomatis dipaksa menjadi putih murni ($255$) agar latar logo tidak menghitam.
+3. **Floyd-Steinberg Error Diffusion Dithering (1-Bit Monochrome):**
+   - Luminositas: $Y = 0.299R + 0.587G + 0.114B$.
+   - Ambang batas biner $128$ dengan penyebaran kuantisasi error 2D ($7/16$ kanan, $3/16$ bawah-kiri, $5/16$ bawah, $1/16$ bawah-kanan).
+   - Menghasilkan binarisasi tajam dan bersih untuk foto maupun logo vektor di atas kertas termal 203 DPI.
+4. **Dual Output Generation:**
+   - **Data-URI (PNG Monokrom):** Untuk pratinjau *WYSIWYG* di layar dan pencetakan sistem browser (`generateReceiptHtml`).
+   - **ESC/POS Raster Bytes (`GS v 0`):** `[0x1D, 0x76, 0x30, 0x00, xL, xH, yL, yH, ...bytes]` yang diserialisasi ke Base64 untuk penyimpanan lokal dan siap dikirim via Bluetooth LE.
+
+### 8.3 Hybrid Persistence & Zero-Latency Offline Execution
+- **Cloud Master:** Logo master diunggah ke Supabase Storage (`attachments/{business_id}/...`) dan disimpan di `businesses.logo_url` untuk sinkronisasi antar perangkat.
+- **Local Raster Cache:** Di perangkat kasir lokal, hasil binarisasi disimpan dalam `RECEIPT_SETTINGS_STORAGE_KEY` (`showLogo`, `logoBase64`, `logoEscPosData`).
+- **Zero Network Delay:** Saat kasir mencetak struk, data logo diambil seketika dari memori/localStorage tanpa menunggu unduhan jaringan, menjamin cetak instan (0ms) bahkan jika koneksi internet terputus.
+- **Auto-Dither On Mount:** Jika perangkat kasir baru memuat `logo_url` dari cloud tanpa cache biner lokal, modal secara otomatis mendownload dan merasterisasi logo di latar belakang (*background lazy dither*).
+
+
 
 

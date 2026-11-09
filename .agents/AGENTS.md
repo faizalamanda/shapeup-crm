@@ -237,6 +237,10 @@
      - **Dilarang menyertakan awalan `Rp `** pada baris harga item, subtotal, diskon, grand total, bayar, dan kembalian di kertas 58mm/80mm agar nominal harga tidak pernah patah baris (*wrapping*).
      - **Format Tanggal Ringkas:** Selalu gunakan mode `'receipt'` pada `formatDisplayDate(date, 'receipt', timezone)` yang menghasilkan format kompak `DD-MM-YYYY HH:mm` tanpa imbuhan zona waktu (WIB) agar pas 1 baris utuh.
      - **Universal Normal Weight & Zero-Bold Standard (Anti-Bleed):** Dilarang keras menggunakan teks tebal (*bold* / `font-weight: 600/700`) dan perintah ESC/POS emphasized mode (`0x1B, 0x45, 0x01`) pada template cetak struk untuk mencegah pelebaran tinta (*thermal ink bleeding*) dan teks buram pada roll 58mm/80mm. Komponen pratinjau di layar (`ReceiptPreviewModal.tsx` dan `ReceiptSettingsModal.tsx`) wajib meniadakan kelas `font-bold` dan `font-semibold` agar selalu selaras 100% (*WYSIWYG*) dengan fisik hasil cetak.
+     - **Monochrome Logo Dithering & ESC/POS GS v 0 Raster Standard:**
+       - Dilarang mengirim gambar warna mentah ke printer thermal. Gambar wajib diproses dengan Floyd-Steinberg dithering melalui `processLogoForThermal()` dari `@/lib/pos/imageDither.ts` (sanitasi transparansi PNG alpha < 128 -> 255 putih murni, resolusi biner 1-bit, lebar kelipatan 8 dot, max-height 140 dot).
+       - Pada printer Bluetooth, logo dienkode menjadi perintah raster `GS v 0 0 xL xH yL yH [data...]` rata tengah (`0x1B, 0x61, 0x01`).
+       - Wajib menerapkan *Hybrid Storage*: File master di Supabase Storage (`attachments`) + database `businesses.logo_url`, sementara hasil binarisasi monokrom (`logoBase64`, `logoEscPosData`) disimpan di `localStorage` (`RECEIPT_SETTINGS_STORAGE_KEY`) untuk cetak instan 0ms offline-safe.
    - Area cetak efektif fisik thermal: Roll 58mm $\rightarrow$ `48mm` (384 dots); Roll 80mm $\rightarrow$ `72mm` (576 dots).
    - Seluruh komponen modal kasir wajib diproteksi ganda dengan kelas `.no-print` dan CSS `@media print` fallback agar tidak pernah merender backdrop, header modal, tombol dropdown ukuran kertas, tombol silang, alert status, atau tombol aksi cetak/tutup ke kertas thermal.
 

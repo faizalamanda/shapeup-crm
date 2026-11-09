@@ -164,6 +164,40 @@ function BusinessSettingsInner() {
   
   const [submitting, setSubmitting] = useState(false)
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('')
+  const [uploadingLogo, setUploadingLogo] = useState(false)
+
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !activeBusiness?.id) return
+    setUploadingLogo(true)
+    try {
+      if (!file.type.startsWith('image/')) {
+        throw new Error('File harus berupa gambar')
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error('Ukuran file maksimal 5 MB')
+      }
+
+      const fileExt = file.name.split('.').pop() || 'png'
+      const fileName = `${activeBusiness.id}/business_logo_${Date.now()}.${fileExt}`
+      const { error: uploadErr } = await supabase.storage
+        .from('attachments')
+        .upload(fileName, file, { upsert: true, contentType: file.type })
+
+      if (uploadErr) throw uploadErr
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('attachments')
+        .getPublicUrl(fileName)
+
+      setProfileForm(prev => ({ ...prev, logo_url: publicUrl }))
+    } catch (err: any) {
+      alert('Gagal mengunggah logo: ' + err.message)
+    } finally {
+      setUploadingLogo(false)
+      if (e.target) e.target.value = ''
+    }
+  }
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -255,6 +289,7 @@ function BusinessSettingsInner() {
         updatePayload.postal_code = profileForm.postal_code || null
         updatePayload.signatory_name = profileForm.signatory_name || null
         updatePayload.signatory_title = profileForm.signatory_title || null
+        updatePayload.logo_url = profileForm.logo_url || null
       } catch (e) {
         // Ignore column extension errors if schema doesn't have columns yet
       }
@@ -491,6 +526,44 @@ function BusinessSettingsInner() {
                   <span>Informasi Umum &amp; Badan Hukum</span>
                 </h3>
                 <p className="text-xs text-[#6B6B63] mt-0.5">Identitas utama bisnis yang muncul pada faktur, nota, dan laporan resmi.</p>
+              </div>
+
+              {/* Logo Bisnis */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 p-4 bg-[#F7F7F5] border border-[#E2E2DC] rounded-2xl">
+                <div className="w-20 h-20 bg-white border border-dashed border-[#E2E2DC] rounded-xl flex items-center justify-center overflow-hidden shrink-0">
+                  {profileForm.logo_url ? (
+                    <img src={profileForm.logo_url} alt="Logo Bisnis" className="max-w-full max-h-full object-contain p-1" />
+                  ) : (
+                    <span className="text-2xl text-[#A8A89E]">🏢</span>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <div className="text-xs font-bold text-[#1C1C1A]">Logo Bisnis / Toko</div>
+                  <div className="text-[11px] text-[#6B6B63] mt-0.5">
+                    Logo akan ditampilkan pada nota struk POS kasir, faktur penjualan, dan kop dokumen.
+                  </div>
+                  <div className="flex items-center gap-3 mt-2">
+                    <label className="px-3 py-1.5 bg-white border border-[#E2E2DC] hover:bg-[#EAEAEA] text-[#1C1C1A] font-bold text-xs rounded-lg cursor-pointer transition shadow-2xs">
+                      {uploadingLogo ? 'Mengunggah...' : profileForm.logo_url ? 'Ganti Logo' : 'Unggah Logo'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleLogoUpload}
+                        disabled={uploadingLogo}
+                        className="hidden"
+                      />
+                    </label>
+                    {profileForm.logo_url && (
+                      <button
+                        type="button"
+                        onClick={() => setProfileForm(prev => ({ ...prev, logo_url: '' }))}
+                        className="text-xs font-bold text-red-600 hover:text-red-700 cursor-pointer"
+                      >
+                        Hapus Logo
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

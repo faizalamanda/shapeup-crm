@@ -1,15 +1,19 @@
 {
-  "summary": "Isolated & Dual-Mode Thermal Receipt Printing Architecture: Clean receipt printing using dynamic hidden iframe isolation, direct Web Bluetooth ESC/POS engine, silent auto-reconnect via navigator.bluetooth.getDevices() (zero-prompt post-payment printing), effective roll width compensation (48mm for 58mm roll, 72mm for 80mm roll), Universal Normal Weight (Zero-Bold / Anti-Bleed) standard, WYSIWYG live preview alignment, and structured Item & Order Notes thermal formatting.",
+  "summary": "Isolated & Dual-Mode Thermal Receipt Printing Architecture: Clean receipt printing using dynamic hidden iframe isolation, direct Web Bluetooth ESC/POS engine, silent auto-reconnect via navigator.bluetooth.getDevices() (zero-prompt post-payment printing), effective roll width compensation (48mm for 58mm roll, 72mm for 80mm roll), Universal Normal Weight (Zero-Bold / Anti-Bleed) standard, WYSIWYG live preview alignment, Floyd-Steinberg monochrome logo dithering & ESC/POS GS v 0 raster encoding, and structured Item & Order Notes thermal formatting.",
   "timestamps": {
     "created": "2026-10-19T14:45:00Z",
-    "last_updated": "2026-11-06T09:47:00Z"
+    "last_updated": "2026-11-09T13:22:00Z"
   },
   "references": [
     "lib/pos/printerAdapter.ts",
+    "lib/pos/imageDither.ts",
+    "lib/pos/receiptSettings.ts",
+    "lib/pos/receiptDataBuilder.ts",
     "app/pos/components/PaymentSuccessView.tsx",
     "app/pos/components/PaymentSuccessModal.tsx",
     "app/pos/components/ReceiptPreviewModal.tsx",
     "app/pos/components/ReceiptSettingsModal.tsx",
+    "app/settings/business/page.tsx",
     ".agents/skills/pos-session-ledger/SKILL.md",
     ".agents/AGENTS.md"
   ]

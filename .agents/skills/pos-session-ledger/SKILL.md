@@ -1011,6 +1011,39 @@ Untuk mendukung fleksibilitas operasional bisnis skala besar tanpa mengubah (*ha
   - Item tanpa pemetaan stasiun (seperti produk pakaian, tas, aksesoris) otomatis diabaikan (*excluded*) dari pencetakan tiket masak sehingga tidak memboroskan kertas printer.
 - Modul ini berdiri sendiri (*decoupled*) dan dapat dikonsumsi oleh POS Worker, UI kasir, KDS (*Kitchen Display System*), maupun API background job tanpa merusak modul existing.
 
+---
+
+## 24. Thermal Receipt Logo Processing & Dual-Pipeline Hardware Parity Standard
+
+Untuk menjamin cetak logo kasir berkualitas tinggi, tajam, dan tidak menyebabkan kegagalan memori printer termal Bluetooth/USB, sistem menerapkan standar pengolahan citra monokrom:
+
+### 24.1 Client-Side Floyd-Steinberg Monochrome Dithering
+- **Masalah Citra Asli:** Gambar RGB/grayscale warna jika langsung dicetak ke printer termal 203 DPI akan menjadi kotak hitam pekat (*black box*) atau pudar karena printer termal hanya memiliki 1 bit kedalaman warna (panas vs dingin).
+- **Algoritma Binarisasi (`@/lib/pos/imageDither.ts`):**
+  - **Sanitasi Alpha Channel:** Piksel transparan (alpha $< 128$) otomatis diubah menjadi putih murni ($255$) agar logo PNG dengan latar transparan tidak berubah menjadi hitam pekat.
+  - **Luminositas Standar:** $Y = 0.299R + 0.587G + 0.114B$.
+  - **Floyd-Steinberg Error Diffusion:** Menyebarkan kuantisasi error ke tetangga 2D ($7/16$ kanan, $3/16$ bawah-kiri, $5/16$ bawah, $1/16$ bawah-kanan) menghasilkan tekstur biner tajam tanpa artefak kasar.
+  - **Kompensasi Lebar & 8-Bit Alignment:**
+    - 58mm: target lebar maksimum 320 dot ($40\text{ byte}$).
+    - 80mm: target lebar maksimum 480 dot ($60\text{ byte}$).
+    - Tinggi: maksimum 140 dot.
+    - Lebar piksel **WAJIB** merupakan kelipatan 8 (`Math.floor(width / 8) * 8`) agar data raster bita ESC/POS pas sempurna tanpa pergeseran dot matriks.
+
+### 24.2 Dual-Pipeline Hardware Execution
+- **Jalur HTML / Browser Print (`generateReceiptHtml`):**
+  - Menyematkan elemen logo `<img src="${receipt.logoBase64 || receipt.logoUrl}" style="max-width: 65%; max-height: 60px; filter: grayscale(100%) contrast(120%);" />` rata tengah di atas nama toko.
+- **Jalur Direct Web Bluetooth ESC/POS (`encodeReceiptToEscPos`):**
+  - Mengirimkan instruksi biner baku raster bit image:
+    `GS v 0 0 xL xH yL yH [data...]` (Kode hex: `0x1D, 0x76, 0x30, 0x00, xL, xH, yL, yH`).
+  - Didahului oleh instruksi perataan tengah `writeRaw(0x1B, 0x61, 0x01)` dan diakhiri dengan *line feed* `writeRaw(0x0A)`.
+
+### 24.3 Hybrid Cloud Sync & Zero-Latency Local Raster Cache
+1. **Cloud Master:** File asli diunggah ke Supabase Storage (`attachments/{business_id}/...`) dan dicatat di `public.businesses.logo_url`.
+2. **Local Raster Cache:** Komponen kasir menyimpan versi binarisasi monokrom (`logoBase64`) dan bita raster ESC/POS (`logoEscPosData`) di `RECEIPT_SETTINGS_STORAGE_KEY`.
+3. **Pencetakan Instan 0ms (Offline-Safe):** Kasir tidak pernah menunggu unduhan gambar dari internet saat menekan tombol cetak. Jika kasir offline, logo tetap tercetak sempurna dari cache lokal.
+4. **Lazy Dither Fallback:** Saat kasir membuka profil bisnis di perangkat baru yang hanya memiliki `logo_url` dari cloud, modal pengaturan struk secara otomatis mendownload dan merasterisasi logo di latar belakang tanpa tindakan manual dari pengguna.
+
+
 
 
 

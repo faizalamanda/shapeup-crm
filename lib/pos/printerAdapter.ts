@@ -40,6 +40,10 @@ export interface ReceiptData {
   cashierName: string
   customerName?: string
   showItemNumbering?: boolean
+  showLogo?: boolean
+  logoUrl?: string
+  logoBase64?: string
+  logoEscPosBytes?: Uint8Array
   loyaltyInfo?: ReceiptLoyaltyInfo
   items: ReceiptItem[]
   subtotal: number
@@ -284,6 +288,14 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
   <div class="receipt-container">
     <!-- Header Toko -->
     <div style="text-align: center; margin-bottom: 6px;">
+      ${(receipt.showLogo && (receipt.logoBase64 || receipt.logoUrl)) ? `
+      <div style="margin-bottom: 6px; text-align: center;">
+        <img 
+          src="${receipt.logoBase64 || escapeHtml(receipt.logoUrl || '')}" 
+          alt="Logo" 
+          style="max-width: 65%; max-height: 60px; object-fit: contain; filter: grayscale(100%) contrast(120%); display: inline-block;"
+        />
+      </div>` : ''}
       <div style="font-size: 1.25em; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(receipt.businessName)}</div>
       ${receipt.businessAddress ? `<div style="font-size: 0.9em; margin-top: 2px; word-break: break-word;">${escapeHtml(receipt.businessAddress)}</div>` : ''}
       ${receipt.businessPhone ? `<div style="font-size: 0.9em; margin-top: 1px;">Telp: ${escapeHtml(receipt.businessPhone)}</div>` : ''}
@@ -472,6 +484,15 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize?: PaperSiz
 
   // 2. Header (Centered)
   writeRaw(0x1B, 0x61, 0x01) // Center
+
+  // 2.1 Optional Monochrome Logo (GS v 0 Raster Bit Image)
+  if (receipt.showLogo && receipt.logoEscPosBytes && receipt.logoEscPosBytes.length > 0) {
+    for (let i = 0; i < receipt.logoEscPosBytes.length; i++) {
+      bytes.push(receipt.logoEscPosBytes[i])
+    }
+    writeRaw(0x0A) // Line feed after logo
+  }
+
   writeRaw(0x1D, 0x21, 0x01) // Double height
   writeText((receipt.businessName || 'SHAPEUP STORE').toUpperCase() + '\n')
   writeRaw(0x1D, 0x21, 0x00) // Normal text

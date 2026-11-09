@@ -12,6 +12,10 @@ export interface ReceiptSettings {
   showItemNumbering: boolean
   showLoyaltyPoints: boolean
   showQueueNumber?: boolean
+  showLogo?: boolean
+  logoUrl?: string
+  logoBase64?: string
+  logoEscPosData?: string
 }
 
 export const RECEIPT_SETTINGS_STORAGE_KEY = 'shapeup_pos_receipt_settings'
@@ -30,7 +34,11 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
       autoPrintAfterPayment: false,
       showItemNumbering: true,
       showLoyaltyPoints: true,
-      showQueueNumber: false
+      showQueueNumber: false,
+      showLogo: false,
+      logoUrl: '',
+      logoBase64: '',
+      logoEscPosData: ''
     }
   }
 
@@ -48,7 +56,11 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
         autoPrintAfterPayment: Boolean(parsed.autoPrintAfterPayment),
         showItemNumbering: parsed.showItemNumbering !== undefined ? Boolean(parsed.showItemNumbering) : true,
         showLoyaltyPoints: parsed.showLoyaltyPoints !== undefined ? Boolean(parsed.showLoyaltyPoints) : true,
-        showQueueNumber: Boolean(parsed.showQueueNumber)
+        showQueueNumber: Boolean(parsed.showQueueNumber),
+        showLogo: Boolean(parsed.showLogo),
+        logoUrl: parsed.logoUrl || '',
+        logoBase64: parsed.logoBase64 || '',
+        logoEscPosData: parsed.logoEscPosData || ''
       }
     }
   } catch (e) {
@@ -65,6 +77,10 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
     autoPrintAfterPayment: false,
     showItemNumbering: true,
     showLoyaltyPoints: true,
-    showQueueNumber: false
+    showQueueNumber: false,
+    showLogo: false,
+    logoUrl: '',
+    logoBase64: '',
+    logoEscPosData: ''
   }
 }

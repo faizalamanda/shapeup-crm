@@ -21,6 +21,7 @@ import {
   RECEIPT_SETTINGS_STORAGE_KEY 
 } from '@/lib/pos/receiptSettings'
 import { buildSampleReceiptData } from '@/lib/pos/receiptDataBuilder'
+import { loadImage, processLogoForThermal } from '@/lib/pos/imageDither'
 import {
   type KitchenSettings,
   getStoredKitchenSettings,
@@ -81,6 +82,14 @@ export default function ReceiptSettingsModal({
   const [isLoyaltyProgramEnabled, setIsLoyaltyProgramEnabled] = useState(false)
   const [loadingLoyalty, setLoadingLoyalty] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
+
+  // Logo States
+  const [showLogo, setShowLogo] = useState(false)
+  const [logoUrl, setLogoUrl] = useState('')
+  const [logoBase64, setLogoBase64] = useState('')
+  const [logoEscPosData, setLogoEscPosData] = useState('')
+  const [isProcessingLogo, setIsProcessingLogo] = useState(false)
+  const [logoError, setLogoError] = useState<string | null>(null)
 
   // Kitchen Settings States
   const [kitchenEnabled, setKitchenEnabled] = useState(true)
@@ -190,6 +199,24 @@ export default function ReceiptSettingsModal({
       setShowItemNumbering(s.showItemNumbering)
       setShowQueueNumber(Boolean(s.showQueueNumber))
       setShowLoyaltyPoints(s.showLoyaltyPoints)
+      setShowLogo(Boolean(s.showLogo))
+      const resolvedLogoUrl = s.logoUrl || (activeBusiness as any)?.logo_url || ''
+      setLogoUrl(resolvedLogoUrl)
+      setLogoBase64(s.logoBase64 || '')
+      setLogoEscPosData(s.logoEscPosData || '')
+      setLogoError(null)
+
+      // Auto-dither logo if logoUrl is present but logoBase64 is not yet generated
+      if (s.showLogo && !s.logoBase64 && resolvedLogoUrl) {
+        loadImage(resolvedLogoUrl)
+          .then((img) => {
+            const processed = processLogoForThermal(img, s.paperSize)
+            setLogoBase64(processed.dataUrl)
+            setLogoEscPosData(processed.escPosBase64)
+          })
+          .catch((e) => console.warn('Could not auto-dither remote logo:', e))
+      }
+
       setSaveSuccess(false)
       setBtStatusMsg(null)
 
@@ -279,6 +306,80 @@ export default function ReceiptSettingsModal({
     }
   }
 
+  const handleLogoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setIsProcessingLogo(true)
+    setLogoError(null)
+
+    try {
+      if (!file.type.startsWith('image/')) {
+        throw new Error('File harus berupa gambar (PNG, JPG, WebP, dsb)')
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error('Ukuran file maksimal 5 MB')
+      }
+
+      // 1. Baca sebagai Data URL
+      const reader = new FileReader()
+      const dataUri = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = () => reject(new Error('Gagal membaca file gambar'))
+        reader.readAsDataURL(file)
+      })
+
+      // 2. Dither & rasterize untuk ukuran kertas aktif
+      const img = await loadImage(dataUri)
+      const processed = processLogoForThermal(img, paperSize)
+
+      setLogoBase64(processed.dataUrl)
+      setLogoEscPosData(processed.escPosBase64)
+      setShowLogo(true)
+
+      // 3. Upload file ke Supabase Storage (jika online & targetBizId tersedia)
+      if (targetBizId) {
+        try {
+          const fileExt = file.name.split('.').pop() || 'png'
+          const fileName = `${targetBizId}/receipt_logo_${Date.now()}.${fileExt}`
+          const { error: uploadErr } = await supabase.storage
+            .from('attachments')
+            .upload(fileName, file, { upsert: true, contentType: file.type })
+
+          if (!uploadErr) {
+            const { data: pubData } = supabase.storage
+              .from('attachments')
+              .getPublicUrl(fileName)
+            if (pubData?.publicUrl) {
+              setLogoUrl(pubData.publicUrl)
+              await supabase
+                .from('businesses')
+                .update({ logo_url: pubData.publicUrl })
+                .eq('id', targetBizId)
+            }
+          }
+        } catch (uploadNetErr) {
+          console.warn('Storage upload fallback (offline active):', uploadNetErr)
+        }
+      }
+    } catch (err: any) {
+      setLogoError(err.message || 'Gagal memproses gambar logo')
+    } finally {
+      setIsProcessingLogo(false)
+      if (e.target) e.target.value = ''
+    }
+  }
+
+  const handleRemoveLogo = () => {
+    setShowLogo(false)
+    setLogoBase64('')
+    setLogoUrl('')
+    setLogoEscPosData('')
+    setLogoError(null)
+    if (targetBizId) {
+      supabase.from('businesses').update({ logo_url: null }).eq('id', targetBizId).then(() => {}, () => {})
+    }
+  }
+
   const handleSave = () => {
     const settings: ReceiptSettings = {
       storeName: storeName.trim() || defaultBusinessName,
@@ -290,7 +391,11 @@ export default function ReceiptSettingsModal({
       autoPrintAfterPayment,
       showItemNumbering,
       showLoyaltyPoints,
-      showQueueNumber
+      showQueueNumber,
+      showLogo,
+      logoUrl,
+      logoBase64,
+      logoEscPosData
     }
 
     const kSettings: KitchenSettings = {
@@ -330,7 +435,11 @@ export default function ReceiptSettingsModal({
       autoPrintAfterPayment,
       showItemNumbering,
       showQueueNumber,
-      showLoyaltyPoints: isLoyaltyProgramEnabled && showLoyaltyPoints
+      showLoyaltyPoints: isLoyaltyProgramEnabled && showLoyaltyPoints,
+      showLogo,
+      logoUrl,
+      logoBase64,
+      logoEscPosData
     })
   }, [
     storeName,
@@ -344,7 +453,11 @@ export default function ReceiptSettingsModal({
     showItemNumbering,
     showQueueNumber,
     isLoyaltyProgramEnabled,
-    showLoyaltyPoints
+    showLoyaltyPoints,
+    showLogo,
+    logoUrl,
+    logoBase64,
+    logoEscPosData
   ])
 
   const sampleReceiptHtml = useMemo(() => {
@@ -457,6 +570,105 @@ export default function ReceiptSettingsModal({
         {/* Kolom Kiri: Form Pengaturan Berdasarkan Tab */}
         {mainTab === 'receipt' ? (
           <div className="space-y-4">
+            {/* Logo Struk Kasir */}
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-slate-800 flex items-center gap-1.5 text-xs">
+                    <span>🖼️</span>
+                    <span>Logo Struk Kasir</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    Cetak logo bisnis di bagian atas struk kasir
+                  </div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showLogo}
+                    onChange={(e) => setShowLogo(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
+              </div>
+
+              {showLogo && (
+                <div className="pt-2 border-t border-slate-200/80 space-y-2.5">
+                  {(logoBase64 || logoUrl) ? (
+                    <div className="flex items-center gap-3 p-2.5 bg-white border border-slate-200 rounded-xl">
+                      <div className="w-16 h-12 bg-slate-100 rounded-lg flex items-center justify-center p-1 border border-dashed border-slate-300 overflow-hidden shrink-0">
+                        <img
+                          src={logoBase64 || logoUrl}
+                          alt="Logo Preview"
+                          className="max-h-full max-w-full object-contain filter grayscale"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold text-slate-800 truncate">
+                          Logo Struk Aktif
+                        </div>
+                        <div className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                          <span>✓</span>
+                          <span>Teroptimasi Monokrom Termal</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <label className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer">
+                            Ganti
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleLogoFileChange}
+                              disabled={isProcessingLogo}
+                              className="hidden"
+                            />
+                          </label>
+                          <span className="text-slate-300">•</span>
+                          <button
+                            type="button"
+                            onClick={handleRemoveLogo}
+                            disabled={isProcessingLogo}
+                            className="text-[11px] font-bold text-rose-600 hover:text-rose-800"
+                          >
+                            Hapus
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="flex flex-col items-center justify-center p-3.5 border-2 border-dashed border-slate-300 hover:border-indigo-400 bg-white rounded-xl cursor-pointer transition-colors text-center group">
+                        <span className="text-xl mb-1 group-hover:scale-110 transition-transform">📤</span>
+                        <span className="text-xs font-bold text-slate-700">
+                          {isProcessingLogo ? 'Memproses binarisasi logo...' : 'Unggah Logo Struk'}
+                        </span>
+                        <span className="text-[10px] text-slate-400 mt-0.5">
+                          Format PNG, JPG, WebP (Maks. 5 MB)
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleLogoFileChange}
+                          disabled={isProcessingLogo}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  {logoError && (
+                    <div className="text-[11px] text-rose-600 font-medium bg-rose-50 p-2 rounded-lg border border-rose-200">
+                      ⚠️ {logoError}
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    💡 Gambar otomatis disesuaikan dengan algoritma dithering Floyd-Steinberg agar tajam di kertas termal 58mm &amp; 80mm.
+                  </p>
+                </div>
+              )}
+            </div>
+
             <div>
               <label className="block font-bold text-slate-700 uppercase tracking-wide mb-1">
                 Nama Toko / Bisnis di Struk
