@@ -11,7 +11,6 @@ import { isUuid } from '@/lib/utils'
 
 const DEFAULT_LOCATIONS = (businessId: string): InventoryLocation[] => [
   { id: 'wh-main', business_id: businessId, name: 'Gudang Utama (WH-MAIN)', type: 'internal', code: 'WH-MAIN', is_default: true, created_at: new Date().toISOString() },
-  { id: 'wh-store', business_id: businessId, name: 'Toko / Display Outlet', type: 'internal', code: 'STORE-1', is_default: false, created_at: new Date().toISOString() },
   { id: 'wh-vendor', business_id: businessId, name: 'Pemasok / Vendor', type: 'vendor', code: 'VENDOR', is_default: false, created_at: new Date().toISOString() },
   { id: 'wh-customer', business_id: businessId, name: 'Transit Pelanggan', type: 'customer', code: 'CUSTOMER', is_default: false, created_at: new Date().toISOString() },
 ]
@@ -28,6 +27,7 @@ async function getCachedLocations(businessId: string, supabase: any): Promise<In
     .from('inventory_locations')
     .select('id, name, code, type, is_default')
     .eq('business_id', businessId)
+    .neq('code', 'STORE-1')
   const locations = (raw && raw.length > 0) ? (raw as InventoryLocation[]) : DEFAULT_LOCATIONS(businessId)
   locationCache[businessId] = { locations, timestamp: now }
   return locations
@@ -382,9 +382,20 @@ export async function GET(req: Request) {
     // ─────────────────────────────────────────────────────────────────────
     if (action === 'location_report') {
       const [{ data: locationsDataRaw }, { data: productsData }] = await Promise.all([
-        supabase.from('inventory_locations').select('id, name, code, type, is_default').eq('business_id', businessId),
+        supabase
+          .from('inventory_locations')
+          .select('id, name, code, type, is_default')
+          .eq('business_id', businessId)
+          .neq('code', 'STORE-1'),
         supabase.from('products').select('id, name, sku, unit, stock_quantity, cost_price').eq('business_id', businessId)
       ])
+
+      // Auto-cleanup legacy STORE-1 if present in DB
+      await supabase
+        .from('inventory_locations')
+        .delete()
+        .eq('business_id', businessId)
+        .eq('code', 'STORE-1')
 
       const locations = (locationsDataRaw && locationsDataRaw.length > 0)
         ? locationsDataRaw as InventoryLocation[]
@@ -412,6 +423,7 @@ export async function GET(req: Request) {
         .from('inventory_locations')
         .select('id, name, code, type, is_default')
         .eq('business_id', businessId)
+        .neq('code', 'STORE-1')
     ])
 
     const allCategories: { id: string; name: string }[] = categoriesRes.data || []

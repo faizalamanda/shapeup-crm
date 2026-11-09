@@ -13,12 +13,12 @@ export async function fetchLocations(supabase: SupabaseClient, businessId: strin
     .from('inventory_locations')
     .select('*')
     .eq('business_id', businessId)
+    .neq('code', 'STORE-1')
 
   let locationsData = locationsDataRaw
   if (!locationsData || locationsData.length === 0) {
     locationsData = [
       { id: 'wh-main', business_id: businessId, name: 'Gudang Utama (WH-MAIN)', type: 'internal', code: 'WH-MAIN', is_default: true, created_at: new Date().toISOString() },
-      { id: 'wh-store', business_id: businessId, name: 'Toko / Display Outlet', type: 'internal', code: 'STORE-1', is_default: false, created_at: new Date().toISOString() },
       { id: 'wh-vendor', business_id: businessId, name: 'Pemasok / Vendor', type: 'vendor', code: 'VENDOR', is_default: false, created_at: new Date().toISOString() },
       { id: 'wh-customer', business_id: businessId, name: 'Transit Pelanggan', type: 'customer', code: 'CUSTOMER', is_default: false, created_at: new Date().toISOString() },
     ]
@@ -41,7 +41,7 @@ export async function fetchFullInventoryData(supabase: SupabaseClient, businessI
     supabase.from('purchases').select('*').eq('business_id', businessId),
     supabase.from('orders').select('*').eq('business_id', businessId),
     supabase.from('stock_opname').select('*').eq('business_id', businessId),
-    supabase.from('inventory_locations').select('*').eq('business_id', businessId),
+    supabase.from('inventory_locations').select('*').eq('business_id', businessId).neq('code', 'STORE-1'),
     supabase.from('v_stock_moves_ledger').select('*').eq('business_id', businessId).order('created_at', { ascending: false }),
     supabase.from('inventory_stock_summary').select('*').eq('business_id', businessId),
   ])
@@ -50,7 +50,6 @@ export async function fetchFullInventoryData(supabase: SupabaseClient, businessI
   if (!locationsData || locationsData.length === 0) {
     locationsData = [
       { id: 'wh-main', business_id: businessId, name: 'Gudang Utama (WH-MAIN)', type: 'internal', code: 'WH-MAIN', is_default: true, created_at: new Date().toISOString() },
-      { id: 'wh-store', business_id: businessId, name: 'Toko / Display Outlet', type: 'internal', code: 'STORE-1', is_default: false, created_at: new Date().toISOString() },
       { id: 'wh-vendor', business_id: businessId, name: 'Pemasok / Vendor', type: 'vendor', code: 'VENDOR', is_default: false, created_at: new Date().toISOString() },
       { id: 'wh-customer', business_id: businessId, name: 'Transit Pelanggan', type: 'customer', code: 'CUSTOMER', is_default: false, created_at: new Date().toISOString() },
     ]
@@ -322,25 +321,16 @@ export function buildStockReport(products: any[], moves: StockMove[], locations:
       ? prod.categories[0]?.name
       : prod.categories?.name || 'Tanpa Kategori'
 
-    // Mock/Distribute stock across internal locations if 2+ internal locations exist
+    // Allocate 100% of physical stock to internal primary warehouse (WH-MAIN)
     const internalLocations = locations.filter(l => l.type === 'internal')
     const locationBreakdown: StockReportItem['locationBreakdown'] = {}
 
     if (internalLocations.length > 0) {
-      const primaryLoc = internalLocations[0]
+      const primaryLoc = internalLocations.find(l => l.is_default) || internalLocations[0]
       locationBreakdown[primaryLoc.id] = {
         locationName: primaryLoc.name,
-        qty: Math.round(onHandQty * 0.7 * 100) / 100,
-        reserved: Math.round(reservedQty * 0.7 * 100) / 100,
-      }
-
-      if (internalLocations.length > 1) {
-        const secLoc = internalLocations[1]
-        locationBreakdown[secLoc.id] = {
-          locationName: secLoc.name,
-          qty: Math.round(onHandQty * 0.3 * 100) / 100,
-          reserved: Math.round(reservedQty * 0.3 * 100) / 100,
-        }
+        qty: onHandQty,
+        reserved: reservedQty,
       }
     }
 
@@ -395,12 +385,12 @@ export function buildLocationReport(locations: InventoryLocation[], stockItems: 
         totalQty += breakdown.qty
         reservedQty += breakdown.reserved
         totalValue += breakdown.qty * item.unitCost
-        if (breakdown.qty > 0) productsCount++
+        if (breakdown.qty !== 0) productsCount++
       } else if (loc.is_default) {
         totalQty += item.onHandQty
         reservedQty += item.reservedQty
         totalValue += item.totalValue
-        if (item.onHandQty > 0) productsCount++
+        if (item.onHandQty !== 0) productsCount++
       }
     })
 

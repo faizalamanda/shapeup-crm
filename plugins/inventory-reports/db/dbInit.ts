@@ -2,11 +2,19 @@ import { SupabaseClient } from '@supabase/supabase-js'
 
 export async function ensureInventoryTablesExist(supabase: SupabaseClient, businessId: string) {
   try {
+    // Proactively clean up legacy STORE-1 if exists
+    await supabase
+      .from('inventory_locations')
+      .delete()
+      .eq('business_id', businessId)
+      .eq('code', 'STORE-1')
+
     // Check if inventory_locations table exists & query default locations
     const { data: locations, error: locError } = await supabase
       .from('inventory_locations')
-      .select('id, name, is_default, type')
+      .select('id, name, is_default, type, code')
       .eq('business_id', businessId)
+      .neq('code', 'STORE-1')
 
     if (locError && locError.message?.includes('does not exist')) {
       console.warn('[InventoryPlugin] Table inventory_locations does not exist yet. Relying on fallback auto-seeding.')
@@ -14,7 +22,7 @@ export async function ensureInventoryTablesExist(supabase: SupabaseClient, busin
     }
 
     if (!locations || locations.length === 0) {
-      // Seed default locations for the business
+      // Seed default locations for the business (WH-MAIN, VENDOR, CUSTOMER)
       const defaultLocations = [
         {
           business_id: businessId,
@@ -22,13 +30,6 @@ export async function ensureInventoryTablesExist(supabase: SupabaseClient, busin
           type: 'internal',
           code: 'WH-MAIN',
           is_default: true,
-        },
-        {
-          business_id: businessId,
-          name: 'Toko / Display Outlet (STORE-1)',
-          type: 'internal',
-          code: 'STORE-1',
-          is_default: false,
         },
         {
           business_id: businessId,
@@ -56,7 +57,7 @@ export async function ensureInventoryTablesExist(supabase: SupabaseClient, busin
       }
     }
 
-    return { initialized: true, locations: locations || [] }
+    return { initialized: true, locations: (locations || []).filter((l: any) => l.code !== 'STORE-1') }
   } catch (err) {
     console.error('[InventoryPlugin] DB Init exception:', err)
     return { initialized: false, locations: [] }
