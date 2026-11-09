@@ -32,8 +32,9 @@ type Props = {
 }
 
 export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
-  const { activeBusiness, userProfile, bizLoading } = useUserContext()
+  const { activeBusiness, userProfile, bizLoading, currentUserRole, isOwner, currentUserPermissions } = useUserContext()
   const timezone = activeBusiness?.timezone
+  const isAdmin = Boolean(isOwner || currentUserRole === 'admin' || currentUserPermissions?.includes('full_access'))
 
   // Core Data State (Hydrate immediately from preloadedSession if available)
   const [loading, setLoading] = useState(!preloadedSession?.activeShift)
@@ -63,6 +64,8 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
 
   // Shift History Filters
   const [shiftStatusFilter, setShiftStatusFilter] = useState<'all' | 'closed' | 'open'>('all')
+  const [selectedCashierId, setSelectedCashierId] = useState<string>('all')
+  const [availableCashiers, setAvailableCashiers] = useState<Array<{ id: string; name: string }>>([])
 
   // Collapsible Manager Section State
   const [isManagerMonitoringOpen, setIsManagerMonitoringOpen] = useState(false)
@@ -84,10 +87,11 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
     setLoading(true)
     try {
       const statusParam = shiftStatusFilter !== 'all' ? `&status=${shiftStatusFilter}` : ''
+      const cashierParam = isAdmin && selectedCashierId !== 'all' ? `&cashier_id=${selectedCashierId}` : ''
       const [shiftRes, historyRes, monitorRes, accRes, regRes] = await Promise.all([
         fetch('/api/pos/shifts'),
-        fetch(`/api/pos/shifts?mode=history&limit=15&offset=0${statusParam}`),
-        fetch('/api/pos/shifts?mode=monitoring'),
+        fetch(`/api/pos/shifts?mode=history&limit=15&offset=0${statusParam}${cashierParam}`),
+        isAdmin ? fetch('/api/pos/shifts?mode=monitoring') : Promise.resolve(null),
         supabase
           .from('accounts')
           .select('id, name, code, type')
@@ -116,13 +120,19 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
         setPastShifts(historyData.shifts || [])
         setTotalShiftsCount(historyData.totalCount || 0)
         setHasMoreShifts(Boolean(historyData.hasMore))
+        if (historyData.cashiers && Array.isArray(historyData.cashiers)) {
+          setAvailableCashiers(historyData.cashiers)
+        }
       }
 
-      // 3. Manager Monitoring
-      if (monitorRes.ok) {
+      // 3. Manager Monitoring (Admin Only)
+      if (monitorRes && monitorRes.ok) {
         const monitorData = await monitorRes.json()
         setMonitoredShifts(monitorData.activeShifts || [])
         setTotalDrawerCash(monitorData.totalDrawerCash || 0)
+      } else if (!isAdmin) {
+        setMonitoredShifts([])
+        setTotalDrawerCash(0)
       }
 
       // 4. Accounts & Registers
@@ -133,7 +143,7 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [activeBusiness?.id, shiftStatusFilter])
+  }, [activeBusiness?.id, shiftStatusFilter, selectedCashierId, isAdmin])
 
   useEffect(() => {
     if (!bizLoading && activeBusiness?.id) {
@@ -164,7 +174,8 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
     setLoadingMore(true)
     try {
       const statusParam = shiftStatusFilter !== 'all' ? `&status=${shiftStatusFilter}` : ''
-      const res = await fetch(`/api/pos/shifts?mode=history&limit=15&offset=${nextOffset}${statusParam}`)
+      const cashierParam = isAdmin && selectedCashierId !== 'all' ? `&cashier_id=${selectedCashierId}` : ''
+      const res = await fetch(`/api/pos/shifts?mode=history&limit=15&offset=${nextOffset}${statusParam}${cashierParam}`)
       if (res.ok) {
         const data = await res.json()
         if (data.shifts) {
@@ -554,51 +565,79 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
         {/* ─── COMPACT SHIFT LEDGER TABLE & LOAD MORE ───────────────────────── */}
         <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
           {/* Header & Filter Controls */}
-          <div className="p-5 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="p-5 sm:p-6 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div>
               <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
                 <span>Riwayat Sesi Shift Kasir (Shift Ledger)</span>
                 <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-bold">
                   {totalShiftsCount || pastShifts.length} Sesi
                 </span>
+                {isAdmin && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 font-black uppercase tracking-wider">
+                    Mode Pengawas
+                  </span>
+                )}
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Daftar rekonsiliasi laci kasir dan Z-Report historis akun Anda. Klik salah satu baris sesi untuk rincian lengkap & cetak ulang struk.
+                {isAdmin
+                  ? 'Daftar rekonsiliasi laci kasir dan Z-Report historis seluruh staf kasir toko. Klik salah satu baris sesi untuk rincian lengkap & cetak ulang struk.'
+                  : 'Daftar rekonsiliasi laci kasir dan Z-Report historis akun Anda. Klik salah satu baris sesi untuk rincian lengkap & cetak ulang struk.'}
               </p>
             </div>
 
-            {/* Filter Tabs */}
-            <div className="inline-flex rounded-xl p-1 bg-slate-100 border border-slate-200 text-xs font-bold self-start sm:self-auto">
-              <button
-                onClick={() => setShiftStatusFilter('all')}
-                className={`px-3 py-1.5 rounded-lg transition ${
-                  shiftStatusFilter === 'all'
-                    ? 'bg-white text-indigo-700 shadow-sm font-black'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Semua Sesi
-              </button>
-              <button
-                onClick={() => setShiftStatusFilter('closed')}
-                className={`px-3 py-1.5 rounded-lg transition ${
-                  shiftStatusFilter === 'closed'
-                    ? 'bg-white text-indigo-700 shadow-sm font-black'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Shift Ditutup 🔒
-              </button>
-              <button
-                onClick={() => setShiftStatusFilter('open')}
-                className={`px-3 py-1.5 rounded-lg transition ${
-                  shiftStatusFilter === 'open'
-                    ? 'bg-white text-indigo-700 shadow-sm font-black'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Shift Berjalan 🟢
-              </button>
+            {/* Filter Controls: Cashier Dropdown (Admin Only) + Status Filter Tabs */}
+            <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto">
+              {isAdmin && availableCashiers.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={selectedCashierId}
+                    onChange={(e) => setSelectedCashierId(e.target.value)}
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold text-slate-700 transition focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                    title="Filter riwayat berdasarkan staf kasir"
+                  >
+                    <option value="all">👥 Semua Kasir ({availableCashiers.length})</option>
+                    {availableCashiers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        👤 {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Filter Tabs */}
+              <div className="inline-flex rounded-xl p-1 bg-slate-100 border border-slate-200 text-xs font-bold">
+                <button
+                  onClick={() => setShiftStatusFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg transition ${
+                    shiftStatusFilter === 'all'
+                      ? 'bg-white text-indigo-700 shadow-sm font-black'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Semua Sesi
+                </button>
+                <button
+                  onClick={() => setShiftStatusFilter('closed')}
+                  className={`px-3 py-1.5 rounded-lg transition ${
+                    shiftStatusFilter === 'closed'
+                      ? 'bg-white text-indigo-700 shadow-sm font-black'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Shift Ditutup 🔒
+                </button>
+                <button
+                  onClick={() => setShiftStatusFilter('open')}
+                  className={`px-3 py-1.5 rounded-lg transition ${
+                    shiftStatusFilter === 'open'
+                      ? 'bg-white text-indigo-700 shadow-sm font-black'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Shift Berjalan 🟢
+                </button>
+              </div>
             </div>
           </div>
 
@@ -712,8 +751,8 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
                               {isOpen ? 'Aktif' : 'Ditutup'}
                             </span>
                           </div>
-                          <span className="text-[10px] text-slate-400 block mt-0.5">
-                            Kasir: {s.cashier_name}
+                          <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">
+                            👤 Kasir: <strong className="text-slate-700">{s.cashier_name}</strong>
                           </span>
                         </td>
 
@@ -834,6 +873,9 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
                           {isOpen ? 'Aktif' : 'Tutup'}
                         </span>
                       </div>
+                      <div className="text-[11px] text-slate-500 font-medium">
+                        Kasir: <strong className="text-slate-800">{s.cashier_name}</strong>
+                      </div>
                       <div className="text-[11px] text-slate-400">
                         {formatDisplayDate(s.opened_at, 'short', timezone)} • {formatDisplayDate(s.opened_at, 'time', timezone)}
                       </div>
@@ -889,7 +931,8 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
           </div>
         </div>
 
-        {/* ─── COLLAPSIBLE MANAGER SECTION ──────────────────────────────────── */}
+        {/* ─── COLLAPSIBLE MANAGER SECTION (ADMIN & OWNER ONLY) ───────────────── */}
+        {isAdmin && (
         <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
           <button
             onClick={() => setIsManagerMonitoringOpen(!isManagerMonitoringOpen)}
@@ -986,6 +1029,7 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
             </div>
           )}
         </div>
+        )}
       </main>
 
       {/* ─── MODALS ───────────────────────────────────────────────────────────── */}

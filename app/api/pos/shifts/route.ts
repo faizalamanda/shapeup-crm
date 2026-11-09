@@ -4,6 +4,20 @@ import { NextResponse } from 'next/server'
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v)
 
+// Helper to verify caller is Owner or Admin of the active business
+async function checkShiftUserRole(businessId: string, userId: string, adminClient: any) {
+  const [bizRes, staffRes] = await Promise.all([
+    adminClient.from('businesses').select('id, owner_id').eq('id', businessId).maybeSingle(),
+    adminClient.from('business_staff').select('role, permissions').eq('business_id', businessId).eq('profile_id', userId).maybeSingle()
+  ])
+
+  const isOwner = bizRes.data?.owner_id === userId
+  const staffRole = staffRes.data?.role
+  const staffPerms: string[] = Array.isArray(staffRes.data?.permissions) ? staffRes.data.permissions : []
+  const isAdmin = isOwner || staffRole === 'admin' || staffPerms.includes('full_access')
+  return { isOwner, isAdmin, staffRole, staffPerms, ownerId: bizRes.data?.owner_id }
+}
+
 // Helper: Calculate running cash balance and metrics for given shift IDs
 async function calculateShiftMetrics(supabase: any, shiftIds: string[]) {
   const metricsMap = new Map<string, {
@@ -84,13 +98,26 @@ export async function GET(req: Request) {
   try {
     const ctx = await getApiContext()
     if (ctx.error) return ctx.error
-    const { user, businessId, supabase } = ctx
+    const { user, businessId, supabase, supabaseAdmin } = ctx
+
+    // Verify user role in this business (Owner, Admin, or Staff)
+    const { isAdmin } = await checkShiftUserRole(businessId, user.id, supabaseAdmin)
 
     const { searchParams } = new URL(req.url)
     const mode = searchParams.get('mode') // 'monitoring' or default single cashier
 
     // ─── Mode: Manager Live Monitoring of All Active Shifts ─────────────────────
     if (mode === 'monitoring') {
+      // Least Privilege: Only Manager/Admin/Owner can access live drawer monitoring across all registers
+      if (!isAdmin) {
+        return NextResponse.json({
+          success: true,
+          activeShifts: [],
+          totalActiveCount: 0,
+          totalDrawerCash: 0
+        })
+      }
+
       const { data: openShifts, error: monitorErr } = await supabase
         .from('pos_shifts')
         .select('*')
@@ -142,14 +169,21 @@ export async function GET(req: Request) {
       const limitVal = Math.min(Math.max(parseInt(searchParams.get('limit') || '15', 10) || 15, 1), 60)
       const offsetVal = Math.max(parseInt(searchParams.get('offset') || '0', 10) || 0, 0)
       const filterStatus = searchParams.get('status') // 'all', 'closed', 'open'
+      const filterCashierId = searchParams.get('cashier_id') || searchParams.get('user_id')
 
       let shiftQuery = supabase
         .from('pos_shifts')
         .select('*', { count: 'exact' })
         .eq('business_id', businessId)
-        .eq('user_id', user.id)
         .order('opened_at', { ascending: false })
         .range(offsetVal, offsetVal + limitVal - 1)
+
+      // Scope by role: Admin sees all shifts or filters by cashier; Staff is strictly restricted to own shifts
+      if (!isAdmin) {
+        shiftQuery = shiftQuery.eq('user_id', user.id)
+      } else if (filterCashierId && isUuid(filterCashierId) && filterCashierId !== 'all') {
+        shiftQuery = shiftQuery.eq('user_id', filterCashierId)
+      }
 
       if (filterStatus && filterStatus !== 'all') {
         shiftQuery = shiftQuery.eq('status', filterStatus)
@@ -188,12 +222,47 @@ export async function GET(req: Request) {
         }
       })
 
+      // If Admin, also retrieve available cashiers list for convenient UI filtering
+      let cashiersList: Array<{ id: string; name: string }> = []
+      if (isAdmin) {
+        try {
+          const [staffListRes, ownerRes] = await Promise.all([
+            supabaseAdmin
+              .from('business_staff')
+              .select('profile_id, profile:profiles(id, full_name, email)')
+              .eq('business_id', businessId),
+            supabaseAdmin
+              .from('businesses')
+              .select('owner_id, profiles:owner_id(id, full_name, email)')
+              .eq('id', businessId)
+              .maybeSingle()
+          ])
+
+          const cashierMap = new Map<string, string>()
+          if (ownerRes.data?.profiles) {
+            const o = ownerRes.data.profiles as any
+            cashierMap.set(o.id, `${o.full_name || o.email || 'Owner'} (Owner)`)
+          }
+          if (staffListRes.data) {
+            staffListRes.data.forEach((s: any) => {
+              const p = s.profile
+              if (p?.id) cashierMap.set(p.id, p.full_name || p.email || 'Staf')
+            })
+          }
+          cashiersList = Array.from(cashierMap.entries()).map(([id, name]) => ({ id, name }))
+        } catch (e) {
+          console.error('[pos/shifts] Error fetching cashiers list:', e)
+        }
+      }
+
       const totalNum = totalCount || 0
       return NextResponse.json({
         success: true,
         shifts: enrichedHistory,
         totalCount: totalNum,
-        hasMore: (offsetVal + shiftList.length) < totalNum
+        hasMore: (offsetVal + shiftList.length) < totalNum,
+        isAdmin,
+        cashiers: cashiersList
       })
     }
 
@@ -256,6 +325,11 @@ export async function GET(req: Request) {
 
       if (shiftErr || !shiftData) {
         return NextResponse.json({ error: 'Shift tidak ditemukan' }, { status: 404 })
+      }
+
+      // Least Privilege: Staff can only inspect their own shift details; Admin/Owner can audit all shifts
+      if (!isAdmin && shiftData.user_id !== user.id) {
+        return NextResponse.json({ error: 'Akses ditolak. Anda hanya dapat melihat rincian sesi shift Anda sendiri.' }, { status: 403 })
       }
 
       // 2. Cross-Shift Resolution: Include orders where payments/refunds occurred in this shift
@@ -575,6 +649,14 @@ export async function POST(req: Request) {
 
       if (!currentShift) {
         return NextResponse.json({ error: 'Data shift tidak ditemukan' }, { status: 404 })
+      }
+
+      // Security: Only shift owner or business Admin/Owner can close a shift
+      if (currentShift.user_id !== user.id) {
+        const { isAdmin } = await checkShiftUserRole(businessId, user.id, supabaseAdmin)
+        if (!isAdmin) {
+          return NextResponse.json({ error: 'Akses ditolak. Anda hanya dapat menutup sesi shift Anda sendiri.' }, { status: 403 })
+        }
       }
 
       const shiftRegisterId = currentShift && isUuid(currentShift.register_id) ? currentShift.register_id : null
