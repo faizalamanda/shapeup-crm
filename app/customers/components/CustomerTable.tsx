@@ -38,10 +38,16 @@ function getCustomerBadges(c: any) {
   if ((Number(c.ltv) || 0) >= 1000000) {
     badges.push({ label: 'VIP', bg: '#EFF6FF', color: '#1D4ED8' })
   }
-  if (c.last_order_date) {
-    const diff = Math.ceil((TODAY.getTime() - new Date(c.last_order_date).getTime()) / 86400000)
-    if (diff > 60) badges.push({ label: 'Churn Risk', bg: '#FEF2F2', color: '#DC2626' })
+  
+  // Gunakan days_since_last_order dari completed order agar tidak terkecoh order cancelled
+  const daysSince = c.days_since_last_order !== null && c.days_since_last_order !== undefined
+    ? Number(c.days_since_last_order)
+    : (c.last_order_date ? Math.ceil((TODAY.getTime() - new Date(c.last_order_date).getTime()) / 86400000) : null)
+
+  if (daysSince !== null && daysSince > 60 && (c.total_order_count || 0) > 0) {
+    badges.push({ label: 'Churn Risk', bg: '#FEF2F2', color: '#DC2626' })
   }
+
   if (c.joined_at) {
     const diffJ = Math.ceil((TODAY.getTime() - new Date(c.joined_at).getTime()) / 86400000)
     if (diffJ <= 30 && (c.total_order_count || 0) <= 1) {

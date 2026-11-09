@@ -32,15 +32,18 @@ export function StatsPanel({ customers, totalCount }: { customers: any[]; totalC
   const total = totalCount !== undefined && totalCount > 0 ? totalCount : customers.length
 
   const totalRevenue = customers.reduce((a, c) => a + (Number(c.ltv) || 0), 0)
-  const avgLTV = customers.length > 0 ? totalRevenue / customers.length : 0
-
+  
+  // Standard CLV: Dihitung berbasis pelanggan yang sudah pernah membeli (orders > 0)
   const withOrders = customers.filter(c => (c.total_order_count || 0) > 0)
+  const avgLTV = withOrders.length > 0 ? totalRevenue / withOrders.length : 0
+
   const avgAOV = withOrders.length > 0
     ? withOrders.reduce((a, c) => a + (Number(c.aov) || 0), 0) / withOrders.length
     : 0
 
-  const repeatRate = customers.length > 0
-    ? (customers.filter(c => (c.total_order_count || 0) > 1).length / customers.length) * 100
+  // Standard RPR: Rasio pelanggan repeat (orders > 1) terhadap pelanggan yang sudah beli (orders >= 1)
+  const repeatRate = withOrders.length > 0
+    ? (withOrders.filter(c => (c.total_order_count || 0) > 1).length / withOrders.length) * 100
     : 0
 
   const vipCount = customers.filter(c => (Number(c.ltv) || 0) >= 1000000).length
@@ -75,7 +78,7 @@ export function StatsPanel({ customers, totalCount }: { customers: any[]; totalC
             {formatIDR(avgLTV)}
           </span>
         }
-        sub="Order selesai"
+        sub={withOrders.length > 0 ? `${withOrders.length.toLocaleString('id-ID')} pembeli` : '0 pembeli'}
         accentColor="#0284C7"
       />
       <StatCard
@@ -85,13 +88,13 @@ export function StatsPanel({ customers, totalCount }: { customers: any[]; totalC
             {formatIDR(avgAOV)}
           </span>
         }
-        sub="Order selesai"
+        sub="Per transaksi selesai"
         accentColor="#F59E0B"
       />
       <StatCard
         label="Repeat Rate"
         value={<span className="text-emerald-600 font-extrabold">{repeatRate.toFixed(1)}%</span>}
-        sub="Order > 1 kali"
+        sub="Pembeli repeat (≥2x)"
         accentColor="#16A34A"
       />
       <StatCard

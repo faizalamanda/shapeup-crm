@@ -27,10 +27,10 @@ const RFM_SEGMENTS = [
   { value: 'loyal',    label: 'Loyal (Order ≥ 3 & Aktif ≤ 30 hari)' },
   { value: 'new',      label: 'Pelanggan Baru (1 Order & Aktif ≤ 30 hari)' },
   { value: 'regular',  label: 'Regular Customer' },
-  { value: 'at_risk',  label: 'At Risk (Belum Order > 60 hari)' },
+  { value: 'at_risk',  label: 'At Risk (Belum Order 61–90 hari)' },
   { value: 'churned',  label: 'Churned (Belum Order > 90 hari)' },
   { value: 'one_time', label: 'One-Timer (1 Order & Belum Order > 30 hari)' },
-  { value: 'lost',     label: 'Lost (0 Order)' },
+  { value: 'lost',     label: 'Prospek (0 Order / Belum Beli)' },
 ]
 
 const DEFAULT_PRESETS = [

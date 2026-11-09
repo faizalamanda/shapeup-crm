@@ -24,7 +24,7 @@ type CachePayload = {
 }
 
 function getCacheKey(bid: string) {
-  return `su_customers_v2_${bid}`
+  return `su_customers_v3_${bid}`
 }
 
 function readCache(bid: string): CachePayload | null {
@@ -123,15 +123,15 @@ function applyCustomerFilters(query: any, search: string, rules: FilterRule[], p
         if (isEq) query = query.gte('total_order_count', 2).lte('days_since_last_order', 60)
         else query = query.or('total_order_count.lt.2,days_since_last_order.gt.60')
       } else if (value === 'at_risk') {
-        if (isEq) query = query.gte('total_order_count', 1).gt('days_since_last_order', 60)
-        else query = query.or('total_order_count.eq.0,days_since_last_order.lte.60')
+        if (isEq) query = query.gte('total_order_count', 1).gt('days_since_last_order', 60).lte('days_since_last_order', 90)
+        else query = query.or('total_order_count.eq.0,days_since_last_order.lte.60,days_since_last_order.gt.90')
       } else if (value === 'churned') {
         if (isEq) query = query.gte('total_order_count', 1).gt('days_since_last_order', 90)
         else query = query.or('total_order_count.eq.0,days_since_last_order.lte.90')
       } else if (value === 'one_time') {
         if (isEq) query = query.eq('total_order_count', 1).gt('days_since_last_order', 30)
         else query = query.or('total_order_count.neq.1,days_since_last_order.lte.30')
-      } else if (value === 'lost') {
+      } else if (value === 'lost' || value === 'prospect') {
         if (isEq) query = query.eq('total_order_count', 0)
         else query = query.gt('total_order_count', 0)
       }

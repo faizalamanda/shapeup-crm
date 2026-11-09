@@ -64,38 +64,41 @@ function ChartCard({
 
 export function AnalyticsCharts({ customers }: { customers: any[] }) {
   const cltvDist = useMemo(() => {
+    const buyers = customers.filter(c => (Number(c.ltv) || 0) > 0)
     const buckets = [
-      { label: '< 100rb',       min: 0,       max: 100000,   count: 0, color: '#2563EB' },
+      { label: '< 100rb',       min: 1,       max: 100000,   count: 0, color: '#2563EB' },
       { label: '100rb – 500rb', min: 100000,   max: 500000,   count: 0, color: '#6366F1' },
       { label: '500rb – 1jt',   min: 500000,   max: 1000000,  count: 0, color: '#8B5CF6' },
       { label: '1jt – 5jt',     min: 1000000,  max: 5000000,  count: 0, color: '#A855F7' },
       { label: '> 5jt',         min: 5000000,  max: Infinity, count: 0, color: '#D946EF' },
     ]
-    customers.forEach(c => {
+    buyers.forEach(c => {
       const v = Number(c.ltv) || 0
       const b = buckets.find(b => v >= b.min && v < b.max)
       if (b) b.count++
     })
-    return { buckets, total: customers.length, maxCount: Math.max(...buckets.map(b => b.count), 1) }
+    return { buckets, total: buyers.length, maxCount: Math.max(...buckets.map(b => b.count), 1) }
   }, [customers])
 
   const aovDist = useMemo(() => {
+    const buyers = customers.filter(c => (Number(c.aov) || 0) > 0)
     const buckets = [
-      { label: '< 50rb',        min: 0,      max: 50000,    count: 0, color: '#10B981' },
+      { label: '< 50rb',        min: 1,      max: 50000,    count: 0, color: '#10B981' },
       { label: '50rb – 150rb',  min: 50000,  max: 150000,   count: 0, color: '#059669' },
       { label: '150rb – 300rb', min: 150000, max: 300000,   count: 0, color: '#0D9488' },
       { label: '300rb – 500rb', min: 300000, max: 500000,   count: 0, color: '#0891B2' },
       { label: '> 500rb',       min: 500000, max: Infinity, count: 0, color: '#0284C7' },
     ]
-    customers.forEach(c => {
+    buyers.forEach(c => {
       const v = Number(c.aov) || 0
       const b = buckets.find(b => v >= b.min && v < b.max)
       if (b) b.count++
     })
-    return { buckets, total: customers.length, maxCount: Math.max(...buckets.map(b => b.count), 1) }
+    return { buckets, total: buyers.length, maxCount: Math.max(...buckets.map(b => b.count), 1) }
   }, [customers])
 
   const ordersDist = useMemo(() => {
+    const buyers = customers.filter(c => (Number(c.total_order_count) || 0) > 0)
     const buckets = [
       { label: '1 Order',     min: 1,  max: 2,        count: 0, color: '#F59E0B' },
       { label: '2 Order',     min: 2,  max: 3,        count: 0, color: '#F97316' },
@@ -103,12 +106,12 @@ export function AnalyticsCharts({ customers }: { customers: any[] }) {
       { label: '6 – 10',      min: 6,  max: 11,       count: 0, color: '#DC2626' },
       { label: '> 10',        min: 11, max: Infinity,  count: 0, color: '#B91C1C' },
     ]
-    customers.forEach(c => {
+    buyers.forEach(c => {
       const v = Number(c.total_order_count) || 0
       const b = buckets.find(b => v >= b.min && v < b.max)
       if (b) b.count++
     })
-    return { buckets, total: customers.length, maxCount: Math.max(...buckets.map(b => b.count), 1) }
+    return { buckets, total: buyers.length, maxCount: Math.max(...buckets.map(b => b.count), 1) }
   }, [customers])
 
   if (customers.length === 0) {
