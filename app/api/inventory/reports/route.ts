@@ -401,6 +401,63 @@ export async function GET(req: Request) {
     // ─────────────────────────────────────────────────────────────────────
     const offset = (page - 1) * limit
 
+    // 1. Fetch categories & inventory locations upfront
+    const [categoriesRes, locationsRes] = await Promise.all([
+      supabase
+        .from('categories')
+        .select('id, name')
+        .eq('business_id', businessId)
+        .order('name', { ascending: true }),
+      supabase
+        .from('inventory_locations')
+        .select('id, name, code, type, is_default')
+        .eq('business_id', businessId)
+    ])
+
+    const allCategories: { id: string; name: string }[] = categoriesRes.data || []
+    const isTanpaKategori = !!categoryFilter && categoryFilter.toLowerCase() === 'tanpa kategori'
+
+    // Determine category ID filtering (ensuring immunity against rename & Left Join bugs)
+    let matchedCategoryIds: string[] = []
+    const isCategoryUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(categoryFilter)
+    if (categoryFilter && !isTanpaKategori) {
+      if (isCategoryUuid) {
+        matchedCategoryIds = [categoryFilter]
+      } else {
+        const filterLower = categoryFilter.toLowerCase()
+        matchedCategoryIds = allCategories
+          .filter(c => c.name.toLowerCase() === filterLower)
+          .map(c => c.id)
+      }
+    } else if (isTanpaKategori) {
+      // Find if there's any category explicitly named "Tanpa Kategori"
+      matchedCategoryIds = allCategories
+        .filter(c => c.name.toLowerCase() === 'tanpa kategori')
+        .map(c => c.id)
+    }
+
+    // Helper to apply robust category filter directly on products.category_id
+    const applyCategoryFilter = (q: any) => {
+      if (!categoryFilter) return q
+
+      if (isTanpaKategori) {
+        if (matchedCategoryIds.length > 0) {
+          return q.or(`category_id.is.null,category_id.in.(${matchedCategoryIds.join(',')})`)
+        } else {
+          return q.is('category_id', null)
+        }
+      } else {
+        if (matchedCategoryIds.length === 1) {
+          return q.eq('category_id', matchedCategoryIds[0])
+        } else if (matchedCategoryIds.length > 1) {
+          return q.in('category_id', matchedCategoryIds)
+        } else {
+          // Kategori tidak ditemukan di database
+          return q.eq('category_id', '00000000-0000-0000-0000-000000000000')
+        }
+      }
+    }
+
     const metricsPromise = (async () => {
       try {
         const { data: rpcRes, error: rpcErr } = await supabase.rpc('get_inventory_summary_metrics', {
@@ -426,16 +483,14 @@ export async function GET(req: Request) {
 
       let statsQuery = supabase
         .from('products')
-        .select('stock_quantity, cost_price, category_id, categories(name)')
+        .select('stock_quantity, cost_price, category_id')
         .eq('business_id', businessId)
 
       if (search) {
         statsQuery = statsQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%`)
       }
 
-      if (categoryFilter) {
-        statsQuery = statsQuery.eq('categories.name', categoryFilter)
-      }
+      statsQuery = applyCategoryFilter(statsQuery)
 
       const { data: prodStats } = await statsQuery
 
@@ -469,12 +524,6 @@ export async function GET(req: Request) {
       }
     })()
 
-    const categoriesPromise = supabase
-      .from('categories')
-      .select('name')
-      .eq('business_id', businessId)
-      .order('name', { ascending: true })
-
     let prodsQuery = supabase
       .from('products')
       .select('id, name, sku, unit, cost_price, price, description, hpp_type, stock_quantity, category_id, categories(id, name), product_variants(*)', { count: 'exact' })
@@ -501,9 +550,7 @@ export async function GET(req: Request) {
       }
     }
 
-    if (categoryFilter) {
-      prodsQuery = prodsQuery.eq('categories.name', categoryFilter)
-    }
+    prodsQuery = applyCategoryFilter(prodsQuery)
 
     // Try DB native sort first for simpler fields
     if (sortField === 'productName') {
@@ -521,11 +568,9 @@ export async function GET(req: Request) {
       prodsQuery = prodsQuery.range(offset, offset + limit - 1)
     }
 
-    let [metrics, categoriesRes, prodsRes, locationsRes] = await Promise.all([
+    let [metrics, prodsRes] = await Promise.all([
       metricsPromise,
-      categoriesPromise,
-      prodsQuery,
-      supabase.from('inventory_locations').select('id, name, code, type, is_default').eq('business_id', businessId)
+      prodsQuery
     ])
 
     // Fallback if nested product_variants query fails due to schema cache
@@ -536,7 +581,8 @@ export async function GET(req: Request) {
         .eq('business_id', businessId)
 
       if (search) fallbackProdsQuery = fallbackProdsQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%`)
-      if (categoryFilter) fallbackProdsQuery = fallbackProdsQuery.eq('categories.name', categoryFilter)
+      fallbackProdsQuery = applyCategoryFilter(fallbackProdsQuery)
+
       if (sortField === 'productName') fallbackProdsQuery = fallbackProdsQuery.order('name', { ascending: isAsc })
       else if (sortField === 'onHandQty') fallbackProdsQuery = fallbackProdsQuery.order('stock_quantity', { ascending: isAsc })
       else if (sortField === 'unitCost') fallbackProdsQuery = fallbackProdsQuery.order('cost_price', { ascending: isAsc })
@@ -593,7 +639,19 @@ export async function GET(req: Request) {
       paginatedProducts = paginatedProducts.slice(offset, offset + limit)
     }
 
-    const categories = (categoriesRes.data || []).map(c => c.name).filter(Boolean)
+    const categoryNames = allCategories.map(c => c.name).filter(Boolean)
+    const hasExplicitTanpaKategori = categoryNames.some(n => n.toLowerCase() === 'tanpa kategori')
+    if (!hasExplicitTanpaKategori) {
+      const { count: uncategorizedCount } = await supabase
+        .from('products')
+        .select('id', { count: 'exact', head: true })
+        .eq('business_id', businessId)
+        .is('category_id', null)
+      if (uncategorizedCount && uncategorizedCount > 0) {
+        categoryNames.push('Tanpa Kategori')
+      }
+    }
+
     const locations = (locationsRes.data && locationsRes.data.length > 0)
       ? locationsRes.data as InventoryLocation[]
       : DEFAULT_LOCATIONS(businessId)
@@ -620,7 +678,7 @@ export async function GET(req: Request) {
         totalItems,
         totalPages
       },
-      categories,
+      categories: categoryNames,
       stockReportItems,
     })
   } catch (err: any) {
