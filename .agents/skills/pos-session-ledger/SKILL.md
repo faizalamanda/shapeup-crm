@@ -32,6 +32,20 @@ Dokumen skill ini menetapkan arsitektur standar untuk sistem Kasir / Point of Sa
   - **Selisih Lebih ($\Delta > 0$):** Diposting ke akun `403000` (*Pendapatan Operasional Lainnya*).
   - Kas aktual disetorkan ke rekening tujuan (`target_account_code` / Bank/Brankas).
 
+### 1.4 Real-Time Petty Cash Movement Journaling & Cash Flow Integration (PSAK 2 / IAS 7)
+- **Zero Orphan Cash Movement:** Setiap mutasi kas laci kasir (`pos_shift_movements`) baik berupa pengeluaran (*Cash Out*) maupun penambahan modal (*Cash In*) **WAJIB** terikat langsung ke Bagan Akun (COA) dan diposting seketika (*Real-Time Perpetual*) ke modul akuntansi (`transactions` & `journal_lines`).
+- **Aturan Jurnal Kas Keluar (Petty Cash Outflow):**
+  - **Debit:** Akun Beban Terpilih (Default: `503000 Beban Operasional`, atau sesuai pemetaan kategori preset seperti `503400 Beban Perlengkapan & ATK`, `503500 Beban Transportasi/Kurir`, `503900 Beban Konsumsi`, `503200 Beban Utilitas`).
+  - **Kredit:** Akun Kas POS / Laci Kasir (`101000` atau register laci aktif).
+  - **Dampak Arus Kas:** Pengeluaran ini seketika diakui pada Laporan Arus Kas di bawah *Arus Kas Keluar dari Aktivitas Operasi (Operating Outflows: Expenses)* tanpa menunggu shift kasir ditutup.
+- **Aturan Jurnal Kas Masuk (Petty Cash Inflow):**
+  - **Debit:** Akun Kas POS / Laci Kasir (`101000`).
+  - **Kredit:** Akun Sumber Dana (Default: `101100 Rekening Bank Utama / Kas Utama`, atau `301000 Modal Pemilik`).
+  - **Dampak Arus Kas:** Jika bersumber dari Kas/Bank lain, diklasifikasikan sebagai mutasi kas internal (saldo kas bersih tidak berubah). Jika bersumber dari modal pemilik, diakui pada *Arus Kas Aktivitas Pendanaan (Financing Flows)*.
+- **Audit Trail & Idempotent Linking:**
+  - Header jurnal transaksi menggunakan format deskripsi standar `[POS-MOV-{movement.id}] ...`.
+  - Hal ini menjamin pelacakan dua arah antara log laci kasir dan buku besar akuntansi, serta mencegah duplikasi posting jurnal secara atomik.
+
 ---
 
 ## 2. Multi-Tender Split Payment & Dual Split Bill Architecture

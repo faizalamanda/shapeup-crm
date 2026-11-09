@@ -9,6 +9,7 @@ type Props = {
   shiftId: string
   initialType?: 'cash_out' | 'cash_in'
   industryMode?: 'fnb' | 'fashion'
+  accounts?: any[]
   onSuccess: () => Promise<void> | void
 }
 
@@ -18,16 +19,56 @@ export default function PettyCashModal({
   shiftId,
   initialType = 'cash_out',
   industryMode = 'fnb',
+  accounts = [],
   onSuccess
 }: Props) {
   const [movementType, setMovementType] = useState<'cash_out' | 'cash_in'>(initialType)
   const [amount, setAmount] = useState<string>('')
   const [category, setCategory] = useState<string>('')
   const [note, setNote] = useState<string>('')
+  const [selectedAccountId, setSelectedAccountId] = useState<string>('')
   const [submitting, setSubmitting] = useState<boolean>(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  // Sync movementType when initialType changes upon opening
+  // Filter accounts
+  const expenseAccounts = (accounts || []).filter(a => a.type === 'EXPENSE')
+  const sourceAccounts = (accounts || []).filter(a => 
+    (a.type === 'ASSET' && (a.sub_type === 'bank_cash' || a.code?.startsWith('101')) && a.code !== '101000') ||
+    a.code === '301000' ||
+    a.type === 'EQUITY' ||
+    a.type === 'REVENUE'
+  )
+
+  const activeAccountList = movementType === 'cash_out' ? expenseAccounts : sourceAccounts
+
+  // Helper: auto map preset to matching expense account
+  const matchPresetToAccount = (presetVal: string) => {
+    const lower = presetVal.toLowerCase()
+    if (lower.includes('lakban') || lower.includes('plastik') || lower.includes('tag') || lower.includes('kertas') || lower.includes('atk')) {
+      const acc = expenseAccounts.find(a => a.code === '503400' || a.name.toLowerCase().includes('perlengkapan'))
+      if (acc) return acc.id
+    }
+    if (lower.includes('parkir') || lower.includes('kurir') || lower.includes('ongkir') || lower.includes('bensin') || lower.includes('transport')) {
+      const acc = expenseAccounts.find(a => a.code === '503500' || a.name.toLowerCase().includes('transport'))
+      if (acc) return acc.id
+    }
+    if (lower.includes('es') || lower.includes('air') || lower.includes('galon') || lower.includes('susu') || lower.includes('snack') || lower.includes('konsumsi')) {
+      const acc = expenseAccounts.find(a => a.code === '503900' || a.name.toLowerCase().includes('konsumsi'))
+      if (acc) return acc.id
+    }
+    if (lower.includes('gas') || lower.includes('listrik') || lower.includes('lpg')) {
+      const acc = expenseAccounts.find(a => a.code === '503200' || a.name.toLowerCase().includes('utilitas'))
+      if (acc) return acc.id
+    }
+    if (lower.includes('display') || lower.includes('kebersihan') || lower.includes('hanger')) {
+      const acc = expenseAccounts.find(a => a.code === '503700' || a.code === '503400' || a.name.toLowerCase().includes('pemeliharaan'))
+      if (acc) return acc.id
+    }
+    const def = expenseAccounts.find(a => a.code === '503000') || expenseAccounts[0]
+    return def?.id || ''
+  }
+
+  // Sync state when modal opens or initialType changes
   useEffect(() => {
     if (isOpen) {
       setMovementType(initialType)
@@ -35,8 +76,29 @@ export default function PettyCashModal({
       setCategory('')
       setNote('')
       setErrorMsg(null)
+
+      if (initialType === 'cash_out') {
+        const def = expenseAccounts.find(a => a.code === '503000') || expenseAccounts[0]
+        setSelectedAccountId(def?.id || '')
+      } else {
+        const def = sourceAccounts.find(a => a.code === '101100') || sourceAccounts[0]
+        setSelectedAccountId(def?.id || '')
+      }
     }
   }, [isOpen, initialType])
+
+  // Sync selectedAccountId when switching movementType
+  const handleSwitchType = (type: 'cash_out' | 'cash_in') => {
+    setMovementType(type)
+    setCategory('')
+    if (type === 'cash_out') {
+      const def = expenseAccounts.find(a => a.code === '503000') || expenseAccounts[0]
+      setSelectedAccountId(def?.id || '')
+    } else {
+      const def = sourceAccounts.find(a => a.code === '101100') || sourceAccounts[0]
+      setSelectedAccountId(def?.id || '')
+    }
+  }
 
   // Fast preset denominations
   const quickAmounts = [10000, 20000, 50000, 100000]
@@ -83,7 +145,8 @@ export default function PettyCashModal({
           shift_id: shiftId,
           type: movementType,
           amount: numAmount,
-          note: finalNote
+          note: finalNote,
+          account_id: selectedAccountId || undefined
         })
       })
 
@@ -126,8 +189,8 @@ export default function PettyCashModal({
       }
       description={
         movementType === 'cash_out' 
-          ? 'Catat pengeluaran tunai kecil operasional tanpa menutup shift' 
-          : 'Catat tambahan uang modal / kembalian ke dalam laci'
+          ? 'Catat pengeluaran tunai kecil operasional, langsung terhubung ke Buku Besar & Arus Kas' 
+          : 'Catat tambahan uang modal / kembalian ke dalam laci kasir'
       }
       desktopSize="md"
       footer={
@@ -153,7 +216,7 @@ export default function PettyCashModal({
             {submitting ? (
               <>
                 <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                <span>Menyimpan...</span>
+                <span>Menyimpan & Menjurnal...</span>
               </>
             ) : (
               <>
@@ -177,10 +240,7 @@ export default function PettyCashModal({
         <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-2xl border border-slate-200/70">
           <button
             type="button"
-            onClick={() => {
-              setMovementType('cash_out')
-              setCategory('')
-            }}
+            onClick={() => handleSwitchType('cash_out')}
             className={`py-2.5 rounded-xl text-xs font-extrabold transition flex items-center justify-center gap-1.5 ${
               movementType === 'cash_out'
                 ? 'bg-rose-600 text-white shadow-sm'
@@ -191,10 +251,7 @@ export default function PettyCashModal({
           </button>
           <button
             type="button"
-            onClick={() => {
-              setMovementType('cash_in')
-              setCategory('')
-            }}
+            onClick={() => handleSwitchType('cash_in')}
             className={`py-2.5 rounded-xl text-xs font-extrabold transition flex items-center justify-center gap-1.5 ${
               movementType === 'cash_in'
                 ? 'bg-emerald-600 text-white shadow-sm'
@@ -254,7 +311,15 @@ export default function PettyCashModal({
                   <button
                     key={p.val}
                     type="button"
-                    onClick={() => setCategory(isSelected ? '' : p.val)}
+                    onClick={() => {
+                      const isSel = category === p.val
+                      const nextVal = isSel ? '' : p.val
+                      setCategory(nextVal)
+                      if (nextVal) {
+                        const matchedId = matchPresetToAccount(nextVal)
+                        if (matchedId) setSelectedAccountId(matchedId)
+                      }
+                    }}
                     className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition border ${
                       isSelected
                         ? 'bg-rose-50 border-rose-400 text-rose-700 font-bold shadow-xs'
@@ -268,6 +333,47 @@ export default function PettyCashModal({
             </div>
           </div>
         )}
+
+        {/* Account Selection (COA) */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-bold text-slate-700 flex justify-between items-center">
+            <span>
+              {movementType === 'cash_out' 
+                ? 'Alokasi Akun Beban (Laba Rugi & Arus Kas)' 
+                : 'Sumber Rekening Kas Masuk'}
+            </span>
+            <span className="text-[11px] text-indigo-600 font-semibold flex items-center gap-1">
+              <span>📑</span> Jurnal Terintegrasi
+            </span>
+          </label>
+          <div className="relative">
+            <select
+              value={selectedAccountId}
+              onChange={(e) => setSelectedAccountId(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition appearance-none"
+            >
+              {activeAccountList.length === 0 ? (
+                <option value="">
+                  {movementType === 'cash_out' ? '503000 - Beban Operasional (Default)' : '101100 - Kas Utama / Bank (Default)'}
+                </option>
+              ) : (
+                activeAccountList.map((acc) => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.code} - {acc.name}
+                  </option>
+                ))
+              )}
+            </select>
+            <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">
+              ▼
+            </div>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            {movementType === 'cash_out'
+              ? 'Pengeluaran ini otomatis didebit ke akun beban terpilih dan muncul di Arus Kas Operasi.'
+              : 'Akun sumber dana yang akan dikreditkan sebagai penyeimbang kas masuk di laci kasir.'}
+          </p>
+        </div>
 
         {/* Note / Deskripsi */}
         <div className="space-y-1.5">
@@ -292,10 +398,10 @@ export default function PettyCashModal({
         <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-2xl text-[11px] space-y-1">
           <p className="font-bold text-amber-900 flex items-center gap-1.5">
             <span>💡</span>
-            <span>Pengaruh ke Laci Kas:</span>
+            <span>Pengaruh ke Laci Kas & Buku Besar:</span>
           </p>
           <p className="text-amber-700/90 leading-relaxed">
-            Nominal ini akan otomatis menambah atau mengurangi saldo fisik yang diharapkan (*Expected Cash*) pada penutupan sesi shift kasir hari ini.
+            Nominal ini otomatis memutasi saldo fisik kas laci yang diharapkan (*Expected Cash*) serta menjurnal pembukuan secara berpasangan ke modul Akuntansi Keuangan.
           </p>
         </div>
       </form>

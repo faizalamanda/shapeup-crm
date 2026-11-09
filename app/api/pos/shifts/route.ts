@@ -783,7 +783,7 @@ export async function POST(req: Request) {
 
     // ─── ACTION: CASH MOVEMENT (PETTY CASH IN / OUT) ───────────────────────────
     if (action === 'cash_movement') {
-      const { shift_id, type, amount, note: movNote = '' } = body
+      const { shift_id, type, amount, note: movNote = '', account_id } = body
       if (!isUuid(shift_id)) {
         return NextResponse.json({ error: 'shift_id tidak valid' }, { status: 400 })
       }
@@ -798,7 +798,7 @@ export async function POST(req: Request) {
       // Verify active shift
       const { data: shift, error: shiftErr } = await supabase
         .from('pos_shifts')
-        .select('id, status')
+        .select('id, status, register_id, cashier_name')
         .eq('id', shift_id)
         .eq('business_id', businessId)
         .maybeSingle()
@@ -807,14 +807,64 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Shift kasir tidak ditemukan atau sudah ditutup' }, { status: 400 })
       }
 
-      const { data: movement, error: movErr } = await supabase
+      const activeCashierName = shift.cashier_name || cashierName
+      const shiftRegisterId = shift && isUuid(shift.register_id) ? shift.register_id : null
+
+      // Resolve Kas POS account
+      const { getOrCreateDefaultAccounts } = await import('@/lib/accountHelper')
+      const accountMap = await getOrCreateDefaultAccounts(businessId, dbClient)
+
+      let kasPosAccId = accountMap['101000']
+      if (shiftRegisterId) {
+        const { data: regData } = await dbClient
+          .from('pos_registers')
+          .select('account_id')
+          .eq('id', shiftRegisterId)
+          .maybeSingle()
+        if (regData?.account_id) kasPosAccId = regData.account_id
+      }
+
+      // Resolve Counterpart Account (Expense for cash_out, Source of fund for cash_in)
+      let counterAccountId = isUuid(account_id) ? account_id : null
+      if (!counterAccountId) {
+        if (type === 'cash_out') {
+          counterAccountId = accountMap['503000'] || null
+          if (!counterAccountId) {
+            const { data: expAcc } = await dbClient
+              .from('accounts')
+              .select('id')
+              .eq('business_id', businessId)
+              .eq('type', 'EXPENSE')
+              .limit(1)
+              .maybeSingle()
+            if (expAcc) counterAccountId = expAcc.id
+          }
+        } else {
+          counterAccountId = accountMap['101100'] || null
+          if (!counterAccountId) {
+            const { data: bankAcc } = await dbClient
+              .from('accounts')
+              .select('id')
+              .eq('business_id', businessId)
+              .eq('type', 'ASSET')
+              .neq('code', '101000')
+              .limit(1)
+              .maybeSingle()
+            if (bankAcc) counterAccountId = bankAcc.id
+          }
+        }
+      }
+
+      const noteText = movNote || (type === 'cash_in' ? 'Kas Masuk Laci' : 'Kas Keluar Operasional')
+
+      const { data: movement, error: movErr } = await dbClient
         .from('pos_shift_movements')
         .insert({
           shift_id,
           business_id: businessId,
           type,
           amount: numAmount,
-          note: movNote || (type === 'cash_in' ? 'Kas Masuk (Modal Tambahan)' : 'Kas Keluar (Petty Cash Operasional)')
+          note: noteText
         })
         .select()
         .single()
@@ -823,11 +873,58 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: movErr.message }, { status: 500 })
       }
 
+      // ─── REAL-TIME JOURNAL POSTING (PSAK 2 / IAS 7) ─────────────────────────
+      let txId = null
+      if (kasPosAccId && counterAccountId) {
+        try {
+          const { postJournalTransaction } = await import('@/lib/journalHelper')
+          const journalLines = type === 'cash_out'
+            ? [
+                { account_id: counterAccountId, debit: numAmount, credit: 0 },
+                { account_id: kasPosAccId, debit: 0, credit: numAmount }
+              ]
+            : [
+                { account_id: kasPosAccId, debit: numAmount, credit: 0 },
+                { account_id: counterAccountId, debit: 0, credit: numAmount }
+              ]
+
+          const desc = type === 'cash_out'
+            ? `[POS-MOV-${movement.id}] Pengeluaran Kas POS: ${noteText} (${activeCashierName})`
+            : `[POS-MOV-${movement.id}] Kas Masuk Laci POS: ${noteText} (${activeCashierName})`
+
+          const jRes = await postJournalTransaction(
+            businessId,
+            null,
+            movement.created_at || new Date().toISOString(),
+            desc,
+            journalLines,
+            dbClient,
+            false
+          )
+          txId = jRes?.transactionId || null
+        } catch (jErr) {
+          console.warn('[pos/shifts] Cash movement journal posting error:', jErr)
+        }
+      }
+
       return NextResponse.json({
         success: true,
         movement,
-        message: type === 'cash_in' ? 'Kas masuk berhasil dicatat' : 'Kas keluar (petty cash) berhasil dicatat'
+        transactionId: txId,
+        message: type === 'cash_in' ? 'Kas masuk berhasil dicatat & disinkronisasi ke jurnal' : 'Kas keluar (petty cash) berhasil dicatat & disinkronisasi ke jurnal'
       })
+    }
+
+    // ─── ACTION: SYNC HISTORICAL CASH MOVEMENTS TO JOURNAL ──────────────────────
+    if (action === 'sync_historical_movements') {
+      const { isAdmin } = await checkShiftUserRole(businessId, user.id, supabaseAdmin)
+      if (!isAdmin) {
+        return NextResponse.json({ error: 'Akses ditolak. Hanya Admin/Owner yang dapat menjalankan sinkronisasi jurnal.' }, { status: 403 })
+      }
+
+      const { syncHistoricalCashMovements } = await import('@/lib/posCashMovementSync')
+      const result = await syncHistoricalCashMovements(businessId, dbClient)
+      return NextResponse.json({ success: true, ...result })
     }
 
     return NextResponse.json({ error: 'Aksi tidak valid' }, { status: 400 })

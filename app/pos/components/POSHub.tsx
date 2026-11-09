@@ -1054,6 +1054,7 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
           shiftId={activeShift.id}
           initialType={pettyCashType}
           industryMode="fashion"
+          accounts={accounts}
           onSuccess={loadData}
         />
       )}
