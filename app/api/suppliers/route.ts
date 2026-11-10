@@ -1,4 +1,5 @@
 import { getApiContext } from '@/lib/apiContext'
+import { fetchAllSupabaseRows } from '@/lib/chunkedQueryHelper'
 import { NextResponse } from 'next/server'
 
 export async function GET(req: Request) {
@@ -7,18 +8,18 @@ export async function GET(req: Request) {
   const { businessId, supabase } = ctx
 
   try {
-    const { data: suppliers, error: fetchErr } = await supabase
-      .from('suppliers')
-      .select(`
-        *,
-        customer:customers(id, name)
-      `)
-      .eq('business_id', businessId)
-      .order('name', { ascending: true })
-
-    if (fetchErr) {
-      return NextResponse.json({ error: fetchErr.message }, { status: 500 })
-    }
+    const suppliers = await fetchAllSupabaseRows((from, to) =>
+      supabase
+        .from('suppliers')
+        .select(`
+          *,
+          customer:customers(id, name)
+        `)
+        .eq('business_id', businessId)
+        .order('name', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to)
+    )
 
     return NextResponse.json(suppliers)
   } catch (err: any) {

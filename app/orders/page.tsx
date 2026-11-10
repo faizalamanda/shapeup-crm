@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { fetchAllSupabaseRows } from '@/lib/chunkedQueryHelper'
 import { useUserContext } from '@/components/UserContext'
 import { OrderStats } from './components/OrderStats'
 import { OrderTable } from './components/OrderTable'
@@ -215,11 +216,15 @@ export default function OrderPage() {
     if (!activeBizId) return
     async function loadProducts() {
       try {
-        const { data } = await supabase
-          .from('products')
-          .select('name')
-          .eq('business_id', activeBizId)
-          .order('name')
+        const data = await fetchAllSupabaseRows<{ name: string }>((from, to) =>
+          supabase
+            .from('products')
+            .select('name')
+            .eq('business_id', activeBizId)
+            .order('name', { ascending: true })
+            .order('id', { ascending: true })
+            .range(from, to)
+        )
         if (data && data.length > 0) {
           setAvailableProducts(Array.from(new Set(data.map(p => p.name).filter(Boolean))).sort())
         }

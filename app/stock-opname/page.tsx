@@ -5,6 +5,7 @@ import { useUserContext } from '@/components/UserContext'
 import { PageLayout } from '@/components/ui/PageLayout'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { formatDisplayDate } from '@/lib/timeUtils'
+import { fetchAllSupabaseRows } from '@/lib/chunkedQueryHelper'
 import { Pagination } from '../components/Pagination'
 
 type ProductVariant = {
@@ -272,33 +273,41 @@ export default function StockOpnamePage() {
     fetchOpnames()
   }, [fetchOpnames])
 
-  // 3. Network Fetch Products when activeBizId is available
+  // 3. Network Fetch Products when activeBizId is available (Chunked > 1,000 rows)
   useEffect(() => {
     if (!activeBizId) return
     let mounted = true
     const fetchProducts = async () => {
       try {
-        let { data, error } = await supabase
-          .from('products')
-          .select('id, name, sku, stock_quantity, cost_price, product_variants(id, name, sku, stock_quantity, cost_price)')
-          .eq('business_id', activeBizId)
-          .eq('type', 'physical')
-          .eq('stock_type', 'tracked')
-          .order('name', { ascending: true })
-
-        if (error) {
-          const fallbackRes = await supabase
-            .from('products')
-            .select('id, name, sku, stock_quantity, cost_price')
-            .eq('business_id', activeBizId)
-            .eq('type', 'physical')
-            .eq('stock_type', 'tracked')
-            .order('name', { ascending: true })
-          data = fallbackRes.data as any
+        let data: Product[] = []
+        try {
+          data = await fetchAllSupabaseRows<Product>((from, to) =>
+            supabase
+              .from('products')
+              .select('id, name, sku, stock_quantity, cost_price, product_variants(id, name, sku, stock_quantity, cost_price)')
+              .eq('business_id', activeBizId)
+              .eq('type', 'physical')
+              .eq('stock_type', 'tracked')
+              .order('name', { ascending: true })
+              .order('id', { ascending: true })
+              .range(from, to)
+          )
+        } catch {
+          data = await fetchAllSupabaseRows<Product>((from, to) =>
+            supabase
+              .from('products')
+              .select('id, name, sku, stock_quantity, cost_price')
+              .eq('business_id', activeBizId)
+              .eq('type', 'physical')
+              .eq('stock_type', 'tracked')
+              .order('name', { ascending: true })
+              .order('id', { ascending: true })
+              .range(from, to)
+          )
         }
 
         if (mounted && data) {
-          setProducts(data as Product[])
+          setProducts(data)
           try {
             localStorage.setItem(`su_stock_products_${activeBizId}`, JSON.stringify(data))
           } catch (e) {

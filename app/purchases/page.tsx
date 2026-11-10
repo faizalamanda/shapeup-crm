@@ -4,7 +4,8 @@ import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import { PurchaseDetailModal } from './components/PurchaseDetailModal'
 import { SupplierSelectCombobox } from '@/components/SupplierSelectCombobox'
-import { ProductSelectCombobox } from '@/components/ProductSelectCombobox'
+import { ProductSelectCombobox, ProductComboboxItem } from '@/components/ProductSelectCombobox'
+import { fetchAllBusinessProducts } from '@/lib/chunkedQueryHelper'
 import QuickAddSupplierModal from '@/components/QuickAddSupplierModal'
 import { Pagination } from '../components/Pagination'
 import { useModalBackHandler } from '@/hooks/useModalBackHandler'
@@ -22,6 +23,16 @@ type Product = {
   price: number
   cost_price: number
   type: 'physical' | 'service'
+  stock_quantity?: number | null
+  stock_type?: string | null
+  product_variants?: {
+    id: string
+    name: string
+    sku: string | null
+    price: number
+    cost_price: number | null
+    stock_quantity?: number | null
+  }[]
 }
 
 type Account = {
@@ -33,6 +44,7 @@ type Account = {
 
 type PurchaseItem = {
   product_id?: string
+  variant_id?: string | null
   name: string
   quantity: number
   price: number
@@ -182,16 +194,16 @@ export default function PurchasesPage() {
     }
   }, [])
 
-  // Fetch Suppliers, Products, and Accounts once in parallel
+  // Fetch Suppliers, Products (Chunked > 1,000 rows), and Accounts once in parallel
   const fetchLookups = useCallback(async (businessId: string) => {
     try {
-      const [supRes, prodRes, accRes] = await Promise.all([
+      const [supRes, prodData, accRes] = await Promise.all([
         fetch('/api/suppliers'),
-        supabase
-          .from('products')
-          .select('id, name, sku, price, cost_price, type')
-          .eq('business_id', businessId)
-          .order('name', { ascending: true }),
+        fetchAllBusinessProducts<Product>(supabase, businessId, {
+          selectWithVariants: 'id, name, sku, price, cost_price, type, stock_quantity, stock_type, product_variants(id, name, sku, price, cost_price, stock_quantity)',
+          selectVariantsOnly: 'id, name, sku, price, cost_price, type, stock_quantity, stock_type, product_variants(id, name, sku, price, cost_price, stock_quantity)',
+          selectFallback: 'id, name, sku, price, cost_price, type, stock_quantity, stock_type'
+        }),
         supabase
           .from('accounts')
           .select('id, code, name, type')
@@ -203,8 +215,8 @@ export default function PurchasesPage() {
         const supData = await supRes.json()
         setSuppliers(supData)
       }
-      if (prodRes.data) {
-        setProducts(prodRes.data)
+      if (prodData) {
+        setProducts(prodData)
       }
       if (accRes.data) {
         setAccounts(accRes.data)
@@ -213,6 +225,43 @@ export default function PurchasesPage() {
       console.error('Error fetching lookups:', err)
     }
   }, [supabase])
+
+  // Unfold products into flat discrete items (Variants as individual rows, or parent product if no variants)
+  const comboboxProducts = useMemo<(ProductComboboxItem & { type?: 'physical' | 'service' })[]>(() => {
+    const list: (ProductComboboxItem & { type?: 'physical' | 'service' })[] = []
+    for (const p of products) {
+      if (Array.isArray(p.product_variants) && p.product_variants.length > 0) {
+        for (const v of p.product_variants) {
+          list.push({
+            id: p.id,
+            variant_id: v.id,
+            name: `${p.name} - ${v.name}`,
+            price: Number(v.price || p.price || 0),
+            sku: v.sku || p.sku || null,
+            cost_price: v.cost_price ?? p.cost_price ?? null,
+            stock_quantity: v.stock_quantity ?? null,
+            stock_type: p.stock_type || 'tracked',
+            is_variant: true,
+            type: p.type
+          })
+        }
+      } else {
+        list.push({
+          id: p.id,
+          variant_id: null,
+          name: p.name,
+          price: Number(p.price || 0),
+          sku: p.sku || null,
+          cost_price: p.cost_price ?? null,
+          stock_quantity: p.stock_quantity ?? null,
+          stock_type: p.stock_type || 'tracked',
+          is_variant: false,
+          type: p.type
+        })
+      }
+    }
+    return list
+  }, [products])
 
   const { activeBusiness, bizLoading } = useUserContext()
 
@@ -264,29 +313,45 @@ export default function PurchasesPage() {
     setFormItems(formItems.filter((_, i) => i !== idx))
   }
 
-  const handleItemChange = (idx: number, field: keyof PurchaseItem | 'custom_name', val: any) => {
+  const handleItemChange = (idx: number, field: keyof PurchaseItem | 'custom_name' | 'select_product', val: any) => {
     const updated = [...formItems]
-    if (field === 'product_id') {
-      if (!val) {
-        updated[idx] = { ...updated[idx], product_id: undefined, name: '' }
+    if (field === 'select_product') {
+      const selectedItem = val as (ProductComboboxItem & { type?: 'physical' | 'service' }) | null
+      if (!selectedItem) {
+        updated[idx] = { ...updated[idx], product_id: undefined, variant_id: null, name: '' }
       } else {
-        const selectedProd = products.find(p => p.id === val)
+        updated[idx] = {
+          product_id: selectedItem.id,
+          variant_id: selectedItem.variant_id || null,
+          name: selectedItem.name,
+          quantity: updated[idx].quantity,
+          price: selectedItem.cost_price || selectedItem.price || 0,
+          is_physical: selectedItem.type ? selectedItem.type === 'physical' : true
+        }
+      }
+    } else if (field === 'product_id') {
+      if (!val) {
+        updated[idx] = { ...updated[idx], product_id: undefined, variant_id: null, name: '' }
+      } else {
+        const selectedProd = comboboxProducts.find(p => p.id === val)
         if (selectedProd) {
           updated[idx] = {
             product_id: selectedProd.id,
+            variant_id: selectedProd.variant_id || null,
             name: selectedProd.name,
             quantity: updated[idx].quantity,
             price: selectedProd.cost_price || selectedProd.price || 0,
-            is_physical: selectedProd.type === 'physical'
+            is_physical: selectedProd.type ? selectedProd.type === 'physical' : true
           }
         } else {
-          updated[idx] = { ...updated[idx], product_id: undefined }
+          updated[idx] = { ...updated[idx], product_id: undefined, variant_id: null }
         }
       }
     } else if (field === 'custom_name') {
       updated[idx] = {
         ...updated[idx],
         product_id: undefined,
+        variant_id: null,
         name: val
       }
     } else {
@@ -436,6 +501,7 @@ export default function PurchasesPage() {
         due_date: formDueDate || null,
         items: formItems.map(i => ({
           product_id: i.product_id,
+          variant_id: i.variant_id || null,
           name: i.name.trim(),
           quantity: i.quantity,
           price: i.price,
@@ -835,16 +901,17 @@ export default function PurchasesPage() {
                   <div key={idx} className="flex gap-2 items-center bg-gray-50 p-2.5 rounded-lg border border-gray-200">
                     <div className="flex-1 min-w-[200px]">
                       <ProductSelectCombobox
-                        products={products}
+                        products={comboboxProducts}
                         selectedProductId={item.product_id || null}
+                        selectedVariantId={item.variant_id || null}
                         selectedProductName={item.name}
                         showCostPrice={true}
                         placeholder="Pilih produk dari daftar..."
                         onSelectProduct={p => {
-                          handleItemChange(idx, 'product_id', p.id)
+                          handleItemChange(idx, 'select_product', p)
                         }}
                         onClearProduct={() => {
-                          handleItemChange(idx, 'product_id', null)
+                          handleItemChange(idx, 'select_product', null)
                         }}
                       />
                     </div>
