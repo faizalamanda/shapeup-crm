@@ -24,6 +24,7 @@
         android:roundIcon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:hardwareAccelerated="true"
         android:theme="@style/Theme.ShapeUpCRM"
         android:usesCleartextTraffic="true"
         tools:targetApi="31">

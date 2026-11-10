@@ -7,16 +7,16 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
-import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -26,7 +26,8 @@ import androidx.core.content.ContextCompat
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        const val DEFAULT_SERVER_URL = "https://shapeup-crm.vercel.app"
+        // Sama persis dengan start_url di manifest.json PWA (/onboarding)
+        const val DEFAULT_SERVER_URL = "https://shapeup-crm.vercel.app/onboarding"
         private const val PREFS_NAME = "shapeup_pos_prefs"
         private const val KEY_SERVER_URL = "server_url"
         private const val REQUEST_BT_PERMS = 101
@@ -34,6 +35,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var prefs: SharedPreferences
+    private var volumeDownCount = 0
+    private var lastVolumeDownTime = 0L
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,39 +47,29 @@ class MainActivity : AppCompatActivity() {
 
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-        // Setup Layout Utama dengan FrameLayout
-        val rootLayout = FrameLayout(this)
-        setContentView(rootLayout)
-
-        // Setup WebView
-        webView = WebView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        }
-        rootLayout.addView(webView)
-
-        // Area Tombol Rahasia di Pojok Kiri Atas (Tekan Lama 3 Detik untuk Ubah URL)
-        val secretArea = View(this).apply {
-            layoutParams = FrameLayout.LayoutParams(120, 120, Gravity.TOP or Gravity.START)
-            setBackgroundColor(0x00000000) // Transparan
-            setOnLongClickListener {
-                showServerUrlDialog()
-                true
-            }
-        }
-        rootLayout.addView(secretArea)
+        // Gunakan WebView langsung sebagai contentView (TANPA overlay apapun agar semua menu 100% mudah diklik!)
+        webView = WebView(this)
+        setContentView(webView)
 
         configureWebView()
         requestBluetoothPermissions()
 
-        // Muat URL tersimpan atau default
+        // Muat URL tersimpan atau default (/onboarding)
         loadServerUrl()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView() {
+        // Aktifkan Hardware Acceleration & Fokus Sentuhan Penuh
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        webView.isFocusable = true
+        webView.isFocusableInTouchMode = true
+
+        // Pastikan Cookie & Session Login tersimpan permanen seperti di PWA Chrome
+        val cookieManager = CookieManager.getInstance()
+        cookieManager.setAcceptCookie(true)
+        cookieManager.setAcceptThirdPartyCookies(webView, true)
+
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -85,13 +78,22 @@ class MainActivity : AppCompatActivity() {
             loadWithOverviewMode = true
             cacheMode = WebSettings.LOAD_DEFAULT
             allowFileAccess = true
+            javaScriptCanOpenWindowsAutomatically = true
             mediaPlaybackRequiresUserGesture = false
-            userAgentString = userAgentString + " ShapeUpNativeApp/1.0"
+            setSupportZoom(false)
+            builtInZoomControls = false
+            displayZoomControls = false
+            userAgentString = "$userAgentString ShapeUpNativeApp/1.1"
         }
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 return false // Biarkan WebView menangani seluruh navigasi internal
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                CookieManager.getInstance().flush()
             }
         }
 
@@ -102,14 +104,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadServerUrl() {
-        val targetUrl = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
+        var targetUrl = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
+        // Migrasi otomatis jika sebelumnya tersimpan root domain tanpa /onboarding
+        if (targetUrl == "https://shapeup-crm.vercel.app" || targetUrl == "https://shapeup-crm.vercel.app/") {
+            targetUrl = DEFAULT_SERVER_URL
+            prefs.edit().putString(KEY_SERVER_URL, targetUrl).apply()
+        }
         webView.loadUrl(targetUrl)
     }
 
     /**
-     * Dialog untuk mengganti alamat server kapan saja jika besok domain berganti
+     * Dialog untuk mengganti alamat server kapan saja jika besok domain berganti.
+     * Dapat dibuka dengan menekan tombol fisik Volume Bawah 3x cepat.
      */
-    private fun showServerUrlDialog() {
+    fun showServerUrlDialog() {
         val currentUrl = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL) ?: DEFAULT_SERVER_URL
         val input = EditText(this).apply {
             setText(currentUrl)
@@ -140,7 +148,26 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun requestBluetoothPermissions() {
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        // Tekan tombol Volume Bawah 3x berturut-turut untuk membuka pengaturan URL Server
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            val now = System.currentTimeMillis()
+            if (now - lastVolumeDownTime < 800) {
+                volumeDownCount++
+            } else {
+                volumeDownCount = 1
+            }
+            lastVolumeDownTime = now
+            if (volumeDownCount >= 3) {
+                volumeDownCount = 0
+                showServerUrlDialog()
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    fun requestBluetoothPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val needed = mutableListOf<String>()
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
@@ -165,9 +192,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         try {
+            CookieManager.getInstance().flush()
             webView.destroy()
         } catch (_: Exception) {}
         super.onDestroy()
     }
 }
-

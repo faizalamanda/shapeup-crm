@@ -1,17 +1,23 @@
 package com.shapeup.crm
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
 import android.util.Base64
 import android.webkit.JavascriptInterface
+import androidx.core.content.ContextCompat
 import java.io.OutputStream
 import java.util.UUID
 
-class PrinterBridge(private val context: Context) {
+class PrinterBridge(private val activity: MainActivity) {
     // Standard Serial Port Profile (SPP) UUID untuk seluruh printer thermal Bluetooth
     private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
@@ -20,8 +26,24 @@ class PrinterBridge(private val context: Context) {
     private var activeMacAddress: String? = null
 
     private fun getBluetoothAdapter(): BluetoothAdapter? {
-        val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val manager = activity.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         return manager?.adapter ?: BluetoothAdapter.getDefaultAdapter()
+    }
+
+    private fun ensureBluetoothPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val hasConnect = ContextCompat.checkSelfPermission(
+                activity,
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!hasConnect) {
+                activity.runOnUiThread {
+                    activity.requestBluetoothPermissions()
+                }
+                return false
+            }
+        }
+        return true
     }
 
     /**
@@ -32,6 +54,9 @@ class PrinterBridge(private val context: Context) {
     @JavascriptInterface
     fun getPairedPrinters(): String {
         return try {
+            if (!ensureBluetoothPermission()) {
+                return "[]"
+            }
             val adapter = getBluetoothAdapter() ?: return "[]"
             val devices = adapter.bondedDevices ?: return "[]"
             val jsonList = devices.map { device ->
@@ -42,6 +67,28 @@ class PrinterBridge(private val context: Context) {
             "[${jsonList.joinToString(",")}]"
         } catch (e: Exception) {
             "[]"
+        }
+    }
+
+    /**
+     * Membuka menu Pengaturan Bluetooth bawaan HP/Tablet Android
+     */
+    @JavascriptInterface
+    fun openBluetoothSettings() {
+        try {
+            val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.startActivity(intent)
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Membuka dialog ubah alamat server
+     */
+    @JavascriptInterface
+    fun openServerSettings() {
+        activity.runOnUiThread {
+            activity.showServerUrlDialog()
         }
     }
 
@@ -61,6 +108,9 @@ class PrinterBridge(private val context: Context) {
     @JavascriptInterface
     fun print(base64Data: String, targetMacAddress: String): String {
         return try {
+            if (!ensureBluetoothPermission()) {
+                return "ERROR: Izin Bluetooth belum diberikan. Silakan izinkan akses perangkat di sekitar pada pop-up yang muncul lalu coba lagi."
+            }
             if (base64Data.isBlank()) {
                 return "ERROR: Data cetak kosong"
             }
@@ -69,16 +119,30 @@ class PrinterBridge(private val context: Context) {
             val adapter = getBluetoothAdapter() ?: return "ERROR: Bluetooth tidak tersedia di perangkat ini"
 
             if (!adapter.isEnabled) {
-                return "ERROR: Bluetooth sedang nonaktif. Silakan aktifkan Bluetooth tablet."
+                return "ERROR: Bluetooth HP/Tablet sedang nonaktif. Silakan aktifkan Bluetooth terlebih dahulu."
             }
 
-            // Tentukan target MAC Address: jika kosong, cari otomatis printer yang ter-pair
-            var mac = targetMacAddress.trim()
-            if (mac.isBlank()) {
-                val bonded = adapter.bondedDevices
-                if (bonded.isNullOrEmpty()) {
-                    return "ERROR: Belum ada printer Bluetooth yang dipasangkan di tablet ini."
+            // Tentukan target MAC Address: bisa dikirim berupa MAC Address ("66:22:...") ATAU Nama Printer ("MPT-II")
+            val query = targetMacAddress.trim()
+            val bonded = adapter.bondedDevices
+            if (bonded.isNullOrEmpty()) {
+                return "ERROR: Belum ada printer Bluetooth yang dipasangkan di HP/Tablet ini."
+            }
+
+            var mac = ""
+            if (query.isNotEmpty()) {
+                val exactMatch = bonded.find { d ->
+                    d.address.equals(query, ignoreCase = true) ||
+                    (d.name != null && d.name.equals(query, ignoreCase = true))
                 }
+                if (exactMatch != null) {
+                    mac = exactMatch.address
+                } else if (BluetoothAdapter.checkBluetoothAddress(query.uppercase())) {
+                    mac = query.uppercase()
+                }
+            }
+
+            if (mac.isBlank()) {
                 // Prioritaskan device yang namanya mengandung printer/pos/thermal
                 val matched = bonded.find { d ->
                     val n = (d.name ?: "").lowercase()
@@ -110,7 +174,7 @@ class PrinterBridge(private val context: Context) {
             "SUCCESS"
         } catch (e: Exception) {
             closeConnection()
-            "ERROR: " + (e.message ?: "Gagal mencetak ke printer")
+            "ERROR: " + (e.message ?: "Gagal mencetak ke printer. Pastikan printer menyala.")
         }
     }
 
@@ -131,4 +195,3 @@ class PrinterBridge(private val context: Context) {
         activeMacAddress = null
     }
 }
-

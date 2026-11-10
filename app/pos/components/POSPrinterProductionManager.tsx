@@ -8,6 +8,9 @@ import {
   ConnectionType, 
   getSystemPrinters, 
   isWebBluetoothSupported, 
+  isAndroidApp,
+  getAndroidPairedPrinters,
+  type AndroidPairedPrinter,
   requestAndConnectBluetoothPrinter,
   getActiveBluetoothDeviceName,
   sendBluetoothTestPrint,
@@ -100,11 +103,20 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
   const [btPairError, setBtPairError] = useState<string | null>(null)
   const [btPaperSize, setBtPaperSize] = useState<PaperSize>('58mm')
   const [btTargetStation, setBtTargetStation] = useState<string>('')
+  const [isNativeAndroid, setIsNativeAndroid] = useState(false)
+  const [androidPairedList, setAndroidPairedList] = useState<AndroidPairedPrinter[]>([])
 
   // 1. Fetch data
   const loadData = useCallback(async () => {
     setLoading(true)
     setStatusMessage(null)
+    if (typeof window !== 'undefined') {
+      const native = isAndroidApp()
+      setIsNativeAndroid(native)
+      if (native) {
+        setAndroidPairedList(getAndroidPairedPrinters())
+      }
+    }
     try {
       const res = await fetch('/api/pos/stations')
       const data = await res.json().catch(() => null)
@@ -1110,18 +1122,58 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
                   <div className="pt-2 border-t border-slate-200/80 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wider">
-                        Printer Bluetooth Terpasang:
+                        {isNativeAndroid ? 'Pilih Printer dari Bluetooth Sistem Android:' : 'Printer Bluetooth Terpasang:'}
                       </label>
-                      <button
-                        type="button"
-                        onClick={() => handleStartBluetoothPairing(editingStationId || undefined)}
-                        disabled={isPairingBt}
-                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer"
-                      >
-                        <span>📶</span>
-                        <span>{isPairingBt ? 'Mencari...' : 'Pairing Bluetooth Baru'}</span>
-                      </button>
+                      {isNativeAndroid ? (
+                        <button
+                          type="button"
+                          onClick={() => setAndroidPairedList(getAndroidPairedPrinters())}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>🔄</span>
+                          <span>Ambil dari Sistem HP</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleStartBluetoothPairing(editingStationId || undefined)}
+                          disabled={isPairingBt}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>📶</span>
+                          <span>{isPairingBt ? 'Mencari...' : 'Pairing Bluetooth Baru'}</span>
+                        </button>
+                      )}
                     </div>
+
+                    {isNativeAndroid && androidPairedList.length > 0 && (
+                      <div className="grid grid-cols-1 gap-1.5">
+                        {androidPairedList.map((p) => {
+                          const isSelected = stationPrinterName === p.name
+                          return (
+                            <button
+                              key={p.address}
+                              type="button"
+                              onClick={() => {
+                                setStationPrinterName(p.name)
+                              }}
+                              className={`w-full px-3 py-2 rounded-xl border text-left flex items-center justify-between transition ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white border-indigo-600'
+                                  : 'bg-white hover:bg-indigo-50 text-slate-800 border-indigo-200'
+                              }`}
+                            >
+                              <span className="text-xs font-bold truncate">🖨️ {p.name} ({p.address})</span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                isSelected ? 'bg-white text-indigo-700' : 'bg-indigo-100 text-indigo-700'
+                              }`}>
+                                {isSelected ? '✓ Terpilih' : 'Pilih'}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
 
                     <select
                       value={stationPrinterDeviceId || ''}

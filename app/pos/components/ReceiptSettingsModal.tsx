@@ -7,7 +7,12 @@ import {
   ConnectionType, 
   generateReceiptHtml,
   isWebBluetoothSupported, 
+  isAndroidApp,
+  getAndroidPairedPrinters,
+  selectAndroidPairedPrinter,
+  type AndroidPairedPrinter,
   getActiveBluetoothDeviceName, 
+  getActiveBluetoothDeviceId,
   requestAndConnectBluetoothPrinter, 
   disconnectBluetoothPrinter, 
   sendBluetoothTestPrint 
@@ -73,6 +78,9 @@ export default function ReceiptSettingsModal({
   const [paperSize, setPaperSize] = useState<PaperSize>('58mm')
   const [connectionType, setConnectionType] = useState<ConnectionType>('system')
   const [btDeviceName, setBtDeviceName] = useState<string | null>(null)
+  const [btDeviceId, setBtDeviceId] = useState<string | null>(null)
+  const [isNativeAndroid, setIsNativeAndroid] = useState(false)
+  const [androidPairedList, setAndroidPairedList] = useState<AndroidPairedPrinter[]>([])
   const [isConnectingBt, setIsConnectingBt] = useState(false)
   const [btStatusMsg, setBtStatusMsg] = useState<string | null>(null)
   const [autoPrintAfterPayment, setAutoPrintAfterPayment] = useState(false)
@@ -193,8 +201,15 @@ export default function ReceiptSettingsModal({
       setPhone(s.phone)
       setFooterNote(s.footerNote)
       setPaperSize(s.paperSize)
+      const nativeApp = isAndroidApp()
+      setIsNativeAndroid(nativeApp)
+      if (nativeApp) {
+        const paired = getAndroidPairedPrinters()
+        setAndroidPairedList(paired)
+      }
       setConnectionType(s.connectionType || 'system')
       setBtDeviceName(getActiveBluetoothDeviceName())
+      setBtDeviceId(getActiveBluetoothDeviceId())
       setAutoPrintAfterPayment(s.autoPrintAfterPayment)
       setShowItemNumbering(s.showItemNumbering)
       setShowQueueNumber(Boolean(s.showQueueNumber))
@@ -255,6 +270,7 @@ export default function ReceiptSettingsModal({
       const res = await requestAndConnectBluetoothPrinter()
       if (res.success && res.deviceName) {
         setBtDeviceName(res.deviceName)
+        if (res.deviceId) setBtDeviceId(res.deviceId)
         setConnectionType('bluetooth')
         setBtStatusMsg(`Terhubung ke ${res.deviceName}`)
         // Auto-persist connectionType so cashier doesn't lose setting if they don't press bottom save
@@ -273,6 +289,37 @@ export default function ReceiptSettingsModal({
     } finally {
       setIsConnectingBt(false)
     }
+  }
+
+  const handleRefreshAndroidPrinters = () => {
+    const paired = getAndroidPairedPrinters()
+    setAndroidPairedList(paired)
+    if (paired.length === 0) {
+      setBtStatusMsg('Belum ada perangkat Bluetooth yang terpasang di HP/Tablet. Silakan buka Pengaturan Bluetooth Sistem Android dan pasangkan printer terlebih dahulu.')
+    } else {
+      setBtStatusMsg(`Ditemukan ${paired.length} perangkat Bluetooth dari Sistem Android.`)
+    }
+  }
+
+  const handleSelectAndroidPrinter = (printer: AndroidPairedPrinter) => {
+    selectAndroidPairedPrinter(printer)
+    setBtDeviceName(printer.name)
+    setBtDeviceId(printer.address)
+    setConnectionType('bluetooth')
+    setBtStatusMsg(`✅ Printer Sistem dipilih: ${printer.name} (${printer.address})`)
+    try {
+      const cur = getStoredReceiptSettings(defaultBusinessName)
+      localStorage.setItem(RECEIPT_SETTINGS_STORAGE_KEY, JSON.stringify({
+        ...cur,
+        connectionType: 'bluetooth'
+      }))
+    } catch {}
+  }
+
+  const handleOpenAndroidBtSettings = () => {
+    try {
+      ;(window as any).AndroidPrinter?.openBluetoothSettings?.()
+    } catch {}
   }
 
   const handleDisconnectBluetooth = async () => {
@@ -718,11 +765,17 @@ export default function ReceiptSettingsModal({
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 font-medium bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
               >
                 <option value="system">Printer Sistem (Browser/OS / Komputer / Kabel USB / RawBT)</option>
-                <option value="bluetooth">Direct Bluetooth (BLE Instan tanpa keluar PWA)</option>
+                <option value="bluetooth">
+                  {isNativeAndroid
+                    ? 'Bluetooth Sistem Android (Native APK - Anti Putus)'
+                    : 'Direct Bluetooth (BLE Instan tanpa keluar PWA)'}
+                </option>
               </select>
               <p className="text-[11px] text-slate-500 mt-1">
                 {connectionType === 'bluetooth' 
-                  ? '⚡ Mencetak langsung via Web Bluetooth (0.2 detik, tanpa keluar PWA, tanpa RawBT).'
+                  ? (isNativeAndroid
+                      ? '⚡ Mencetak langsung via Bluetooth Sistem Android (Stabil, Anti-Putus, tanpa perlu pairing ulang di browser).'
+                      : '⚡ Mencetak langsung via Web Bluetooth (0.2 detik, tanpa keluar PWA, tanpa RawBT).')
                   : '🖥️ Menggunakan dialog cetak bawaan sistem OS atau printer kabel USB komputer.'}
               </p>
             </div>
@@ -732,7 +785,7 @@ export default function ReceiptSettingsModal({
               <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-indigo-950 uppercase tracking-wider">
-                    Status Printer Bluetooth
+                    {isNativeAndroid ? 'Printer Bluetooth Sistem Android' : 'Status Printer Bluetooth'}
                   </span>
                   {btDeviceName ? (
                     <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full">
@@ -740,7 +793,7 @@ export default function ReceiptSettingsModal({
                     </span>
                   ) : (
                     <span className="text-[10px] font-medium px-2 py-0.5 bg-slate-200 text-slate-600 rounded-full">
-                      ⚪ Belum Terhubung
+                      ⚪ Belum Dipilih
                     </span>
                   )}
                 </div>
@@ -751,35 +804,113 @@ export default function ReceiptSettingsModal({
                   </div>
                 )}
 
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleConnectBluetooth}
-                    disabled={isConnectingBt}
-                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
-                  >
-                    {isConnectingBt ? 'Menghubungkan...' : btDeviceName ? 'Ganti Printer Bluetooth' : 'Hubungkan Printer Bluetooth'}
-                  </button>
-                  {btDeviceName && (
-                    <>
+                {isNativeAndroid ? (
+                  <div className="space-y-2.5 pt-1">
+                    {androidPairedList.length > 0 ? (
+                      <div className="space-y-1.5">
+                        <p className="text-[11px] font-semibold text-indigo-900">
+                          Pilih Printer dari Daftar Bluetooth Sistem HP/Tablet:
+                        </p>
+                        <div className="grid grid-cols-1 gap-1.5">
+                          {androidPairedList.map((p) => {
+                            const isSelected = btDeviceId === p.address || btDeviceName === p.name
+                            return (
+                              <button
+                                key={p.address}
+                                type="button"
+                                onClick={() => handleSelectAndroidPrinter(p)}
+                                className={`w-full px-3 py-2.5 rounded-xl border text-left flex items-center justify-between transition-all ${
+                                  isSelected
+                                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                                    : 'bg-white hover:bg-indigo-50 text-slate-800 border-indigo-200'
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <div className="text-xs font-bold truncate flex items-center gap-1.5">
+                                    <span>🖨️</span>
+                                    <span>{p.name}</span>
+                                  </div>
+                                  <div className={`text-[10px] mt-0.5 ${isSelected ? 'text-indigo-200' : 'text-slate-400'}`}>
+                                    MAC: {p.address}
+                                  </div>
+                                </div>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                  isSelected
+                                    ? 'bg-white text-indigo-700'
+                                    : 'bg-indigo-100 text-indigo-700'
+                                }`}>
+                                  {isSelected ? '✓ Aktif' : 'Pilih'}
+                                </span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 space-y-1">
+                        <p className="font-bold">⚠️ Belum Ada Printer Terdeteksi di Sistem Android</p>
+                        <p>Pastikan Bluetooth HP/Tablet aktif dan printer sudah dipasangkan (Paired) di menu Pengaturan Bluetooth HP Anda.</p>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-2 pt-1">
                       <button
                         type="button"
-                        onClick={handleTestPrintBluetooth}
-                        disabled={isConnectingBt}
-                        className="px-3 py-1.5 bg-white hover:bg-slate-50 text-indigo-700 border border-indigo-300 rounded-lg text-xs font-semibold transition-all"
+                        onClick={handleRefreshAndroidPrinters}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
                       >
-                        Uji Cetak (Test Print)
+                        🔄 Ambil / Muat Ulang dari Sistem
                       </button>
                       <button
                         type="button"
-                        onClick={handleDisconnectBluetooth}
-                        className="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-xs font-semibold transition-all"
+                        onClick={handleOpenAndroidBtSettings}
+                        className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold transition-all"
                       >
-                        Putuskan
+                        ⚙️ Buka Bluetooth HP
                       </button>
-                    </>
-                  )}
-                </div>
+                      {btDeviceName && (
+                        <button
+                          type="button"
+                          onClick={handleTestPrintBluetooth}
+                          disabled={isConnectingBt}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
+                        >
+                          🧾 Uji Cetak (Test Print)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleConnectBluetooth}
+                      disabled={isConnectingBt}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
+                    >
+                      {isConnectingBt ? 'Menghubungkan...' : btDeviceName ? 'Ganti Printer Bluetooth' : 'Hubungkan Printer Bluetooth'}
+                    </button>
+                    {btDeviceName && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleTestPrintBluetooth}
+                          disabled={isConnectingBt}
+                          className="px-3 py-1.5 bg-white hover:bg-slate-50 text-indigo-700 border border-indigo-300 rounded-lg text-xs font-semibold transition-all"
+                        >
+                          Uji Cetak (Test Print)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDisconnectBluetooth}
+                          className="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-xs font-semibold transition-all"
+                        >
+                          Putuskan
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

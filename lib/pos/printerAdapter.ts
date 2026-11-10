@@ -707,17 +707,72 @@ export const THERMAL_PRINTER_SERVICES = [
 ]
 
 export function isWebBluetoothSupported(): boolean {
-  return typeof window !== 'undefined' && Boolean((navigator as any)?.bluetooth)
+  return typeof window !== 'undefined' && (Boolean((navigator as any)?.bluetooth) || isAndroidApp())
+}
+
+export interface AndroidPairedPrinter {
+  name: string
+  address: string
+}
+
+/** Mengambil daftar perangkat Bluetooth yang sudah dipairing di Pengaturan Sistem Android */
+export function getAndroidPairedPrinters(): AndroidPairedPrinter[] {
+  if (!isAndroidApp()) return []
+  try {
+    const raw = (window as any).AndroidPrinter?.getPairedPrinters?.()
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch (e) {
+    console.warn('[PrinterAdapter] Failed parsing getPairedPrinters:', e)
+    return []
+  }
+}
+
+/** Memilih printer dari daftar Bluetooth Sistem Android */
+export function selectAndroidPairedPrinter(printer: AndroidPairedPrinter): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem('shapeup_pos_bt_name', printer.name)
+  localStorage.setItem('shapeup_pos_bt_id', printer.address)
+  notifyBluetoothStatusChange(true, printer.name)
 }
 
 export function getActiveBluetoothDeviceName(): string | null {
   if (typeof window === 'undefined') return null
-  return localStorage.getItem('shapeup_pos_bt_name') || (activeBluetoothDevice?.name ?? null)
+  const saved = localStorage.getItem('shapeup_pos_bt_name') || (activeBluetoothDevice?.name ?? null)
+  if (saved) return saved
+  if (isAndroidApp()) {
+    const paired = getAndroidPairedPrinters()
+    if (paired.length > 0) {
+      const matched = paired.find((d) => {
+        const n = (d.name || '').toLowerCase()
+        return n.includes('print') || n.includes('pos') || n.includes('rpp') || n.includes('mpt') || n.includes('thermal')
+      }) || paired[0]
+      localStorage.setItem('shapeup_pos_bt_name', matched.name)
+      localStorage.setItem('shapeup_pos_bt_id', matched.address)
+      return matched.name
+    }
+  }
+  return null
 }
 
 export function getActiveBluetoothDeviceId(): string | null {
   if (typeof window === 'undefined') return null
-  return localStorage.getItem('shapeup_pos_bt_id') || (activeBluetoothDevice?.id ?? null)
+  const saved = localStorage.getItem('shapeup_pos_bt_id') || (activeBluetoothDevice?.id ?? null)
+  if (saved) return saved
+  if (isAndroidApp()) {
+    const paired = getAndroidPairedPrinters()
+    if (paired.length > 0) {
+      const matched = paired.find((d) => {
+        const n = (d.name || '').toLowerCase()
+        return n.includes('print') || n.includes('pos') || n.includes('rpp') || n.includes('mpt') || n.includes('thermal')
+      }) || paired[0]
+      localStorage.setItem('shapeup_pos_bt_name', matched.name)
+      localStorage.setItem('shapeup_pos_bt_id', matched.address)
+      return matched.address
+    }
+  }
+  return null
 }
 
 /** Check if currently running inside ShapeUp POS Native Android APK */
@@ -1079,6 +1134,33 @@ export async function ensureBluetoothPrinterConnection(
   targetDeviceId?: string,
   targetDeviceName?: string
 ): Promise<{ success: boolean; deviceName?: string; deviceId?: string; isFallback?: boolean; error?: string }> {
+  // Fast Path for Native Android APK Bridge
+  if (isAndroidApp()) {
+    const paired = getAndroidPairedPrinters()
+    const savedId = targetDeviceId || getActiveBluetoothDeviceId()
+    const savedName = targetDeviceName || getActiveBluetoothDeviceName()
+    if (savedId || savedName) {
+      return {
+        success: true,
+        deviceName: savedName || 'Printer Bluetooth Sistem',
+        deviceId: savedId || ''
+      }
+    }
+    if (paired.length > 0) {
+      const matched = paired[0]
+      selectAndroidPairedPrinter(matched)
+      return {
+        success: true,
+        deviceName: matched.name,
+        deviceId: matched.address
+      }
+    }
+    return {
+      success: false,
+      error: 'Belum ada printer yang dipasangkan di Bluetooth Sistem Android. Buka Pengaturan Bluetooth HP/Tablet dan pasangkan printer terlebih dahulu.'
+    }
+  }
+
   if (!isWebBluetoothSupported()) {
     return { success: false, error: 'Web Bluetooth tidak didukung pada peramban ini. Gunakan Chrome pada Android atau Komputer.' }
   }
@@ -1312,6 +1394,27 @@ export async function getSystemPrinters(): Promise<{
 }
 
 export async function requestAndConnectBluetoothPrinter(): Promise<{ success: boolean; deviceName?: string; deviceId?: string; error?: string }> {
+  // Fast Path for Native Android APK Bridge (Read directly from Android System Bluetooth)
+  if (isAndroidApp()) {
+    const paired = getAndroidPairedPrinters()
+    if (paired.length === 0) {
+      return {
+        success: false,
+        error: 'Belum ada perangkat Bluetooth yang dipasangkan di Sistem Android. Silakan buka Pengaturan Bluetooth HP/Tablet Anda dan pasangkan printer terlebih dahulu.'
+      }
+    }
+    const matched = paired.find((d) => {
+      const n = (d.name || '').toLowerCase()
+      return n.includes('print') || n.includes('pos') || n.includes('rpp') || n.includes('mpt') || n.includes('thermal')
+    }) || paired[0]
+    selectAndroidPairedPrinter(matched)
+    return {
+      success: true,
+      deviceName: matched.name,
+      deviceId: matched.address
+    }
+  }
+
   if (!isWebBluetoothSupported()) {
     return { success: false, error: 'Web Bluetooth tidak didukung pada peramban ini. Pastikan menggunakan Chrome pada Android atau Komputer.' }
   }
@@ -1361,8 +1464,9 @@ export async function sendBluetoothRawBytes(
         binaryStr += String.fromCharCode(payload[i])
       }
       const base64Data = btoa(binaryStr)
-      const targetMac = targetDeviceId || getActiveBluetoothDeviceId() || ''
-      const resultStr = (window as any).AndroidPrinter.print(base64Data, targetMac)
+      const isMacFormat = targetDeviceId && targetDeviceId.includes(':')
+      const targetMacOrName = (isMacFormat ? targetDeviceId : targetDeviceName) || targetDeviceId || getActiveBluetoothDeviceId() || getActiveBluetoothDeviceName() || ''
+      const resultStr = (window as any).AndroidPrinter.print(base64Data, targetMacOrName)
       if (resultStr === 'SUCCESS' || (typeof resultStr === 'string' && resultStr.startsWith('SUCCESS'))) {
         return { success: true, message: 'Data cetak berhasil dikirim via Android Native Driver.' }
       } else {
@@ -1442,7 +1546,18 @@ export async function testPrintStationTicket(options: {
   const effectiveSize = options.paperSize || '58mm'
   const is58mm = effectiveSize === '58mm'
 
-  if (options.connectionType === 'bluetooth') {
+  let effectiveConn = options.connectionType
+  if (effectiveConn === 'same_as_cashier' && typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem('shapeup_pos_receipt_settings')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed.connectionType === 'bluetooth') effectiveConn = 'bluetooth'
+      }
+    } catch {}
+  }
+
+  if (effectiveConn === 'bluetooth') {
     const nowStr = new Date().toLocaleTimeString('id-ID')
     const sampleChitText = [
       '\x1B\x40', // ESC @ init
@@ -1694,6 +1809,12 @@ export class WebBluetoothPrinterAdapter implements PrinterAdapter {
 
   async print(receipt: ReceiptData, paperSize?: PaperSize): Promise<PrintResult> {
     const effectiveSize = paperSize || receipt.paperSize || '58mm'
+
+    // Fast Path for Native Android APK Bridge (SPP RFCOMM Socket)
+    if (isAndroidApp()) {
+      const payload = encodeReceiptToEscPos(receipt, effectiveSize)
+      return sendBluetoothRawBytes(payload)
+    }
 
     // Zero Silent Fallback: never divert to the OS print dialog when Bluetooth is selected
     if (!isWebBluetoothSupported()) {
