@@ -42,17 +42,29 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
     }
   }
 
+  const isNativeAndroid = typeof window !== 'undefined' && Boolean((window as any).AndroidPrinter)
+  const hasPairedBt =
+    typeof window !== 'undefined' &&
+    Boolean(localStorage.getItem('shapeup_pos_bt_id') || localStorage.getItem('shapeup_pos_bt_name'))
+  const defaultConnectionType: ConnectionType = isNativeAndroid || hasPairedBt ? 'bluetooth' : 'system'
+
   try {
     const raw = localStorage.getItem(RECEIPT_SETTINGS_STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
+      // In Native Android APK, WebView does not support window.print() (system print is a no-op),
+      // so always route to 'bluetooth' unless PDF export is explicitly chosen.
+      const resolvedConn: ConnectionType = isNativeAndroid
+        ? (parsed.connectionType === 'pdf' ? 'pdf' : 'bluetooth')
+        : (parsed.connectionType || defaultConnectionType)
+
       return {
         storeName: parsed.storeName || defaultBusinessName,
         address: parsed.address || '',
         phone: parsed.phone || '',
         footerNote: parsed.footerNote || DEFAULT_RECEIPT_FOOTER,
         paperSize: parsed.paperSize || '58mm',
-        connectionType: parsed.connectionType || 'system',
+        connectionType: resolvedConn,
         autoPrintAfterPayment: Boolean(parsed.autoPrintAfterPayment),
         showItemNumbering: parsed.showItemNumbering !== undefined ? Boolean(parsed.showItemNumbering) : true,
         showLoyaltyPoints: parsed.showLoyaltyPoints !== undefined ? Boolean(parsed.showLoyaltyPoints) : true,
@@ -73,7 +85,7 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
     phone: '',
     footerNote: DEFAULT_RECEIPT_FOOTER,
     paperSize: '58mm',
-    connectionType: 'system',
+    connectionType: defaultConnectionType,
     autoPrintAfterPayment: false,
     showItemNumbering: true,
     showLoyaltyPoints: true,

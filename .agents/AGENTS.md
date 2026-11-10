@@ -438,6 +438,23 @@
         - **Desktop PC (Mouse):** Mengikuti riwayat browser linear standar (`router.back()`).
     - **Registrasi Wajib Semua Modal:** Seluruh komponen modal (baik yang menggunakan `FullScreenModal` maupun modal dialog mandiri seperti varian, hold order, print receipt, filter audiens) **WAJIB** mendaftarkan diri ke `useModalBackHandler(isOpen, onClose)` tepat di baris teratas komponen.
 
+28. **Thermal Printer 4 KB RX Buffer Flow Control, BLE Heartbeat Mutex & Native Android APK Routing Standards (Skill `pos-session-ledger`):**
+    - **Pencegahan Overflow Buffer 4 KB (`4.096 bytes`) pada Struk Panjang (> 20 Item + Logo Raster):**
+      - Printer thermal Bluetooth portabel 58mm/80mm umumnya hanya memiliki buffer hardware UART/RAM sebesar **4 KB (`4.096 bytes`)**, sedangkan motor kertas fisik hanya mengonsumsi ~600–800 bytes/detik (dan melambat drastis saat membakar blok raster logo `GS v 0` berukuran ~2.800–3.200 bytes).
+      - **Mandatory Logo-Text Split (`findEscPosLogoSplitOffset`):** Sebelum mengirim byte stream ESC/POS di `sendBluetoothRawBytes()`, sistem **WAJIB** mendeteksi header raster logo (`0x1D, 0x76, 0x30`), mengirim segmen logo terlebih dahulu, lalu memberikan **jeda kuras printhead (`400ms–450ms`)** sebelum mengalirkan teks item pesanan agar buffer 4 KB kembali kosong.
+      - **Adaptive Chunked Pacing & Drain Breather (`sendBleSegmentFlowControlled` & `PrinterBridge.kt`):**
+        - **PWA Web Bluetooth (BLE):** Kirim dalam potongan `64 bytes` dengan jeda `25ms` untuk `1.024 bytes` pertama, jeda `40ms` untuk byte selanjutnya, ditambah **jeda pengurasan buffer `220ms` setiap kelipatan `1.024 bytes`**, serta *per-chunk retry* (`writeBleChunkWithRetry`, 3x percobaan dengan backoff `150ms`) jika stack GATT Android sibuk.
+        - **Native Android APK (`window.AndroidPrinter` / SPP RFCOMM):** Pecah pengiriman Base64 per `1.024 bytes` dengan jeda `140ms` di sisi JS, dan tulis ke `BluetoothSocket.outputStream` per `512 bytes` + `flush()` + `Thread.sleep(35)` di `PrinterBridge.kt`.
+    - **BLE Heartbeat Mutex (`isPrintingBle`):**
+      - Timer `startBluetoothHeartbeat()` (ping `DLE EOT 1` setiap 12 detik) **DILARANG KERAS** menembakkan paket GATT saat `isPrintingBle === true` atau `isConnectingGatt === true`, dan blok `catch` pada heartbeat dilarang me-reset `activeWriteCharacteristic = null` jika proses cetak sedang berlangsung agar tidak memutus cetakan struk panjang di tengah jalan.
+    - **Native Android APK Auto-Routing & `PaymentSuccessView` State Stability:**
+      - Android `WebView` tidak mendukung `window.print()` / `iframe.contentWindow.print()` (selalu menjadi *silent no-op*). Jika `isAndroidApp()` bernilai `true`:
+        1. `getStoredReceiptSettings()` di `@/lib/pos/receiptSettings.ts` wajib selalu meresolusi `connectionType` ke `'bluetooth'` (kecuali `'pdf'`).
+        2. `getPrinterAdapter()`, `BrowserSystemPrinterAdapter.print()`, `printSingleKitchenTicket()`, dan `testPrintStationTicket()` wajib otomatis mengarahkan jalur cetak ke Bluetooth (`WebBluetoothPrinterAdapter` / `sendBluetoothRawBytes`).
+      - Setiap fungsi pemilihan/penyambungan printer (`selectAndroidPairedPrinter`, `requestAndConnectBluetoothPrinter`, `getActiveBluetoothDeviceName`, `getActiveBluetoothDeviceId`) wajib memanggil `persistBluetoothConnectionType()` agar `connectionType: 'bluetooth'` tersimpan permanen di `shapeup_pos_receipt_settings`.
+      - Di `PaymentSuccessView.tsx`, `useEffect` inisialisasi **DILARANG KERAS** memasukkan `handlePrint` atau `handlePrintKitchen` ke dalam dependency array (wajib gunakan `handlePrintRef` dan `handlePrintKitchenRef`), karena perubahan dropdown `connectionType` atau `paperSize` akan memicu ulang `useEffect` dan me-reset pilihan kembali ke nilai lama.
+
+
 
 
 

@@ -647,10 +647,25 @@ const bluetoothPool = new Map<string, BluetoothDeviceSession>()
 let activeBluetoothDevice: any = null
 let activeWriteCharacteristic: any = null
 let isConnectingGatt = false
+let isPrintingBle = false
 let reconnectTimer: any = null
 let heartbeatTimer: any = null
 let cachedServiceUuid: string | null = null
 let cachedCharUuid: string | null = null
+
+/** Helper to persist connectionType = 'bluetooth' in localStorage when a BT printer is selected/paired */
+function persistBluetoothConnectionType(): void {
+  if (typeof window === 'undefined') return
+  try {
+    const key = 'shapeup_pos_receipt_settings'
+    const raw = localStorage.getItem(key)
+    const parsed = raw ? JSON.parse(raw) : {}
+    if (parsed.connectionType !== 'bluetooth') {
+      parsed.connectionType = 'bluetooth'
+      localStorage.setItem(key, JSON.stringify(parsed))
+    }
+  } catch {}
+}
 
 // Restore cached service & char UUIDs from storage if present
 if (typeof window !== 'undefined') {
@@ -734,6 +749,7 @@ export function selectAndroidPairedPrinter(printer: AndroidPairedPrinter): void 
   if (typeof window === 'undefined') return
   localStorage.setItem('shapeup_pos_bt_name', printer.name)
   localStorage.setItem('shapeup_pos_bt_id', printer.address)
+  persistBluetoothConnectionType()
   notifyBluetoothStatusChange(true, printer.name)
 }
 
@@ -750,6 +766,7 @@ export function getActiveBluetoothDeviceName(): string | null {
       }) || paired[0]
       localStorage.setItem('shapeup_pos_bt_name', matched.name)
       localStorage.setItem('shapeup_pos_bt_id', matched.address)
+      persistBluetoothConnectionType()
       return matched.name
     }
   }
@@ -769,6 +786,7 @@ export function getActiveBluetoothDeviceId(): string | null {
       }) || paired[0]
       localStorage.setItem('shapeup_pos_bt_name', matched.name)
       localStorage.setItem('shapeup_pos_bt_id', matched.address)
+      persistBluetoothConnectionType()
       return matched.address
     }
   }
@@ -899,6 +917,7 @@ export function startBluetoothHeartbeat(): void {
   let roundRobinIndex = 0
   heartbeatTimer = setInterval(async () => {
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+    if (isPrintingBle || isConnectingGatt) return
     if (!isPosContext()) {
       stopBluetoothHeartbeat()
       return
@@ -928,6 +947,9 @@ export function startBluetoothHeartbeat(): void {
     const session = activeSessions[roundRobinIndex % activeSessions.length]
     roundRobinIndex++
 
+    // Skip ping if peripheral was already active within the last 10 seconds
+    if (Date.now() - (session.lastActive || 0) < 10000) return
+
     try {
       // ESC/POS DLE EOT 1 (0x10, 0x04, 0x01) - Real-time status transmission.
       // 3 bytes, non-printing, non-feeding. Resets peripheral BLE idle timer.
@@ -939,6 +961,8 @@ export function startBluetoothHeartbeat(): void {
       }
       session.lastActive = Date.now()
     } catch (err) {
+      // If a print job started while ping was in-flight, ignore collision error without wiping writeChar
+      if (isPrintingBle || isConnectingGatt) return
       console.warn(`[PrinterAdapter] Heartbeat failed for ${session.deviceName}:`, err)
       session.writeChar = null
       if (session.device === activeBluetoothDevice) {
@@ -1188,6 +1212,8 @@ export async function ensureBluetoothPrinterConnection(
 
   isConnectingGatt = true
   try {
+    let hasDeviceHandle = false
+
     // 2. Try reconnecting in-memory candidate device
     let candidateDevice: any = null
     if (lookupKey && bluetoothPool.has(lookupKey)) {
@@ -1197,12 +1223,14 @@ export async function ensureBluetoothPrinterConnection(
     }
 
     if (candidateDevice?.gatt) {
+      hasDeviceHandle = true
       const writeChar = await connectKnownDevice(candidateDevice)
       if (writeChar) {
         const session = registerInPool(candidateDevice, writeChar)
         if (!lookupKey || candidateDevice === activeBluetoothDevice) {
           activeBluetoothDevice = candidateDevice
           activeWriteCharacteristic = writeChar
+          persistBluetoothConnectionType()
           notifyBluetoothStatusChange(true, session.deviceName)
         }
         startBluetoothHeartbeat()
@@ -1235,6 +1263,10 @@ export async function ensureBluetoothPrinterConnection(
           }
 
           if (matchedDevice) {
+            hasDeviceHandle = true
+            if (!lookupKey && !activeBluetoothDevice) {
+              activeBluetoothDevice = matchedDevice
+            }
             const writeChar = await connectKnownDevice(matchedDevice)
             if (writeChar) {
               const session = registerInPool(matchedDevice, writeChar)
@@ -1244,6 +1276,7 @@ export async function ensureBluetoothPrinterConnection(
                 const name = matchedDevice.name || 'Bluetooth Thermal Printer'
                 localStorage.setItem('shapeup_pos_bt_name', name)
                 if (matchedDevice.id) localStorage.setItem('shapeup_pos_bt_id', matchedDevice.id)
+                persistBluetoothConnectionType()
                 notifyBluetoothStatusChange(true, name)
               }
               startBluetoothHeartbeat()
@@ -1268,8 +1301,8 @@ export async function ensureBluetoothPrinterConnection(
       }
     }
 
-    // 5. Prompt ONLY if allowed AND the printer has never been paired before
-    if (interactive && !hasPairedBluetoothPrinter()) {
+    // 5. Prompt chooser if interactive is true AND either never paired OR browser lost the BluetoothDevice handle
+    if (interactive && (!hasPairedBluetoothPrinter() || !hasDeviceHandle)) {
       return requestAndConnectBluetoothPrinter()
     }
 
@@ -1436,11 +1469,13 @@ export async function requestAndConnectBluetoothPrinter(): Promise<{ success: bo
 
     activeBluetoothDevice = device
     activeWriteCharacteristic = writeChar
+    registerInPool(device, writeChar)
     const name = device.name || 'Bluetooth Thermal Printer'
     localStorage.setItem('shapeup_pos_bt_name', name)
     if (device.id) {
       localStorage.setItem('shapeup_pos_bt_id', device.id)
     }
+    persistBluetoothConnectionType()
     notifyBluetoothStatusChange(true, name)
     startBluetoothHeartbeat()
 
@@ -1450,28 +1485,140 @@ export async function requestAndConnectBluetoothPrinter(): Promise<{ success: bo
   }
 }
 
+/**
+ * Detects if an ESC/POS payload begins with `ESC @` + `ESC a 1` + `GS v 0` (Raster Bit Image Logo).
+ * Returns the exact byte offset right after the logo (including its trailing LF) so the sender
+ * can let the thermal printhead finish burning the dense bitmap and drain the 4KB hardware RX buffer
+ * before streaming the rest of the receipt text.
+ */
+function findEscPosLogoSplitOffset(payload: Uint8Array): number {
+  if (
+    payload.length > 20 &&
+    payload[0] === 0x1B &&
+    payload[1] === 0x40 &&
+    payload[2] === 0x1B &&
+    payload[3] === 0x61 &&
+    payload[4] === 0x01 &&
+    payload[5] === 0x1D &&
+    payload[6] === 0x76 &&
+    payload[7] === 0x30 &&
+    payload[8] === 0x00
+  ) {
+    const widthBytes = payload[9] | (payload[10] << 8)
+    const height = payload[11] | (payload[12] << 8)
+    const rasterLen = widthBytes * height
+    if (rasterLen > 0) {
+      let endIdx = 13 + rasterLen
+      if (endIdx < payload.length && payload[endIdx] === 0x0A) {
+        endIdx += 1
+      }
+      if (endIdx < payload.length) {
+        return endIdx
+      }
+    }
+  }
+  return 0
+}
+
+function uint8SliceToBase64(slice: Uint8Array): string {
+  let binaryStr = ''
+  const len = slice.byteLength
+  for (let i = 0; i < len; i++) {
+    binaryStr += String.fromCharCode(slice[i])
+  }
+  return btoa(binaryStr)
+}
+
+async function writeBleChunkWithRetry(charToSend: any, chunk: Uint8Array, maxRetries = 3): Promise<void> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (charToSend.properties.write) {
+        await charToSend.writeValueWithResponse(chunk)
+      } else {
+        await charToSend.writeValueWithoutResponse(chunk)
+      }
+      return
+    } catch (err) {
+      if (attempt === maxRetries) throw err
+      // Give the thermal printer's 4KB BLE RX buffer time to drain before retrying the exact chunk
+      await new Promise((r) => setTimeout(r, 150 * (attempt + 1)))
+    }
+  }
+}
+
+async function sendBleSegmentFlowControlled(charToSend: any, segment: Uint8Array): Promise<void> {
+  const CHUNK_SIZE = 64
+  const DRAIN_INTERVAL_BYTES = 1024
+  let bytesSinceLastDrain = 0
+
+  for (let i = 0; i < segment.length; i += CHUNK_SIZE) {
+    const chunk = segment.slice(i, i + CHUNK_SIZE)
+    await writeBleChunkWithRetry(charToSend, chunk)
+    bytesSinceLastDrain += chunk.length
+
+    if (i + CHUNK_SIZE < segment.length) {
+      if (bytesSinceLastDrain >= DRAIN_INTERVAL_BYTES) {
+        // Periodic 220ms breather every 1KB so the 4KB hardware buffer never overflows on 20-100+ item receipts
+        bytesSinceLastDrain = 0
+        await new Promise((resolve) => setTimeout(resolve, 220))
+      } else {
+        // Fast pace (25ms) for the first 1KB, steady motor-matched pace (40ms) afterwards
+        const delayMs = i < DRAIN_INTERVAL_BYTES ? 25 : 40
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+      }
+    }
+  }
+}
+
 export async function sendBluetoothRawBytes(
   payload: Uint8Array,
   targetDeviceId?: string,
   targetDeviceName?: string
 ): Promise<PrintResult> {
-  // 1. Android APK Native SPP Bridge (Fast Path, Zero Drops, Anti Sleep)
+  const logoSplitOffset = findEscPosLogoSplitOffset(payload)
+
+  // 1. Android APK Native SPP Bridge (Fast Path, Flow-Controlled for 4KB Buffer, Anti Sleep)
   if (isAndroidApp()) {
     try {
-      let binaryStr = ''
-      const len = payload.byteLength
-      for (let i = 0; i < len; i++) {
-        binaryStr += String.fromCharCode(payload[i])
-      }
-      const base64Data = btoa(binaryStr)
       const isMacFormat = targetDeviceId && targetDeviceId.includes(':')
-      const targetMacOrName = (isMacFormat ? targetDeviceId : targetDeviceName) || targetDeviceId || getActiveBluetoothDeviceId() || getActiveBluetoothDeviceName() || ''
-      const resultStr = (window as any).AndroidPrinter.print(base64Data, targetMacOrName)
-      if (resultStr === 'SUCCESS' || (typeof resultStr === 'string' && resultStr.startsWith('SUCCESS'))) {
-        return { success: true, message: 'Data cetak berhasil dikirim via Android Native Driver.' }
-      } else {
-        return { success: false, message: resultStr || 'Gagal mengirim cetak ke Android Native Printer.' }
+      const targetMacOrName =
+        (isMacFormat ? targetDeviceId : targetDeviceName) ||
+        targetDeviceId ||
+        getActiveBluetoothDeviceId() ||
+        getActiveBluetoothDeviceName() ||
+        ''
+
+      const sendAndroidSegment = async (segment: Uint8Array, chunkSize: number, delayMs: number): Promise<PrintResult> => {
+        for (let i = 0; i < segment.length; i += chunkSize) {
+          const chunk = segment.slice(i, i + chunkSize)
+          const base64Data = uint8SliceToBase64(chunk)
+          const resultStr = (window as any).AndroidPrinter.print(base64Data, targetMacOrName)
+          const ok = resultStr === 'SUCCESS' || (typeof resultStr === 'string' && resultStr.startsWith('SUCCESS'))
+          if (!ok) {
+            return { success: false, message: resultStr || 'Gagal mengirim cetak ke Android Native Printer.' }
+          }
+          if (i + chunkSize < segment.length && delayMs > 0) {
+            await new Promise((r) => setTimeout(r, delayMs))
+          }
+        }
+        return { success: true }
       }
+
+      if (logoSplitOffset > 0) {
+        const logoPart = payload.slice(0, logoSplitOffset)
+        const textPart = payload.slice(logoSplitOffset)
+        const logoRes = await sendAndroidSegment(logoPart, logoPart.length, 0)
+        if (!logoRes.success) return logoRes
+        // Wait 400ms so thermal printhead finishes burning the bitmap logo & drains the 4KB hardware buffer
+        await new Promise((r) => setTimeout(r, 400))
+        const textRes = await sendAndroidSegment(textPart, 1024, 140)
+        if (!textRes.success) return textRes
+      } else {
+        const res = await sendAndroidSegment(payload, 1024, 140)
+        if (!res.success) return res
+      }
+
+      return { success: true, message: '✓ Struk berhasil dicetak via Bluetooth Sistem Android.' }
     } catch (err: any) {
       console.warn('[PrinterAdapter] AndroidPrinter error, falling back to Web Bluetooth:', err)
     }
@@ -1481,6 +1628,7 @@ export async function sendBluetoothRawBytes(
     return { success: false, message: 'Web Bluetooth tidak didukung pada peramban ini.' }
   }
 
+  isPrintingBle = true
   try {
     const hasPaired = hasPairedBluetoothPrinter()
     if (!hasPaired) {
@@ -1498,40 +1646,59 @@ export async function sendBluetoothRawBytes(
     }
 
     if (!connRes.success) {
-      return { success: false, message: connRes.error || 'Printer Bluetooth tidak terhubung.' }
+      return {
+        success: false,
+        needsBluetoothReconnect: hasPairedBluetoothPrinter(),
+        message: connRes.error || 'Printer Bluetooth tidak terhubung.'
+      }
     }
 
     // Resolve target write characteristic from pool session or primary active
     let charToSend = activeWriteCharacteristic
+    let activeSession: BluetoothDeviceSession | undefined
     const lookupKey = targetDeviceId || targetDeviceName
     if (lookupKey && bluetoothPool.has(lookupKey)) {
-      const session = bluetoothPool.get(lookupKey)
-      if (session?.writeChar) charToSend = session.writeChar
+      activeSession = bluetoothPool.get(lookupKey)
+      if (activeSession?.writeChar) charToSend = activeSession.writeChar
     }
 
     if (!charToSend) {
-      return { success: false, message: 'Karakteristik cetak printer tidak tersedia.' }
+      return {
+        success: false,
+        needsBluetoothReconnect: hasPairedBluetoothPrinter(),
+        message: 'Karakteristik cetak printer tidak tersedia.'
+      }
     }
 
-    const CHUNK_SIZE = 64
-    for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
-      const chunk = payload.slice(i, i + CHUNK_SIZE)
-      if (charToSend.properties.write) {
-        await charToSend.writeValueWithResponse(chunk)
-      } else {
-        await charToSend.writeValueWithoutResponse(chunk)
-      }
-      await new Promise((resolve) => setTimeout(resolve, 20))
+    if (logoSplitOffset > 0) {
+      const logoPart = payload.slice(0, logoSplitOffset)
+      const textPart = payload.slice(logoSplitOffset)
+      await sendBleSegmentFlowControlled(charToSend, logoPart)
+      // Wait 450ms after dense logo bitmap so the printhead finishes stepping and empties the 4KB buffer
+      await new Promise((resolve) => setTimeout(resolve, 450))
+      await sendBleSegmentFlowControlled(charToSend, textPart)
+    } else {
+      await sendBleSegmentFlowControlled(charToSend, payload)
+    }
+
+    if (activeSession) {
+      activeSession.lastActive = Date.now()
     }
 
     return {
       success: true,
       message: connRes.isFallback
         ? `Data cetak dialihkan ke ${connRes.deviceName} (Fallback)`
-        : 'Data cetak berhasil dikirim via Bluetooth.'
+        : '✓ Struk berhasil dicetak via Bluetooth.'
     }
   } catch (err: any) {
-    return { success: false, message: 'Gagal mengirim data ke printer Bluetooth: ' + (err.message || 'Error') }
+    return {
+      success: false,
+      needsBluetoothReconnect: hasPairedBluetoothPrinter(),
+      message: 'Gagal mengirim data ke printer Bluetooth: ' + (err.message || 'Error')
+    }
+  } finally {
+    isPrintingBle = false
   }
 }
 
@@ -1546,13 +1713,15 @@ export async function testPrintStationTicket(options: {
   const effectiveSize = options.paperSize || '58mm'
   const is58mm = effectiveSize === '58mm'
 
-  let effectiveConn = options.connectionType
+  let effectiveConn = isAndroidApp() ? 'bluetooth' : options.connectionType
   if (effectiveConn === 'same_as_cashier' && typeof window !== 'undefined') {
     try {
       const raw = localStorage.getItem('shapeup_pos_receipt_settings')
       if (raw) {
         const parsed = JSON.parse(raw)
         if (parsed.connectionType === 'bluetooth') effectiveConn = 'bluetooth'
+      } else if (hasPairedBluetoothPrinter()) {
+        effectiveConn = 'bluetooth'
       }
     } catch {}
   }
@@ -1741,6 +1910,11 @@ export class BrowserSystemPrinterAdapter implements PrinterAdapter {
 
   async print(receipt: ReceiptData, paperSize?: PaperSize): Promise<PrintResult> {
     const size = paperSize || receipt.paperSize || '58mm'
+    // In Native Android APK, WebView does not support window.print(); always route to Native Bluetooth Bridge
+    if (isAndroidApp()) {
+      const btAdapter = new WebBluetoothPrinterAdapter()
+      return btAdapter.print(receipt, size)
+    }
     return printReceiptViaIframe(receipt, size)
   }
 }
@@ -1809,80 +1983,17 @@ export class WebBluetoothPrinterAdapter implements PrinterAdapter {
 
   async print(receipt: ReceiptData, paperSize?: PaperSize): Promise<PrintResult> {
     const effectiveSize = paperSize || receipt.paperSize || '58mm'
-
-    // Fast Path for Native Android APK Bridge (SPP RFCOMM Socket)
-    if (isAndroidApp()) {
-      const payload = encodeReceiptToEscPos(receipt, effectiveSize)
-      return sendBluetoothRawBytes(payload)
-    }
-
-    // Zero Silent Fallback: never divert to the OS print dialog when Bluetooth is selected
-    if (!isWebBluetoothSupported()) {
-      return {
-        success: false,
-        message: 'Web Bluetooth tidak didukung pada peramban ini. Gunakan Chrome pada Android/Komputer atau ganti koneksi ke Printer Sistem.'
-      }
-    }
-
-    try {
-      const hasPairedBefore = hasPairedBluetoothPrinter()
-
-      if (!hasPairedBefore) {
-        // Never paired: open the chooser immediately while the click gesture is still fresh
-        const pairRes = await requestAndConnectBluetoothPrinter()
-        if (!pairRes.success || !activeWriteCharacteristic) {
-          return {
-            success: false,
-            message: pairRes.error || 'Printer Bluetooth belum dipasangkan.'
-          }
-        }
-      } else {
-        // Paired before: silent reconnect only (in-memory GATT → getDevices + watchAdvertisements). Zero prompt.
-        let connRes = await ensureBluetoothPrinterConnection(false)
-        if (!connRes.success || !activeWriteCharacteristic) {
-          // One more wake-up attempt for thermal printers in BLE idle sleep
-          await new Promise((r) => setTimeout(r, 400))
-          connRes = await ensureBluetoothPrinterConnection(false)
-        }
-
-        if (!connRes.success || !activeWriteCharacteristic) {
-          return {
-            success: false,
-            needsBluetoothReconnect: true,
-            message: connRes.error || 'Printer Bluetooth tidak terhubung. Pastikan printer menyala dan berada dalam jangkauan.'
-          }
-        }
-      }
-
-      // Encode ESC/POS byte sequence
-      const payload = encodeReceiptToEscPos(receipt, effectiveSize)
-
-      // Send payload in chunks of 64 bytes
-      const CHUNK_SIZE = 64
-      for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
-        const chunk = payload.slice(i, i + CHUNK_SIZE)
-        if (activeWriteCharacteristic.properties.write) {
-          await activeWriteCharacteristic.writeValueWithResponse(chunk)
-        } else {
-          await activeWriteCharacteristic.writeValueWithoutResponse(chunk)
-        }
-        await new Promise((resolve) => setTimeout(resolve, 20))
-      }
-
-      return { success: true, message: 'Struk berhasil dicetak via Bluetooth.' }
-    } catch (err: any) {
-      console.warn('Web Bluetooth print error:', err)
-      return {
-        success: false,
-        needsBluetoothReconnect: hasPairedBluetoothPrinter(),
-        message: 'Gagal mencetak via Bluetooth: ' + (err.message || 'Koneksi terputus')
-      }
-    }
+    const payload = encodeReceiptToEscPos(receipt, effectiveSize)
+    return sendBluetoothRawBytes(payload)
   }
 }
 
 // Helper factory to get active printer adapter
 export function getPrinterAdapter(type: ConnectionType = 'system'): PrinterAdapter {
+  // In Native Android APK, always route thermal printing to Bluetooth Bridge unless exporting PDF
+  if (isAndroidApp() && type !== 'pdf') {
+    return new WebBluetoothPrinterAdapter()
+  }
   switch (type) {
     case 'bluetooth':
       return new WebBluetoothPrinterAdapter()

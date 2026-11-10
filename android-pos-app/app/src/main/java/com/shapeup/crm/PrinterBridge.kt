@@ -167,9 +167,20 @@ class PrinterBridge(private val activity: MainActivity) {
                 activeMacAddress = mac
             }
 
-            // Kirim byte cetak langsung ke hardware printer
-            activeOutputStream?.write(rawBytes)
-            activeOutputStream?.flush()
+            // Kirim byte cetak ke hardware printer secara bertahap (Chunked Flow Control)
+            // guna mencegah RX Buffer Overflow (4KB limit) pada printer thermal 58mm saat mencetak struk panjang/logo
+            val out = activeOutputStream ?: return "ERROR: Output stream printer tidak tersedia"
+            val chunkSize = 512
+            var offset = 0
+            while (offset < rawBytes.size) {
+                val length = minOf(chunkSize, rawBytes.size - offset)
+                out.write(rawBytes, offset, length)
+                out.flush()
+                offset += length
+                if (offset < rawBytes.size) {
+                    Thread.sleep(35)
+                }
+            }
 
             "SUCCESS"
         } catch (e: Exception) {

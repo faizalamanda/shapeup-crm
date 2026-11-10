@@ -11,9 +11,10 @@ import {
   requestAndConnectBluetoothPrinter,
   ensureBluetoothPrinterConnection,
   hasPairedBluetoothPrinter,
-  warmUpBluetoothPrinter
+  warmUpBluetoothPrinter,
+  isAndroidApp
 } from '@/lib/pos/printerAdapter'
-import { getStoredReceiptSettings } from '@/lib/pos/receiptSettings'
+import { getStoredReceiptSettings, saveStoredReceiptSettings } from '@/lib/pos/receiptSettings'
 import { getStoredKitchenSettings } from '@/lib/pos/kitchenSettings'
 import { buildKitchenTicketsFromItems, KitchenTicketData } from '@/lib/pos/kitchenTicketBuilder'
 import { dispatchAllKitchenTickets } from '@/lib/pos/kitchenPrinterDispatcher'
@@ -123,7 +124,7 @@ export default function PaymentSuccessView({
       setIsPrinting(true)
       setPrintMessage(null)
       setNeedsBtReconnect(false)
-      const effectiveConn = overrideConn || connectionType
+      const effectiveConn: ConnectionType = isAndroidApp() ? 'bluetooth' : (overrideConn || connectionType)
       const effectiveSize = overrideSize || paperSize
 
       try {
@@ -160,26 +161,20 @@ export default function PaymentSuccessView({
     setPrintMessage(null)
     try {
       const hasPaired = hasPairedBluetoothPrinter()
-      let res: { success: boolean; deviceName?: string; error?: string } = { success: false }
 
-      // 1. If previously paired, attempt silent reconnection first (Zero Chooser Prompt)
-      if (hasPaired) {
+      // 1. Attempt reconnection: silent if browser still holds BluetoothDevice handle,
+      // or opens chooser if never paired / browser lost device handle after restart.
+      let res = await ensureBluetoothPrinterConnection(true)
+      if (!res.success && hasPaired) {
+        // Retry once with 350ms delay to give peripheral time to wake up
+        await new Promise((r) => setTimeout(r, 350))
         res = await ensureBluetoothPrinterConnection(false)
-        if (!res.success) {
-          // Retry once with 350ms delay to give peripheral time to wake up
-          await new Promise((r) => setTimeout(r, 350))
-          res = await ensureBluetoothPrinterConnection(false)
-        }
-      }
-
-      // 2. Only show the pairing chooser dialog if the device was NEVER paired before
-      if (!res.success && !hasPaired) {
-        res = await requestAndConnectBluetoothPrinter()
       }
 
       if (res.success) {
         setNeedsBtReconnect(false)
         setConnectionType('bluetooth')
+        saveStoredReceiptSettings({ connectionType: 'bluetooth' }, receipt?.businessName)
         await handlePrint('bluetooth')
       } else {
         setPrintMessage(res.error || '⚠️ Gagal menyambungkan printer Bluetooth. Pastikan printer menyala di dekat kasir.')
@@ -231,14 +226,20 @@ export default function PaymentSuccessView({
     }
   }, [receipt, isPrintingKitchen, paperSize, connectionType])
 
+  const handlePrintKitchenRef = useRef(handlePrintKitchen)
+  useEffect(() => {
+    handlePrintKitchenRef.current = handlePrintKitchen
+  }, [handlePrintKitchen])
+
   // Initial Load: Printer Settings & Optional Auto-print.
-  // Depends ONLY on [isOpen, receipt] so finishing a print never resets hasPrinted
-  // or triggers another auto-print (see skill pos-session-ledger §19.5).
+  // Depends ONLY on [isOpen, receipt] so changing connectionType/paperSize or finishing a print
+  // never resets state or triggers another auto-print (see skill pos-session-ledger §19.5).
   useEffect(() => {
     if (isOpen && receipt) {
       const settings = getStoredReceiptSettings(receipt.businessName)
+      const resolvedConn: ConnectionType = isAndroidApp() ? 'bluetooth' : (settings.connectionType || 'system')
       if (settings.paperSize) setPaperSize(settings.paperSize)
-      if (settings.connectionType) setConnectionType(settings.connectionType)
+      setConnectionType(resolvedConn)
       setPrintMessage(null)
       setShowThermalPreview(false)
       setHasPrinted(false)
@@ -247,7 +248,7 @@ export default function PaymentSuccessView({
 
       if (settings.autoPrintAfterPayment && autoPrintedReceiptRef.current !== receipt) {
         autoPrintedReceiptRef.current = receipt
-        handlePrintRef.current(settings.connectionType, settings.paperSize)
+        handlePrintRef.current(resolvedConn, settings.paperSize)
       }
 
       // Check auto-print for kitchen tickets (hanya jika mode F&B / aktif produksi)
@@ -256,12 +257,12 @@ export default function PaymentSuccessView({
         if (kSettings.enabled && kSettings.autoPrintOnPayment && autoPrintedKitchenRef.current !== receipt) {
           autoPrintedKitchenRef.current = receipt
           setTimeout(() => {
-            handlePrintKitchen(true)
+            handlePrintKitchenRef.current(true)
           }, 750)
         }
       }
     }
-  }, [isOpen, receipt, handlePrintKitchen])
+  }, [isOpen, receipt, posMode.enableProductionTickets])
 
   // Void Handler (Immediate reversal with confirmation)
   const handleVoid = async () => {
@@ -496,7 +497,11 @@ export default function PaymentSuccessView({
                 <div className="flex items-center gap-2">
                   <select
                     value={connectionType}
-                    onChange={(e) => setConnectionType(e.target.value as ConnectionType)}
+                    onChange={(e) => {
+                      const nextConn = e.target.value as ConnectionType
+                      setConnectionType(nextConn)
+                      saveStoredReceiptSettings({ connectionType: nextConn }, receipt?.businessName)
+                    }}
                     className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 text-xs outline-none cursor-pointer"
                   >
                     <option value="system">Sistem (OS/USB)</option>
@@ -504,7 +509,11 @@ export default function PaymentSuccessView({
                   </select>
                   <select
                     value={paperSize}
-                    onChange={(e) => setPaperSize(e.target.value as PaperSize)}
+                    onChange={(e) => {
+                      const nextSize = e.target.value as PaperSize
+                      setPaperSize(nextSize)
+                      saveStoredReceiptSettings({ paperSize: nextSize }, receipt?.businessName)
+                    }}
                     className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 text-xs outline-none cursor-pointer"
                   >
                     <option value="58mm">Thermal 58mm</option>

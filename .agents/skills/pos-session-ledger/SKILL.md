@@ -1089,6 +1089,28 @@ Untuk mengatasi batasan Web Bluetooth API (pembatasan daya peramban Chrome saat 
 ### 25.3 Mode 3: Printer Sistem Komputer (Desktop USB / Iframe)
 - Menggunakan hidden iframe terisolasi untuk PC kasir dengan kabel USB atau driver RawBT eksternal.
 
+### 25.4 Standar Anti-Potong Struk Panjang (4 KB Hardware RX Buffer Flow Control & Heartbeat Mutex)
+Printer thermal Bluetooth portabel 58mm/80mm umumnya hanya memiliki **4 KB (`4.096 bytes`) hardware RX buffer**, sedangkan kecepatan motor mekanik pemanas kertas hanya ~600–800 bytes/detik:
+1. **Logo-Text Split & Printhead Drain Pause (`findEscPosLogoSplitOffset`):**
+   - Blok bitmap logo raster (`GS v 0` / `0x1D, 0x76, 0x30`) memakan `2.800–3.200 bytes` dan membutuhkan waktu pembakaran fisik paling lama.
+   - `sendBluetoothRawBytes()` wajib memisahkan segmen logo di awal stream, mengirimkannya terlebih dahulu, lalu menahan pengiriman teks selama **`400ms–450ms`** hingga printhead selesai membakar logo dan buffer 4 KB kembali kosong.
+2. **Adaptive Chunked Pacing & Periodic Buffer Drain (`sendBleSegmentFlowControlled`):**
+   - **PWA Web Bluetooth (BLE):** Potongan `64 bytes`, jeda `25ms` untuk `1.024 bytes` pertama (agar struk pendek tetap instan), jeda `40ms` setelahnya, ditambah **jeda pengurasan buffer `220ms` setiap kelipatan `1.024 bytes`**, serta retry per-chunk (`writeBleChunkWithRetry`, 3x percobaan) jika GATT Android sibuk.
+   - **Native Android SPP (`window.AndroidPrinter` & `PrinterBridge.kt`):** Pengiriman dipecah per `1.024 bytes` dengan jeda `140ms` di JS, dan ditulis ke `BluetoothSocket.outputStream` per `512 bytes` + `flush()` + `Thread.sleep(35)` di Kotlin.
+3. **BLE Heartbeat Mutex (`isPrintingBle`):**
+   - `startBluetoothHeartbeat()` wajib memeriksa `if (isPrintingBle || isConnectingGatt) return` sebelum mengirim ping `DLE EOT 1` (`0x10, 0x04, 0x01`), dan blok `catch`-nya dilarang menghapus `activeWriteCharacteristic = null` saat `isPrintingBle` aktif.
+
+### 25.5 Auto-Routing Native Android APK & Stabilitas State `PaymentSuccessView`
+1. **Bypass Silent No-Op `window.print()` di Android WebView:**
+   - Karena Android `WebView` tidak mendukung `window.print()`, saat `isAndroidApp()` bernilai `true`:
+     - `getStoredReceiptSettings()` selalu meresolusi `connectionType` ke `'bluetooth'` (kecuali `'pdf'`).
+     - `getPrinterAdapter()`, `BrowserSystemPrinterAdapter.print()`, `printSingleKitchenTicket()`, dan `testPrintStationTicket()` otomatis mengarahkan cetakan ke `WebBluetoothPrinterAdapter` / `sendBluetoothRawBytes()`.
+2. **Persistensi Otomatis `connectionType: 'bluetooth'`:**
+   - Fungsi `selectAndroidPairedPrinter()`, `requestAndConnectBluetoothPrinter()`, `getActiveBluetoothDeviceName()`, dan `getActiveBluetoothDeviceId()` wajib memanggil `persistBluetoothConnectionType()` agar `shapeup_pos_receipt_settings` sinkron menyimpan `connectionType: 'bluetooth'`.
+3. **Isolasi Dependency Array di `PaymentSuccessView.tsx`:**
+   - `useEffect` inisialisasi di `PaymentSuccessView.tsx` wajib memanggil `handlePrintRef.current` dan `handlePrintKitchenRef.current` tanpa memasukkan `handlePrint` atau `handlePrintKitchen` ke dependency array (`[isOpen, receipt, posMode.enableProductionTickets]`), sehingga perubahan dropdown metode cetak atau ukuran kertas tidak pernah me-reset state.
+
+
 
 
 

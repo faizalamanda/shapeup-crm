@@ -13,8 +13,10 @@ import {
   hasPairedBluetoothPrinter,
   requestAndConnectBluetoothPrinter,
   ensureBluetoothPrinterConnection,
-  sendBluetoothRawBytes
+  sendBluetoothRawBytes,
+  isAndroidApp
 } from './printerAdapter'
+import { getStoredReceiptSettings } from './receiptSettings'
 
 // Dynamic reference to active BLE write characteristic from printerAdapter
 declare const window: any
@@ -78,15 +80,13 @@ export async function printSingleKitchenTicket(
   
   // Resolve station printer connection: specific station preference overrides global cashier connection
   let effectiveConn: ConnectionType = 'system'
-  if (ticket.printerConnectionType === 'bluetooth') {
+  if (isAndroidApp() || ticket.printerConnectionType === 'bluetooth') {
     effectiveConn = 'bluetooth'
   } else if (ticket.printerConnectionType === 'system') {
     effectiveConn = 'system'
   } else {
     // 'same_as_cashier' fallback to cashier settings
-    effectiveConn = connectionType || (typeof window !== 'undefined' && localStorage.getItem('shapeup_pos_receipt_settings')
-      ? (JSON.parse(localStorage.getItem('shapeup_pos_receipt_settings') || '{}').connectionType || 'system')
-      : 'system')
+    effectiveConn = connectionType || getStoredReceiptSettings().connectionType
   }
 
   if (effectiveConn === 'bluetooth') {
@@ -98,7 +98,10 @@ export async function printSingleKitchenTicket(
       if (!hasPaired) {
         const pairRes = await requestAndConnectBluetoothPrinter()
         if (!pairRes.success) {
-          // Fallback to system print if bluetooth fails
+          if (isAndroidApp()) {
+            return { success: false, message: pairRes.error || 'Printer Bluetooth belum dipasangkan.' }
+          }
+          // Fallback to system print if bluetooth fails on web/desktop
           console.warn('[KitchenPrinter] Bluetooth pairing cancelled, falling back to system print.')
           return printKitchenTicketViaIframe(ticket)
         }
@@ -106,6 +109,9 @@ export async function printSingleKitchenTicket(
 
       const connRes = await ensureBluetoothPrinterConnection(false, targetDeviceId, targetDeviceName)
       if (!connRes.success) {
+        if (isAndroidApp()) {
+          return { success: false, message: connRes.error || 'Printer Bluetooth tidak terhubung.' }
+        }
         console.warn('[KitchenPrinter] Silent reconnect failed, falling back to system print.')
         return printKitchenTicketViaIframe(ticket)
       }
@@ -118,12 +124,15 @@ export async function printSingleKitchenTicket(
 
       // Send ESC/POS bytes directly over Web Bluetooth (to target station printer, or fallback)
       const sendRes = await sendBluetoothRawBytes(payload, targetDeviceId, targetDeviceName)
-      if (sendRes.success) {
+      if (sendRes.success || isAndroidApp()) {
         return sendRes
       }
       console.warn('[KitchenPrinter] Direct bluetooth transmission failed, falling back to iframe print:', sendRes.message)
       return printKitchenTicketViaIframe(ticket)
     } catch (err: any) {
+      if (isAndroidApp()) {
+        return { success: false, message: err.message || 'Gagal mencetak nota dapur via Bluetooth.' }
+      }
       console.warn('[KitchenPrinter] Bluetooth exception, falling back to iframe:', err)
       return printKitchenTicketViaIframe(ticket)
     }

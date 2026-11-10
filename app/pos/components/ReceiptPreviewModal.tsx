@@ -7,9 +7,10 @@ import {
   getPrinterAdapter, 
   PaperSize, 
   ConnectionType, 
-  generateReceiptHtml 
+  generateReceiptHtml,
+  isAndroidApp
 } from '@/lib/pos/printerAdapter'
-import { getStoredReceiptSettings } from '@/lib/pos/receiptSettings'
+import { getStoredReceiptSettings, saveStoredReceiptSettings } from '@/lib/pos/receiptSettings'
 
 type Props = {
   isOpen: boolean
@@ -45,9 +46,8 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
       if (settings.paperSize) {
         setPaperSize(settings.paperSize)
       }
-      if (settings.connectionType) {
-        setConnectionType(settings.connectionType)
-      }
+      const resolvedConn: ConnectionType = isAndroidApp() ? 'bluetooth' : (settings.connectionType || 'system')
+      setConnectionType(resolvedConn)
     }
   }, [isOpen, receipt?.businessName])
 
@@ -63,7 +63,8 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
     setIsPrinting(true)
     setPrintMessage(null)
     try {
-      const adapter = getPrinterAdapter(connectionType)
+      const effectiveConn: ConnectionType = isAndroidApp() ? 'bluetooth' : connectionType
+      const adapter = getPrinterAdapter(effectiveConn)
       const res = await adapter.print(receipt, paperSize)
       if (res.success) {
         setPrintMessage(res.message || 'Receipt berhasil dicetak.')
@@ -87,7 +88,11 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
             {/* Connection Type selector */}
             <select
               value={connectionType}
-              onChange={(e) => setConnectionType(e.target.value as ConnectionType)}
+              onChange={(e) => {
+                const nextConn = e.target.value as ConnectionType
+                setConnectionType(nextConn)
+                saveStoredReceiptSettings({ connectionType: nextConn }, receipt?.businessName)
+              }}
               className="text-xs bg-white border border-gray-200 rounded-lg px-2 py-1 font-medium text-gray-700 outline-none"
               title="Metode Cetak"
             >
@@ -97,7 +102,11 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
             {/* Paper Size selector */}
             <select
               value={paperSize}
-              onChange={(e) => setPaperSize(e.target.value as PaperSize)}
+              onChange={(e) => {
+                const nextSize = e.target.value as PaperSize
+                setPaperSize(nextSize)
+                saveStoredReceiptSettings({ paperSize: nextSize }, receipt?.businessName)
+              }}
               className="text-xs bg-white border border-gray-200 rounded-lg px-2 py-1 font-medium text-gray-700 outline-none"
             >
               <option value="58mm">Thermal 58mm</option>
