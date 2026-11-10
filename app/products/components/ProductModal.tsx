@@ -227,27 +227,35 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
   const [loadingCategories, setLoadingCategories] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  // Form State
-  const [name, setName] = useState('')
-  const [sku, setSku] = useState('')
-  const [description, setDescription] = useState('')
-  const [price, setPrice] = useState<number>(0)
-  const [enableMultiPrice, setEnableMultiPrice] = useState(false)
-  const [dineInPrice, setDineInPrice] = useState<number>(0)
-  const [takeAwayPrice, setTakeAwayPrice] = useState<number>(0)
-  const [costPrice, setCostPrice] = useState<number>(0)
-  const [type, setType] = useState<'physical' | 'service'>('physical')
-  const [categoryId, setCategoryId] = useState<string>('')
-  const [stockType, setStockType] = useState<'tracked' | 'available' | 'unavailable'>('available')
-  const [stockQuantity, setStockQuantity] = useState<number>(0)
-  const [minStockAlert, setMinStockAlert] = useState<number>(0)
-  const [unit, setUnit] = useState<string>('pcs')
-  const [customUnit, setCustomUnit] = useState<string>('')
-  const [pricingType, setPricingType] = useState<'standard' | 'area'>('standard')
-  const [minArea, setMinArea] = useState<number>(0)
-  const [minPrice, setMinPrice] = useState<number>(0)
-  const [hppType, setHppType] = useState<'fixed' | 'variable'>('fixed')
-  const [preventBelowHpp, setPreventBelowHpp] = useState(false)
+  const tiers = (product as any)?.price_tiers
+  const dPrice = Number(tiers?.dine_in || 0)
+  const tPrice = Number(tiers?.take_away || 0)
+
+  // Form State initialized directly from product (0ms initial frame render, no stale data flash)
+  const [name, setName] = useState(product?.name || '')
+  const [sku, setSku] = useState(product?.sku || '')
+  const [description, setDescription] = useState(product?.description || '')
+  const [price, setPrice] = useState<number>(product?.price || 0)
+  const [enableMultiPrice, setEnableMultiPrice] = useState(dPrice > 0 || tPrice > 0)
+  const [dineInPrice, setDineInPrice] = useState<number>(dPrice)
+  const [takeAwayPrice, setTakeAwayPrice] = useState<number>(tPrice)
+  const [costPrice, setCostPrice] = useState<number>(product?.cost_price || 0)
+  const [type, setType] = useState<'physical' | 'service'>(product?.type || 'physical')
+  const [categoryId, setCategoryId] = useState<string>(product?.category_id || '')
+  const [stockType, setStockType] = useState<'tracked' | 'available' | 'unavailable'>(product?.stock_type || 'available')
+  const [stockQuantity, setStockQuantity] = useState<number>(product?.stock_quantity || 0)
+  const [minStockAlert, setMinStockAlert] = useState<number>(Number((product as any)?.min_stock_alert || 0))
+  const [unit, setUnit] = useState<string>(
+    product?.unit && COMMON_UNITS.includes(product.unit) ? product.unit : (product?.unit ? 'custom' : 'pcs')
+  )
+  const [customUnit, setCustomUnit] = useState<string>(
+    product?.unit && !COMMON_UNITS.includes(product.unit) ? product.unit : ''
+  )
+  const [pricingType, setPricingType] = useState<'standard' | 'area'>(product?.pricing_type || 'standard')
+  const [minArea, setMinArea] = useState<number>(Number(product?.min_area) || 0)
+  const [minPrice, setMinPrice] = useState<number>(Number(product?.min_price) || 0)
+  const [hppType, setHppType] = useState<'fixed' | 'variable'>(product?.hpp_type || 'fixed')
+  const [preventBelowHpp, setPreventBelowHpp] = useState(Boolean((product as any)?.prevent_below_hpp))
   const [globalPriceGuardEnabled, setGlobalPriceGuardEnabled] = useState(false)
 
   // Recipe Builder State
@@ -380,14 +388,20 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         setNewCategoryName('')
         setCategoryError('')
 
+        // Clear sub-collections immediately to prevent stale data flashing from previously edited products
+        setRecipeRows([])
+        setVariantRows([])
+        setModifierGroups([])
+        setShowMatrixGen(false)
+        setMatrixAttributes([
+          { name: 'Warna', values: 'Hitam, Putih, Merah' },
+          { name: 'Ukuran', values: 'S, M, L, XL' }
+        ])
+
         if (product.id) {
           fetchProductRecipes(product.id)
           fetchProductVariants(product.id)
           fetchProductModifiers(product.id)
-        } else {
-          setRecipeRows([])
-          setVariantRows([])
-          setModifierGroups([])
         }
       } else {
         setName('')

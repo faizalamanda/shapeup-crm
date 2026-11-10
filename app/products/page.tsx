@@ -1447,11 +1447,15 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* Product Add / Edit Modal */}
-      {activeBizId && (
+      {/* Product Add / Edit Modal (Keyed mounting prevents stale state leakage across products) */}
+      {activeBizId && isModalOpen && (
         <ProductModal
+          key={selectedProduct?.id || 'new-product'}
           isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
+          onClose={() => {
+            setIsModalOpen(false)
+            setSelectedProduct(null)
+          }}
           onSave={refreshData}
           product={selectedProduct}
           businessId={activeBizId}
