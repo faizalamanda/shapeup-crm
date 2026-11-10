@@ -16,6 +16,8 @@ import { resolvePosMode } from '@/lib/pos/posMode'
 import AddCustomerModal from '../../orders/pos/components/AddCustomerModal'
 import OrderHistoryModal from '../../orders/pos/components/OrderHistoryModal'
 import POSOrderDetailModal from './POSOrderDetailModal'
+import POSBluetoothStatusBar from './POSBluetoothStatusBar'
+import POSBluetoothQuickReconnectModal from './POSBluetoothQuickReconnectModal'
 import ItemNoteModal from './ItemNoteModal'
 import OrderNoteModal from './OrderNoteModal'
 import GlobalDiscountModal from './GlobalDiscountModal'
@@ -178,6 +180,7 @@ export default function POSWorkspace({
   const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false)
   const [isOrderHistoryOpen, setIsOrderHistoryOpen] = useState(false)
   const [selectedOrderForDetail, setSelectedOrderForDetail] = useState<any | null>(null)
+  const [isBtQuickModalOpen, setIsBtQuickModalOpen] = useState(false)
   const [unpaidOrdersCount, setUnpaidOrdersCount] = useState<number>(0)
 
   // Receipt & Payment Data
@@ -2483,6 +2486,19 @@ export default function POSWorkspace({
           }}
         />
       )}
+
+      {/* Floating Proactive Bluetooth Printer Status Bar */}
+      <POSBluetoothStatusBar
+        onOpenQuickModal={() => setIsBtQuickModalOpen(true)}
+        defaultBusinessName={activeBusiness?.name}
+      />
+
+      {/* Quick Bluetooth Reconnect & Pairing Modal */}
+      <POSBluetoothQuickReconnectModal
+        isOpen={isBtQuickModalOpen}
+        onClose={() => setIsBtQuickModalOpen(false)}
+        defaultBusinessName={activeBusiness?.name}
+      />
     </div>
   )
 }

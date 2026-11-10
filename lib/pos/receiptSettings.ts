@@ -84,3 +84,19 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
     logoEscPosData: ''
   }
 }
+
+export function saveStoredReceiptSettings(updates: Partial<ReceiptSettings>, defaultBusinessName: string = 'ShapeUp Store'): ReceiptSettings {
+  const current = getStoredReceiptSettings(defaultBusinessName)
+  const updated: ReceiptSettings = {
+    ...current,
+    ...updates
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(RECEIPT_SETTINGS_STORAGE_KEY, JSON.stringify(updated))
+    } catch (e) {
+      console.warn('Failed saving receipt settings:', e)
+    }
+  }
+  return updated
+}

@@ -720,6 +720,36 @@ export function getActiveBluetoothDeviceId(): string | null {
   return localStorage.getItem('shapeup_pos_bt_id') || (activeBluetoothDevice?.id ?? null)
 }
 
+/** Check if cashier primary Bluetooth printer is currently connected and writable */
+export function isBluetoothPrinterConnected(): boolean {
+  return Boolean(activeBluetoothDevice?.gatt?.connected && activeWriteCharacteristic)
+}
+
+export type BluetoothStatusListener = (connected: boolean, deviceName: string | null) => void
+const bluetoothStatusListeners = new Set<BluetoothStatusListener>()
+
+export function subscribeBluetoothStatus(listener: BluetoothStatusListener): () => void {
+  bluetoothStatusListeners.add(listener)
+  // Call immediately with current state
+  try {
+    listener(isBluetoothPrinterConnected(), getActiveBluetoothDeviceName())
+  } catch {}
+  return () => {
+    bluetoothStatusListeners.delete(listener)
+  }
+}
+
+export function notifyBluetoothStatusChange(connected: boolean, deviceName?: string | null): void {
+  const name = deviceName ?? getActiveBluetoothDeviceName()
+  bluetoothStatusListeners.forEach((l) => {
+    try {
+      l(connected, name)
+    } catch (err) {
+      console.warn('[PrinterAdapter] Error in bluetooth status listener:', err)
+    }
+  })
+}
+
 /** Devices that already have our 'gattserverdisconnected' listener attached (prevents listener leaks). */
 const devicesWithDisconnectListener = new WeakSet<object>()
 
@@ -926,6 +956,7 @@ async function connectGattAndFindWriteChar(device: any): Promise<any> {
       console.warn('[PrinterAdapter] Bluetooth GATT disconnected.')
       if (activeBluetoothDevice === device) {
         activeWriteCharacteristic = null
+        notifyBluetoothStatusChange(false, device.name || null)
       }
       // Schedule silent auto-reconnect if document is visible
       scheduleSilentAutoReconnect()
@@ -1078,6 +1109,7 @@ export async function ensureBluetoothPrinterConnection(
         if (!lookupKey || candidateDevice === activeBluetoothDevice) {
           activeBluetoothDevice = candidateDevice
           activeWriteCharacteristic = writeChar
+          notifyBluetoothStatusChange(true, session.deviceName)
         }
         startBluetoothHeartbeat()
         return { success: true, deviceName: session.deviceName, deviceId: session.deviceId }
@@ -1118,6 +1150,7 @@ export async function ensureBluetoothPrinterConnection(
                 const name = matchedDevice.name || 'Bluetooth Thermal Printer'
                 localStorage.setItem('shapeup_pos_bt_name', name)
                 if (matchedDevice.id) localStorage.setItem('shapeup_pos_bt_id', matchedDevice.id)
+                notifyBluetoothStatusChange(true, name)
               }
               startBluetoothHeartbeat()
               return { success: true, deviceName: session.deviceName, deviceId: session.deviceId }
@@ -1293,6 +1326,7 @@ export async function requestAndConnectBluetoothPrinter(): Promise<{ success: bo
     if (device.id) {
       localStorage.setItem('shapeup_pos_bt_id', device.id)
     }
+    notifyBluetoothStatusChange(true, name)
     startBluetoothHeartbeat()
 
     return { success: true, deviceName: name, deviceId: device.id }
@@ -1501,6 +1535,7 @@ export async function disconnectBluetoothPrinter(): Promise<void> {
     localStorage.removeItem('shapeup_pos_bt_service_uuid')
     localStorage.removeItem('shapeup_pos_bt_char_uuid')
   }
+  notifyBluetoothStatusChange(false, null)
 }
 
 export async function sendBluetoothTestPrint(): Promise<PrintResult> {
