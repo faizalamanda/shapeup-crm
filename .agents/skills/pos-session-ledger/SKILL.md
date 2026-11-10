@@ -1062,6 +1062,34 @@ Untuk menjamin cetak logo kasir berkualitas tinggi, tajam, dan tidak menyebabkan
 3. **Pencetakan Instan 0ms (Offline-Safe):** Kasir tidak pernah menunggu unduhan gambar dari internet saat menekan tombol cetak. Jika kasir offline, logo tetap tercetak sempurna dari cache lokal.
 4. **Lazy Dither Fallback:** Saat kasir membuka profil bisnis di perangkat baru yang hanya memiliki `logo_url` dari cloud, modal pengaturan struk secara otomatis mendownload dan merasterisasi logo di latar belakang tanpa tindakan manual dari pengguna.
 
+---
+
+## 25. Tri-Mode Hardware Printer Architecture & Native Android RFCOMM/SPP Bridge
+
+Untuk mengatasi batasan Web Bluetooth API (pembatasan daya peramban Chrome saat layar terkunci dan timeout sleep firmware printer BLE murah), sistem menerapkan arsitektur *Tri-Mode Hardware Parity*:
+
+### 25.1 Mode 1: Native Android SPP Bridge (`window.AndroidPrinter`)
+- **Deteksi Cepat:** `isAndroidApp()` memeriksa keberadaan objek `window.AndroidPrinter`.
+- **Protokol:** Menggunakan Bluetooth Classic Serial Port Profile (SPP / RFCOMM) via UUID `00001101-0000-1000-8000-00805F9B34FB`.
+- **Keunggulan:**
+  - Koneksi dikelola kernel OS Android, bukan sandbox browser. Tidak pernah putus meski layar mati atau tablet sleep berjam-jam.
+  - Zero Re-Pairing: Menggunakan MAC Address perangkat yang sudah dipasangkan di menu Bluetooth tablet (`bondedDevices`). Tidak perlu pop-up izin peramban lagi selamanya.
+  - Pengiriman biner ESC/POS berbasis Base64 via Java/Kotlin `BluetoothSocket.outputStream.write()`.
+
+### 25.2 Mode 2: Proactive Reactive Web Bluetooth (Browser / PWA)
+- **Komponen Indikator Melayang (`POSBluetoothStatusBar.tsx`):**
+  - Hanya aktif jika kasir mengonfigurasi koneksi Bluetooth (`connectionType === 'bluetooth'` atau `hasPairedBluetoothPrinter() === true`).
+  - Posisi aman melayang di sudut atas (`top-15 right-3`), tidak menutupi keranjang belanja atau tombol checkout.
+  - Memandu kasir secara proaktif saat masuk POS pertama kali jika printer dalam keadaan mati/terputus.
+- **Modal Reconnect Khusus (`POSBluetoothQuickReconnectModal.tsx`):**
+  - Ramping, touch-friendly untuk tablet kasir.
+  - Menyediakan tombol sambung ulang cepat (gesture resmi Chrome), scan printer baru, tes cetak instan, dan tombol darurat alihkan ke cetak sistem.
+- **Event-Driven Subscriptions:** Fungsi `subscribeBluetoothStatus()` dan `notifyBluetoothStatusChange()` memperbarui antarmuka secara instan saat terjadi event `gattserverdisconnected` atau koneksi baru.
+
+### 25.3 Mode 3: Printer Sistem Komputer (Desktop USB / Iframe)
+- Menggunakan hidden iframe terisolasi untuk PC kasir dengan kabel USB atau driver RawBT eksternal.
+
+
 
 
 

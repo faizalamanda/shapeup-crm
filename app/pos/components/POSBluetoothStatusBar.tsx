@@ -7,7 +7,8 @@ import {
   getActiveBluetoothDeviceName,
   hasPairedBluetoothPrinter,
   ensureBluetoothPrinterConnection,
-  subscribeBluetoothStatus
+  subscribeBluetoothStatus,
+  isAndroidApp
 } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings } from '@/lib/pos/receiptSettings'
 
@@ -72,6 +73,11 @@ export default function POSBluetoothStatusBar({
 
     return () => unsubscribe()
   }, [defaultBusinessName])
+
+  // If running inside Android APK (Native Bluetooth active), hide Web Bluetooth warning
+  if (isAndroidApp()) {
+    return null
+  }
 
   // If Bluetooth is not configured or user is on system print, do not render anything
   if (!isBluetoothConfigured || !isWebBluetoothSupported()) {

@@ -1,0 +1,49 @@
+name: Build ShapeUp POS Android APK
+
+on:
+  workflow_dispatch: # Memungkinkan tombol "Run workflow" manual di GitHub
+  push:
+    paths:
+      - 'android-pos-app/**'
+      - '.github/workflows/build-apk.yml'
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Grant Execute Permission for Gradlew
+        run: chmod +x android-pos-app/gradlew || true
+
+      - name: Build APK with Gradle
+        working-directory: android-pos-app
+        run: |
+          if [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            ./gradlew assembleDebug --stacktrace
+          else
+            gradle assembleDebug --stacktrace
+          fi
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShapeUp-CRM-POS-app-debug
+          path: android-pos-app/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+

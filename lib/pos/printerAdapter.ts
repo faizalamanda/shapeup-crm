@@ -720,8 +720,20 @@ export function getActiveBluetoothDeviceId(): string | null {
   return localStorage.getItem('shapeup_pos_bt_id') || (activeBluetoothDevice?.id ?? null)
 }
 
+/** Check if currently running inside ShapeUp POS Native Android APK */
+export function isAndroidApp(): boolean {
+  return typeof window !== 'undefined' && Boolean((window as any).AndroidPrinter)
+}
+
 /** Check if cashier primary Bluetooth printer is currently connected and writable */
 export function isBluetoothPrinterConnected(): boolean {
+  if (isAndroidApp()) {
+    try {
+      return Boolean((window as any).AndroidPrinter?.isConnected?.())
+    } catch {
+      return true
+    }
+  }
   return Boolean(activeBluetoothDevice?.gatt?.connected && activeWriteCharacteristic)
 }
 
@@ -1340,6 +1352,27 @@ export async function sendBluetoothRawBytes(
   targetDeviceId?: string,
   targetDeviceName?: string
 ): Promise<PrintResult> {
+  // 1. Android APK Native SPP Bridge (Fast Path, Zero Drops, Anti Sleep)
+  if (isAndroidApp()) {
+    try {
+      let binaryStr = ''
+      const len = payload.byteLength
+      for (let i = 0; i < len; i++) {
+        binaryStr += String.fromCharCode(payload[i])
+      }
+      const base64Data = btoa(binaryStr)
+      const targetMac = targetDeviceId || getActiveBluetoothDeviceId() || ''
+      const resultStr = (window as any).AndroidPrinter.print(base64Data, targetMac)
+      if (resultStr === 'SUCCESS' || (typeof resultStr === 'string' && resultStr.startsWith('SUCCESS'))) {
+        return { success: true, message: 'Data cetak berhasil dikirim via Android Native Driver.' }
+      } else {
+        return { success: false, message: resultStr || 'Gagal mengirim cetak ke Android Native Printer.' }
+      }
+    } catch (err: any) {
+      console.warn('[PrinterAdapter] AndroidPrinter error, falling back to Web Bluetooth:', err)
+    }
+  }
+
   if (typeof window === 'undefined' || !isWebBluetoothSupported()) {
     return { success: false, message: 'Web Bluetooth tidak didukung pada peramban ini.' }
   }
