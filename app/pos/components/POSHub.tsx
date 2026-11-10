@@ -1078,6 +1078,7 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
           setQuickPrintReceipt(receipt)
           setIsReceiptPreviewOpen(true)
         }}
+        onShiftUpdated={() => loadData()}
       />
 
       {/* 4. Receipt Settings Modal */}

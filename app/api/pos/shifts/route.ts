@@ -74,14 +74,17 @@ async function calculateShiftMetrics(supabase: any, shiftIds: string[]) {
     }
   }
 
-  // 2. Fetch cash movements
+  // 2. Fetch cash movements (Excluding voided movements)
   const { data: movements } = await supabase
     .from('pos_shift_movements')
-    .select('shift_id, amount, type')
+    .select('shift_id, amount, type, status, note')
     .in('shift_id', shiftIds)
 
   if (movements) {
     for (const m of movements) {
+      const isVoided = m.status === 'voided' || (typeof m.note === 'string' && m.note.startsWith('[VOID'))
+      if (isVoided) continue
+
       const metric = metricsMap.get(m.shift_id)
       if (!metric) continue
       const amt = Number(m.amount) || 0
@@ -907,11 +910,126 @@ export async function POST(req: Request) {
         }
       }
 
+      if (txId || counterAccountId) {
+        try {
+          await dbClient
+            .from('pos_shift_movements')
+            .update({
+              transaction_id: txId || undefined,
+              account_id: counterAccountId || undefined
+            })
+            .eq('id', movement.id)
+        } catch (_) {}
+      }
+
       return NextResponse.json({
         success: true,
         movement,
         transactionId: txId,
         message: type === 'cash_in' ? 'Kas masuk berhasil dicatat & disinkronisasi ke jurnal' : 'Kas keluar (petty cash) berhasil dicatat & disinkronisasi ke jurnal'
+      })
+    }
+
+    // ─── ACTION: VOID CASH MOVEMENT (PETTY CASH IN/OUT) ─────────────────────────
+    if (action === 'void_cash_movement') {
+      const {
+        movement_id,
+        void_reason,
+        approver_id = null,
+        approver_pin = null
+      } = body
+
+      if (!movement_id) {
+        return NextResponse.json({ error: 'movement_id wajib diisi' }, { status: 400 })
+      }
+
+      const cleanReason = (void_reason || '').trim()
+      if (!cleanReason || cleanReason.length < 5) {
+        return NextResponse.json({ error: 'Alasan pembatalan (void) wajib diisi minimal 5 karakter' }, { status: 400 })
+      }
+
+      // Check role
+      const { isAdmin } = await checkShiftUserRole(businessId, user.id, supabaseAdmin)
+
+      // Fetch the target movement to verify shift ownership
+      const { data: targetMov, error: findMovErr } = await dbClient
+        .from('pos_shift_movements')
+        .select('id, shift_id, business_id, amount, type, note, status')
+        .eq('id', movement_id)
+        .eq('business_id', businessId)
+        .single()
+
+      if (findMovErr || !targetMov) {
+        return NextResponse.json({ error: 'Data mutasi kas tidak ditemukan' }, { status: 404 })
+      }
+
+      // Check Shift
+      const { data: targetShift } = await dbClient
+        .from('pos_shifts')
+        .select('id, user_id, status, cashier_name')
+        .eq('id', targetMov.shift_id)
+        .eq('business_id', businessId)
+        .single()
+
+      if (!targetShift) {
+        return NextResponse.json({ error: 'Sesi shift kasir tidak ditemukan' }, { status: 404 })
+      }
+
+      if (targetShift.status !== 'open') {
+        return NextResponse.json({
+          error: 'Mutasi kas pada shift yang sudah ditutup tidak dapat dibatalkan (void). Silakan lakukan koreksi jurnal manual.'
+        }, { status: 422 })
+      }
+
+      // If user is neither admin nor the cashier who opened this shift, reject
+      if (!isAdmin && targetShift.user_id !== user.id) {
+        return NextResponse.json({
+          error: 'Akses ditolak. Anda hanya dapat membatalkan mutasi kas pada sesi shift aktif milik Anda sendiri.'
+        }, { status: 403 })
+      }
+
+      // Manager / Approver PIN authorization for Staff (when business has configured approvers)
+      if (!isAdmin) {
+        const { data: approverPins } = await dbClient
+          .from('pos_approver_pins')
+          .select('id, user_id, pin_hash')
+          .eq('business_id', businessId)
+
+        if (approverPins && approverPins.length > 0) {
+          if (!approver_id || !approver_pin) {
+            return NextResponse.json({
+              error: 'Otorisasi Manajer diperlukan. Pilih akun approver dan masukkan 6 digit PIN.',
+              require_approval: true
+            }, { status: 403 })
+          }
+
+          const approver = approverPins.find((p: any) => p.user_id === approver_id)
+          if (!approver) {
+            return NextResponse.json({ error: 'Approver yang dipilih tidak memiliki PIN aktif.' }, { status: 403 })
+          }
+
+          const { verifyPin } = await import('@/lib/priceGuard/pinCrypto')
+          const isMatch = verifyPin(String(approver_pin).trim(), approver.pin_hash)
+          if (!isMatch) {
+            return NextResponse.json({ error: 'PIN otorisasi manajer salah.' }, { status: 403 })
+          }
+        }
+      }
+
+      // Delegate to ledger module!
+      const { voidPosCashMovement } = await import('@/lib/paymentLedger')
+      const result = await voidPosCashMovement({
+        businessId,
+        movementId: movement_id,
+        voidReason: cleanReason,
+        shiftId: targetShift.id,
+        cashierName: targetShift.cashier_name || profile?.full_name || 'Kasir',
+        userId: user.id,
+        supabase: dbClient
+      })
+
+      return NextResponse.json({
+        ...result
       })
     }
 

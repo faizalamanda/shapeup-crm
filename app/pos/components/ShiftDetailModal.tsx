@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { formatDisplayDate } from '@/lib/timeUtils'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
@@ -14,6 +14,7 @@ type Props = {
   onReprintOrder?: (order: any) => void
   onOpenOrderDetail?: (order: any) => void
   onReprintZReport?: (receipt: ReceiptData) => void
+  onShiftUpdated?: () => void
 }
 
 export default function ShiftDetailModal({
@@ -24,7 +25,8 @@ export default function ShiftDetailModal({
   businessName = 'ShapeUp Store',
   onReprintOrder,
   onOpenOrderDetail,
-  onReprintZReport
+  onReprintZReport,
+  onShiftUpdated
 }: Props) {
   const [loading, setLoading] = useState<boolean>(true)
   const [shift, setShift] = useState<any | null>(null)
@@ -39,6 +41,16 @@ export default function ShiftDetailModal({
   const [activeTab, setActiveTab] = useState<'zreport' | 'orders' | 'movements'>('zreport')
   const [orderSearch, setOrderSearch] = useState<string>('')
 
+  // Void Modal State
+  const [movementToVoid, setMovementToVoid] = useState<any | null>(null)
+  const [voidReason, setVoidReason] = useState<string>('')
+  const [approvers, setApprovers] = useState<any[]>([])
+  const [selectedApproverId, setSelectedApproverId] = useState<string>('')
+  const [approverPin, setApproverPin] = useState<string>('')
+  const [showPin, setShowPin] = useState<boolean>(false)
+  const [voidSubmitting, setVoidSubmitting] = useState<boolean>(false)
+  const [voidError, setVoidError] = useState<string | null>(null)
+
   // Format IDR
   const formatIDR = (val: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -48,37 +60,50 @@ export default function ShiftDetailModal({
     }).format(val || 0)
   }
 
-  // Load Shift Details
-  useEffect(() => {
-    if (!isOpen || !shiftId) return
-
-    let isMounted = true
+  // Fetch Shift Details
+  const fetchShiftDetails = useCallback(async () => {
+    if (!shiftId) return
     setLoading(true)
+    try {
+      const res = await fetch(`/api/pos/shifts?mode=shift_details&shift_id=${shiftId}`)
+      const data = await res.json()
+      if (data.success) {
+        setShift(data.shift)
+        setOrders(data.orders || [])
+        setMovements(data.movements || [])
+        if (data.tenderBreakdown) {
+          setTenderBreakdown(data.tenderBreakdown)
+        }
+      }
+    } catch (err) {
+      console.error('Error loading shift details:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [shiftId])
 
-    fetch(`/api/pos/shifts?mode=shift_details&shift_id=${shiftId}`)
-      .then((res) => res.json())
+  useEffect(() => {
+    if (isOpen && shiftId) {
+      fetchShiftDetails()
+    }
+  }, [isOpen, shiftId, fetchShiftDetails])
+
+  // Load Approvers in case approval PIN is needed
+  useEffect(() => {
+    if (!isOpen) return
+    fetch('/api/pos/price-authorizations')
+      .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (!isMounted) return
-        if (data.success) {
-          setShift(data.shift)
-          setOrders(data.orders || [])
-          setMovements(data.movements || [])
-          if (data.tenderBreakdown) {
-            setTenderBreakdown(data.tenderBreakdown)
+        if (data?.approvers && data.approvers.length > 0) {
+          const validApprovers = data.approvers.filter((a: any) => a.has_pin)
+          setApprovers(validApprovers)
+          if (validApprovers.length > 0) {
+            setSelectedApproverId(validApprovers[0].id)
           }
         }
       })
-      .catch((err) => {
-        console.error('Error loading shift details:', err)
-      })
-      .finally(() => {
-        if (isMounted) setLoading(false)
-      })
-
-    return () => {
-      isMounted = false
-    }
-  }, [isOpen, shiftId])
+      .catch(() => {})
+  }, [isOpen])
 
   // Filtered Orders inside this shift
   const filteredOrders = useMemo(() => {
@@ -91,7 +116,7 @@ export default function ShiftDetailModal({
     })
   }, [orders, orderSearch])
 
-  // Cash Calculation Metrics
+  // Cash Calculation Metrics (Excluding Voided Movements)
   const cashMetrics = useMemo(() => {
     if (!shift) {
       return {
@@ -104,7 +129,9 @@ export default function ShiftDetailModal({
         expectedCash: 0,
         actualCash: 0,
         difference: 0,
-        totalSales: 0
+        totalSales: 0,
+        voidedCount: 0,
+        voidedTotal: 0
       }
     }
 
@@ -116,8 +143,19 @@ export default function ShiftDetailModal({
 
     let cashIn = 0
     let cashOut = 0
+    let voidedCount = 0
+    let voidedTotal = 0
+
     movements.forEach((m) => {
+      const isVoided = m.status === 'voided' || (typeof m.note === 'string' && m.note.startsWith('[VOID'))
       const amt = Number(m.amount) || 0
+
+      if (isVoided) {
+        voidedCount += 1
+        voidedTotal += amt
+        return
+      }
+
       if (m.type === 'cash_in') cashIn += amt
       else if (m.type === 'cash_out') cashOut += amt
     })
@@ -142,11 +180,13 @@ export default function ShiftDetailModal({
       expectedCash,
       actualCash,
       difference,
-      totalSales
+      totalSales,
+      voidedCount,
+      voidedTotal
     }
   }, [shift, tenderBreakdown, movements, orders])
 
-  // Handler: Build and Print Z-Report
+  // Handler: Build and Print Z-Report (with Compact Audit Note for voids)
   const handlePrintZReport = () => {
     if (!shift) return
 
@@ -204,7 +244,13 @@ export default function ShiftDetailModal({
           quantity: 1,
           price: -cashMetrics.cashOut,
           subtotal: -cashMetrics.cashOut
-        }
+        },
+        ...(cashMetrics.voidedCount > 0 ? [{
+          name: `*Catatan: ${cashMetrics.voidedCount} mutasi di-void (${formatIDR(cashMetrics.voidedTotal)})`,
+          quantity: cashMetrics.voidedCount,
+          price: 0,
+          subtotal: 0
+        }] : [])
       ],
       subtotal: cashMetrics.totalSales,
       discountTotal: 0,
@@ -217,6 +263,53 @@ export default function ShiftDetailModal({
 
     if (onReprintZReport) {
       onReprintZReport(zReceipt)
+    }
+  }
+
+  // Handler: Confirm Void POS Movement
+  const handleConfirmVoid = async () => {
+    if (!movementToVoid) return
+    setVoidError(null)
+
+    const cleanReason = voidReason.trim()
+    if (!cleanReason || cleanReason.length < 5) {
+      setVoidError('Alasan pembatalan (void) wajib diisi minimal 5 karakter.')
+      return
+    }
+
+    if (approvers.length > 0 && (!selectedApproverId || approverPin.length !== 6)) {
+      setVoidError('Otorisasi Manajer diperlukan. Pilih approver dan masukkan 6 digit PIN.')
+      return
+    }
+
+    setVoidSubmitting(true)
+    try {
+      const res = await fetch('/api/pos/shifts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'void_cash_movement',
+          movement_id: movementToVoid.id,
+          void_reason: cleanReason,
+          approver_id: approvers.length > 0 ? selectedApproverId : undefined,
+          approver_pin: approvers.length > 0 ? approverPin : undefined
+        })
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || 'Gagal membatalkan mutasi kas')
+      }
+
+      setMovementToVoid(null)
+      setVoidReason('')
+      setApproverPin('')
+      await fetchShiftDetails()
+      if (onShiftUpdated) onShiftUpdated()
+    } catch (err: any) {
+      setVoidError(err.message || 'Terjadi kesalahan saat membatalkan mutasi kas')
+    } finally {
+      setVoidSubmitting(false)
     }
   }
 
@@ -616,38 +709,90 @@ export default function ShiftDetailModal({
                 ) : (
                   <div className="space-y-2">
                     {movements.map((mov) => {
+                      const isVoided = mov.status === 'voided' || (typeof mov.note === 'string' && mov.note.startsWith('[VOID'))
                       const isCashIn = mov.type === 'cash_in'
+                      const canVoid = shift?.status === 'open' && !isVoided
+
+                      // Clean note preview
+                      const cleanNote = (mov.note || (isCashIn ? 'Kas Masuk Laci' : 'Kas Keluar Operasional')).replace(/^\[VOID:[^\]]+\]\s*/i, '').trim()
+                      const voidReasonText = mov.void_reason || (typeof mov.note === 'string' && mov.note.match(/^\[VOID:\s*([^\]]+)\]/i)?.[1])
 
                       return (
                         <div
                           key={mov.id}
-                          className="p-3.5 rounded-2xl border border-slate-200/80 bg-slate-50/60 flex items-center justify-between gap-3 text-xs"
+                          className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between gap-3 text-xs ${
+                            isVoided
+                              ? 'border-slate-200/70 bg-slate-100/50 opacity-70'
+                              : 'border-slate-200/80 bg-slate-50/60'
+                          }`}
                         >
-                          <div className="flex items-center gap-3">
-                            <span className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-sm ${
-                              isCashIn ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 ${
+                              isVoided
+                                ? 'bg-slate-200 text-slate-500'
+                                : isCashIn
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-rose-100 text-rose-700'
                             }`}>
-                              {isCashIn ? '🔺' : '🔻'}
+                              {isVoided ? '🚫' : isCashIn ? '🔺' : '🔻'}
                             </span>
-                            <div>
-                              <span className="font-extrabold text-slate-900 block">
-                                {mov.note || (isCashIn ? 'Kas Masuk Laci' : 'Kas Keluar Operasional')}
-                              </span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`font-extrabold truncate ${
+                                  isVoided ? 'line-through text-slate-500' : 'text-slate-900'
+                                }`}>
+                                  {cleanNote}
+                                </span>
+                                {isVoided && (
+                                  <span className="text-[9px] font-black uppercase tracking-wider bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded-md border border-rose-200">
+                                    VOID
+                                  </span>
+                                )}
+                              </div>
                               <span className="text-[11px] text-slate-400 block mt-0.5">
                                 Waktu: {formatDisplayDate(mov.created_at, 'time', timezone)}
                               </span>
+                              {isVoided && voidReasonText && (
+                                <span className="text-[10px] text-rose-600/90 font-medium block mt-0.5 italic">
+                                  Alasan Void: {voidReasonText}
+                                </span>
+                              )}
                             </div>
                           </div>
 
-                          <div className="text-right">
-                            <span className={`font-black text-sm tabular-nums ${
-                              isCashIn ? 'text-emerald-700' : 'text-rose-600'
-                            }`}>
-                              {isCashIn ? '+' : '-'}{formatIDR(mov.amount)}
-                            </span>
-                            <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-bold mt-0.5">
-                              {isCashIn ? 'Kas Masuk' : 'Petty Cash'}
-                            </span>
+                          <div className="text-right shrink-0 flex items-center gap-3">
+                            <div>
+                              <span className={`font-black text-sm tabular-nums block ${
+                                isVoided
+                                  ? 'line-through text-slate-400'
+                                  : isCashIn
+                                  ? 'text-emerald-700'
+                                  : 'text-rose-600'
+                              }`}>
+                                {isCashIn ? '+' : '-'}{formatIDR(mov.amount)}
+                              </span>
+                              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-bold mt-0.5">
+                                {isCashIn ? 'Kas Masuk' : 'Petty Cash'}
+                              </span>
+                            </div>
+
+                            {/* Tombol Void Mutasi untuk Shift Aktif */}
+                            {canVoid && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setMovementToVoid(mov)
+                                  setVoidReason('')
+                                  setApproverPin('')
+                                  setVoidError(null)
+                                }}
+                                className="px-2.5 py-1.5 rounded-xl bg-slate-200/70 hover:bg-rose-50 text-slate-600 hover:text-rose-700 hover:border-rose-200 border border-transparent font-bold text-[11px] transition shadow-2xs flex items-center gap-1"
+                                title="Batalkan (Void) Mutasi Kas Ini"
+                              >
+                                <span>🚫</span>
+                                <span className="hidden sm:inline">Void</span>
+                              </button>
+                            )}
                           </div>
                         </div>
                       )
@@ -659,6 +804,166 @@ export default function ShiftDetailModal({
           </>
         )}
       </div>
+
+      {/* MODAL KONFIRMASI VOID MUTASI KAS */}
+      {movementToVoid && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="w-9 h-9 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center text-lg font-black">
+                  🚫
+                </span>
+                <div>
+                  <h3 className="font-black text-slate-900 text-base">Batalkan Mutasi Kas (Void)</h3>
+                  <p className="text-[11px] text-slate-500 font-medium">Sesi shift aktif saat ini</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setMovementToVoid(null)
+                  setVoidError(null)
+                }}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center text-xs font-bold transition"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Ringkasan Mutasi */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1.5 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Tipe Mutasi:</span>
+                <span className="font-extrabold text-slate-900">
+                  {movementToVoid.type === 'cash_in' ? '🔺 Kas Masuk Laci' : '🔻 Kas Keluar Operasional'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Nominal:</span>
+                <span className={`font-black text-sm tabular-nums ${movementToVoid.type === 'cash_in' ? 'text-emerald-700' : 'text-rose-600'}`}>
+                  {formatIDR(movementToVoid.amount)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Catatan Asal:</span>
+                <span className="font-bold text-slate-700 truncate max-w-[200px]">
+                  {movementToVoid.note || '-'}
+                </span>
+              </div>
+            </div>
+
+            {/* Dampak Finansial */}
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200/70 text-[11px] text-amber-900 leading-relaxed font-medium">
+              {movementToVoid.type === 'cash_out'
+                ? `ℹ️ Uang kas sebesar ${formatIDR(movementToVoid.amount)} akan dikembalikan ke saldo kas laci, dan jurnal pembalik beban akan diposting otomatis ke buku besar.`
+                : `ℹ️ Saldo kas laci sebesar ${formatIDR(movementToVoid.amount)} akan dikurangi kembali, dan jurnal pembalik sumber dana akan diposting otomatis ke buku besar.`}
+            </div>
+
+            {/* Input Alasan */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-black text-slate-800 block">
+                Alasan Pembatalan (Void) <span className="text-rose-600">*</span>
+              </label>
+              <textarea
+                value={voidReason}
+                onChange={(e) => setVoidReason(e.target.value)}
+                placeholder="Contoh: Salah input nominal kelebihan nol, transaksi dibatalkan kurir..."
+                rows={2}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 transition"
+              />
+            </div>
+
+            {/* Approver & PIN (Jika toko memiliki approver PIN) */}
+            {approvers.length > 0 && (
+              <div className="p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 space-y-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs">🔑</span>
+                  <span className="text-xs font-black text-indigo-950">Otorisasi Manajer / Approver</span>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700 block">Pilih Approver</label>
+                  <select
+                    value={selectedApproverId}
+                    onChange={(e) => setSelectedApproverId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    {approvers.map((a: any) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700 block">6 Digit PIN Approver</label>
+                  <div className="relative">
+                    <input
+                      type={showPin ? 'text' : 'password'}
+                      value={approverPin}
+                      onChange={(e) => setApproverPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="Masukkan 6 digit PIN"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-900 tracking-widest pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPin(!showPin)}
+                      tabIndex={-1}
+                      aria-label={showPin ? 'Sembunyikan PIN' : 'Lihat PIN'}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs p-1"
+                    >
+                      {showPin ? '🙈' : '👁️'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Error Message */}
+            {voidError && (
+              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold flex items-center gap-2">
+                <span>⚠️</span>
+                <span>{voidError}</span>
+              </div>
+            )}
+
+            {/* Tombol Aksi */}
+            <div className="flex items-center gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setMovementToVoid(null)
+                  setVoidError(null)
+                }}
+                disabled={voidSubmitting}
+                className="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 transition"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmVoid}
+                disabled={voidSubmitting || voidReason.trim().length < 5 || (approvers.length > 0 && approverPin.length !== 6)}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-black shadow-xs transition flex items-center justify-center gap-2"
+              >
+                {voidSubmitting ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    <span>Memproses...</span>
+                  </>
+                ) : (
+                  <span>Konfirmasi Void</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </FullScreenModal>
   )
 }

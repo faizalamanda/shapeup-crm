@@ -66,6 +66,14 @@
      `business_id IN (SELECT id FROM businesses WHERE owner_id = auth.uid() UNION SELECT business_id FROM business_staff WHERE profile_id = auth.uid()) OR business_id = (SELECT active_business_id FROM profiles WHERE id = auth.uid())`
      Hal ini menjamin staf yang ditugaskan di unit bisnis tidak pernah mengalami kegagalan RLS (*403 / zero rows returned*) saat membuka shift kasir atau menjurnal akun operasional meskipun ada latensi sinkronisasi pada profil pengguna.
 
+16. **POS Petty Cash Movements & Universal Void Ledger:**
+   - Setiap mutasi kas laci kasir (`pos_shift_movements`), baik pengeluaran (*Cash Out*) maupun penambahan modal (*Cash In*), wajib terikat langsung ke akun riil Bagan Akun (COA) dan diposting seketika ke modul akuntansi (`transactions` & `journal_lines`).
+   - Pembatalan (*Void*) mutasi kas **WAJIB** menggunakan fungsi universal `voidPosCashMovement()` dari `@/lib/paymentLedger.ts`.
+   - **Zero DELETE Policy:** Dilarang keras melakukan `DELETE` atau memodifikasi nominal mutasi historis. Mutasi ditandai dengan `status = 'voided'` dan dicatat metadata auditnya (`void_reason`, `voided_at`, `voided_by`, `reversal_transaction_id`).
+   - **Active Shift Gating:** Void mutasi kas **DILARANG KERAS** dieksekusi pada sesi shift yang telah ditutup (`pos_shifts.status = 'closed'`).
+   - **Compensating Reversal Entry:** Sistem wajib memposting jurnal pembalik otomatis (Debit Kas POS & Credit Beban untuk void Cash Out; Debit Sumber Dana & Credit Kas POS untuk void Cash In).
+   - **Role-Aware PIN Gating:** Staf wajib memasukkan 6 digit PIN jika bisnis telah mengonfigurasi akun approver di `pos_approver_pins`.
+
 
 ## Performance Rules
 

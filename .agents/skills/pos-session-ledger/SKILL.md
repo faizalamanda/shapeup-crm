@@ -46,6 +46,23 @@ Dokumen skill ini menetapkan arsitektur standar untuk sistem Kasir / Point of Sa
   - Header jurnal transaksi menggunakan format deskripsi standar `[POS-MOV-{movement.id}] ...`.
   - Hal ini menjamin pelacakan dua arah antara log laci kasir dan buku besar akuntansi, serta mencegah duplikasi posting jurnal secara atomik.
 
+### 1.5 Void Pengeluaran & Masukan Kas pada Shift Aktif (Compensating Reversal via Universal Ledger)
+- **Strict Active Shift Gating:** Mutasi kas laci kasir (`pos_shift_movements`) hanya dapat dibatalkan (void) jika sesi shift kasir pemilik mutasi masih berstatus buka (`pos_shifts.status = 'open'`). Sesi shift yang telah ditutup (`closed`) dilarang di-void untuk menjaga keutuhan Z-Report yang telah ditandatangani.
+- **Universal Ledger Engine Delegation (`lib/paymentLedger.ts`):** Logika pembatalan dipusatkan pada fungsi `voidPosCashMovement()`. Endpoint API `POST /api/pos/shifts` (`action: void_cash_movement`) bertindak sebagai kontroler tipis yang memvalidasi otorisasi sebelum mendelegasikan ke modul ledger.
+- **Double-Entry Compensating Reversal:**
+  - **Void Cash Out:** Membalik jurnal pengeluaran dengan mendebit kembali Kas POS (`101000` / register laci aktif) dan mengkredit akun Beban terkait (`503000 Beban Operasional`).
+  - **Void Cash In:** Membalik jurnal kas masuk dengan mendebit akun sumber dana (`101100 Kas Utama` / `301000 Modal`) dan mengkredit Kas POS (`101000`).
+  - Deskripsi transaksi jurnal: `[POS-MOV-VOID-{movement.id}] Void Pengeluaran/Kas Masuk POS: {note} (Alasan: {void_reason}) - {cashier_name}`.
+- **In-Place Status & Audit Trail:**
+  - Baris mutasi pada `pos_shift_movements` tidak pernah di-`DELETE`. Status diperbarui menjadi `status = 'voided'` dengan mencatat `void_reason` (min. 5 karakter), `voided_at`, `voided_by`, dan `reversal_transaction_id`.
+  - Prefix defensif `[VOID: {reason}]` disematkan ke kolom `note` untuk menjamin konsistensi tampilan dan filtering.
+- **Role-Aware Security & Manager PIN Gating:**
+  - Kasir Owner dan Admin dapat langsung melakukan void mutasi pada shift aktif mana pun.
+  - Kasir Staf wajib memilih Approver dan memasukkan 6 digit PIN jika bisnis telah mengonfigurasi approver dengan PIN aktif di tabel `pos_approver_pins`. Jika toko beroperasi kasir tunggal tanpa approver PIN, staf diizinkan void mandiri dengan audit trail alasan wajib.
+- **Z-Report & Thermal Receipt Presentation:**
+  - Saldo `Petty Cash Masuk` dan `Petty Cash Keluar` pada Z-Report dihitung secara bersih (*Net Active*) mengecualikan transaksi yang di-void.
+  - Jika terdapat transaksi yang dibatalkan pada shift tersebut, Z-Report mencetak 1 baris catatan audit ringkas di bagian bawah: `*Catatan: {count} mutasi di-void ({totalIDR})`.
+
 ---
 
 ## 2. Multi-Tender Split Payment & Dual Split Bill Architecture
@@ -165,6 +182,8 @@ Untuk menjamin integritas buku besar dan laci kasir saat terjadi pembatalan pesa
 | :--- | :--- |
 | `POST /api/pos/shifts` (`action: open`) | Buka shift kasir, catat modal awal dan akun sumber |
 | `POST /api/pos/shifts` (`action: close`) | Rekonsiliasi expected vs actual, jurnal selisih kas, transfer setoran |
+| `POST /api/pos/shifts` (`action: cash_movement`) | Catat kas keluar (petty cash) / kas masuk laci kasir |
+| `POST /api/pos/shifts` (`action: void_cash_movement`) | Batalkan (void) mutasi kas keluar/masuk pada shift aktif via universal ledger |
 | `GET /api/pos/shifts?mode=monitoring` | Data real-time saldo laci seluruh kasir aktif untuk dashboard manajer |
 | `POST /api/pos/order` | Checkout pesanan POS, validasi stok, insert multi-tender `order_payments` |
 | `POST /api/pos/order/pay` | Penerimaan cicilan/pelunasan sisa piutang pesanan |
