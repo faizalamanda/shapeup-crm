@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { invalidatePosCatalogCache } from '@/lib/posCatalogStore'
 
 type Category = {
   id: string
@@ -12,36 +13,77 @@ type Category = {
 }
 
 const TARGET_FIELDS = [
-  { key: 'name', name: 'Nama Produk / Barang', required: true, desc: 'Nama lengkap item atau jasa' },
+  { key: 'name', name: 'Nama Produk / Barang', required: true, desc: 'Nama lengkap item atau jasa (Moka: Items Name)' },
+  { key: 'variant_name', name: 'Nama Varian (Opsional / Moka Variant)', required: false, desc: 'Jika diisi, baris dengan Nama Produk sama otomatis digabung menjadi Varian SKU' },
   { key: 'sku', name: 'Kode SKU / Barcode', required: false, desc: 'Kode identifikasi unik atau barcode produk' },
-  { key: 'price', name: 'Harga Jual', required: false, desc: 'Harga jual satuan (default: Rp 0)' },
-  { key: 'cost_price', name: 'HPP / Harga Modal Beli', required: false, desc: 'Harga modal perolehan barang (default: Rp 0)' },
+  { key: 'price', name: 'Harga Jual Utama (Basic Price)', required: false, desc: 'Harga jual satuan utama (otomatis fallback dari Dine In / Take Away jika kosong)' },
+  { key: 'dine_in_price', name: 'Harga Dine In (Makan di Tempat)', required: false, desc: 'Harga khusus layanan Dine In (opsional / Moka POS)' },
+  { key: 'take_away_price', name: 'Harga Take Away (Bungkus / Ojol)', required: false, desc: 'Harga khusus layanan Take Away (opsional / Moka POS)' },
+  { key: 'cost_price', name: 'HPP / Harga Modal Beli', required: false, desc: 'Harga modal perolehan barang (Moka: Cost Amount)' },
   { key: 'category', name: 'Kategori Produk', required: false, desc: 'Kategori barang (otomatis dibuat jika belum ada)' },
-  { key: 'stock_quantity', name: 'Stok Awal Fisik', required: false, desc: 'Jumlah fisik stok awal (contoh: 10, 50, 100)' },
-  { key: 'unit', name: 'Satuan Unit', required: false, desc: 'Satuan barang (pcs, box, kg, botol, pack, dll)' },
+  { key: 'stock_quantity', name: 'Stok Awal Fisik', required: false, desc: 'Jumlah fisik stok awal (Moka: In Stock)' },
+  { key: 'min_stock_alert', name: 'Batas Minimum Stok (Stock Alert)', required: false, desc: 'Ambang batas pengingat stok menipis (Moka: Stock Alert)' },
+  { key: 'unit', name: 'Satuan Unit', required: false, desc: 'Satuan barang (pcs, porsi, box, kg, botol, pack, dll)' },
   { key: 'type', name: 'Tipe Produk (Fisik / Jasa)', required: false, desc: 'Tipe item: "Barang Fisik" (physical) atau "Jasa / Layanan" (service)' },
-  { key: 'stock_type', name: 'Manajemen Stok (Tersedia / Tidak Tersedia / Di Track)', required: false, desc: 'Status stok: "tersedia" (available), "tidak tersedia" (unavailable), atau "di track" / "lacak" (tracked)' },
+  { key: 'stock_type', name: 'Manajemen Stok (Track Stock Yes/No)', required: false, desc: 'Status stok: "Yes/Di Track" (tracked), "No/Tersedia" (available), atau "Tidak Tersedia" (unavailable)' },
+  { key: 'external_id', name: 'ID Eksternal / Internal ID POS', required: false, desc: 'ID referensi dari sistem POS lama (Moka: Internal ID Variant)' },
   { key: 'description', name: 'Deskripsi / Detail', required: false, desc: 'Catatan detail spesifikasi produk' }
 ]
 
-const detectProductFieldByHeader = (header: string): string => {
-  const h = header.toLowerCase().replace(/[^a-z0-9]/g, '')
+const extractModifierGroupNameFromHeader = (header: string): string | null => {
+  const match = String(header || '').trim().match(/^Modifier\s*Set\s*-\s*(.+?)(?:\s*-\s*\d+)?$/i)
+  if (match && match[1]) {
+    return match[1].trim()
+  }
+  return null
+}
 
+const detectProductFieldByHeader = (header: string): string => {
+  const raw = String(header || '').trim()
+  const lowerRaw = raw.toLowerCase()
+  const h = lowerRaw.replace(/[^a-z0-9]/g, '')
+
+  // Ignore Moka internal parent ID or Modifier Set columns in standard 1-to-1 dropdown (handled automatically)
+  if (extractModifierGroupNameFromHeader(raw)) {
+    return ''
+  }
+  if (h === 'internaliditemdonotedit' || h === 'internaliditem') {
+    return ''
+  }
+  if (h.includes('internalidvariant') || h === 'externalid' || h === 'posid') {
+    return 'external_id'
+  }
+  if (h === 'variantname' || h === 'namavarian' || h === 'varian' || h === 'variant') {
+    return 'variant_name'
+  }
+  if (h.includes('dinein') && (h.includes('price') || h.includes('harga'))) {
+    return 'dine_in_price'
+  }
+  if ((h.includes('takeaway') || h.includes('bungkus')) && (h.includes('price') || h.includes('harga'))) {
+    return 'take_away_price'
+  }
+  if (h.includes('stockalert') || h.includes('minstock') || h.includes('stokminimum') || h.includes('batasstok') || h.includes('minimumstok')) {
+    return 'min_stock_alert'
+  }
+  if (h.includes('trackcost')) {
+    return ''
+  }
   if (h.includes('sku') || h.includes('barcode') || h.includes('kode') || h.includes('itemcode') || h.includes('upc')) {
     return 'sku'
   }
-  if (h.includes('hpp') || h.includes('modal') || h.includes('hargabeli') || h.includes('cost') || h.includes('buyprice') || h.includes('hargamodal')) {
+  if (h.includes('hpp') || h.includes('modal') || h.includes('hargabeli') || h.includes('costamount') || h.includes('costprice') || h === 'cost' || h.includes('buyprice') || h.includes('hargamodal')) {
     return 'cost_price'
   }
-  if (h.includes('hargajual') || h.includes('harga') || h.includes('price') || h.includes('jual') || h.includes('tarif') || h.includes('retail')) {
+  if (h === 'basicprice' || h.includes('hargajual') || h.includes('harga') || h.includes('price') || h.includes('jual') || h.includes('tarif') || h.includes('retail')) {
     return 'price'
   }
   // Detect Tipe Produk before category to avoid "jenis produk" matching category
   if (h.includes('tipeproduk') || h.includes('jenisproduk') || h.includes('producttype') || h.includes('itemtype') || h === 'tipe' || h === 'type') {
     return 'type'
   }
-  // Detect Manajemen Stok before stock_quantity so "manajemen stok" doesn't falsely match "stok"
+  // Detect Manajemen Stok before stock_quantity so "manajemen stok" / "Track Stock" doesn't falsely match "stok"
   if (
+    h === 'trackstock' ||
     h.includes('manajemenstok') ||
     h.includes('statusstok') ||
     h.includes('tipestok') ||
@@ -56,7 +98,7 @@ const detectProductFieldByHeader = (header: string): string => {
   ) {
     return 'stock_type'
   }
-  if (h.includes('stokawal') || h.includes('openingstock') || h.includes('stok') || h.includes('stock') || h.includes('qty') || h.includes('quantity') || h.includes('jumlah') || h.includes('saldo')) {
+  if (h === 'instock' || h.includes('stokawal') || h.includes('openingstock') || h.includes('stok') || h.includes('stock') || h.includes('qty') || h.includes('quantity') || h.includes('jumlah') || h.includes('saldo')) {
     return 'stock_quantity'
   }
   if (h.includes('kategori') || h.includes('category') || h.includes('golongan') || h.includes('kelompok') || h.includes('katalog') || (h.includes('jenis') && !h.includes('produk'))) {
@@ -71,7 +113,7 @@ const detectProductFieldByHeader = (header: string): string => {
   if (h.includes('tipe') || h.includes('type')) {
     return 'type'
   }
-  if (h.includes('namaproduk') || h.includes('namabarang') || h.includes('nama') || h.includes('product') || h.includes('title') || h.includes('item')) {
+  if (h.includes('itemsname') || h.includes('itemname') || h.includes('namaproduk') || h.includes('namabarang') || h.includes('nama') || h.includes('product') || h.includes('title') || h.includes('item')) {
     return 'name'
   }
 
@@ -313,38 +355,73 @@ export default function ProductImportPage() {
     XLSX.writeFile(wb, 'template_import_produk_shapeup.xlsx')
   }
 
-  // Parsed and Validated Data
+  // Detect whether the uploaded file has Moka POS headers or Modifier Set columns
+  const detectedModifierHeaders = useMemo(() => {
+    return headers
+      .map(h => ({ header: h, groupName: extractModifierGroupNameFromHeader(h) }))
+      .filter((x): x is { header: string; groupName: string } => Boolean(x.groupName))
+  }, [headers])
+
+  const isMokaFormatDetected = useMemo(() => {
+    const lowerHeaders = headers.map(h => h.toLowerCase())
+    return (
+      lowerHeaders.some(h => h.includes('items name') || h.includes('internal id variant')) ||
+      detectedModifierHeaders.length > 0
+    )
+  }, [headers, detectedModifierHeaders])
+
+  // Parsed and Validated Data (with automatic SPU -> SKU Variant Grouping when Variant Name is mapped)
   const parsedData = useMemo(() => {
-    return rawData.map((row, idx) => {
+    const rawMappedRows = rawData.map((row, idx) => {
       const result: any = {
         _index: idx + 1,
+        _rowNumber: idx + 2,
         _errors: [] as string[],
         _warnings: [] as string[]
       }
 
       let rawName: any = null
+      let rawVariantName: any = null
       let rawSku: any = null
       let rawPrice: any = null
+      let rawDineInPrice: any = null
+      let rawTakeAwayPrice: any = null
       let rawCost: any = null
       let rawCat: any = null
       let rawStock: any = null
+      let rawMinStockAlert: any = null
       let rawUnit: any = null
       let rawType: any = null
       let rawStockType: any = null
+      let rawExternalId: any = null
       let rawDesc: any = null
 
       headers.forEach(h => {
         const target = mapping[h]
         if (target === 'name') rawName = row[h]
+        if (target === 'variant_name') rawVariantName = row[h]
         if (target === 'sku') rawSku = row[h]
         if (target === 'price') rawPrice = row[h]
+        if (target === 'dine_in_price') rawDineInPrice = row[h]
+        if (target === 'take_away_price') rawTakeAwayPrice = row[h]
         if (target === 'cost_price') rawCost = row[h]
         if (target === 'category') rawCat = row[h]
         if (target === 'stock_quantity') rawStock = row[h]
+        if (target === 'min_stock_alert') rawMinStockAlert = row[h]
         if (target === 'unit') rawUnit = row[h]
         if (target === 'type') rawType = row[h]
         if (target === 'stock_type') rawStockType = row[h]
+        if (target === 'external_id') rawExternalId = row[h]
         if (target === 'description') rawDesc = row[h]
+      })
+
+      // Extract active Modifier Groups from "Modifier Set - [Name]" columns where cell value is Yes / True / 1
+      const activeModifiers: string[] = []
+      detectedModifierHeaders.forEach(({ header, groupName }) => {
+        const cellVal = String(row[header] ?? '').trim().toLowerCase()
+        if (cellVal === 'yes' || cellVal === 'ya' || cellVal === 'true' || cellVal === '1' || cellVal === 'aktif') {
+          activeModifiers.push(groupName)
+        }
       })
 
       // Validation: Name is the only strictly required field
@@ -356,12 +433,28 @@ export default function ProductImportPage() {
         result.name = cleanName
       }
 
-      result.sku = rawSku !== undefined && rawSku !== null ? String(rawSku).trim() : null
-      result.price = parseNumeric(rawPrice)
-      result.cost_price = parseNumeric(rawCost)
-      result.stock_quantity = parseNumeric(rawStock)
+      result.variant_name = rawVariantName !== undefined && rawVariantName !== null ? String(rawVariantName).trim() : ''
+      result.sku = rawSku !== undefined && rawSku !== null && String(rawSku).trim() ? String(rawSku).trim() : null
+
+      // Smart Price Coalesce (Moka often leaves Basic - Price blank and fills Dine In / Take Away)
+      const basicPriceNum = parseNumeric(rawPrice)
+      const dineInPriceNum = parseNumeric(rawDineInPrice)
+      const takeAwayPriceNum = parseNumeric(rawTakeAwayPrice)
+      result.price = basicPriceNum > 0 ? basicPriceNum : (dineInPriceNum > 0 ? dineInPriceNum : (takeAwayPriceNum > 0 ? takeAwayPriceNum : 0))
+
+      const priceTiers: { dine_in?: number; take_away?: number } = {}
+      if (dineInPriceNum > 0) priceTiers.dine_in = dineInPriceNum
+      if (takeAwayPriceNum > 0) priceTiers.take_away = takeAwayPriceNum
+      result.price_tiers = priceTiers
+
+      result.cost_price = Math.max(0, parseNumeric(rawCost))
+      // Sanitize negative stock from POS exports (e.g. -1469 in Moka when untracked) to 0
+      result.stock_quantity = Math.max(0, Math.round(parseNumeric(rawStock)))
+      result.min_stock_alert = Math.max(0, Math.round(parseNumeric(rawMinStockAlert)))
+      result.external_id = rawExternalId !== undefined && rawExternalId !== null && String(rawExternalId).trim() ? String(rawExternalId).trim() : null
       result.unit = rawUnit !== undefined && rawUnit !== null && String(rawUnit).trim() ? String(rawUnit).trim() : defaultUnit
-      result.description = rawDesc !== undefined && rawDesc !== null ? String(rawDesc).trim() : null
+      result.description = rawDesc !== undefined && rawDesc !== null && String(rawDesc).trim() ? String(rawDesc).trim() : null
+      result.modifier_groups = activeModifiers
 
       // Category
       const cleanCat = rawCat !== undefined && rawCat !== null ? String(rawCat).trim() : ''
@@ -393,6 +486,10 @@ export default function ProductImportPage() {
       ) {
         result.stock_type = 'unavailable'
       } else if (
+        stockTypeStr === 'yes' ||
+        stockTypeStr === 'ya' ||
+        stockTypeStr === 'true' ||
+        stockTypeStr === '1' ||
         stockTypeStr.includes('track') ||
         stockTypeStr.includes('lacak') ||
         stockTypeStr.includes('kelola') ||
@@ -400,6 +497,10 @@ export default function ProductImportPage() {
       ) {
         result.stock_type = 'tracked'
       } else if (
+        stockTypeStr === 'no' ||
+        stockTypeStr === 'tidak lacak' ||
+        stockTypeStr === 'false' ||
+        stockTypeStr === '0' ||
         stockTypeStr.includes('tersedia') ||
         stockTypeStr.includes('available') ||
         stockTypeStr.includes('bebas') ||
@@ -407,7 +508,6 @@ export default function ProductImportPage() {
       ) {
         result.stock_type = 'available'
       } else {
-        // If empty / unmapped:
         if (result.type === 'service' && defaultStockType === 'tracked') {
           result.stock_type = 'available'
         } else {
@@ -418,14 +518,81 @@ export default function ProductImportPage() {
       result._valid = result._errors.length === 0
       return result
     })
-  }, [rawData, headers, mapping, defaultCategory, defaultUnit, defaultType, defaultStockType, categories])
+
+    // Group rows by Product Name if they share the same valid name and have variant_name (or multiple rows with same name in Moka format)
+    const groupedProducts: any[] = []
+    const validGroupMap = new Map<string, any[]>()
+
+    rawMappedRows.forEach(r => {
+      if (!r._valid) {
+        groupedProducts.push({ ...r, variants: [] })
+        return
+      }
+      const key = r.name.toLowerCase()
+      if (!validGroupMap.has(key)) {
+        validGroupMap.set(key, [])
+      }
+      validGroupMap.get(key)!.push(r)
+    })
+
+    let displayIdx = 1
+    validGroupMap.forEach((rowsForProduct) => {
+      const first = rowsForProduct[0]
+      const hasMultipleRows = rowsForProduct.length > 1
+      const hasExplicitVariantName = rowsForProduct.some(
+        r => r.variant_name && r.variant_name.toLowerCase() !== r.name.toLowerCase()
+      )
+
+      if (!hasMultipleRows && !hasExplicitVariantName) {
+        // Single standalone product without variants
+        groupedProducts.push({
+          ...first,
+          _index: displayIdx++,
+          variants: []
+        })
+      } else {
+        // Parent SPU with discrete SKU Variants
+        const variants = rowsForProduct.map((r, vIdx) => ({
+          name: r.variant_name || `Varian ${vIdx + 1}`,
+          sku: r.sku || null,
+          price: r.price,
+          cost_price: r.cost_price,
+          stock_quantity: r.stock_quantity,
+          price_tiers: r.price_tiers,
+          min_stock_alert: r.min_stock_alert,
+          external_id: r.external_id
+        }))
+
+        const totalVariantStock = variants.reduce((acc, v) => acc + (Number(v.stock_quantity) || 0), 0)
+        const anyTracked = rowsForProduct.some(r => r.stock_type === 'tracked')
+        const mergedModGroups = Array.from(
+          new Set(rowsForProduct.flatMap(r => r.modifier_groups || []))
+        )
+        const minPositivePrice = variants.reduce((min, v) => (v.price > 0 && (min === 0 || v.price < min) ? v.price : min), first.price || 0)
+
+        groupedProducts.push({
+          ...first,
+          _index: displayIdx++,
+          sku: hasMultipleRows ? null : first.sku,
+          price: minPositivePrice,
+          stock_type: anyTracked ? 'tracked' : first.stock_type,
+          stock_quantity: anyTracked ? totalVariantStock : 0,
+          modifier_groups: mergedModGroups,
+          variants
+        })
+      }
+    })
+
+    return groupedProducts
+  }, [rawData, headers, mapping, defaultCategory, defaultUnit, defaultType, defaultStockType, categories, detectedModifierHeaders])
 
   const stats = useMemo(() => {
     const total = parsedData.length
     const valid = parsedData.filter(d => d._valid).length
     const errors = total - valid
-    return { total, valid, errors }
-  }, [parsedData])
+    const totalVariants = parsedData.reduce((acc, d) => acc + (Array.isArray(d.variants) ? d.variants.length : 0), 0)
+    return { total, valid, errors, totalVariants, rawRowCount: rawData.length }
+  }, [parsedData, rawData.length])
 
   // Download Failed Rows as Excel (.xlsx)
   const handleDownloadFailedRows = () => {
@@ -538,7 +705,12 @@ export default function ProductImportPage() {
         type: d.type,
         stock_type: d.stock_type,
         description: d.description,
-        hpp_type: 'fixed'
+        hpp_type: 'fixed',
+        price_tiers: d.price_tiers,
+        min_stock_alert: d.min_stock_alert,
+        external_id: d.external_id,
+        variants: d.variants,
+        modifier_groups: d.modifier_groups
       }))
 
       try {
@@ -630,9 +802,10 @@ export default function ProductImportPage() {
 
     setFailedRows(currentFailedRows)
 
-    // Invalidate products cache in sessionStorage so /products displays fresh data immediately
+    // Invalidate products cache in sessionStorage & POS Catalog L1/L2/BroadcastChannel so /products and /pos display fresh data immediately
     if (activeBizId) {
       sessionStorage.removeItem(`su_products_data_${activeBizId}`)
+      invalidatePosCatalogCache(activeBizId, true)
     }
 
     setStep('result')
@@ -798,6 +971,23 @@ export default function ProductImportPage() {
                 </button>
               </div>
 
+              {isMokaFormatDetected && (
+                <div className="bg-indigo-50/90 border border-indigo-200 rounded-xl p-3.5 flex items-start gap-3 text-xs text-indigo-950">
+                  <span className="text-lg leading-none mt-0.5">✨</span>
+                  <div className="space-y-1">
+                    <p className="font-extrabold uppercase tracking-wide text-indigo-900">
+                      Format Export Moka POS Terdeteksi Otomatis
+                    </p>
+                    <p className="text-[11px] text-indigo-800 leading-relaxed">
+                      Baris dengan <strong>Items Name</strong> yang sama dan memiliki <strong>Variant name</strong> akan otomatis dikelompokkan menjadi <strong>Produk Induk + Varian SKU</strong>. Harga kosong pada <em>Basic - Price</em> otomatis mengambil dari <em>Dine In / Take Away</em>.
+                      {detectedModifierHeaders.length > 0 && (
+                        <> Grup Modifier terdeteksi: <strong>{detectedModifierHeaders.map(m => m.groupName).join(', ')}</strong>.</>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Global Defaults Section */}
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
                 <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">
@@ -957,10 +1147,15 @@ export default function ProductImportPage() {
                 </div>
                 
                 {/* Stats Badges */}
-                <div className="flex items-center gap-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
                   <span className="bg-slate-100 text-slate-800 font-bold px-3 py-1 rounded-lg border border-slate-200">
-                    Total: {stats.total}
+                    Produk Induk: {stats.total}
                   </span>
+                  {stats.totalVariants > 0 && (
+                    <span className="bg-indigo-50 text-indigo-700 font-bold px-3 py-1 rounded-lg border border-indigo-200">
+                      🏷️ Varian SKU: {stats.totalVariants}
+                    </span>
+                  )}
                   <span className="bg-emerald-50 text-emerald-700 font-bold px-3 py-1 rounded-lg border border-emerald-200">
                     ✓ Valid: {stats.valid}
                   </span>
@@ -1006,7 +1201,21 @@ export default function ProductImportPage() {
                           )}
                         </td>
                         <td className="py-2.5 px-3 font-bold text-gray-900">
-                          {row.name}
+                          <div>{row.name}</div>
+                          {(Array.isArray(row.variants) && row.variants.length > 0 || (Array.isArray(row.modifier_groups) && row.modifier_groups.length > 0)) && (
+                            <div className="flex flex-wrap items-center gap-1 mt-1">
+                              {Array.isArray(row.variants) && row.variants.length > 0 && (
+                                <span className="text-[9px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded">
+                                  🏷️ {row.variants.length} Varian ({row.variants.slice(0, 2).map((v: any) => v.name).join(', ')}{row.variants.length > 2 ? '...' : ''})
+                                </span>
+                              )}
+                              {Array.isArray(row.modifier_groups) && row.modifier_groups.map((mg: string) => (
+                                <span key={mg} className="text-[9px] font-extrabold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded">
+                                  ✨ {mg}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                           {row._errors.length > 0 && (
                             <span className="block text-[10px] text-rose-600 font-medium">
                               {row._errors.join(', ')}

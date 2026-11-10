@@ -1110,6 +1110,35 @@ Printer thermal Bluetooth portabel 58mm/80mm umumnya hanya memiliki **4 KB (`4.0
 3. **Isolasi Dependency Array di `PaymentSuccessView.tsx`:**
    - `useEffect` inisialisasi di `PaymentSuccessView.tsx` wajib memanggil `handlePrintRef.current` dan `handlePrintKitchenRef.current` tanpa memasukkan `handlePrint` atau `handlePrintKitchen` ke dependency array (`[isOpen, receipt, posMode.enableProductionTickets]`), sehingga perubahan dropdown metode cetak atau ukuran kertas tidak pernah me-reset state.
 
+---
+
+## 26. Moka POS Compatibility, F&B Sales Type Multi-Pricing (`price_tiers`), Master Modifier Templates & Variant Cost Inheritance
+
+Untuk mendukung migrasi instan dari **Moka POS** sekaligus menjaga standar arsitektur **Square POS & Odoo ERP** tanpa membebani tampilan halaman produk:
+
+### 26.1 4-Tab Workstation Modal & 9-Column Compact Product Table
+1. **Tabel Utama `/products` Tetap 9 Kolom:**
+   - Tidak boleh menambah kolom tabel baru untuk harga Dine-In/Take-Away atau daftar varian yang membuat tabel sempit.
+   - Varian dan modifier ditampilkan sebagai badge ringkas di bawah nama produk (`🏷️ N Varian`, `✨ Modifier`), sedangkan rentang harga varian (`Rp Min – Rp Max`) dan badge `🍽️/🛍️ Multi-Harga` ditampilkan di bawah kolom Harga Jual.
+2. **Modal Produk 4-Tab (`ProductModal.tsx`):**
+   - **Tab 1 (`📦 Info & Harga Utama`):** Info dasar, toggle opsional Multi-Harga Layanan (`dine_in`, `take_away`), dan `min_stock_alert`.
+   - **Tab 2 (`🏷️ Varian SKU`):** Baris varian diskret beserta generator matriks; input harga Dine-In/Take-Away per varian hanya tampil jika toggle Multi-Harga aktif.
+   - **Tab 3 (`✨ Modifier / Topping`):** Pengaturan grup modifier (`group_name`), nama pilihan (`option_name`), harga ekstra (`price_extra`), HPP ekstra (`cost_price`), serta tombol **1-Klik Salin Template Modifier** dari produk lain di bisnis yang sama.
+   - **Tab 4 (`🧪 Resep & BOM HPP`):** Kalkulator bahan baku untuk HPP variabel.
+
+### 26.2 F&B-Only Sales Type Switcher & Smart Price Coalesce (`resolvePosItemPrice`)
+- Pemilih layanan `🍽️ Dine In | 🛍️ Take Away | 📌 Umum` di keranjang `POSWorkspace.tsx` **HANYA** ditampilkan jika `posMode.mode === 'fnb'`. Untuk mode Retail atau Custom Print, pemilih ini disembunyikan dan `salesType` otomatis menggunakan `'basic'`.
+- Fungsi `resolvePosItemPrice(item, salesType, fallbackBasePrice)` di `@/lib/posCatalogStore.ts` menerapkan *Smart Price Coalesce*:
+  1. Jika `salesType === 'dine_in'` dan `price_tiers.dine_in > 0` $\rightarrow$ gunakan `dine_in`.
+  2. Jika `salesType === 'take_away'` dan `price_tiers.take_away > 0` $\rightarrow$ gunakan `take_away`.
+  3. Fallback berurutan: `price` dasar $\rightarrow$ `price_tiers.dine_in` $\rightarrow$ `price_tiers.take_away` $\rightarrow$ `fallbackBasePrice` $\rightarrow$ `0`.
+
+### 26.3 Pewarisan HPP Varian (Variant Cost Price Inheritance)
+- Setiap varian di `product_variants` memiliki kolom `cost_price`.
+- Apabila `v.cost_price` bernilai `0` atau dikosongkan, sistem **WAJIB** mewarisi `cost_price` dari produk induk (`Number(v.cost_price) > 0 ? Number(v.cost_price) : Number(parent.cost_price || 0)`).
+- Aturan ini berlaku konsisten di 5 titik: penyimpanan `ProductModal.tsx`, import massal `/api/products/bulk`, konfirmasi `VariantSelectorModal.tsx`, evaluasi Price Guard `POSWorkspace.tsx`, serta combobox produk di `/purchases` dan `/orders/invoices`.
+
+
 
 
 

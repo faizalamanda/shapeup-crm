@@ -81,8 +81,9 @@ export async function fetchAllBusinessProducts<T = any>(
     options?.selectFallback ||
     'id, name, price, sku, cost_price, stock_quantity, stock_type'
 
+  let rows: T[] = []
   try {
-    return await fetchAllSupabaseRows<T>((from, to) =>
+    rows = await fetchAllSupabaseRows<T>((from, to) =>
       supabaseClient
         .from('products')
         .select(selectWithVariants)
@@ -94,7 +95,7 @@ export async function fetchAllBusinessProducts<T = any>(
   } catch (err1) {
     if (selectVariantsOnly && selectVariantsOnly !== selectWithVariants) {
       try {
-        return await fetchAllSupabaseRows<T>((from, to) =>
+        rows = await fetchAllSupabaseRows<T>((from, to) =>
           supabaseClient
             .from('products')
             .select(selectVariantsOnly)
@@ -105,15 +106,43 @@ export async function fetchAllBusinessProducts<T = any>(
         )
       } catch (err2) {}
     }
-    return await fetchAllSupabaseRows<T>((from, to) =>
-      supabaseClient
-        .from('products')
-        .select(selectFallback)
+    if (rows.length === 0) {
+      rows = await fetchAllSupabaseRows<T>((from, to) =>
+        supabaseClient
+          .from('products')
+          .select(selectFallback)
+          .eq('business_id', businessId)
+          .order('name', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
+    }
+  }
+
+  // Self-healing direct table hydration: if embedded join fell back and product_variants is missing,
+  // hydrate variants directly from product_variants table so variants NEVER disappear or return empty.
+  if (rows.length > 0 && (rows[0] as any)?.product_variants === undefined) {
+    try {
+      const { data: directVars } = await supabaseClient
+        .from('product_variants')
+        .select('*')
         .eq('business_id', businessId)
         .order('name', { ascending: true })
-        .order('id', { ascending: true })
-        .range(from, to)
-    )
+      if (directVars) {
+        const vMap = new Map<string, any[]>()
+        for (const v of directVars) {
+          if (!vMap.has(v.product_id)) vMap.set(v.product_id, [])
+          vMap.get(v.product_id)!.push(v)
+        }
+        for (const r of rows as any[]) {
+          r.product_variants = vMap.get(r.id) || []
+        }
+      }
+    } catch {
+      // ignore if product_variants table does not exist
+    }
   }
+
+  return rows
 }
 

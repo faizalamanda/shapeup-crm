@@ -38,7 +38,7 @@ import { getBusinessTimezone } from '@/lib/localzone'
 import { fetchLoyaltySettings } from '@/plugins/loyalty/helpers/loyaltyApi'
 import { LoyaltySettings, LoyaltyTier, DEFAULT_LOYALTY_SETTINGS, resolveTier, calculateEarnedPoints } from '@/plugins/loyalty/types'
 import { useCustomerDirectory, matchesCustomerQuery, notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
-import { usePosCatalog } from '@/lib/posCatalogStore'
+import { usePosCatalog, PosSalesType, resolvePosItemPrice } from '@/lib/posCatalogStore'
 import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 
 // Pastel badge colors for product cards
@@ -122,9 +122,41 @@ export default function POSWorkspace({
   const [keypadAmount, setKeypadAmount] = useState('0')
   const [customItemName, setCustomItemName] = useState('')
 
-  // Cart & Customer State
+  // Cart, Sales Type & Customer State
   const [cart, setCart] = useState<any[]>([])
+  const [salesType, setSalesType] = useState<PosSalesType>(() => (posMode.mode === 'fnb' ? 'dine_in' : 'basic'))
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null)
+
+  // Sync default salesType when business posMode changes (F&B -> dine_in, Retail/Print -> basic)
+  useEffect(() => {
+    setSalesType(posMode.mode === 'fnb' ? 'dine_in' : 'basic')
+  }, [posMode.mode])
+
+  // Sales Type Switcher in POS Cashier is strictly shown ONLY for F&B POS mode
+  const showSalesTypeSwitcher = posMode.mode === 'fnb'
+
+  // Switch Sales Type and dynamically recalculate non-overridden item prices in cart
+  const handleSalesTypeChange = useCallback((nextType: PosSalesType) => {
+    setSalesType(nextType)
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.dimension_spec || item.authorization || String(item.product?.id || '').startsWith('custom-')) {
+          return item
+        }
+        const modExtra = Array.isArray(item.selectedModifiers)
+          ? item.selectedModifiers.reduce((sum: number, m: any) => sum + Number(m?.priceExtra || 0), 0)
+          : 0
+        const parentResolved = resolvePosItemPrice(item.product, nextType, Number(item.product?.price || 0))
+        const unitBase = item.selectedVariant
+          ? resolvePosItemPrice(item.selectedVariant, nextType, parentResolved)
+          : parentResolved
+        return {
+          ...item,
+          finalPrice: unitBase + modExtra
+        }
+      })
+    )
+  }, [])
   
   // Discount states
   const [globalDiscountType, setGlobalDiscountType] = useState<'nominal' | 'percent'>('nominal')
@@ -544,12 +576,13 @@ export default function POSWorkspace({
   }
 
   const getItemCostPrice = (item: any) => {
-    return Number(
-      item?.selectedVariant?.cost_price ??
-      item?.selectedVariant?.costPrice ??
-      item?.product?.cost_price ??
-      0
-    )
+    const varCost = Number(item?.selectedVariant?.cost_price || item?.selectedVariant?.costPrice || 0)
+    const parentCost = Number(item?.product?.cost_price || item?.product?.costPrice || 0)
+    const baseCost = varCost > 0 ? varCost : parentCost
+    const modCost = Array.isArray(item?.selectedModifiers)
+      ? item.selectedModifiers.reduce((sum: number, m: any) => sum + Number(m?.costPrice || m?.cost_price || 0), 0)
+      : 0
+    return baseCost + modCost
   }
 
   const isItemPriceViolation = (item: any) => {
@@ -608,6 +641,7 @@ export default function POSWorkspace({
       setSelectedProductForVariant(p)
       setIsVariantModalOpen(true)
     } else {
+      const effectivePrice = resolvePosItemPrice(p, salesType, Number(p.price || 0))
       setCart((prev) => {
         const existingIdx = prev.findIndex((item) => item.product.id === p.id && !item.selectedVariant)
         if (existingIdx > -1) {
@@ -618,7 +652,7 @@ export default function POSWorkspace({
         return [...prev, {
           product: p,
           quantity: 1,
-          finalPrice: p.price,
+          finalPrice: effectivePrice,
           discount: 0
         }]
       })
@@ -1303,6 +1337,50 @@ export default function POSWorkspace({
         )}
       </div>
 
+      {/* Sales Type Switcher (Dine In / Take Away / Basic) — Shown strictly in F&B POS mode */}
+      {showSalesTypeSwitcher && (
+        <div className="px-2.5 py-1.5 border-b border-slate-100 bg-white flex items-center gap-1 shrink-0">
+          <div className="grid grid-cols-3 gap-1 w-full bg-slate-100 p-0.5 rounded-xl border border-slate-200/80">
+            <button
+              type="button"
+              onClick={() => handleSalesTypeChange('dine_in')}
+              className={`py-1 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
+                salesType === 'dine_in'
+                  ? 'bg-white text-indigo-700 shadow-2xs ring-1 ring-slate-200'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <span>🍽️</span>
+              <span>Dine In</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSalesTypeChange('take_away')}
+              className={`py-1 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
+                salesType === 'take_away'
+                  ? 'bg-white text-emerald-700 shadow-2xs ring-1 ring-slate-200'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <span>🛍️</span>
+              <span>Take Away</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSalesTypeChange('basic')}
+              className={`py-1 px-2 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
+                salesType === 'basic'
+                  ? 'bg-white text-slate-800 shadow-2xs ring-1 ring-slate-200'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <span>📌</span>
+              <span>Umum</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {activeHoldId && (
         <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200/70 flex items-center justify-between text-xs text-amber-900 shrink-0">
           <div className="flex items-center gap-1.5">
@@ -1359,6 +1437,11 @@ export default function POSWorkspace({
                           {item.selectedVariant.name}
                         </span>
                       )}
+                      {Array.isArray(item.selectedModifiers) && item.selectedModifiers.map((mod: any, mIdx: number) => (
+                        <span key={mIdx} className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200/80 font-bold px-1.5 py-0.2 rounded shrink-0">
+                          ✨ {mod.name}{mod.priceExtra > 0 ? ` (+${mod.priceExtra.toLocaleString('id-ID')})` : ''}
+                        </span>
+                      ))}
                       {item.dimension_spec && (
                         <span className="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-200 font-bold px-1.5 py-0.2 rounded shrink-0">
                           📐 {item.dimension_spec.length}×{item.dimension_spec.width} {item.dimension_spec.input_unit} ({item.dimension_spec.billable_area} {item.dimension_spec.area_unit})
@@ -1945,7 +2028,7 @@ export default function POSWorkspace({
                               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
                                 <div className="flex flex-col">
                                   <span className="text-xs sm:text-sm font-black text-slate-950">
-                                    Rp {p.price.toLocaleString('id-ID')}
+                                    Rp {resolvePosItemPrice(p, salesType, Number(p.price || 0)).toLocaleString('id-ID')}
                                   </span>
                                   {p.pricing_type === 'area' && (
                                     <span className="text-[10px] text-indigo-600 font-bold">
@@ -2166,6 +2249,7 @@ export default function POSWorkspace({
       <VariantSelectorModal
         isOpen={isVariantModalOpen}
         onClose={() => setIsVariantModalOpen(false)}
+        salesType={salesType}
         product={selectedProductForVariant}
         onAddToCart={handleAddVariantItem}
       />

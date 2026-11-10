@@ -2,11 +2,13 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 import { supabase } from '@/lib/supabase'
+import { PosSalesType, PosPriceTiers, resolvePosItemPrice } from '@/lib/posCatalogStore'
 
 export type VariantOption = {
   id: string
   name: string
   price: number
+  price_tiers?: PosPriceTiers | null
   costPrice?: number
   cost_price?: number
   stockQuantity?: number
@@ -20,16 +22,21 @@ export type ModifierGroup = {
     id: string
     name: string
     priceExtra: number
+    costPrice?: number
   }[]
 }
 
 type Props = {
   isOpen: boolean
   onClose: () => void
+  salesType?: PosSalesType
   product: {
     id: string
     name: string
     price: number
+    cost_price?: number
+    costPrice?: number
+    price_tiers?: PosPriceTiers | null
     stock_quantity: number
     variants?: VariantOption[]
     product_variants?: any[]
@@ -40,72 +47,98 @@ type Props = {
   onAddToCart: (item: {
     product: any
     selectedVariant?: VariantOption
-    selectedModifiers: { group: string; name: string; priceExtra: number }[]
+    selectedModifiers: { group: string; name: string; priceExtra: number; costPrice?: number }[]
     note: string
     finalPrice: number
   }) => void
 }
 
-export default function VariantSelectorModal({ isOpen, onClose, product, onAddToCart }: Props) {
+export default function VariantSelectorModal({ isOpen, onClose, salesType = 'basic', product, onAddToCart }: Props) {
   useModalBackHandler(isOpen, onClose)
 
-  // Fallback state if variants need on-the-fly fetch
+  // Fallback state if variants or modifiers need on-the-fly fetch
   const [fetchedVariants, setFetchedVariants] = useState<VariantOption[]>([])
+  const [fetchedModifiers, setFetchedModifiers] = useState<any[]>([])
   const [isLoadingVariants, setIsLoadingVariants] = useState(false)
 
-  // Fetch variants from DB if product indicates has_variants but product_variants is empty
+  // Fetch variants & modifiers from DB if not preloaded (Self-Healing POS Resilience)
   useEffect(() => {
     if (!isOpen || !product?.id) {
       setFetchedVariants([])
+      setFetchedModifiers([])
       setIsLoadingVariants(false)
       return
     }
 
-    const raw = (product as any).product_variants || product.variants
-    const hasPreloaded = Array.isArray(raw) && raw.length > 0
+    const rawVars = (product as any).product_variants || product.variants
+    const hasPreloadedVars = Array.isArray(rawVars) && rawVars.length > 0
+    const rawMods = (product as any).product_modifiers || product.modifiers
+    const hasPreloadedMods = Array.isArray(rawMods) && rawMods.length > 0
 
-    if (!hasPreloaded && product.has_variants) {
+    if (!hasPreloadedVars || !hasPreloadedMods) {
       let active = true
-      setIsLoadingVariants(true)
-      supabase
-        .from('product_variants')
-        .select('id, name, sku, price, cost_price, stock_quantity')
-        .eq('product_id', product.id)
-        .order('name', { ascending: true })
-        .then(({ data, error }) => {
-          if (!active) return
-          setIsLoadingVariants(false)
-          if (!error && data && data.length > 0) {
-            setFetchedVariants(
-              data.map((v: any) => ({
-                id: v.id,
-                name: v.name || '',
-                price: Number(v.price ?? product.price ?? 0),
-                costPrice: Number(v.cost_price ?? v.costPrice ?? 0),
-                cost_price: Number(v.cost_price ?? v.costPrice ?? 0),
-                stockQuantity: Number(v.stock_quantity ?? 0)
-              }))
-            )
-          }
-        })
+      if (!hasPreloadedVars && product.has_variants) {
+        setIsLoadingVariants(true)
+      }
+
+      Promise.all([
+        !hasPreloadedVars
+          ? supabase
+              .from('product_variants')
+              .select('*')
+              .eq('product_id', product.id)
+              .order('created_at', { ascending: true })
+          : Promise.resolve({ data: null, error: null }),
+        !hasPreloadedMods
+          ? supabase
+              .from('product_modifiers')
+              .select('*')
+              .eq('product_id', product.id)
+              .order('created_at', { ascending: true })
+          : Promise.resolve({ data: null, error: null })
+      ]).then(([varRes, modRes]) => {
+        if (!active) return
+        setIsLoadingVariants(false)
+        if (!varRes.error && varRes.data && varRes.data.length > 0) {
+          const parentFallbackPrice = resolvePosItemPrice(product, salesType, Number(product.price || 0))
+          setFetchedVariants(
+            varRes.data.map((v: any) => ({
+              id: v.id,
+              name: v.name || '',
+              price: resolvePosItemPrice(v, salesType, parentFallbackPrice),
+              price_tiers: v.price_tiers || null,
+              costPrice: Number(v.cost_price ?? v.costPrice ?? 0),
+              cost_price: Number(v.cost_price ?? v.costPrice ?? 0),
+              stockQuantity: Number(v.stock_quantity ?? 0)
+            }))
+          )
+        }
+        if (!modRes.error && modRes.data && modRes.data.length > 0) {
+          setFetchedModifiers(modRes.data)
+        }
+      })
+
       return () => {
         active = false
       }
     } else {
       setFetchedVariants([])
+      setFetchedModifiers([])
       setIsLoadingVariants(false)
     }
-  }, [isOpen, product])
+  }, [isOpen, product, salesType])
 
-  // Resolve real database variants or props
+  // Resolve real database variants or props with Sales Type awareness
   const variants: VariantOption[] = useMemo(() => {
     if (!product) return []
+    const parentEffectivePrice = resolvePosItemPrice(product, salesType, Number(product.price || 0))
     const raw = (product as any).product_variants || product.variants
     if (Array.isArray(raw) && raw.length > 0) {
       return raw.map((v: any) => ({
         id: v?.id || '',
         name: v?.name || '',
-        price: Number(v?.price ?? product.price ?? 0),
+        price: resolvePosItemPrice(v, salesType, parentEffectivePrice),
+        price_tiers: v?.price_tiers || null,
         costPrice: Number(v?.cost_price ?? v?.costPrice ?? 0),
         cost_price: Number(v?.cost_price ?? v?.costPrice ?? 0),
         stockQuantity: Number(v?.stock_quantity ?? 0)
@@ -115,12 +148,18 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
       return fetchedVariants
     }
     return []
-  }, [product, fetchedVariants])
+  }, [product, fetchedVariants, salesType])
 
   // Resolve real database modifiers or props
   const modifierGroups: ModifierGroup[] = useMemo(() => {
     if (!product) return []
-    const raw = (product as any).product_modifiers || product.modifiers
+    const raw =
+      (Array.isArray((product as any).product_modifiers) && (product as any).product_modifiers.length > 0
+        ? (product as any).product_modifiers
+        : null) ||
+      (Array.isArray(product.modifiers) && product.modifiers.length > 0 ? product.modifiers : null) ||
+      fetchedModifiers
+
     if (Array.isArray(raw) && raw.length > 0) {
       if (raw[0]?.group_name) {
         const map: Record<string, ModifierGroup> = {}
@@ -136,9 +175,10 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
             }
           }
           map[gName].options.push({
-            id: m.id || '',
+            id: m.id || `${gName}-${m.option_name}`,
             name: m.option_name || '',
-            priceExtra: Number(m.price_extra || 0)
+            priceExtra: Number(m.price_extra || 0),
+            costPrice: Number(m.cost_price || 0)
           })
         }
         return Object.values(map)
@@ -146,7 +186,7 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
       return raw
     }
     return []
-  }, [product])
+  }, [product, fetchedModifiers])
 
   // Check if variants follow the multi-attribute hyphen pattern (e.g. "Hitam - XL")
   const isMultiAttribute = useMemo(() => {
@@ -209,7 +249,7 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
 
   const [selectedAttrValues, setSelectedAttrValues] = useState<Record<number, string>>({})
   const [selectedVariant, setSelectedVariant] = useState<VariantOption | null>(null)
-  const [selectedModifiers, setSelectedModifiers] = useState<Record<string, { group: string; name: string; priceExtra: number }>>({})
+  const [selectedModifiers, setSelectedModifiers] = useState<Record<string, { group: string; name: string; priceExtra: number; costPrice?: number }>>({})
   const [note, setNote] = useState('')
 
   // Sync state when modal opens or product/variants change
@@ -228,10 +268,10 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
         setSelectedVariant(variants[0] || null)
       }
 
-      const initialMods: Record<string, { group: string; name: string; priceExtra: number }> = {}
+      const initialMods: Record<string, { group: string; name: string; priceExtra: number; costPrice?: number }> = {}
       for (const g of modifierGroups) {
         if (g.required && g.options.length > 0) {
-          initialMods[g.id] = { group: g.name, name: g.options[0].name, priceExtra: g.options[0].priceExtra }
+          initialMods[g.id] = { group: g.name, name: g.options[0].name, priceExtra: g.options[0].priceExtra, costPrice: g.options[0].costPrice }
         }
       }
       setSelectedModifiers(initialMods)
@@ -246,16 +286,18 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
 
   // Calculate final unit price
   const extraTotal = Object.values(selectedModifiers).reduce((acc, m) => acc + (m?.priceExtra || 0), 0)
-  const basePrice = selectedVariant ? Number(selectedVariant.price || 0) : Number(product?.price || 0)
+  const basePrice = selectedVariant
+    ? Number(selectedVariant.price || 0)
+    : resolvePosItemPrice(product, salesType, Number(product?.price || 0))
   const finalPrice = basePrice + extraTotal
 
-  const handleToggleModifier = (group: ModifierGroup, opt: { id: string; name: string; priceExtra: number }) => {
+  const handleToggleModifier = (group: ModifierGroup, opt: { id: string; name: string; priceExtra: number; costPrice?: number }) => {
     setSelectedModifiers((prev) => {
       const copy = { ...prev }
       if (copy[group.id]?.name === opt.name && !group.required) {
         delete copy[group.id]
       } else {
-        copy[group.id] = { group: group.name, name: opt.name, priceExtra: opt.priceExtra }
+        copy[group.id] = { group: group.name, name: opt.name, priceExtra: opt.priceExtra, costPrice: opt.costPrice }
       }
       return copy
     })
@@ -263,10 +305,13 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
 
   const handleConfirm = () => {
     if (!product) return
+    const rawVarCost = Number(selectedVariant?.cost_price || selectedVariant?.costPrice || 0)
+    const fallbackParentCost = Number(product?.cost_price || product?.costPrice || 0)
+    const effectiveVarCost = rawVarCost > 0 ? rawVarCost : fallbackParentCost
     const resolvedVariant = selectedVariant ? {
       ...selectedVariant,
-      cost_price: Number(selectedVariant.cost_price ?? selectedVariant.costPrice ?? 0),
-      costPrice: Number(selectedVariant.costPrice ?? selectedVariant.cost_price ?? 0)
+      cost_price: effectiveVarCost,
+      costPrice: effectiveVarCost
     } : undefined
 
     onAddToCart({

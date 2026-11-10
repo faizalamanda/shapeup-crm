@@ -304,6 +304,22 @@ export default function StockOpnamePage() {
               .order('id', { ascending: true })
               .range(from, to)
           )
+          if (data.length > 0) {
+            try {
+              const { data: directVars } = await supabase
+                .from('product_variants')
+                .select('id, product_id, name, sku, stock_quantity, cost_price')
+                .eq('business_id', activeBizId)
+              if (directVars) {
+                const vMap = new Map<string, ProductVariant[]>()
+                for (const v of directVars) {
+                  if (!vMap.has(v.product_id)) vMap.set(v.product_id, [])
+                  vMap.get(v.product_id)!.push(v)
+                }
+                data = data.map(p => ({ ...p, product_variants: vMap.get(p.id) || [] }))
+              }
+            } catch {}
+          }
         }
 
         if (mounted && data) {

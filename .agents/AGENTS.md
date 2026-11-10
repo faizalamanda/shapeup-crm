@@ -454,6 +454,22 @@
       - Setiap fungsi pemilihan/penyambungan printer (`selectAndroidPairedPrinter`, `requestAndConnectBluetoothPrinter`, `getActiveBluetoothDeviceName`, `getActiveBluetoothDeviceId`) wajib memanggil `persistBluetoothConnectionType()` agar `connectionType: 'bluetooth'` tersimpan permanen di `shapeup_pos_receipt_settings`.
       - Di `PaymentSuccessView.tsx`, `useEffect` inisialisasi **DILARANG KERAS** memasukkan `handlePrint` atau `handlePrintKitchen` ke dalam dependency array (wajib gunakan `handlePrintRef` dan `handlePrintKitchenRef`), karena perubahan dropdown `connectionType` atau `paperSize` akan memicu ulang `useEffect` dan me-reset pilihan kembali ke nilai lama.
 
+29. **Moka POS Compatibility, F&B Multi-Price Tiers (`price_tiers`), Product Modifiers, Variant HPP Inheritance & Anti-Empty-Data Catalog Standards (Skills `pos-session-ledger` & `high-cardinality-data`):**
+    - **100% Non-Breaking Additive Schema (`products`, `product_variants`, `product_modifiers`):**
+      - Kolom `price_tiers JSONB DEFAULT '{}'::jsonb` (`{ dine_in?: number, take_away?: number }`), `min_stock_alert INTEGER DEFAULT 0`, dan `external_id TEXT` pada `products` serta `product_variants`, ditambah `cost_price NUMERIC DEFAULT 0` dan `sort_order INTEGER DEFAULT 0` pada `product_modifiers` bersifat opsional/additive sehingga seluruh produk, mutasi stok (`stock_moves`), dan jurnal akuntansi (`transactions` & `journal_lines`) lama berjalan otomatis tanpa perubahan.
+      - Nama kolom opsi pada tabel `public.product_modifiers` adalah **`option_name`** (bukan `name`). Seluruh query dan insert ke `product_modifiers` wajib menggunakan `option_name`.
+    - **F&B-Only Sales Type Switcher & Smart Price Coalesce (`resolvePosItemPrice`):**
+      - Pemilih layanan `🍽️ Dine In | 🛍️ Take Away | 📌 Umum` di header keranjang `POSWorkspace.tsx` **WAJIB HANYA** tampil pada bisnis dengan mode POS F&B (`posMode.mode === 'fnb'`). Untuk mode Retail / Custom Print, bar tersebut disembunyikan dan `salesType` dikunci ke `'basic'`.
+      - Resolusi harga jual item dan varian wajib menggunakan fungsi SSOT `resolvePosItemPrice(item, salesType, fallbackBasePrice)` dari `@/lib/posCatalogStore.ts` (`Tier Price -> Base Price -> Dine In -> Take Away -> 0`).
+    - **Variant HPP Inheritance (Fallback Otomatis ke HPP Produk Induk):**
+      - Setiap baris varian memiliki kolom `cost_price` mandiri. Namun, jika `v.cost_price` bernilai `0` atau dikosongkan (saat simpan di `ProductModal.tsx`, saat import di `/api/products/bulk`, saat pilih varian di `VariantSelectorModal.tsx`, saat cek Price Guard di `POSWorkspace.tsx`, maupun di dropdown `/purchases` dan `/orders/invoices`), sistem **WAJIB** menggunakan pengecekan `Number(v.cost_price) > 0 ? Number(v.cost_price) : Number(parentProduct.cost_price || 0)`. **DILARANG** hanya menggunakan operator `??` (`v.cost_price ?? p.cost_price`) karena angka `0` bukanlah `null`/`undefined` sehingga akan menggagalkan pewarisan HPP induk.
+    - **Zero Empty Data & Self-Healing Variant Hydration (`fetchAllBusinessProducts` & `/products`):**
+      - Untuk mencegah halaman `/products`, `/pos`, `/purchases`, `/orders/invoices`, atau `/stock-opname` menjadi kosong (*data kosong*) atau kehilangan varian saat ada penambahan kolom/tabel baru:
+        1. Kueri bertingkat wajib mencoba `'*, product_variants(*), product_modifiers(*)'` $\rightarrow$ `'*, product_variants(*)'` $\rightarrow$ fallback kolom dasar murni tanpa embedded join (agar fallback terakhir dijamin tidak pernah gagal karena PostgREST FK schema cache).
+        2. **Mandatory Direct Table Hydration:** Jika kueri utama jatuh ke fallback tanpa embedded join (`rows[0]?.product_variants === undefined`), helper `fetchAllBusinessProducts()` di `@/lib/chunkedQueryHelper.ts`, `/products`, dan `/stock-opname` wajib melakukan kueri langsung ke tabel `product_variants` (`.from('product_variants').select('*').eq('business_id', businessId)`) dan menggabungkannya di memori berdasarkan `product_id`.
+        3. **Mandatory POS Cache Invalidation:** Setiap mutasi produk/varian/modifier di `ProductModal.tsx`, penghapusan di `/products`, dan import massal di `/products/import` **WAJIB** memanggil `invalidatePosCatalogCache(businessId, true)` agar L1 RAM, L2 `sessionStorage`, dan tab kasir POS langsung tersinkronisasi seketika.
+
+
 
 
 

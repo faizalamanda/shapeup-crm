@@ -286,7 +286,7 @@ export default function EditInvoicePage() {
             name: `${p.name} - ${v.name}`,
             price: Number(v.price || p.price || 0),
             sku: v.sku || p.sku || null,
-            cost_price: v.cost_price ?? p.cost_price ?? null,
+            cost_price: Number(v.cost_price) > 0 ? Number(v.cost_price) : (p.cost_price ?? null),
             stock_quantity: v.stock_quantity ?? null,
             stock_type: p.stock_type || 'tracked',
             is_variant: true

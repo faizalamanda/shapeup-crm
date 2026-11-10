@@ -16,6 +16,14 @@ import { fetchAllSupabaseRows, fetchAllBusinessProducts } from '@/lib/chunkedQue
 
 // ─── Types & Constants ───────────────────────────────────────────────────────
 
+export type PosSalesType = 'basic' | 'dine_in' | 'take_away'
+
+export interface PosPriceTiers {
+  dine_in?: number | null
+  take_away?: number | null
+  [key: string]: number | null | undefined
+}
+
 export interface PosCatalogItem {
   id: string
   business_id: string
@@ -31,11 +39,51 @@ export interface PosCatalogItem {
   pricing_type?: string
   min_area?: number
   min_price?: number
+  min_stock_alert?: number
+  external_id?: string | null
+  price_tiers?: PosPriceTiers | null
   has_variants?: boolean
   prevent_below_hpp?: boolean
   product_variants?: any[]
   product_modifiers?: any[]
   [key: string]: any
+}
+
+/**
+ * SSOT Price Resolver untuk Produk & Varian di POS:
+ * Menghormati pilihan Sales Type ('basic' | 'dine_in' | 'take_away'),
+ * dan otomatis fallback ke harga dasar (price) tanpa merusak produk lama
+ * yang tidak memiliki price_tiers.
+ */
+export function resolvePosItemPrice(
+  item: { price?: number | null; price_tiers?: PosPriceTiers | null } | null | undefined,
+  salesType: PosSalesType = 'basic',
+  fallbackBasePrice = 0
+): number {
+  if (!item) return fallbackBasePrice
+  const tiers = item.price_tiers && typeof item.price_tiers === 'object' ? item.price_tiers : null
+
+  if (salesType !== 'basic' && tiers) {
+    const tierVal = Number(tiers[salesType])
+    if (Number.isFinite(tierVal) && tierVal > 0) {
+      return tierVal
+    }
+  }
+
+  const baseVal = Number(item.price)
+  if (Number.isFinite(baseVal) && baseVal > 0) {
+    return baseVal
+  }
+
+  // Fallback jika base price 0 tetapi punya harga di dine_in / take_away (kasus umum CSV Moka POS)
+  if (tiers) {
+    const dineInVal = Number(tiers.dine_in)
+    if (Number.isFinite(dineInVal) && dineInVal > 0) return dineInVal
+    const takeAwayVal = Number(tiers.take_away)
+    if (Number.isFinite(takeAwayVal) && takeAwayVal > 0) return takeAwayVal
+  }
+
+  return Number.isFinite(baseVal) && baseVal >= 0 ? baseVal : fallbackBasePrice
 }
 
 export interface PosCategoryItem {
@@ -58,13 +106,13 @@ const BROADCAST_CHANNEL_NAME = 'shapeup_pos_catalog_sync_v2'
 const CUSTOM_EVENT_NAME = 'shapeup:pos_catalog_updated'
 
 export const POS_SLIM_PRODUCT_SELECT_VARIANTS =
-  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, unit, pricing_type, min_area, min_price, prevent_below_hpp, product_variants(*), product_modifiers(*)'
+  '*, product_variants(*), product_modifiers(*)'
 
 export const POS_SLIM_PRODUCT_SELECT_VARIANTS_ONLY =
-  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, unit, pricing_type, min_area, min_price, prevent_below_hpp, product_variants(*)'
+  '*, product_variants(*)'
 
 export const POS_SLIM_PRODUCT_SELECT_FALLBACK =
-  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type, prevent_below_hpp'
+  'id, business_id, name, sku, price, cost_price, stock_quantity, stock_type, category_id, type'
 
 function getL2Key(businessId: string): string {
   return `su_pos_cat_v2_${businessId}`
@@ -118,11 +166,16 @@ function writeL2Cache(
           name: p.name,
           sku: p.sku,
           price: p.price,
+          price_tiers: p.price_tiers,
           cost_price: p.cost_price,
           stock_quantity: p.stock_quantity,
           stock_type: p.stock_type,
           category_id: p.category_id,
           type: p.type,
+          unit: p.unit,
+          pricing_type: p.pricing_type,
+          min_area: p.min_area,
+          min_price: p.min_price,
           has_variants: Boolean((Array.isArray(p.product_variants) && p.product_variants.length > 0) || p.has_variants),
           prevent_below_hpp: p.prevent_below_hpp,
           product_variants: p.product_variants,

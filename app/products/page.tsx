@@ -5,6 +5,7 @@ import ProductModal from './components/ProductModal'
 import { useUserContext } from '@/components/UserContext'
 import Link from 'next/link'
 import { Pagination } from '@/app/components/Pagination'
+import { invalidatePosCatalogCache, PosPriceTiers } from '@/lib/posCatalogStore'
 
 type Category = {
   id: string
@@ -18,15 +19,19 @@ type Product = {
   sku: string | null
   description: string | null
   price: number
+  price_tiers?: PosPriceTiers | null
   cost_price: number // HPP / Harga Modal Beli
   type: 'physical' | 'service'
   category_id: string | null
   stock_type: 'tracked' | 'available' | 'unavailable'
   stock_quantity: number
+  min_stock_alert?: number
   unit?: string
   hpp_type?: 'fixed' | 'variable'
   created_at: string
   categories?: Category | Category[] | null // Supabase join
+  product_variants?: any[]
+  product_modifiers?: any[]
 }
 
 type ProductCachePayload = {
@@ -172,19 +177,66 @@ export default function ProductsPage() {
       const CHUNK_SIZE = 1000
       let allProducts: Product[] = []
       let from = 0
+      let selectClause = '*, categories(id, name), product_variants(*), product_modifiers(*)'
+
       while (true) {
-        const { data: chunk, error: prodErr } = await supabase
+        let { data: chunk, error: prodErr } = await supabase
           .from('products')
-          .select('*, categories(id, name)')
+          .select(selectClause)
           .eq('business_id', businessId)
           .order('created_at', { ascending: false })
           .range(from, from + CHUNK_SIZE - 1)
 
+        if (prodErr && selectClause === '*, categories(id, name), product_variants(*), product_modifiers(*)') {
+          selectClause = '*, categories(id, name), product_variants(*)'
+          const retryWithVars = await supabase
+            .from('products')
+            .select(selectClause)
+            .eq('business_id', businessId)
+            .order('created_at', { ascending: false })
+            .range(from, from + CHUNK_SIZE - 1)
+          chunk = retryWithVars.data
+          prodErr = retryWithVars.error
+        }
+
+        if (prodErr && selectClause !== '*, categories(id, name)') {
+          selectClause = '*, categories(id, name)'
+          const fallbackRes = await supabase
+            .from('products')
+            .select(selectClause)
+            .eq('business_id', businessId)
+            .order('created_at', { ascending: false })
+            .range(from, from + CHUNK_SIZE - 1)
+          chunk = fallbackRes.data
+          prodErr = fallbackRes.error
+        }
+
         if (prodErr) throw prodErr
         if (!chunk || chunk.length === 0) break
-        allProducts = allProducts.concat(chunk as Product[])
+        allProducts = allProducts.concat(chunk as unknown as Product[])
         if (chunk.length < CHUNK_SIZE) break
         from += CHUNK_SIZE
+      }
+
+      // Self-healing direct table hydration if embedded join fell back
+      if (allProducts.length > 0 && allProducts[0].product_variants === undefined) {
+        try {
+          const { data: directVars } = await supabase
+            .from('product_variants')
+            .select('*')
+            .eq('business_id', businessId)
+          if (directVars) {
+            const vMap = new Map<string, any[]>()
+            for (const v of directVars) {
+              if (!vMap.has(v.product_id)) vMap.set(v.product_id, [])
+              vMap.get(v.product_id)!.push(v)
+            }
+            allProducts = allProducts.map(p => ({
+              ...p,
+              product_variants: vMap.get(p.id) || []
+            }))
+          }
+        } catch {}
       }
 
       setProducts(allProducts)
@@ -226,9 +278,10 @@ export default function ProductsPage() {
         setCategories(cached.categories)
         setLoading(false)
 
-        // Revalidate in background if stale
+        // Revalidate in background if stale or if legacy cache lacked product_variants array
         const age = Date.now() - cached.ts
-        if (age > STALE_RECHECK) {
+        const missingVariantsRel = cached.products.length > 0 && cached.products[0].product_variants === undefined
+        if (age > STALE_RECHECK || missingVariantsRel) {
           fetchProductsAndCategories(businessId, true)
         }
       } else {
@@ -528,6 +581,7 @@ export default function ProductsPage() {
     clearSelection()
     if (activeBizId) {
       writeCache(activeBizId, nextProducts, categories)
+      invalidatePosCatalogCache(activeBizId, true)
     }
 
     // 4. Floating progress feedback
@@ -931,6 +985,18 @@ export default function ProductsPage() {
                         {p.sku && (
                           <span className="text-[10px] font-mono text-gray-400 block mt-0.5">SKU: {p.sku}</span>
                         )}
+                        <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                          {Array.isArray(p.product_variants) && p.product_variants.length > 0 && (
+                            <span className="text-[9px] font-bold text-blue-700 bg-blue-50 border border-blue-200/70 px-1.5 py-0.5 rounded">
+                              🏷️ {p.product_variants.length} Varian ({p.product_variants.slice(0, 3).map((v: any) => v.name).join(', ')}{p.product_variants.length > 3 ? '...' : ''})
+                            </span>
+                          )}
+                          {Array.isArray(p.product_modifiers) && p.product_modifiers.length > 0 && (
+                            <span className="text-[9px] font-bold text-purple-700 bg-purple-50 border border-purple-200/70 px-1.5 py-0.5 rounded">
+                              ✨ {Array.from(new Set(p.product_modifiers.map((m: any) => m.group_name))).join(', ')}
+                            </span>
+                          )}
+                        </div>
                         {p.description && (
                           <p className="text-xs text-gray-500 font-medium mt-1 line-clamp-2">{p.description}</p>
                         )}
@@ -942,6 +1008,11 @@ export default function ProductsPage() {
                             <span className="text-[9px] font-semibold text-gray-400 uppercase">HPP: {formatPrice(p.cost_price)}</span>
                           )}
                           <span className="font-extrabold text-xs text-gray-900">Jual: {formatPrice(p.price)}</span>
+                          {(Number(p.price_tiers?.dine_in) > 0 || Number(p.price_tiers?.take_away) > 0) && (
+                            <span className="text-[9px] font-bold text-emerald-700">
+                              🍽️ Dine-In / Take Away Aktif
+                            </span>
+                          )}
                         </div>
                         <div className="flex gap-2">
                           <button
@@ -1025,6 +1096,23 @@ export default function ProductsPage() {
                             </td>
                             <td className="p-4">
                               <div className="font-extrabold text-gray-900 uppercase text-xs tracking-tight">{p.name}</div>
+                              {(Array.isArray(p.product_variants) && p.product_variants.length > 0) || (Array.isArray(p.product_modifiers) && p.product_modifiers.length > 0) ? (
+                                <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                                  {Array.isArray(p.product_variants) && p.product_variants.length > 0 && (
+                                    <span
+                                      className="text-[9px] font-bold text-blue-700 bg-blue-50 border border-blue-200/80 px-1.5 py-0.5 rounded"
+                                      title={p.product_variants.map((v: any) => `${v.name}: ${formatPrice(v.price || p.price)}`).join(' | ')}
+                                    >
+                                      🏷️ {p.product_variants.length} Varian: {p.product_variants.slice(0, 3).map((v: any) => v.name).join(', ')}{p.product_variants.length > 3 ? '...' : ''}
+                                    </span>
+                                  )}
+                                  {Array.isArray(p.product_modifiers) && p.product_modifiers.length > 0 && (
+                                    <span className="text-[9px] font-bold text-purple-700 bg-purple-50 border border-purple-200/80 px-1.5 py-0.5 rounded">
+                                      ✨ {Array.from(new Set(p.product_modifiers.map((m: any) => m.group_name))).join(', ')}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : null}
                               {p.description && (
                                 <p className="text-[11px] text-gray-400 font-normal line-clamp-1 mt-0.5">{p.description}</p>
                               )}
@@ -1089,7 +1177,34 @@ export default function ProductsPage() {
                               </div>
                             </td>
                             <td className="p-4 whitespace-nowrap">
-                              <span className="text-xs font-extrabold text-gray-900">{formatPrice(p.price)}</span>
+                              <div className="flex flex-col">
+                                {(() => {
+                                  const vars = Array.isArray(p.product_variants) ? p.product_variants : []
+                                  if (vars.length > 1) {
+                                    const prices = vars.map((v: any) => Number(v.price || p.price || 0)).filter(n => n > 0)
+                                    if (prices.length > 1) {
+                                      const minP = Math.min(...prices)
+                                      const maxP = Math.max(...prices)
+                                      if (minP !== maxP) {
+                                        return (
+                                          <span className="text-xs font-extrabold text-gray-900">
+                                            {formatPrice(minP)} – {formatPrice(maxP)}
+                                          </span>
+                                        )
+                                      }
+                                    }
+                                  }
+                                  return <span className="text-xs font-extrabold text-gray-900">{formatPrice(p.price)}</span>
+                                })()}
+                                {(Number(p.price_tiers?.dine_in) > 0 || Number(p.price_tiers?.take_away) > 0) && (
+                                  <span
+                                    className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/70 px-1.5 py-0.5 rounded w-fit mt-0.5"
+                                    title={`Dine-In: ${formatPrice(Number(p.price_tiers?.dine_in || p.price))} | Take Away: ${formatPrice(Number(p.price_tiers?.take_away || p.price))}`}
+                                  >
+                                    🍽️/🛍️ Multi-Harga
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="p-4 text-right whitespace-nowrap">
                               <div className="flex gap-2 justify-end opacity-80 group-hover:opacity-100 transition-opacity">

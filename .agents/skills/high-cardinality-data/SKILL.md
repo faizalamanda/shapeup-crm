@@ -107,3 +107,27 @@ Ketika pengguna berpindah unit bisnis melalui dropdown sidebar (`handleSwitchBus
 - Klien **WAJIB** memanggil `PATCH /api/business` yang memperbarui `profiles.active_business_id` sekaligus mengeksekusi `invalidateProfileCache(user.id)` di `lib/apiContext.ts`.
 - Selain itu, panggilan ke `/api/customers` menyertakan `?business_id=${activeBusiness.id}` yang diverifikasi terhadap kepemilikan/penugasan staf (`resolveTargetBusinessId`), sehingga tidak pernah terjadi *30-second profile cache drift* saat pengguna baru saja beralih ke unit bisnis lain (seperti beralih ke **Bisnis Tanem**).
 
+---
+
+## 5. Protokol Anti-Data-Kosong & Self-Healing Variant Hydration (`fetchAllBusinessProducts`)
+
+Penambahan kolom baru (seperti `price_tiers`, `min_stock_alert`, `external_id`) atau relasi baru (`product_variants`, `product_modifiers`) sering kali memicu error PostgREST schema cache (`PGRST200` / `PGRST204` / `42703`) jika embedded join ditulis kaku tanpa fallback. Untuk menjamin katalog produk di `/products`, `/pos`, `/purchases`, `/orders/invoices`, dan `/stock-opname` **tidak pernah kosong (*zero empty data*)** dan **tidak pernah kehilangan varian**:
+
+1. **Multi-Stage Select Fallback:**
+   - Tahap 1: `'*, product_variants(*), product_modifiers(*)'`
+   - Tahap 2: `'*, product_variants(*)'`
+   - Tahap 3 (Fallback Dasar): Kolom inti `products` **tanpa** embedded join sama sekali (sehingga dijamin 100% berhasil dieksekusi oleh PostgreSQL dalam kondisi apa pun).
+2. **Direct Table Hydration (`product_variants`):**
+   - Di dalam `fetchAllBusinessProducts()` (`lib/chunkedQueryHelper.ts`), `/products/page.tsx`, dan `/stock-opname/page.tsx`, apabila hasil kueri jatuh ke Tahap 3 sehingga `rows[0]?.product_variants === undefined`, sistem **WAJIB** menjalankan kueri tabel langsung:
+     ```typescript
+     const { data: directVars } = await supabaseClient
+       .from('product_variants')
+       .select('*')
+       .eq('business_id', businessId)
+     ```
+     lalu memetakan varian ke masing-masing produk di memori (`O(N)` Map lookup).
+3. **Cross-Module POS Catalog Cache Invalidation (`invalidatePosCatalogCache`):**
+   - Setiap kali produk ditambah, diedit (`ProductModal.tsx`), dihapus (`/products/page.tsx`), atau diimpor massal (`/products/import/page.tsx`), klien **WAJIB** memanggil `invalidatePosCatalogCache(businessId, true)` dari `@/lib/posCatalogStore.ts` selain membersihkan `su_products_data_${businessId}`.
+   - Jika cache lama di `sessionStorage` terdeteksi belum memiliki properti `product_variants` (`cached.products[0]?.product_variants === undefined`), halaman wajib langsung memicu revalidasi latar belakang (*background revalidation*).
+
+

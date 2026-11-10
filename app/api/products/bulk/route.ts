@@ -2,6 +2,17 @@ import { NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
 import { isUuid } from '@/lib/utils'
 
+interface ProductVariantImportRow {
+  name: string
+  sku?: string | null
+  price?: number
+  cost_price?: number
+  stock_quantity?: number
+  price_tiers?: { dine_in?: number | null; take_away?: number | null } | null
+  min_stock_alert?: number | null
+  external_id?: string | null
+}
+
 interface ProductImportRow {
   name: string
   sku?: string | null
@@ -14,6 +25,11 @@ interface ProductImportRow {
   stock_type?: 'tracked' | 'available' | 'unavailable'
   description?: string | null
   hpp_type?: 'fixed' | 'variable'
+  price_tiers?: { dine_in?: number | null; take_away?: number | null } | null
+  min_stock_alert?: number | null
+  external_id?: string | null
+  variants?: ProductVariantImportRow[]
+  modifier_groups?: string[]
 }
 
 interface BulkRequestBody {
@@ -163,8 +179,13 @@ export async function POST(req: Request) {
     let skippedCount = 0
     const failedItems: { index: number; name: string; sku?: string | null; reason: string }[] = []
 
-    const productsToInsert: { originalIndex: number; payload: any }[] = []
-    const productsToUpdate: { originalIndex: number; id: string; existingStock: number; payload: any }[] = []
+    const productsToInsert: { originalIndex: number; payload: any; variants: ProductVariantImportRow[]; modifierGroups: string[] }[] = []
+    const productsToUpdate: { originalIndex: number; id: string; existingStock: number; payload: any; variants: ProductVariantImportRow[]; modifierGroups: string[] }[] = []
+
+    const stripExtendedProductCols = (payload: any) => {
+      const { price_tiers, min_stock_alert, external_id, ...safePayload } = payload
+      return safePayload
+    }
 
     for (let i = 0; i < products.length; i++) {
       const item = products[i]
@@ -211,6 +232,20 @@ export async function POST(req: Request) {
 
       const cleanHppType = item.hpp_type === 'variable' ? 'variable' : 'fixed'
       const cleanDesc = item.description ? String(item.description).trim() : null
+      const cleanMinStockAlert = Number(item.min_stock_alert) > 0 ? Math.round(Number(item.min_stock_alert)) : 0
+      const cleanExternalId = item.external_id ? String(item.external_id).trim() : null
+      const cleanPriceTiers: Record<string, number> = {}
+      if (item.price_tiers && typeof item.price_tiers === 'object') {
+        if (Number(item.price_tiers.dine_in) > 0) cleanPriceTiers.dine_in = Math.round(Number(item.price_tiers.dine_in))
+        if (Number(item.price_tiers.take_away) > 0) cleanPriceTiers.take_away = Math.round(Number(item.price_tiers.take_away))
+      }
+
+      const cleanVariants: ProductVariantImportRow[] = Array.isArray(item.variants)
+        ? item.variants.filter(v => v && v.name && String(v.name).trim())
+        : []
+      const cleanModifierGroups: string[] = Array.isArray(item.modifier_groups)
+        ? Array.from(new Set(item.modifier_groups.map(m => String(m || '').trim()).filter(Boolean)))
+        : []
 
       // Resolve category
       let resolvedCategoryId: string | null = null
@@ -233,7 +268,7 @@ export async function POST(req: Request) {
         existingMatch = existingProductsMap.get(`name:${rawName.toLowerCase()}`)
       }
 
-      const productPayload = {
+      const productPayload: any = {
         business_id: businessId,
         name: rawName,
         sku: rawSku || null,
@@ -246,6 +281,9 @@ export async function POST(req: Request) {
         stock_quantity: cleanStockType === 'tracked' ? cleanStockQty : 0,
         unit: cleanUnit,
         hpp_type: cleanHppType,
+        price_tiers: cleanPriceTiers,
+        min_stock_alert: cleanMinStockAlert,
+        external_id: cleanExternalId,
         updated_at: new Date().toISOString()
       }
 
@@ -255,7 +293,9 @@ export async function POST(req: Request) {
             originalIndex: i,
             id: existingMatch.id,
             existingStock: Number(existingMatch.stock_quantity || 0),
-            payload: productPayload
+            payload: productPayload,
+            variants: cleanVariants,
+            modifierGroups: cleanModifierGroups
           })
         } else {
           skippedCount++
@@ -263,7 +303,9 @@ export async function POST(req: Request) {
       } else {
         productsToInsert.push({
           originalIndex: i,
-          payload: productPayload
+          payload: productPayload,
+          variants: cleanVariants,
+          modifierGroups: cleanModifierGroups
         })
         // Mark in in-memory map to prevent duplicates within the same batch
         const pendingObj = {
@@ -282,24 +324,44 @@ export async function POST(req: Request) {
       }
     }
 
-    // 6. Execute Inserts
-    const insertedProductRows: any[] = []
+    // 6. Execute Inserts (with schema fallback for extended Moka columns)
+    const insertedProductRows: Array<{ id: string; name: string; sku: string | null; stock_quantity: number; cost_price: number; stock_type: string; variants: ProductVariantImportRow[]; modifierGroups: string[] }> = []
     if (productsToInsert.length > 0) {
       const payloads = productsToInsert.map(p => p.payload)
-      const { data: insertedData, error: insErr } = await supabaseAdmin
+      let { data: insertedData, error: insErr } = await supabaseAdmin
         .from('products')
         .insert(payloads)
         .select('id, name, sku, stock_quantity, cost_price, stock_type')
+
+      if (insErr && (insErr.message?.includes('price_tiers') || insErr.message?.includes('min_stock_alert') || insErr.message?.includes('external_id') || insErr.code === '42703' || insErr.code === 'PGRST204')) {
+        const fallbackPayloads = productsToInsert.map(p => stripExtendedProductCols(p.payload))
+        const retryRes = await supabaseAdmin
+          .from('products')
+          .insert(fallbackPayloads)
+          .select('id, name, sku, stock_quantity, cost_price, stock_type')
+        insertedData = retryRes.data
+        insErr = retryRes.error
+      }
 
       if (insErr) {
         console.error('[ProductsBulk] Insert chunk failed, retrying rows:', insErr)
         // If bulk insert failed, fallback to individual row insert to salvage valid rows
         for (const item of productsToInsert) {
-          const { data: singleData, error: singleErr } = await supabaseAdmin
+          let { data: singleData, error: singleErr } = await supabaseAdmin
             .from('products')
             .insert(item.payload)
             .select('id, name, sku, stock_quantity, cost_price, stock_type')
             .maybeSingle()
+
+          if (singleErr && (singleErr.message?.includes('price_tiers') || singleErr.message?.includes('min_stock_alert') || singleErr.message?.includes('external_id') || singleErr.code === '42703' || singleErr.code === 'PGRST204')) {
+            const retrySingle = await supabaseAdmin
+              .from('products')
+              .insert(stripExtendedProductCols(item.payload))
+              .select('id, name, sku, stock_quantity, cost_price, stock_type')
+              .maybeSingle()
+            singleData = retrySingle.data
+            singleErr = retrySingle.error
+          }
 
           if (singleErr) {
             failedItems.push({
@@ -309,27 +371,43 @@ export async function POST(req: Request) {
               reason: singleErr.message || 'Gagal menyimpan produk'
             })
           } else if (singleData) {
-            insertedProductRows.push(singleData)
+            insertedProductRows.push({ ...singleData, variants: item.variants, modifierGroups: item.modifierGroups })
             insertedCount++
           }
         }
       } else if (insertedData) {
-        insertedProductRows.push(...insertedData)
+        insertedData.forEach((row, idx) => {
+          const src = productsToInsert[idx]
+          insertedProductRows.push({
+            ...row,
+            variants: src?.variants || [],
+            modifierGroups: src?.modifierGroups || []
+          })
+        })
         insertedCount += insertedData.length
       }
     }
 
     // 7. Execute Updates in parallel chunks of 10 to eliminate N+1 timeout risk
+    const updatedProductRows: Array<{ id: string; cost_price: number; stock_type: string; variants: ProductVariantImportRow[]; modifierGroups: string[] }> = []
     if (productsToUpdate.length > 0) {
       const CHUNK_SIZE = 10
       for (let i = 0; i < productsToUpdate.length; i += CHUNK_SIZE) {
         const chunk = productsToUpdate.slice(i, i + CHUNK_SIZE)
         const results = await Promise.all(
           chunk.map(async item => {
-            const { error: updErr } = await supabaseAdmin
+            let { error: updErr } = await supabaseAdmin
               .from('products')
               .update(item.payload)
               .eq('id', item.id)
+
+            if (updErr && (updErr.message?.includes('price_tiers') || updErr.message?.includes('min_stock_alert') || updErr.message?.includes('external_id') || updErr.code === '42703' || updErr.code === 'PGRST204')) {
+              const retryUpd = await supabaseAdmin
+                .from('products')
+                .update(stripExtendedProductCols(item.payload))
+                .eq('id', item.id)
+              updErr = retryUpd.error
+            }
             return { item, error: updErr }
           })
         )
@@ -346,17 +424,249 @@ export async function POST(req: Request) {
             })
           } else {
             updatedCount++
+            updatedProductRows.push({
+              id: res.item.id,
+              cost_price: Number(res.item.payload.cost_price || 0),
+              stock_type: res.item.payload.stock_type,
+              variants: res.item.variants,
+              modifierGroups: res.item.modifierGroups
+            })
           }
         }
       }
     }
 
-    // 8. Event Sourcing: Record initial stock movements for new & updated tracked products
-    const stockMovesToInsert: any[] = []
+    // 7b. Process Discrete Product Variants (SPU -> SKU) & Modifier Groups
+    const allProcessedProductsForSubEntities = [
+      ...insertedProductRows.map(p => ({ id: p.id, cost_price: Number(p.cost_price || 0), stock_type: p.stock_type, variants: p.variants, modifierGroups: p.modifierGroups, isNewProduct: true })),
+      ...updatedProductRows.map(p => ({ id: p.id, cost_price: Number((p as any).cost_price || 0), stock_type: p.stock_type, variants: p.variants, modifierGroups: p.modifierGroups, isNewProduct: false }))
+    ]
 
-    // 8a. Initial stock moves for new tracked products with stock > 0
+    const newlyInsertedVariantStockMoves: any[] = []
+
+    const productsWithVariants = allProcessedProductsForSubEntities.filter(p => p.variants && p.variants.length > 0)
+    if (productsWithVariants.length > 0) {
+      const parentIds = productsWithVariants.map(p => p.id)
+      const { data: existingVars } = await supabaseAdmin
+        .from('product_variants')
+        .select('id, product_id, name, sku, stock_quantity')
+        .eq('business_id', businessId)
+        .in('product_id', parentIds)
+
+      const existingVarByKey = new Map<string, any>()
+      if (existingVars) {
+        existingVars.forEach(ev => {
+          if (ev.sku) existingVarByKey.set(`${ev.product_id}:sku:${String(ev.sku).trim().toLowerCase()}`, ev)
+          if (ev.name) existingVarByKey.set(`${ev.product_id}:name:${String(ev.name).trim().toLowerCase()}`, ev)
+        })
+      }
+
+      const variantsToInsert: Array<{ parentStockType: string; payload: any }> = []
+      const variantsToUpdate: Array<{ id: string; payload: any }> = []
+
+      for (const prod of productsWithVariants) {
+        for (const v of prod.variants) {
+          const vName = String(v.name || '').trim()
+          if (!vName) continue
+          const vSku = v.sku ? String(v.sku).trim() : null
+          const vPrice = Number(v.price) >= 0 ? Number(v.price) : 0
+          const vCost = Number(v.cost_price) > 0 ? Number(v.cost_price) : Number(prod.cost_price || 0)
+          const vStock = prod.stock_type === 'tracked' && Number(v.stock_quantity) > 0 ? Math.round(Number(v.stock_quantity)) : 0
+          const vMinAlert = Number(v.min_stock_alert) > 0 ? Math.round(Number(v.min_stock_alert)) : 0
+          const vExtId = v.external_id ? String(v.external_id).trim() : null
+          const vTiers: Record<string, number> = {}
+          if (v.price_tiers && typeof v.price_tiers === 'object') {
+            if (Number(v.price_tiers.dine_in) > 0) vTiers.dine_in = Math.round(Number(v.price_tiers.dine_in))
+            if (Number(v.price_tiers.take_away) > 0) vTiers.take_away = Math.round(Number(v.price_tiers.take_away))
+          }
+
+          const existingVar = (vSku ? existingVarByKey.get(`${prod.id}:sku:${vSku.toLowerCase()}`) : null) ||
+                              existingVarByKey.get(`${prod.id}:name:${vName.toLowerCase()}`)
+
+          if (existingVar) {
+            variantsToUpdate.push({
+              id: existingVar.id,
+              payload: {
+                name: vName,
+                sku: vSku,
+                price: vPrice,
+                cost_price: vCost,
+                price_tiers: vTiers,
+                min_stock_alert: vMinAlert,
+                external_id: vExtId,
+                updated_at: new Date().toISOString()
+              }
+            })
+          } else {
+            variantsToInsert.push({
+              parentStockType: prod.stock_type,
+              payload: {
+                business_id: businessId,
+                product_id: prod.id,
+                name: vName,
+                sku: vSku,
+                price: vPrice,
+                cost_price: vCost,
+                stock_quantity: vStock,
+                price_tiers: vTiers,
+                min_stock_alert: vMinAlert,
+                external_id: vExtId
+              }
+            })
+          }
+        }
+      }
+
+      if (variantsToInsert.length > 0) {
+        const varPayloads = variantsToInsert.map(x => x.payload)
+        let { data: insVars, error: insVarErr } = await supabaseAdmin
+          .from('product_variants')
+          .insert(varPayloads)
+          .select('id, product_id, stock_quantity, cost_price')
+
+        if (insVarErr && (insVarErr.message?.includes('price_tiers') || insVarErr.message?.includes('min_stock_alert') || insVarErr.message?.includes('external_id') || insVarErr.code === '42703' || insVarErr.code === 'PGRST204')) {
+          const safeVarPayloads = varPayloads.map(p => stripExtendedProductCols(p))
+          const retryVar = await supabaseAdmin
+            .from('product_variants')
+            .insert(safeVarPayloads)
+            .select('id, product_id, stock_quantity, cost_price')
+          insVars = retryVar.data
+          insVarErr = retryVar.error
+        }
+
+        if (!insVarErr && insVars) {
+          insVars.forEach((iv, idx) => {
+            const meta = variantsToInsert[idx]
+            if (meta?.parentStockType === 'tracked' && Number(iv.stock_quantity) > 0) {
+              newlyInsertedVariantStockMoves.push({
+                business_id: businessId,
+                product_id: iv.product_id,
+                variant_id: iv.id,
+                reference: 'STOK-AWAL-IMPORT',
+                qty: Number(iv.stock_quantity),
+                unit_cost: Number(iv.cost_price || 0),
+                type: 'adjustment',
+                status: 'done',
+                bucket: 'main',
+                source_type: 'manual',
+                origin_location_id: null,
+                destination_location_id: null,
+                lot_number: null,
+                created_at: new Date().toISOString()
+              })
+            }
+          })
+        }
+      }
+
+      if (variantsToUpdate.length > 0) {
+        const CHUNK_SIZE = 15
+        for (let i = 0; i < variantsToUpdate.length; i += CHUNK_SIZE) {
+          const chunk = variantsToUpdate.slice(i, i + CHUNK_SIZE)
+          await Promise.all(
+            chunk.map(async vItem => {
+              const { error: vUpdErr } = await supabaseAdmin
+                .from('product_variants')
+                .update(vItem.payload)
+                .eq('id', vItem.id)
+              if (vUpdErr && (vUpdErr.message?.includes('price_tiers') || vUpdErr.message?.includes('min_stock_alert') || vUpdErr.message?.includes('external_id') || vUpdErr.code === '42703' || vUpdErr.code === 'PGRST204')) {
+                await supabaseAdmin
+                  .from('product_variants')
+                  .update(stripExtendedProductCols(vItem.payload))
+                  .eq('id', vItem.id)
+              }
+            })
+          )
+        }
+      }
+    }
+
+    // 7c. Process Modifier Groups (Moka Modifier Set compatibility)
+    const productsWithModifiers = allProcessedProductsForSubEntities.filter(p => p.modifierGroups && p.modifierGroups.length > 0)
+    if (productsWithModifiers.length > 0) {
+      try {
+        // Fetch existing business modifier templates so if the user already defined options for "Level", we reuse them
+        const { data: existingBizMods } = await supabaseAdmin
+          .from('product_modifiers')
+          .select('product_id, group_name, option_name, price_extra, is_required')
+          .eq('business_id', businessId)
+
+        const templateByGroup = new Map<string, Array<{ option_name: string; price_extra: number; is_required: boolean }>>()
+        const existingProductGroupSet = new Set<string>()
+
+        if (existingBizMods) {
+          existingBizMods.forEach((m: any) => {
+            const gKey = String(m.group_name || '').trim().toLowerCase()
+            const optText = String(m.option_name || '').trim()
+            if (!gKey || !optText) return
+            existingProductGroupSet.add(`${m.product_id}:${gKey}`)
+            if (!templateByGroup.has(gKey)) {
+              templateByGroup.set(gKey, [])
+            }
+            const list = templateByGroup.get(gKey)!
+            if (!list.some(opt => opt.option_name.toLowerCase() === optText.toLowerCase())) {
+              list.push({
+                option_name: optText,
+                price_extra: Number(m.price_extra || 0),
+                is_required: Boolean(m.is_required)
+              })
+            }
+          })
+        }
+
+        const modifiersToInsert: any[] = []
+        for (const prod of productsWithModifiers) {
+          for (const rawGroupName of prod.modifierGroups) {
+            const gName = String(rawGroupName || '').trim()
+            const gKey = gName.toLowerCase()
+            if (!gName || existingProductGroupSet.has(`${prod.id}:${gKey}`)) continue
+
+            const templateOptions = templateByGroup.get(gKey)
+            if (templateOptions && templateOptions.length > 0) {
+              templateOptions.forEach(opt => {
+                modifiersToInsert.push({
+                  business_id: businessId,
+                  product_id: prod.id,
+                  group_name: gName,
+                  option_name: opt.option_name,
+                  price_extra: opt.price_extra,
+                  is_required: opt.is_required
+                })
+              })
+            } else {
+              // Create starter options for newly discovered Moka Modifier Set
+              const defaultOpts = gKey.includes('level')
+                ? ['Level 1', 'Level 2', 'Level 3']
+                : [`Standar (${gName})`]
+              defaultOpts.forEach(optName => {
+                modifiersToInsert.push({
+                  business_id: businessId,
+                  product_id: prod.id,
+                  group_name: gName,
+                  option_name: optName,
+                  price_extra: 0,
+                  is_required: false
+                })
+              })
+            }
+            existingProductGroupSet.add(`${prod.id}:${gKey}`)
+          }
+        }
+
+        if (modifiersToInsert.length > 0) {
+          await supabaseAdmin.from('product_modifiers').insert(modifiersToInsert)
+        }
+      } catch (modErr) {
+        console.warn('[ProductsBulk] Non-critical modifier import warning:', modErr)
+      }
+    }
+
+    // 8. Event Sourcing: Record initial stock movements for new & updated tracked products
+    const stockMovesToInsert: any[] = [...newlyInsertedVariantStockMoves]
+
+    // 8a. Initial stock moves for new tracked products WITHOUT discrete variants where stock > 0
     const newProductsNeedingStockMoves = insertedProductRows.filter(
-      p => p.stock_type === 'tracked' && Number(p.stock_quantity) > 0
+      p => p.stock_type === 'tracked' && Number(p.stock_quantity) > 0 && (!p.variants || p.variants.length === 0)
     )
     for (const p of newProductsNeedingStockMoves) {
       stockMovesToInsert.push({
