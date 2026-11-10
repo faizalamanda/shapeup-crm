@@ -70,6 +70,11 @@ type ModifierGroupForm = {
   options: ModifierOptionForm[]
 }
 
+type MatrixAttribute = {
+  name: string
+  values: string
+}
+
 type ModalTab = 'general' | 'variants' | 'modifiers' | 'recipe'
 
 type ProductModalProps = {
@@ -265,10 +270,13 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
   const [businessModifierTemplates, setBusinessModifierTemplates] = useState<ModifierGroupForm[]>([])
   const [loadingModifiers, setLoadingModifiers] = useState(false)
 
-  // Matrix Generator State
+  // Matrix Generator State (Shopee / WooCommerce Dynamic Attributes Standard)
   const [showMatrixGen, setShowMatrixGen] = useState(false)
-  const [matrixAttr1Values, setMatrixAttr1Values] = useState('Hitam, Putih, Merah')
-  const [matrixAttr2Values, setMatrixAttr2Values] = useState('S, M, L, XL')
+  const [matrixAttributes, setMatrixAttributes] = useState<MatrixAttribute[]>([
+    { name: 'Warna', values: 'Hitam, Putih, Merah' },
+    { name: 'Ukuran', values: 'S, M, L, XL' }
+  ])
+  const [preserveExistingVariants, setPreserveExistingVariants] = useState(true)
   const [bulkMatrixPrice, setBulkMatrixPrice] = useState<number>(0)
   const [bulkMatrixCostPrice, setBulkMatrixCostPrice] = useState<number>(0)
   const [bulkMatrixStock, setBulkMatrixStock] = useState<number>(10)
@@ -405,6 +413,12 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         setRecipeRows([])
         setVariantRows([])
         setModifierGroups([])
+        setShowMatrixGen(false)
+        setMatrixAttributes([
+          { name: 'Warna', values: 'Hitam, Putih, Merah' },
+          { name: 'Ukuran', values: 'S, M, L, XL' }
+        ])
+        setPreserveExistingVariants(true)
         setShowNewCategoryInput(false)
         setNewCategoryName('')
         setCategoryError('')
@@ -514,6 +528,27 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         })
         setVariantRows(mapped)
         if (hasVariantTiers) setEnableMultiPrice(true)
+
+        // Smart attribute detection from existing variant names (e.g. "Hitam - S", "Putih - M")
+        if (mapped.length > 0) {
+          const sampleNames = mapped.map((m: any) => (m.name || '').split(' - ').map((s: string) => s.trim()))
+          const partsCount = sampleNames[0]?.length || 1
+          const isConsistent = sampleNames.every((p: string[]) => p.length === partsCount)
+          if (isConsistent && partsCount > 0) {
+            const detectedAttrs: MatrixAttribute[] = []
+            for (let i = 0; i < partsCount; i++) {
+              const uniqueVals = Array.from(new Set(sampleNames.map((p: string[]) => p[i]).filter(Boolean)))
+              const defaultName = partsCount === 1 ? 'Varian' : (i === 0 ? 'Warna' : (i === 1 ? 'Ukuran' : (i === 2 ? 'Bahan' : `Atribut ${i + 1}`)))
+              detectedAttrs.push({
+                name: defaultName,
+                values: uniqueVals.join(', ')
+              })
+            }
+            if (detectedAttrs.length > 0) {
+              setMatrixAttributes(detectedAttrs)
+            }
+          }
+        }
       }
     } catch (err) {
       console.warn('Error fetching variants:', err)
@@ -600,49 +635,96 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
     }
   }
 
-  const handleGenerateMatrix = () => {
-    const vals1 = matrixAttr1Values.split(',').map(s => s.trim()).filter(Boolean)
-    const vals2 = matrixAttr2Values.split(',').map(s => s.trim()).filter(Boolean)
+  // Preview total combinations calculated from active matrix attributes
+  const previewCombinationsCount = useMemo(() => {
+    const activeArrays = matrixAttributes
+      .map(a => a.values.split(',').map(s => s.trim()).filter(Boolean))
+      .filter(arr => arr.length > 0)
+    if (activeArrays.length === 0) return 0
+    return activeArrays.reduce((acc, curr) => acc * curr.length, 1)
+  }, [matrixAttributes])
 
-    if (vals1.length === 0 && vals2.length === 0) {
-      alert('Masukkan setidaknya satu nilai atribut!')
+  const handleGenerateMatrix = () => {
+    const activeAttrs = matrixAttributes
+      .map(a => ({
+        name: a.name.trim() || 'Varian',
+        values: a.values.split(',').map(s => s.trim()).filter(Boolean)
+      }))
+      .filter(a => a.values.length > 0)
+
+    if (activeAttrs.length === 0) {
+      alert('Masukkan setidaknya satu tipe variasi beserta pilihan nilainya!')
       return
     }
 
-    const generated: VariantRow[] = []
+    const valueArrays = activeAttrs.map(a => a.values)
+    const combinations: string[][] = valueArrays.reduce<string[][]>(
+      (acc, curr) => {
+        if (acc.length === 0) return curr.map(item => [item])
+        const res: string[][] = []
+        for (const a of acc) {
+          for (const c of curr) {
+            res.push([...a, c])
+          }
+        }
+        return res
+      },
+      []
+    )
+
+    if (combinations.length === 0) {
+      alert('Tidak ada kombinasi varian yang dapat dibuat.')
+      return
+    }
+
+    if (combinations.length > 250) {
+      const confirmContinue = confirm(
+        `Kombinasi atribut menghasilkan ${combinations.length} varian. Lanjutkan pembuatan?`
+      )
+      if (!confirmContinue) return
+    }
+
     const baseSkuVal = sku ? sku.trim() : (name ? name.slice(0, 3).toUpperCase() : 'SKU')
     const finalPriceVal = Number(bulkMatrixPrice || price || 0)
-    const finalCostVal = Number(bulkMatrixCostPrice || (hppType === 'variable' ? calculatedDynamicHpp : (costPrice || 0)))
+    const parentEffectiveCost = hppType === 'variable' ? calculatedDynamicHpp : (Number(costPrice) || 0)
+    const finalCostVal = Number(bulkMatrixCostPrice || parentEffectiveCost)
     const finalStockVal = Number(bulkMatrixStock || 0)
 
-    if (vals1.length > 0 && vals2.length > 0) {
-      for (const v1 of vals1) {
-        for (const v2 of vals2) {
-          generated.push({
-            name: `${v1} - ${v2}`,
-            sku: `${baseSkuVal}-${v1.slice(0, 3).toUpperCase()}-${v2.toUpperCase()}`,
-            price: finalPriceVal,
-            dine_in_price: dineInPrice > 0 ? dineInPrice : null,
-            take_away_price: takeAwayPrice > 0 ? takeAwayPrice : null,
-            cost_price: finalCostVal,
-            stock_quantity: finalStockVal
-          })
-        }
-      }
-    } else {
-      const singleVals = vals1.length > 0 ? vals1 : vals2
-      for (const val of singleVals) {
-        generated.push({
-          name: val,
-          sku: `${baseSkuVal}-${val.toUpperCase()}`,
-          price: finalPriceVal,
-          dine_in_price: dineInPrice > 0 ? dineInPrice : null,
-          take_away_price: takeAwayPrice > 0 ? takeAwayPrice : null,
-          cost_price: finalCostVal,
-          stock_quantity: finalStockVal
-        })
+    // Map existing variants by normalized name for non-destructive merge
+    const existingMap = new Map<string, VariantRow>()
+    if (preserveExistingVariants) {
+      for (const v of variantRows) {
+        if (v.name) existingMap.set(v.name.trim().toLowerCase(), v)
       }
     }
+
+    const generated: VariantRow[] = combinations.map(combo => {
+      const comboName = combo.join(' - ')
+      const existing = existingMap.get(comboName.toLowerCase())
+
+      if (existing && preserveExistingVariants) {
+        // PRESERVE historical ID, price, cost_price, SKU, and stock!
+        return {
+          ...existing,
+          name: comboName // maintain standardized formatting
+        }
+      }
+
+      // Generate clean SKU suffix
+      const skuSuffix = combo
+        .map(c => c.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() || 'VAR')
+        .join('-')
+
+      return {
+        name: comboName,
+        sku: `${baseSkuVal}-${skuSuffix}`,
+        price: finalPriceVal,
+        dine_in_price: dineInPrice > 0 ? dineInPrice : null,
+        take_away_price: takeAwayPrice > 0 ? takeAwayPrice : null,
+        cost_price: finalCostVal,
+        stock_quantity: finalStockVal
+      }
+    })
 
     setVariantRows(generated)
     setShowMatrixGen(false)
@@ -1064,9 +1146,6 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
   return createPortal(
     <div
       className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex justify-center items-center p-0 sm:p-3 md:p-4 overflow-hidden overscroll-none z-[99] animate-in fade-in duration-200"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !saving) onClose()
-      }}
     >
       <div
         className="bg-slate-50 border-0 sm:border sm:border-slate-200/90 rounded-none sm:rounded-2xl shadow-2xl w-screen h-[100dvh] sm:w-[96vw] sm:max-w-5xl sm:h-[94dvh] sm:max-h-[94dvh] flex flex-col overflow-hidden overscroll-contain transform scale-100 transition-all duration-200"
@@ -1813,64 +1892,233 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                 </div>
 
                 {showMatrixGen && (
-                  <div className="p-4 bg-purple-50/60 border border-purple-200/80 rounded-2xl space-y-3 animate-in fade-in duration-150">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-black text-purple-950 uppercase tracking-wide">
-                        ⚡ Generator Matriks Variasi Otomatis
-                      </span>
-                      <span className="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
-                        Kombinasi Cartesian
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
-                      <div className="sm:col-span-2">
-                        <label className="block text-[10px] font-bold text-purple-900 uppercase mb-1">
-                          Atribut 1 (contoh: Panas, Es / Warna)
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="Panas, Es"
-                          className="w-full p-2 border border-purple-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none"
-                          value={matrixAttr1Values}
-                          onChange={e => setMatrixAttr1Values(e.target.value)}
-                        />
-                      </div>
-                      <div className="sm:col-span-2">
-                        <label className="block text-[10px] font-bold text-purple-900 uppercase mb-1">
-                          Atribut 2 Opsional (contoh: Kecil, Besar)
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="Kosongkan jika 1 atribut"
-                          className="w-full p-2 border border-purple-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none"
-                          value={matrixAttr2Values}
-                          onChange={e => setMatrixAttr2Values(e.target.value)}
-                        />
-                      </div>
+                  <div className="p-4 sm:p-5 bg-purple-50/60 border border-purple-200/90 rounded-2xl space-y-4 animate-in fade-in duration-150">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-purple-200/60 pb-3">
                       <div>
-                        <label className="block text-[10px] font-bold text-purple-900 uppercase mb-1">
-                          Harga Jual (Rp)
-                        </label>
-                        <input
-                          type="number"
-                          min="0"
-                          placeholder={String(price || 10000)}
-                          className="w-full p-2 border border-purple-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none"
-                          value={bulkMatrixPrice === 0 ? '' : bulkMatrixPrice}
-                          onChange={e => setBulkMatrixPrice(Number(e.target.value) || 0)}
-                        />
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black text-purple-950 uppercase tracking-wide">
+                            ⚡ Generator Matriks Variasi (Standar Shopee / WooCommerce)
+                          </span>
+                          <span className="text-[10px] font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full border border-purple-200">
+                            {previewCombinationsCount > 0 ? `${previewCombinationsCount} Kombinasi` : '0 Kombinasi'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-purple-800/80 font-medium mt-0.5">
+                          Kustomisasi nama grup atribut (misal: Warna, Ukuran, Rasa, Bahan) dan tambahkan opsi tak terbatas.
+                        </p>
                       </div>
-                    </div>
 
-                    <div className="flex justify-end">
                       <button
                         type="button"
-                        onClick={handleGenerateMatrix}
-                        className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+                        onClick={() => setShowMatrixGen(false)}
+                        className="text-xs font-bold text-slate-500 hover:text-slate-800 self-end sm:self-auto cursor-pointer"
                       >
-                        ⚡ Buat Kombinasi Varian
+                        ✕ Tutup
                       </button>
+                    </div>
+
+                    {/* Dynamic Attribute Groups List (Shopee / WooCommerce Multi-tier) */}
+                    <div className="space-y-3">
+                      {matrixAttributes.map((attr, aIdx) => {
+                        const parsedOptions = attr.values.split(',').map(s => s.trim()).filter(Boolean)
+                        return (
+                          <div key={aIdx} className="bg-white border border-purple-200/90 rounded-xl p-3.5 space-y-2.5 shadow-2xs">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 flex-1">
+                                <span className="text-[10px] font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md uppercase shrink-0">
+                                  Tipe #{aIdx + 1}
+                                </span>
+                                <input
+                                  type="text"
+                                  placeholder="Nama Tipe Variasi (contoh: Warna, Ukuran, Rasa, Bahan)"
+                                  className="p-1.5 px-2.5 border border-slate-200 rounded-lg text-xs font-extrabold text-slate-900 outline-none focus:border-purple-600 w-full sm:max-w-xs bg-slate-50/50 focus:bg-white"
+                                  value={attr.name}
+                                  onChange={e => {
+                                    const val = e.target.value
+                                    setMatrixAttributes(prev => {
+                                      const copy = [...prev]
+                                      copy[aIdx] = { ...copy[aIdx], name: val }
+                                      return copy
+                                    })
+                                  }}
+                                />
+                              </div>
+
+                              {/* Quick Preset Buttons */}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] text-slate-400 font-semibold hidden md:inline">Preset:</span>
+                                {['Warna', 'Ukuran', 'Rasa', 'Bahan', 'Level'].map(preset => (
+                                  <button
+                                    key={preset}
+                                    type="button"
+                                    onClick={() => {
+                                      setMatrixAttributes(prev => {
+                                        const copy = [...prev]
+                                        copy[aIdx] = { ...copy[aIdx], name: preset }
+                                        return copy
+                                      })
+                                    }}
+                                    className={`text-[10px] px-2 py-0.5 rounded-md border transition cursor-pointer ${
+                                      attr.name.toLowerCase() === preset.toLowerCase()
+                                        ? 'bg-purple-600 text-white border-purple-600 font-bold'
+                                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-purple-50'
+                                    }`}
+                                  >
+                                    {preset}
+                                  </button>
+                                ))}
+                                {matrixAttributes.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setMatrixAttributes(prev => prev.filter((_, i) => i !== aIdx))}
+                                    className="text-xs text-rose-600 hover:bg-rose-50 px-2 py-1 rounded-md transition font-bold ml-1 cursor-pointer"
+                                    title="Hapus tipe variasi ini"
+                                  >
+                                    🗑️ Hapus
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                                Pilihan Nilai / Opsi (Pisahkan dengan tanda koma)
+                              </label>
+                              <input
+                                type="text"
+                                placeholder={
+                                  attr.name.toLowerCase().includes('warna')
+                                    ? 'Contoh: Merah, Hitam, Putih, Navy, Hijau'
+                                    : attr.name.toLowerCase().includes('ukuran')
+                                      ? 'Contoh: S, M, L, XL, XXL'
+                                      : 'Contoh: Opsi 1, Opsi 2, Opsi 3'
+                                }
+                                className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                                value={attr.values}
+                                onChange={e => {
+                                  const val = e.target.value
+                                  setMatrixAttributes(prev => {
+                                    const copy = [...prev]
+                                    copy[aIdx] = { ...copy[aIdx], values: val }
+                                    return copy
+                                  })
+                                }}
+                              />
+                            </div>
+
+                            {/* Live Parsed Badges */}
+                            {parsedOptions.length > 0 && (
+                              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                                <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
+                                  {parsedOptions.length} opsi:
+                                </span>
+                                {parsedOptions.map((opt, oIdx) => (
+                                  <span key={oIdx} className="text-[11px] font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200/60">
+                                    {opt}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+
+                      {/* Add Attribute Group Button */}
+                      {matrixAttributes.length < 5 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMatrixAttributes(prev => [
+                              ...prev,
+                              {
+                                name: prev.length === 1 ? 'Ukuran' : (prev.length === 2 ? 'Bahan' : `Atribut ${prev.length + 1}`),
+                                values: ''
+                              }
+                            ])
+                          }}
+                          className="text-xs font-bold text-purple-700 hover:text-purple-900 bg-white hover:bg-purple-50 border border-dashed border-purple-300 px-3.5 py-2 rounded-xl transition inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                        >
+                          <span>➕</span>
+                          <span>Tambah Tipe Variasi / Atribut Baru (Maks. 5 Tingkat)</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Bulk Setup for New Combinations & Preservation Settings */}
+                    <div className="p-3.5 bg-white border border-purple-200/80 rounded-xl space-y-3">
+                      <span className="text-xs font-black text-slate-800 uppercase tracking-wide block">
+                        Pengaturan Massal untuk Varian Baru:
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                            Harga Jual Massal (Rp)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder={String(price || 10000)}
+                            className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                            value={bulkMatrixPrice === 0 ? '' : bulkMatrixPrice}
+                            onChange={e => setBulkMatrixPrice(Number(e.target.value) || 0)}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                            Modal HPP Massal (Rp)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder={String(costPrice || 0)}
+                            className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                            value={bulkMatrixCostPrice === 0 ? '' : bulkMatrixCostPrice}
+                            onChange={e => setBulkMatrixCostPrice(Number(e.target.value) || 0)}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                            Stok Awal Massal
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="10"
+                            className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                            value={bulkMatrixStock === 0 ? '' : bulkMatrixStock}
+                            onChange={e => setBulkMatrixStock(Number(e.target.value) || 0)}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="pt-2.5 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={preserveExistingVariants}
+                            onChange={e => setPreserveExistingVariants(e.target.checked)}
+                            className="rounded text-purple-600 w-4 h-4 cursor-pointer"
+                          />
+                          <span>Pertahankan ID, Harga, SKU & Stok varian lama yang namanya cocok (Aman)</span>
+                        </label>
+
+                        <div className="flex items-center gap-2 justify-end shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setShowMatrixGen(false)}
+                            className="px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                          >
+                            Batal
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleGenerateMatrix}
+                            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer flex items-center gap-1.5"
+                          >
+                            <span>⚡ Buat {previewCombinationsCount > 0 ? `${previewCombinationsCount} Kombinasi` : 'Variasi'}</span>
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
