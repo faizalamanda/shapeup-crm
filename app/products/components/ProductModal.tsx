@@ -277,12 +277,19 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
     setMounted(true)
   }, [])
 
-  // Lock body scroll when open
+  // Lock html & body scroll completely when open (prevents background scroll chaining)
   useEffect(() => {
     if (isOpen) {
+      const prevBodyOverflow = document.body.style.overflow
+      const prevHtmlOverflow = document.documentElement.style.overflow
+      const prevHtmlOverscroll = document.documentElement.style.overscrollBehavior
       document.body.style.overflow = 'hidden'
+      document.documentElement.style.overflow = 'hidden'
+      document.documentElement.style.overscrollBehavior = 'none'
       return () => {
-        document.body.style.overflow = ''
+        document.body.style.overflow = prevBodyOverflow
+        document.documentElement.style.overflow = prevHtmlOverflow
+        document.documentElement.style.overscrollBehavior = prevHtmlOverscroll
       }
     }
   }, [isOpen])
@@ -1055,111 +1062,144 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
   )
 
   return createPortal(
-    <div className="fixed inset-0 bg-slate-900/55 backdrop-blur-xs flex justify-center items-start md:items-center p-3 md:p-6 overflow-y-auto z-[99] animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex justify-center items-center p-0 sm:p-3 md:p-4 overflow-hidden overscroll-none z-[99] animate-in fade-in duration-200"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !saving) onClose()
+      }}
+    >
       <div
-        className="bg-white border border-slate-200 rounded-3xl shadow-2xl w-full max-w-2xl lg:max-w-4xl xl:max-w-5xl my-auto flex flex-col max-h-[92vh] overflow-hidden transform scale-100 transition-all duration-200"
+        className="bg-slate-50 border-0 sm:border sm:border-slate-200/90 rounded-none sm:rounded-2xl shadow-2xl w-screen h-[100dvh] sm:w-[96vw] sm:max-w-5xl sm:h-[94dvh] sm:max-h-[94dvh] flex flex-col overflow-hidden overscroll-contain transform scale-100 transition-all duration-200"
         role="dialog"
         aria-modal="true"
       >
-        {/* Header */}
-        <div className="flex justify-between items-center px-6 md:px-8 py-4 bg-slate-50 border-b border-slate-200 shrink-0">
-          <div>
-            <h3 className="text-lg font-black text-slate-900 tracking-tight">
-              {product ? `Edit Produk: ${name || product.name}` : 'Tambah Produk Baru'}
-            </h3>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Standar Katalog Modern — Info Dasar, Multi-Harga (Dine-In/Take Away), Varian SKU, Modifier, & Resep HPP
-            </p>
+        {/* Sticky Workstation Header (Mekari Jurnal / Shopify Standard) */}
+        <div className="bg-white border-b border-slate-200 shrink-0 px-4 sm:px-6 md:px-8 py-3.5">
+          <div className="max-w-4xl mx-auto flex justify-between items-center gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200/60 text-[10px] font-black uppercase tracking-wider">
+                  {product ? 'Edit Katalog' : 'Produk Baru'}
+                </span>
+                <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight truncate">
+                  {product ? (name || product.name) : 'Tambah Produk Baru'}
+                </h3>
+              </div>
+              <p className="text-[11px] sm:text-xs text-slate-500 font-medium mt-0.5 truncate">
+                Manajemen Katalog Terpadu — Informasi Utama, Skema Harga, Variasi SKU, Opsi Tambahan, & Komposisi HPP
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-9 h-9 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors text-lg font-light focus:outline-none cursor-pointer shrink-0"
+              aria-label="Tutup"
+            >
+              ✕
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="w-9 h-9 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors text-lg font-light focus:outline-none cursor-pointer"
-            aria-label="Tutup"
-          >
-            ✕
-          </button>
         </div>
 
-        {/* Segmented Navigation Tabs (Square / Odoo Standard — Prevents Form Clutter) */}
-        <div className="px-6 md:px-8 pt-3 bg-slate-50/70 border-b border-slate-200 flex items-center gap-1.5 overflow-x-auto scrollbar-none shrink-0">
-          <button
-            type="button"
-            onClick={() => setActiveTab('general')}
-            className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-              activeTab === 'general'
-                ? 'bg-white text-blue-700 border-blue-600 shadow-2xs'
-                : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-white/50'
-            }`}
-          >
-            <span>📦</span>
-            <span>Info & Harga Utama</span>
-            {enableMultiPrice && (
-              <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800">
-                Multi-Harga
+        {/* Sticky Segmented Navigation Tabs (Centered to match Workstation Canvas) */}
+        <div className="bg-white border-b border-slate-200 px-4 sm:px-6 md:px-8 shrink-0">
+          <div className="max-w-4xl mx-auto pt-2 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+            <button
+              type="button"
+              onClick={() => setActiveTab('general')}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+                activeTab === 'general'
+                  ? 'bg-slate-50 text-blue-700 border-blue-600'
+                  : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60'
+              }`}
+            >
+              <span>📦</span>
+              <span>Info & Harga Utama</span>
+              {enableMultiPrice && (
+                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800">
+                  Multi-Harga
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('variants')}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+                activeTab === 'variants'
+                  ? 'bg-slate-50 text-blue-700 border-blue-600'
+                  : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60'
+              }`}
+            >
+              <span>🏷️</span>
+              <span>Varian SKU</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                variantRows.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-200/80 text-slate-500'
+              }`}>
+                {variantRows.length}
               </span>
-            )}
-          </button>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('variants')}
-            className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-              activeTab === 'variants'
-                ? 'bg-white text-blue-700 border-blue-600 shadow-2xs'
-                : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-white/50'
-            }`}
-          >
-            <span>🏷️</span>
-            <span>Varian SKU</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-              variantRows.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-200/80 text-slate-500'
-            }`}>
-              {variantRows.length}
-            </span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('modifiers')}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+                activeTab === 'modifiers'
+                  ? 'bg-slate-50 text-purple-700 border-purple-600'
+                  : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60'
+              }`}
+            >
+              <span>✨</span>
+              <span>Opsi Tambahan / Modifier</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                modifierGroups.length > 0 ? 'bg-purple-100 text-purple-700' : 'bg-slate-200/80 text-slate-500'
+              }`}>
+                {modifierGroups.length}
+              </span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('modifiers')}
-            className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-              activeTab === 'modifiers'
-                ? 'bg-white text-purple-700 border-purple-600 shadow-2xs'
-                : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-white/50'
-            }`}
-          >
-            <span>✨</span>
-            <span>Modifier / Topping</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-              modifierGroups.length > 0 ? 'bg-purple-100 text-purple-700' : 'bg-slate-200/80 text-slate-500'
-            }`}>
-              {modifierGroups.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setHppType('variable')
-              setActiveTab('recipe')
-            }}
-            className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-              activeTab === 'recipe'
-                ? 'bg-white text-indigo-700 border-indigo-600 shadow-2xs'
-                : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-white/50'
-            }`}
-          >
-            <span>🧪</span>
-            <span>Resep & BOM HPP</span>
-            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-              recipeRows.length > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200/80 text-slate-500'
-            }`}>
-              {recipeRows.length}
-            </span>
-          </button>
+            <button
+              type="button"
+              disabled={hppType !== 'variable'}
+              title={
+                hppType === 'variable'
+                  ? 'Kelola komposisi bahan baku & resep HPP'
+                  : 'Aktifkan "Variabel Resep (BOM)" di tab Info & Harga Utama terlebih dahulu untuk membuka tab ini'
+              }
+              onClick={() => {
+                if (hppType !== 'variable') return
+                setActiveTab('recipe')
+              }}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap ${
+                hppType !== 'variable'
+                  ? 'text-slate-400 border-transparent opacity-60 cursor-not-allowed select-none'
+                  : activeTab === 'recipe'
+                    ? 'bg-slate-50 text-indigo-700 border-indigo-600 cursor-pointer'
+                    : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60 cursor-pointer'
+              }`}
+            >
+              <span>🧪</span>
+              <span>Resep & BOM HPP</span>
+              {hppType !== 'variable' ? (
+                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-slate-200/80 text-slate-500">
+                  🔒 Nonaktif
+                </span>
+              ) : (
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                  recipeRows.length > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200/80 text-slate-500'
+                }`}>
+                  {recipeRows.length}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
 
-        {/* Form Body */}
-        <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 max-w-full">
+        {/* Single Isolated Scrollable Workstation Body (Centered Canvas max-w-4xl) */}
+        <form
+          onSubmit={handleSave}
+          className="flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6 md:px-8 py-6"
+        >
+          <div className="max-w-4xl mx-auto space-y-6">
           {/* ================================================================= */}
           {/* TAB 1: INFO & HARGA UTAMA                                         */}
           {/* ================================================================= */}
@@ -1167,7 +1207,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start animate-in fade-in duration-150">
               {/* LEFT COLUMN: Identitas & Stok */}
               <div className="lg:col-span-6 space-y-5">
-                <div className="bg-slate-50/60 border border-slate-200/80 rounded-2xl p-4 space-y-4">
+                <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-2xs space-y-4">
                   <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider border-b border-slate-200/60 pb-2">
                     1. Identitas Produk
                   </h4>
@@ -1309,12 +1349,12 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                     </div>
                   )}
 
-                  {/* Skema Harga Standar vs Luas */}
+                  {/* Skema Harga Standar vs Dimensi Unit */}
                   <div>
                     <div className="flex justify-between items-center mb-1.5">
                       <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Skema Kalkulasi Unit</label>
                       <span className="text-[10px] font-bold text-slate-500">
-                        {pricingType === 'area' ? '📐 Percetakan / Luas (P × L)' : '📌 Standar (Per Pcs/Unit)'}
+                        {pricingType === 'area' ? '📐 Dimensi Unit (P × L)' : '📌 Standar (Per Pcs/Unit)'}
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-2.5">
@@ -1324,10 +1364,10 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                           setPricingType('standard')
                           if (unit === 'm2' || unit === 'cm2') setUnit('pcs')
                         }}
-                        className={`py-2 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 ${
+                        className={`py-2 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                           pricingType === 'standard'
                             ? 'border-indigo-600 bg-indigo-50/80 text-indigo-700 shadow-xs ring-1 ring-indigo-600/30'
-                            : 'border-slate-200 hover:bg-white text-slate-600'
+                            : 'border-slate-200 hover:bg-slate-50 text-slate-600'
                         }`}
                       >
                         <span>📌</span>
@@ -1339,21 +1379,24 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                           setPricingType('area')
                           if (unit !== 'm2' && unit !== 'cm2') setUnit('m2')
                         }}
-                        className={`py-2 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 ${
+                        className={`py-2 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                           pricingType === 'area'
                             ? 'border-indigo-600 bg-indigo-50/80 text-indigo-700 shadow-xs ring-1 ring-indigo-600/30'
-                            : 'border-slate-200 hover:bg-white text-slate-600'
+                            : 'border-slate-200 hover:bg-slate-50 text-slate-600'
                         }`}
                       >
                         <span>📐</span>
-                        <span>Percetakan (P × L)</span>
+                        <span>Dimensi Unit (P × L)</span>
                       </button>
                     </div>
                     {pricingType === 'area' && (
                       <div className="mt-2.5 p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2 text-xs">
+                        <p className="text-[10px] font-medium text-indigo-800/90 leading-relaxed">
+                          Kalkulasi otomatis berdasarkan ukuran <strong>Panjang × Lebar</strong> saat transaksi (cocok untuk kaca, kain, keramik, karpet, spanduk, akrilik, kayu, dll).
+                        </p>
                         <div className="grid grid-cols-2 gap-2">
                           <div>
-                            <label className="block text-[10px] font-bold text-indigo-950 uppercase">Luas Minimum Order</label>
+                            <label className="block text-[10px] font-bold text-indigo-950 uppercase">Ukuran Minimum Order</label>
                             <div className="flex items-center gap-1 mt-1">
                               <input
                                 type="number"
@@ -1368,7 +1411,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                             </div>
                           </div>
                           <div>
-                            <label className="block text-[10px] font-bold text-indigo-950 uppercase">Tarif Dihitung Per</label>
+                            <label className="block text-[10px] font-bold text-indigo-950 uppercase">Satuan Dimensi</label>
                             <select
                               className="w-full mt-1 p-2 border border-indigo-300 rounded-lg text-xs font-bold text-slate-800 bg-white outline-none"
                               value={unit}
@@ -1385,7 +1428,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                 </div>
 
                 {/* Stok & Deskripsi */}
-                <div className="bg-slate-50/60 border border-slate-200/80 rounded-2xl p-4 space-y-4">
+                <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-2xs space-y-4">
                   <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider border-b border-slate-200/60 pb-2">
                     2. Manajemen Stok & Catatan
                   </h4>
@@ -1578,15 +1621,15 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                     )}
                   </div>
 
-                  {/* Progressive Disclosure: Harga Khusus Channel (Dine-In / Take Away) */}
+                  {/* Progressive Disclosure: Harga Khusus Channel / Tipe Layanan */}
                   <div className="p-3.5 rounded-2xl border border-slate-200/90 bg-white space-y-3">
                     <div className="flex items-center justify-between gap-2">
                       <div>
                         <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
-                          <span>🍽️</span> Harga Khusus Tipe Penjualan (Dine-In / Take Away)
+                          <span>🍽️</span> Harga Khusus Tipe Layanan (Dine-In / Take Away)
                         </span>
-                        <p className="text-[10px] text-slate-500 mt-0.5">
-                          Opsional (Standar Moka POS). Jika dikosongkan, POS otomatis memakai Harga Jual Dasar.
+                        <p className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">
+                          Opsional. Atur tarif berbeda berdasarkan tipe layanan (misal: Makan di Tempat vs Bungkus / Pesan Antar). Jika dikosongkan, sistem otomatis memakai Harga Jual Dasar.
                         </p>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer shrink-0">
@@ -1610,7 +1653,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                             type="number"
                             min="0"
                             className="w-full p-2.5 border border-indigo-200 rounded-xl text-xs font-bold text-slate-800 bg-indigo-50/30 outline-none focus:border-indigo-600"
-                            placeholder={price > 0 ? `Sama dgn Basic (Rp ${price.toLocaleString('id-ID')})` : 'Contoh: 15000'}
+                            placeholder={price > 0 ? `Sama dgn Dasar (Rp ${price.toLocaleString('id-ID')})` : 'Contoh: 15000'}
                             value={dineInPrice === 0 ? '' : dineInPrice}
                             onChange={e => setDineInPrice(e.target.value === '' ? 0 : Number(e.target.value))}
                           />
@@ -1623,7 +1666,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                             type="number"
                             min="0"
                             className="w-full p-2.5 border border-emerald-200 rounded-xl text-xs font-bold text-slate-800 bg-emerald-50/30 outline-none focus:border-emerald-600"
-                            placeholder={price > 0 ? `Sama dgn Basic (Rp ${price.toLocaleString('id-ID')})` : 'Contoh: 15000'}
+                            placeholder={price > 0 ? `Sama dgn Dasar (Rp ${price.toLocaleString('id-ID')})` : 'Contoh: 15000'}
                             value={takeAwayPrice === 0 ? '' : takeAwayPrice}
                             onChange={e => setTakeAwayPrice(e.target.value === '' ? 0 : Number(e.target.value))}
                           />
@@ -1654,7 +1697,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                       className="p-3 rounded-xl border border-slate-200 bg-white hover:border-purple-400 hover:bg-purple-50/30 transition text-left flex items-center justify-between cursor-pointer"
                     >
                       <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase">Modifier / Topping</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase">Opsi Tambahan</p>
                         <p className="text-xs font-extrabold text-slate-800 mt-0.5">
                           {modifierGroups.length > 0 ? `${modifierGroups.length} Grup Opsi` : 'Belum Ada'}
                         </p>
@@ -2003,18 +2046,18 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
           )}
 
           {/* ================================================================= */}
-          {/* TAB 3: MODIFIER / TOPPING & TAMBAHAN HARGA (+RP)                  */}
+          {/* TAB 3: OPSI TAMBAHAN / MODIFIER & TAMBAHAN HARGA (+RP)            */}
           {/* ================================================================= */}
           {activeTab === 'modifiers' && (
             <div className="space-y-5 animate-in fade-in duration-150">
-              <div className="bg-purple-50/40 border border-purple-200/80 rounded-2xl p-5 space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-200/60 pb-3">
+              <div className="bg-white border border-purple-200/80 rounded-2xl p-5 shadow-2xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-100 pb-3">
                   <div>
                     <h4 className="text-sm font-black text-purple-950 flex items-center gap-2">
-                      <span>✨</span> Grup Modifier / Topping / Level (Kompatibel Moka POS)
+                      <span>✨</span> Grup Opsi Tambahan (Modifier / Topping / Kustomisasi)
                     </h4>
-                    <p className="text-xs text-purple-800/80 font-medium mt-0.5">
-                      Atur pilihan tambahan seperti <strong>Level Pedas</strong>, <strong>Topping</strong>, atau <strong>Takaran Gula</strong> beserta tambahan harga (+Rp) di POS.
+                    <p className="text-xs text-slate-600 font-medium mt-0.5">
+                      Atur pilihan tambahan seperti <strong>Level</strong>, <strong>Topping</strong>, <strong>Ekstra Komponen</strong>, atau <strong>Kustomisasi Layanan</strong> beserta tambahan harga (+Rp) dan modal HPP.
                     </p>
                   </div>
                   <button
@@ -2023,19 +2066,18 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                       setModifierGroups(prev => [
                         ...prev,
                         {
-                          group_name: prev.length === 0 ? 'Level' : `Grup Modifier ${prev.length + 1}`,
+                          group_name: prev.length === 0 ? 'Pilihan Tambahan' : `Grup Opsi ${prev.length + 1}`,
                           is_required: false,
                           options: [
-                            { option_name: 'Level 1', price_extra: 0, cost_price: 0 },
-                            { option_name: 'Level 2', price_extra: 0, cost_price: 0 },
-                            { option_name: 'Level 3', price_extra: 2000, cost_price: 0 }
+                            { option_name: 'Opsi 1', price_extra: 0, cost_price: 0 },
+                            { option_name: 'Opsi 2', price_extra: 2000, cost_price: 0 }
                           ]
                         }
                       ])
                     }}
                     className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition shadow-xs shrink-0 cursor-pointer"
                   >
-                    ➕ Tambah Grup Modifier
+                    ➕ Tambah Grup Opsi
                   </button>
                 </div>
 
@@ -2322,7 +2364,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                     </p>
                   </div>
                 ) : (
-                  <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                  <div className="space-y-2">
                     {recipeRows.map((r) => {
                       const rowCost = r.quantity * r.cost_price
                       return (
@@ -2377,41 +2419,45 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
               </div>
             </div>
           )}
+          </div>
         </form>
 
-        {/* Footer */}
-        <div className="px-6 md:px-8 py-4 bg-slate-50 border-t border-slate-200 flex gap-3 justify-between items-center shrink-0">
-          <div className="text-[11px] text-slate-500 hidden sm:block">
-            {variantRows.length > 0 && <span className="mr-3">🏷️ <strong>{variantRows.length}</strong> Varian</span>}
-            {modifierGroups.length > 0 && <span className="mr-3">✨ <strong>{modifierGroups.length}</strong> Grup Modifier</span>}
-            {enableMultiPrice && <span>🍽️ Multi-Harga Aktif</span>}
-          </div>
-          <div className="flex gap-3 ml-auto">
-            <button
-              type="button"
-              disabled={saving}
-              onClick={onClose}
-              className="px-5 py-2.5 border border-slate-300 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-50 transition-all cursor-pointer"
-            >
-              Batal
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-blue-700 disabled:bg-blue-400 transition-all flex items-center gap-2 cursor-pointer"
-            >
-              {saving ? (
-                <>
-                  <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  <span>Menyimpan...</span>
-                </>
-              ) : (
-                <span>Simpan Produk</span>
-              )}
-            </button>
+        {/* Sticky Workstation Footer (Centered max-w-4xl to align with form canvas) */}
+        <div className="px-4 sm:px-6 md:px-8 py-3.5 bg-white border-t border-slate-200 shrink-0">
+          <div className="max-w-4xl mx-auto flex gap-3 justify-between items-center">
+            <div className="text-[11px] text-slate-500 hidden sm:flex items-center gap-3">
+              {variantRows.length > 0 && <span>🏷️ <strong>{variantRows.length}</strong> Varian</span>}
+              {modifierGroups.length > 0 && <span>✨ <strong>{modifierGroups.length}</strong> Grup Opsi</span>}
+              {enableMultiPrice && <span>🍽️ Multi-Harga Aktif</span>}
+              {hppType === 'variable' && <span>🧪 Resep BOM ({recipeRows.length} komponen)</span>}
+            </div>
+            <div className="flex gap-3 ml-auto w-full sm:w-auto justify-end">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={onClose}
+                className="px-5 py-2.5 border border-slate-300 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-50 transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-blue-700 disabled:bg-blue-400 transition-all flex items-center gap-2 cursor-pointer"
+              >
+                {saving ? (
+                  <>
+                    <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span>Menyimpan...</span>
+                  </>
+                ) : (
+                  <span>Simpan Produk</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
