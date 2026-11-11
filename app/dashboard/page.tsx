@@ -812,7 +812,7 @@ export default function DashboardPage() {
   const DashboardSkeleton = () => (
     <div className="space-y-6 su-fade-in">
       {/* KPI Cards Skeleton */}
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {[...Array(5)].map((_, i) => (
           <div key={i} className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
             <div className="space-y-2">
@@ -938,35 +938,35 @@ export default function DashboardPage() {
       {/* ── HEADER ──────────────────────────────────────────────────────── */}
       <section className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-[#E2E2DC] pb-5">
         <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.24em] text-blue-600">Overview Dashboard</p>
-          <h1 className="mt-1 text-2xl font-black text-slate-900 tracking-tight">Performa Bisnis & Customer</h1>
-          <p className="text-xs font-semibold text-[#6B6B63] mt-0.5">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-blue-600">Overview Dashboard</p>
+          <h1 className="mt-1 text-2xl font-bold text-slate-900 tracking-tight">Performa Bisnis & Customer</h1>
+          <p className="text-xs text-slate-500 mt-1">
             {businessName ? `Ringkasan metrik real-time ${businessName}` : 'Ringkasan metrik performa retail Anda.'}
           </p>
         </div>
         <button
           onClick={() => setShowLayoutModal(true)}
-          className="inline-flex items-center gap-1.5 justify-center rounded-xl bg-white border border-[#E2E2DC] px-4 py-2.5 text-xs font-black uppercase tracking-wider text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer"
+          className="inline-flex items-center gap-2 justify-center rounded-xl bg-white border border-slate-200 px-3.5 py-2.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:border-slate-300 cursor-pointer"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="3" y="3" width="7" height="9" />
             <rect x="14" y="3" width="7" height="5" />
             <rect x="14" y="12" width="7" height="9" />
             <rect x="3" y="16" width="7" height="5" />
           </svg>
-          Personalize Layout
+          Sesuaikan Layout
         </button>
       </section>
 
       {/* ── DATE FILTER PANEL ────────────────────────────────────────────── */}
       <section className="bg-white border border-[#E2E2DC] rounded-2xl p-4 shadow-sm flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div className="flex flex-wrap items-end gap-3 flex-1">
-          <label className="space-y-1 w-full sm:max-w-[200px]">
-            <span className="text-[10px] font-black uppercase tracking-widest text-[#8A8A80]">Preset Periode</span>
+          <label className="space-y-1.5 w-full sm:max-w-[200px]">
+            <span className="text-xs font-medium text-slate-600">Preset Periode</span>
             <select
               value={datePreset}
               onChange={(e) => handlePresetChange(e.target.value)}
-              className="w-full rounded-xl border border-[#E2E2DC] bg-[#F7F7F5] px-3.5 py-2.5 text-xs font-black uppercase tracking-wider text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition"
             >
               <option value="all">Semua Periode</option>
               <option value="this-month">Bulan Ini</option>
@@ -974,8 +974,8 @@ export default function DashboardPage() {
               <option value="last-30">30 Hari Terakhir</option>
             </select>
           </label>
-          <label className="space-y-1 w-full sm:max-w-[160px]">
-            <span className="text-[10px] font-black uppercase tracking-widest text-[#8A8A80]">Tanggal Mulai</span>
+          <label className="space-y-1.5 w-full sm:max-w-[160px]">
+            <span className="text-xs font-medium text-slate-600">Tanggal Mulai</span>
             <input
               type="date"
               value={startDate}
@@ -983,11 +983,11 @@ export default function DashboardPage() {
                 setStartDate(e.target.value)
                 setDatePreset('')
               }}
-              className="w-full rounded-xl border border-[#E2E2DC] bg-[#F7F7F5] px-3.5 py-2.5 text-xs font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition"
             />
           </label>
-          <label className="space-y-1 w-full sm:max-w-[160px]">
-            <span className="text-[10px] font-black uppercase tracking-widest text-[#8A8A80]">Tanggal Akhir</span>
+          <label className="space-y-1.5 w-full sm:max-w-[160px]">
+            <span className="text-xs font-medium text-slate-600">Tanggal Akhir</span>
             <input
               type="date"
               value={endDate}
@@ -995,7 +995,7 @@ export default function DashboardPage() {
                 setEndDate(e.target.value)
                 setDatePreset('')
               }}
-              className="w-full rounded-xl border border-[#E2E2DC] bg-[#F7F7F5] px-3.5 py-2.5 text-xs font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition"
             />
           </label>
         </div>
@@ -1020,12 +1020,12 @@ export default function DashboardPage() {
           // Business Overview KPI Cards
           if (item.id === 'overview_kpis') {
             return (
-              <section key={item.id} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <section key={item.id} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                 {/* KPI Card 1: Revenue */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors">
                   <div>
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#8A8A80]">Revenue</span>
-                    <h3 className="text-xl font-black text-slate-900 tracking-tight mt-1">
+                    <span className="text-xs font-medium text-slate-500">Revenue</span>
+                    <h3 className="text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums">
                       {loading ? (
                         <div className="h-7 w-28 bg-slate-200 animate-pulse rounded" />
                       ) : (
@@ -1037,8 +1037,8 @@ export default function DashboardPage() {
                     {loading ? (
                       <div className="h-4 w-12 bg-slate-200 animate-pulse rounded" />
                     ) : (
-                      <div className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                        metrics.revenueDiff >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+                      <div className={`text-xs font-bold px-2 py-0.5 rounded-md tabular-nums ${
+                        metrics.revenueDiff >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
                       }`}>
                         {metrics.revenueDiff >= 0 ? '+' : ''}{metrics.revenueDiff.toFixed(1)}%
                       </div>
@@ -1051,17 +1051,17 @@ export default function DashboardPage() {
                           <path d={revenueSparklinePath} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
                       ) : (
-                        <span className="text-[8px] font-bold text-slate-300">No data</span>
+                        <span className="text-[10px] font-medium text-slate-400">No data</span>
                       )}
                     </div>
                   </div>
                 </div>
 
                 {/* KPI Card 2: Total Customers */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors">
                   <div>
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#8A8A80]">Total Customer</span>
-                    <h3 className="text-xl font-black text-slate-900 tracking-tight mt-1">
+                    <span className="text-xs font-medium text-slate-500">Total Customer</span>
+                    <h3 className="text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums">
                       {loading ? (
                         <div className="h-7 w-16 bg-slate-200 animate-pulse rounded" />
                       ) : (
@@ -1073,21 +1073,21 @@ export default function DashboardPage() {
                     {loading ? (
                       <div className="h-4 w-12 bg-slate-200 animate-pulse rounded" />
                     ) : (
-                      <div className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                        metrics.customersDiff >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+                      <div className={`text-xs font-bold px-2 py-0.5 rounded-md tabular-nums ${
+                        metrics.customersDiff >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
                       }`}>
                         {metrics.customersDiff >= 0 ? '+' : ''}{metrics.customersDiff.toFixed(1)}%
                       </div>
                     )}
-                    <span className="text-[10px] font-bold text-[#6B6B63]">{metrics.ordersCount} orders</span>
+                    <span className="text-xs font-medium text-slate-500 tabular-nums">{metrics.ordersCount} orders</span>
                   </div>
                 </div>
 
                 {/* KPI Card 3: Repeat Customer Rate */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors">
                   <div>
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#8A8A80]">Repeat Customer Rate</span>
-                    <h3 className="text-xl font-black text-slate-900 tracking-tight mt-1">
+                    <span className="text-xs font-medium text-slate-500">Repeat Customer Rate</span>
+                    <h3 className="text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums">
                       {loading ? (
                         <div className="h-7 w-20 bg-slate-200 animate-pulse rounded" />
                       ) : (
@@ -1096,7 +1096,7 @@ export default function DashboardPage() {
                     </h3>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-[#6B6B63]">
+                    <span className="text-xs font-medium text-slate-500 tabular-nums">
                       {loading ? (
                         <span className="inline-block h-3.5 w-16 bg-slate-100 animate-pulse rounded" />
                       ) : (
@@ -1107,10 +1107,10 @@ export default function DashboardPage() {
                 </div>
 
                 {/* KPI Card 4: Repeat Revenue Rate */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors">
                   <div>
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#8A8A80]">Repeat Revenue Rate</span>
-                    <h3 className="text-xl font-black text-slate-900 tracking-tight mt-1">
+                    <span className="text-xs font-medium text-slate-500">Repeat Revenue Rate</span>
+                    <h3 className="text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums">
                       {loading ? (
                         <div className="h-7 w-20 bg-slate-200 animate-pulse rounded" />
                       ) : (
@@ -1119,7 +1119,7 @@ export default function DashboardPage() {
                     </h3>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-[#6B6B63]">
+                    <span className="text-xs font-medium text-slate-500 tabular-nums">
                       {loading ? (
                         <span className="inline-block h-3.5 w-16 bg-slate-100 animate-pulse rounded" />
                       ) : (
@@ -1130,10 +1130,10 @@ export default function DashboardPage() {
                 </div>
 
                 {/* KPI Card 5: CLV */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors">
                   <div>
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#8A8A80]">Customer Lifetime Value</span>
-                    <h3 className="text-xl font-black text-slate-900 tracking-tight mt-1">
+                    <span className="text-xs font-medium text-slate-500">Customer Lifetime Value</span>
+                    <h3 className="text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums">
                       {loading ? (
                         <div className="h-7 w-24 bg-slate-200 animate-pulse rounded" />
                       ) : (
@@ -1145,13 +1145,13 @@ export default function DashboardPage() {
                     {loading ? (
                       <div className="h-4 w-12 bg-slate-200 animate-pulse rounded" />
                     ) : (
-                      <div className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                        metrics.clvDiff >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+                      <div className={`text-xs font-bold px-2 py-0.5 rounded-md tabular-nums ${
+                        metrics.clvDiff >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
                       }`}>
                         {metrics.clvDiff >= 0 ? '+' : ''}{metrics.clvDiff.toFixed(1)}%
                       </div>
                     )}
-                    <span className="text-[10px] font-bold text-[#6B6B63]">Avg. CLV</span>
+                    <span className="text-xs font-medium text-slate-500">Avg. CLV</span>
                   </div>
                 </div>
               </section>
@@ -1165,57 +1165,57 @@ export default function DashboardPage() {
                 {/* Column 1: Customer Segmentation */}
                 <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5">
                   <div>
-                    <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">Segmentasi Customer</h2>
-                    <p className="text-[10px] text-[#6B6B63] font-bold mt-0.5">Klasifikasi berdasarkan frekuensi beli.</p>
+                    <h2 className="text-sm font-bold text-slate-800">Segmentasi Customer</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Klasifikasi berdasarkan frekuensi beli.</p>
                   </div>
 
                   <div className="space-y-4">
                     {/* Loyal */}
                     <div>
-                      <div className="flex justify-between items-center text-xs font-bold mb-1.5">
+                      <div className="flex justify-between items-center text-xs font-semibold mb-1.5">
                         <span className="text-slate-800">Loyal</span>
-                        <span className="text-[#6B6B63]">{loading ? '--' : `${segments.loyal.count} (${segments.loyal.percent.toFixed(1)}%)`}</span>
+                        <span className="text-slate-600 tabular-nums">{loading ? '--' : `${segments.loyal.count} (${segments.loyal.percent.toFixed(1)}%)`}</span>
                       </div>
                       <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                         <div className="h-full bg-blue-600 rounded-full transition-all duration-500" style={{ width: `${loading ? 0 : segments.loyal.percent}%` }} />
                       </div>
-                      <p className="text-[9px] font-bold text-[#8A8A80] mt-1">Beli &ge; 2 kali</p>
+                      <p className="text-[11px] font-medium text-slate-500 mt-1">Beli &ge; 2 kali</p>
                     </div>
 
                     {/* Aktif */}
                     <div>
-                      <div className="flex justify-between items-center text-xs font-bold mb-1.5">
+                      <div className="flex justify-between items-center text-xs font-semibold mb-1.5">
                         <span className="text-slate-800">Aktif</span>
-                        <span className="text-[#6B6B63]">{loading ? '--' : `${segments.active.count} (${segments.active.percent.toFixed(1)}%)`}</span>
+                        <span className="text-slate-600 tabular-nums">{loading ? '--' : `${segments.active.count} (${segments.active.percent.toFixed(1)}%)`}</span>
                       </div>
                       <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                         <div className="h-full bg-cyan-500 rounded-full transition-all duration-500" style={{ width: `${loading ? 0 : segments.active.percent}%` }} />
                       </div>
-                      <p className="text-[9px] font-bold text-[#8A8A80] mt-1">Beli dalam 60 hari terakhir</p>
+                      <p className="text-[11px] font-medium text-slate-500 mt-1">Beli dalam 60 hari terakhir</p>
                     </div>
 
                     {/* Mulai Hilang */}
                     <div>
-                      <div className="flex justify-between items-center text-xs font-bold mb-1.5">
+                      <div className="flex justify-between items-center text-xs font-semibold mb-1.5">
                         <span className="text-slate-800">Mulai Hilang</span>
-                        <span className="text-[#6B6B63]">{loading ? '--' : `${segments.warning.count} (${segments.warning.percent.toFixed(1)}%)`}</span>
+                        <span className="text-slate-600 tabular-nums">{loading ? '--' : `${segments.warning.count} (${segments.warning.percent.toFixed(1)}%)`}</span>
                       </div>
                       <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                         <div className="h-full bg-amber-500 rounded-full transition-all duration-500" style={{ width: `${loading ? 0 : segments.warning.percent}%` }} />
                       </div>
-                      <p className="text-[9px] font-bold text-[#8A8A80] mt-1">Beli 61 - 90 hari yang lalu</p>
+                      <p className="text-[11px] font-medium text-slate-500 mt-1">Beli 61 - 90 hari yang lalu</p>
                     </div>
 
                     {/* Hilang */}
                     <div>
-                      <div className="flex justify-between items-center text-xs font-bold mb-1.5">
+                      <div className="flex justify-between items-center text-xs font-semibold mb-1.5">
                         <span className="text-slate-800">Hilang</span>
-                        <span className="text-[#6B6B63]">{loading ? '--' : `${segments.lost.count} (${segments.lost.percent.toFixed(1)}%)`}</span>
+                        <span className="text-slate-600 tabular-nums">{loading ? '--' : `${segments.lost.count} (${segments.lost.percent.toFixed(1)}%)`}</span>
                       </div>
                       <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                         <div className="h-full bg-rose-500 rounded-full transition-all duration-500" style={{ width: `${loading ? 0 : segments.lost.percent}%` }} />
                       </div>
-                      <p className="text-[9px] font-bold text-[#8A8A80] mt-1">Tidak beli &gt; 90 hari</p>
+                      <p className="text-[11px] font-medium text-slate-500 mt-1">Tidak beli &gt; 90 hari</p>
                     </div>
                   </div>
                 </div>
@@ -1223,8 +1223,8 @@ export default function DashboardPage() {
                 {/* Column 2: Revenue Sources */}
                 <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5">
                   <div>
-                    <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">Sumber Revenue</h2>
-                    <p className="text-[10px] text-[#6B6B63] font-bold mt-0.5">Kontribusi Customer Baru vs Repeat Customer.</p>
+                    <h2 className="text-sm font-bold text-slate-800">Sumber Revenue</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Kontribusi Customer Baru vs Repeat Customer.</p>
                   </div>
 
                   <div className="flex justify-center items-center py-2">
@@ -1235,43 +1235,42 @@ export default function DashboardPage() {
                         background: `conic-gradient(#2563eb ${revenueSources.repeatPercent}%, #06b6d4 0%)`
                       }}>
                         <div className="w-24 h-24 rounded-full bg-white flex flex-col items-center justify-center shadow-inner">
-                          <span className="text-[10px] font-black uppercase text-[#8A8A80]">Total</span>
-                          <span className="text-xs font-black text-slate-800 mt-0.5">{formatCompactIDR(metrics.revenue)}</span>
+                          <span className="text-xs font-medium text-slate-500">Total</span>
+                          <span className="text-sm font-bold text-slate-800 mt-0.5 tabular-nums">{formatCompactIDR(metrics.revenue)}</span>
                         </div>
                       </div>
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 border-t border-[#E2E2DC] pt-3.5">
+                  <div className="grid grid-cols-2 gap-3 border-t border-[#E2E2DC] pt-3.5">
                     <div className="space-y-0.5">
                       <div className="flex items-center gap-1.5">
                         <span className="w-2.5 h-2.5 rounded-sm bg-blue-600 inline-block" />
-                        <span className="text-[10px] font-black uppercase text-slate-700">Repeat Customer</span>
+                        <span className="text-xs font-semibold text-slate-700">Repeat Customer</span>
                       </div>
-                      <p className="text-xs font-black text-slate-900">{loading ? '--' : formatCompactIDR(revenueSources.repeatRevenue)}</p>
-                      <p className="text-[9px] font-bold text-[#8A8A80]">{loading ? '--' : `${revenueSources.repeatPercent.toFixed(1)}%`}</p>
+                      <p className="text-sm font-bold text-slate-900 tabular-nums">{loading ? '--' : formatCompactIDR(revenueSources.repeatRevenue)}</p>
+                      <p className="text-xs font-medium text-slate-500 tabular-nums">{loading ? '--' : `${revenueSources.repeatPercent.toFixed(1)}%`}</p>
                     </div>
                     <div className="space-y-0.5">
                       <div className="flex items-center gap-1.5">
                         <span className="w-2.5 h-2.5 rounded-sm bg-cyan-500 inline-block" />
-                        <span className="text-[10px] font-black uppercase text-slate-700">Customer Baru</span>
+                        <span className="text-xs font-semibold text-slate-700">Customer Baru</span>
                       </div>
-                      <p className="text-xs font-black text-slate-900">{loading ? '--' : formatCompactIDR(revenueSources.newRevenue)}</p>
-                      <p className="text-[9px] font-bold text-[#8A8A80]">{loading ? '--' : `${revenueSources.newPercent.toFixed(1)}%`}</p>
+                      <p className="text-sm font-bold text-slate-900 tabular-nums">{loading ? '--' : formatCompactIDR(revenueSources.newRevenue)}</p>
+                      <p className="text-xs font-medium text-slate-500 tabular-nums">{loading ? '--' : `${revenueSources.newPercent.toFixed(1)}%`}</p>
                     </div>
                   </div>
                 </div>
 
-
                 {/* Column 3: Customer Health Trend */}
                 <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
                   <div>
-                    <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">Customer Health Trend</h2>
-                    <p className="text-[10px] text-[#6B6B63] font-bold mt-0.5">Perkembangan segmentasi pelanggan 6 bulan terakhir.</p>
+                    <h2 className="text-sm font-bold text-slate-800">Customer Health Trend</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Perkembangan segmentasi pelanggan 6 bulan terakhir.</p>
                   </div>
 
                   {/* Legend */}
-                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-[9px] font-bold text-[#6B6B63]">
+                  <div className="flex flex-wrap gap-x-3.5 gap-y-1 text-xs font-medium text-slate-600">
                     <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-blue-600 inline-block" />Loyal</span>
                     <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-cyan-500 inline-block" />Aktif</span>
                     <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-amber-400 inline-block" />Mulai Hilang</span>
@@ -1284,7 +1283,7 @@ export default function DashboardPage() {
                   ) : healthTrendData.every(m => m.loyal + m.active + m.warning + m.lost === 0) ? (
                     <div className="h-36 w-full rounded-xl border border-dashed border-slate-200 flex flex-col items-center justify-center gap-2">
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#CBD5E1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
-                      <p className="text-[10px] font-bold text-slate-300">Belum ada data</p>
+                      <p className="text-xs font-medium text-slate-400">Belum ada data</p>
                     </div>
                   ) : (
                     <svg
@@ -1302,13 +1301,17 @@ export default function DashboardPage() {
 
                   {/* Month labels */}
                   {!loading && (
-                    <div className="flex justify-between text-[9px] font-bold text-slate-400">
+                    <div className="flex justify-between text-xs font-medium text-slate-500 pt-1">
                       {healthTrendData.map((m) => (
                         <span key={m.key}>{m.label}</span>
                       ))}
                     </div>
                   )}
                 </div>
+
+              </section>
+            )
+          }
 
               </section>
             )
@@ -1321,17 +1324,17 @@ export default function DashboardPage() {
                 {/* Top Pelanggan */}
                 <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
                   <div>
-                    <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">Top Pelanggan (CLV)</h2>
-                    <p className="text-[10px] text-[#6B6B63] font-bold mt-0.5">Pelanggan dengan kontribusi revenue tertinggi.</p>
+                    <h2 className="text-sm font-bold text-slate-800">Top Pelanggan (CLV)</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Pelanggan dengan kontribusi revenue tertinggi.</p>
                   </div>
 
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                       <thead>
-                        <tr className="border-b border-[#E2E2DC] text-[9px] font-black uppercase tracking-wider text-[#8A8A80]">
-                          <th className="pb-2">Nama</th>
-                          <th className="pb-2">Orders</th>
-                          <th className="pb-2 text-right">Lifetime LTV</th>
+                        <tr className="border-b border-[#E2E2DC] text-xs font-semibold text-slate-500">
+                          <th className="pb-2.5">Nama</th>
+                          <th className="pb-2.5">Orders</th>
+                          <th className="pb-2.5 text-right">Lifetime LTV</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#E2E2DC]/50">
@@ -1345,10 +1348,10 @@ export default function DashboardPage() {
                           ))
                         ) : (
                           topCustomers.map((cust) => (
-                            <tr key={cust.customer_id} className="text-xs font-bold text-slate-700 hover:bg-[#F7F7F5]/50">
+                            <tr key={cust.customer_id} className="text-xs font-medium text-slate-700 hover:bg-[#F7F7F5]/50">
                               <td className="py-2.5 max-w-[120px] truncate">{cust.name || 'Tanpa Nama'}</td>
-                              <td className="py-2.5">{cust.total_order_count}</td>
-                              <td className="py-2.5 text-right text-blue-600">{formatIDR(cust.ltv)}</td>
+                              <td className="py-2.5 tabular-nums">{cust.total_order_count}</td>
+                              <td className="py-2.5 text-right font-semibold text-blue-600 tabular-nums">{formatIDR(cust.ltv)}</td>
                             </tr>
                           ))
                         )}
@@ -1359,10 +1362,10 @@ export default function DashboardPage() {
                   <div className="border-t border-[#E2E2DC] pt-3 text-center">
                     <Link
                       href="/customers"
-                      className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center justify-center gap-1 hover:underline"
+                      className="text-xs font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center justify-center gap-1.5 hover:underline"
                     >
                       Lihat daftar customer
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
                       </svg>
                     </Link>
@@ -1372,47 +1375,47 @@ export default function DashboardPage() {
                 {/* Customer yang Perlu Diperhatikan */}
                 <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
                   <div>
-                    <h2 className="text-sm font-black uppercase tracking-wider text-slate-800">Customer yang Perlu Diperhatikan</h2>
-                    <p className="text-[10px] text-[#6B6B63] font-bold mt-0.5">Segmen pelanggan dengan tanda-tanda churn.</p>
+                    <h2 className="text-sm font-bold text-slate-800">Customer yang Perlu Diperhatikan</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Segmen pelanggan dengan tanda-tanda churn.</p>
                   </div>
 
                   <div className="space-y-3">
                     <div className="flex items-center justify-between p-3 bg-rose-50/50 border border-rose-100 rounded-xl">
                       <div className="space-y-0.5">
-                        <p className="text-xs font-black text-rose-800">Customer Hilang (&gt;90 hari)</p>
-                        <p className="text-[10px] font-bold text-rose-600">Pelanggan tidak bertransaksi &gt; 90 hari.</p>
+                        <p className="text-xs font-bold text-rose-800">Customer Hilang (&gt;90 hari)</p>
+                        <p className="text-xs text-rose-600 font-normal">Pelanggan tidak bertransaksi &gt; 90 hari.</p>
                       </div>
-                      <span className="text-xs font-black text-rose-800 bg-rose-100/60 px-2.5 py-1 rounded-lg">
+                      <span className="text-xs font-bold text-rose-800 bg-rose-100/60 px-2.5 py-1 rounded-lg tabular-nums">
                         {loading ? '--' : attentionItems.inactive90}
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between p-3 bg-amber-50/50 border border-amber-100 rounded-xl">
                       <div className="space-y-0.5">
-                        <p className="text-xs font-black text-amber-800">Mulai Hilang (60-90 hari)</p>
-                        <p className="text-[10px] font-bold text-amber-600">Pelanggan mulai masuk masa risiko.</p>
+                        <p className="text-xs font-bold text-amber-800">Mulai Hilang (60-90 hari)</p>
+                        <p className="text-xs text-amber-700 font-normal">Pelanggan mulai masuk masa risiko.</p>
                       </div>
-                      <span className="text-xs font-black text-amber-800 bg-amber-100/60 px-2.5 py-1 rounded-lg">
+                      <span className="text-xs font-bold text-amber-800 bg-amber-100/60 px-2.5 py-1 rounded-lg tabular-nums">
                         {loading ? '--' : attentionItems.inactive60_90}
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between p-3 bg-blue-50/50 border border-blue-100 rounded-xl">
                       <div className="space-y-0.5">
-                        <p className="text-xs font-black text-blue-800">Pembeli 1-Kali (One-time)</p>
-                        <p className="text-[10px] font-bold text-blue-600">Pelanggan baru sekali belanja.</p>
+                        <p className="text-xs font-bold text-blue-800">Pembeli 1-Kali (One-time)</p>
+                        <p className="text-xs text-blue-600 font-normal">Pelanggan baru sekali belanja.</p>
                       </div>
-                      <span className="text-xs font-black text-blue-800 bg-blue-100/60 px-2.5 py-1 rounded-lg">
+                      <span className="text-xs font-bold text-blue-800 bg-blue-100/60 px-2.5 py-1 rounded-lg tabular-nums">
                         {loading ? '--' : attentionItems.oneTimeBuyers}
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between p-3 bg-purple-50/50 border border-purple-100 rounded-xl">
                       <div className="space-y-0.5">
-                        <p className="text-xs font-black text-purple-800">High CLV Potential</p>
-                        <p className="text-[10px] font-bold text-purple-600">Pelanggan dengan LTV tinggi &ge; Rp2jt.</p>
+                        <p className="text-xs font-bold text-purple-800">High CLV Potential</p>
+                        <p className="text-xs text-purple-600 font-normal">Pelanggan dengan LTV tinggi &ge; Rp2jt.</p>
                       </div>
-                      <span className="text-xs font-black text-purple-800 bg-purple-100/60 px-2.5 py-1 rounded-lg">
+                      <span className="text-xs font-bold text-purple-800 bg-purple-100/60 px-2.5 py-1 rounded-lg tabular-nums">
                         {loading ? '--' : attentionItems.highClv}
                       </span>
                     </div>
@@ -1422,16 +1425,16 @@ export default function DashboardPage() {
                 {/* Nilai Potensi */}
                 <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
                   <div className="space-y-2">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-700">Nilai Potensi Hilang</span>
-                    <h2 className="text-sm font-black text-slate-800">LTV Terancam (Risk Value)</h2>
-                    <p className="text-xs font-semibold text-slate-600 leading-relaxed">
+                    <span className="text-xs font-semibold text-amber-800">Nilai Potensi Hilang</span>
+                    <h2 className="text-base font-bold text-slate-900">LTV Terancam (Risk Value)</h2>
+                    <p className="text-xs text-slate-600 leading-relaxed font-normal">
                       Jumlah akumulasi total spend pelanggan (LTV) yang berada pada segmen <strong>Mulai Hilang</strong> dan <strong>Hilang</strong>.
                     </p>
                   </div>
 
                   <div className="space-y-1">
-                    <p className="text-[10px] font-bold text-amber-700 uppercase tracking-widest">Total Potensi</p>
-                    <div className="text-2xl font-black text-amber-600 tracking-tight">
+                    <p className="text-xs font-medium text-amber-800">Total Potensi</p>
+                    <div className="text-2xl font-bold text-amber-700 tracking-tight tabular-nums">
                       {loading ? (
                         <div className="h-8 w-36 bg-amber-200/50 animate-pulse rounded" />
                       ) : (
@@ -1455,14 +1458,14 @@ export default function DashboardPage() {
           <div className="bg-white rounded-2xl border border-[#E2E2DC] shadow-2xl p-6 w-full max-w-md mx-4 space-y-6 animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-start border-b border-[#E2E2DC] pb-3">
               <div>
-                <h3 className="text-base font-extrabold text-slate-800">Personalize Dashboard Layout</h3>
-                <p className="text-[11px] text-[#6B6B63] font-medium mt-1">Sesuaikan urutan dan visibilitas dari bagian dashboard.</p>
+                <h3 className="text-base font-bold text-slate-800">Sesuaikan Layout Dashboard</h3>
+                <p className="text-xs text-slate-500 font-normal mt-1">Sesuaikan urutan dan visibilitas dari bagian dashboard.</p>
               </div>
               <button
                 onClick={() => setShowLayoutModal(false)}
-                className="text-[#A8A89E] hover:text-[#1C1C1A] text-xs font-black uppercase tracking-wider bg-slate-50 border border-[#E2E2DC] px-3 py-1.5 rounded-lg shadow-sm cursor-pointer"
+                className="text-slate-600 hover:text-slate-900 text-xs font-semibold bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm hover:bg-slate-100 cursor-pointer transition"
               >
-                Close
+                Tutup
               </button>
             </div>
 
@@ -1507,7 +1510,7 @@ export default function DashboardPage() {
               ))}
             </div>
 
-            <div className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-100 p-3 rounded-xl">
+            <div className="text-xs font-medium text-amber-800 bg-amber-50 border border-amber-200 p-3 rounded-xl">
               💡 Pengaturan layout Anda akan disimpan secara otomatis di browser (localStorage) dan tetap sama saat Anda kembali.
             </div>
           </div>
