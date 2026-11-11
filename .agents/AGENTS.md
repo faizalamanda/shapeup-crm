@@ -469,6 +469,23 @@
         2. **Mandatory Direct Table Hydration:** Jika kueri utama jatuh ke fallback tanpa embedded join (`rows[0]?.product_variants === undefined`), helper `fetchAllBusinessProducts()` di `@/lib/chunkedQueryHelper.ts`, `/products`, dan `/stock-opname` wajib melakukan kueri langsung ke tabel `product_variants` (`.from('product_variants').select('*').eq('business_id', businessId)`) dan menggabungkannya di memori berdasarkan `product_id`.
         3. **Mandatory POS Cache Invalidation:** Setiap mutasi produk/varian/modifier di `ProductModal.tsx`, penghapusan di `/products`, dan import massal di `/products/import` **WAJIB** memanggil `invalidatePosCatalogCache(businessId, true)` agar L1 RAM, L2 `sessionStorage`, dan tab kasir POS langsung tersinkronisasi seketika.
 
+30. **Lifetimely-Grade Temporal Analytics, Worldwide Timezone Isolation & Comparative Financial Statements (Skill `temporal-analytics-filter`):**
+    - **Universal Component SSOT (`TemporalDateFilter`):** Seluruh halaman analitik, laporan akuntansi, dashboard metrik, dan pergerakan stok **WAJIB** menggunakan `<TemporalDateFilter />` dari `@/components/ui/TemporalDateFilter`. Dilarang menduplikasi dropdown `<select>` dan input `<input type="date">` lokal secara terpisah.
+    - **Lifetimely Dual-Group Desktop Bar & Mobile Modal Drawer:**
+      - **Desktop:** Menampilkan Grup 1 (Periode Waktu) dan Grup 2 (Perbandingan Waktu: mode select + badge tanggal pembanding konkret). Popover kalender ganda menyediakan bilah jalan pintas *quick presets* serta navigasi dua bulan interaktif.
+      - **Mobile (< 640px):** Otomatis berubah menjadi bilah ringkas yang membuka `FullScreenModal` lengkap dengan navigasi tab dan proteksi LIFO Hardware Back Navigation (`useModalBackHandler`).
+    - **Worldwide Dynamic Business Timezone (Dilarang Hardcoded Jakarta):**
+      - Sistem **WAJIB** membaca `activeBusiness?.timezone` (mendukung penuh standar IANA dunia: WIB `Asia/Jakarta`, WITA `Asia/Makassar`, WIT `Asia/Jayapura`, Singapura, Tokyo, London, New York) dan me-resolusinya melalui `getBusinessTimezone(tz)` dari `@/lib/localzone.ts`.
+      - Dilarang mengasumsikan offset statis `+07:00` atau menggunakan waktu lokal browser staf.
+    - **Pure Calendar-Space Date Shifts (Anti-DST & Leap Year Bug):**
+      - Pergeseran hari wajib menggunakan `shiftLocalCalendarDate(dateStr, deltaDays)` yang beroperasi pada komponen kalender UTC `(YYYY, MM, DD)` untuk mencegah bug lompat ganda pada hari pergantian *Daylight Saving Time (DST)*.
+      - Pergeseran tahun pembanding (*Year-over-Year / YoY*) menggunakan `getPreviousYearDateRangeLimits(start, end)` yang otomatis mengoreksi 29 Februari menjadi 28 Februari pada tahun non-kabisat via `isLeapYear()`.
+    - **Comparative Statements & Metric Synergy:**
+      - Pada Laporan Laba Rugi (`app/accounting/profit-loss/page.tsx`), jika `comparisonMode !== 'none'`, sistem wajib mengeksekusi kueri buku besar secara paralel (`Promise.all([fetchCurrent, fetchPrevious])`) dan menampilkan kolom komparasi multi-periode beserta badge pertumbuhan ($\Delta\%$).
+      - Polaritas kenaikan metrik wajib disesuaikan: Pendapatan & Laba (Hijau jika naik), Beban & HPP (Merah jika naik / `reversePolarity = true`).
+      - Pada Dashboard Utama, jika `compMode === 'none'`, badge persentase perubahan tidak boleh menampilkan label statis `+0.0%`, melainkan disembunyikan secara bersih.
+
+
 
 
 

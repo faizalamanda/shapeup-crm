@@ -3,44 +3,146 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { 
   formatCurrencyIDR, 
-  getDateRangeLimits, 
   fetchLedgerBalances, 
-  DateRangeKey, 
   Account 
 } from '../utils'
 import { useUserContext } from '@/components/UserContext'
+import { TemporalDateFilter, TemporalFilterValue } from '@/components/ui/TemporalDateFilter'
+import { 
+  ComparisonMode,
+  getLocalDateRangeLimits, 
+  resolveComparisonRange, 
+  getBusinessTimezone, 
+  DEFAULT_TIMEZONE 
+} from '@/lib/localzone'
+
+function calculateGrowth(current: number, previous: number): { percent: number; isUp: boolean } | null {
+  if (!previous || previous === 0) return null
+  const diff = current - previous
+  const percent = (diff / Math.abs(previous)) * 100
+  return { percent, isUp: percent >= 0 }
+}
+
+function GrowthBadge({ current, previous, reversePolarity = false }: { current: number; previous: number; reversePolarity?: boolean }) {
+  const g = calculateGrowth(current, previous)
+  if (!g) return null
+  const isPositiveGrowth = g.isUp
+  // For Revenue/Profit: up is good (green), down is bad (red)
+  // For Expenses/HPP: up is bad (red), down is good (green)
+  const isGood = reversePolarity ? !isPositiveGrowth : isPositiveGrowth
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded ${
+      isGood ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+    }`}>
+      {isPositiveGrowth ? '▲' : '▼'} {Math.abs(g.percent).toFixed(1)}%
+    </span>
+  )
+}
+
+function computePLReportData(accounts: Account[], balMap: Record<string, { debit: number; credit: number }>) {
+  if (Object.keys(balMap).length === 0) {
+    return {
+      revenueList: [],
+      totalRevenue: 0,
+      hppList: [],
+      totalHpp: 0,
+      grossProfit: 0,
+      expenseList: [],
+      totalExpenses: 0,
+      netProfit: 0
+    }
+  }
+
+  const revenueList: { account: Account; balance: number }[] = []
+  const hppList: { account: Account; balance: number }[] = []
+  const expenseList: { account: Account; balance: number }[] = []
+
+  accounts.forEach(acc => {
+    const b = balMap[acc.id] || { debit: 0, credit: 0 }
+    let bal = 0
+    
+    if (acc.type === 'REVENUE') {
+      bal = b.credit - b.debit
+    } else if (acc.type === 'EXPENSE') {
+      bal = b.debit - b.credit
+    }
+
+    if (acc.type === 'REVENUE') {
+      revenueList.push({ account: acc, balance: bal })
+    } else if (acc.type === 'EXPENSE') {
+      const isHpp = acc.sub_type === 'cogs' || 
+                    (!acc.sub_type && (
+                      acc.code.startsWith('501') || 
+                      acc.code === '501000' || 
+                      acc.name.toLowerCase().includes('harga pokok') || 
+                      acc.name.toLowerCase().includes('hpp')
+                    ));
+      if (isHpp) {
+        hppList.push({ account: acc, balance: bal })
+      } else {
+        expenseList.push({ account: acc, balance: bal })
+      }
+    }
+  })
+
+  const totalRevenue = revenueList.reduce((sum, item) => sum + item.balance, 0)
+  const totalHpp = hppList.reduce((sum, item) => sum + item.balance, 0)
+  const grossProfit = totalRevenue - totalHpp
+  const totalExpenses = expenseList.reduce((sum, item) => sum + item.balance, 0)
+  const netProfit = grossProfit - totalExpenses
+
+  return {
+    revenueList: revenueList.filter(item => item.balance !== 0),
+    totalRevenue,
+    hppList: hppList.filter(item => item.balance !== 0),
+    totalHpp,
+    grossProfit,
+    expenseList: expenseList.filter(item => item.balance !== 0),
+    totalExpenses,
+    netProfit
+  }
+}
 
 export default function ProfitLossPage() {
-  // Using singleton supabase client from @/lib/supabase
+  const { activeBusiness, bizLoading } = useUserContext()
+  const activeBizTimezone = getBusinessTimezone(activeBusiness?.timezone)
 
   const [activeBizId, setActiveBizId] = useState<string | null>(null)
   const [activeBizName, setActiveBizName] = useState<string | null>(null)
-  const [activeBizTimezone, setActiveBizTimezone] = useState<string>('Asia/Jakarta')
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   // Ledger state
   const [accounts, setAccounts] = useState<Account[]>([])
   const [balances, setBalances] = useState<Record<string, { debit: number; credit: number }>>({})
+  const [prevBalances, setPrevBalances] = useState<Record<string, { debit: number; credit: number }>>({})
 
-  // Date range filters
-  const [dateRangeType, setDateRangeType] = useState<DateRangeKey>('this-month')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  // Temporal Date & Comparison Filter
+  const [temporalFilter, setTemporalFilter] = useState<TemporalFilterValue>(() => {
+    const limits = getLocalDateRangeLimits('this-month', activeBizTimezone)
+    const comp = resolveComparisonRange('previous_period', limits.start, limits.end)
+    return {
+      startDate: limits.start,
+      endDate: limits.end,
+      preset: 'this-month',
+      comparisonMode: 'previous_period',
+      comparisonStartDate: comp.start,
+      comparisonEndDate: comp.end,
+      comparisonLabel: comp.label,
+    }
+  })
+
+  const startDate = temporalFilter.startDate
+  const endDate = temporalFilter.endDate
+  const compStartDate = temporalFilter.comparisonStartDate
+  const compEndDate = temporalFilter.comparisonEndDate
+  const compMode = temporalFilter.comparisonMode
+
   const [basis, setBasis] = useState<'accrual' | 'cash'>('accrual')
 
   // Toggle detail rows
   const [showRevenueDetail, setShowRevenueDetail] = useState(true)
   const [showExpenseDetail, setShowExpenseDetail] = useState(true)
-
-  // Initialize dates using business localzone
-  useEffect(() => {
-    const limits = getDateRangeLimits(dateRangeType, activeBizTimezone)
-    setStartDate(limits.start)
-    setEndDate(limits.end)
-  }, [dateRangeType, activeBizTimezone])
-
-  const { activeBusiness, bizLoading } = useUserContext()
 
   // Load Active Business Profile from UserContext
   useEffect(() => {
@@ -48,7 +150,6 @@ export default function ProfitLossPage() {
     if (activeBusiness?.id) {
       setActiveBizId(activeBusiness.id)
       setActiveBizName(activeBusiness.name || 'Toko')
-      setActiveBizTimezone(activeBusiness.timezone || 'Asia/Jakarta')
 
       const savedBasis = localStorage.getItem(`su_pl_basis_${activeBusiness.id}`)
       if (savedBasis === 'accrual' || savedBasis === 'cash') {
@@ -61,12 +162,32 @@ export default function ProfitLossPage() {
   }, [activeBusiness, bizLoading])
 
   // Fetch data from Ledger using server-side RPC
-  const loadData = useCallback(async (businessId: string, startD: string, endD: string, timezone: string, reportBasis: 'accrual' | 'cash') => {
+  const loadData = useCallback(async (
+    businessId: string, 
+    startD: string, 
+    endD: string, 
+    timezone: string, 
+    reportBasis: 'accrual' | 'cash',
+    cMode: ComparisonMode,
+    cStart: string,
+    cEnd: string
+  ) => {
     setLoading(true)
     try {
-      const data = await fetchLedgerBalances(supabase, businessId, endD, startD, timezone, reportBasis)
-      setAccounts(data.accounts)
-      setBalances(data.balances)
+      if (cMode !== 'none' && cStart && cEnd) {
+        const [currData, prevData] = await Promise.all([
+          fetchLedgerBalances(supabase, businessId, endD, startD, timezone, reportBasis),
+          fetchLedgerBalances(supabase, businessId, cEnd, cStart, timezone, reportBasis)
+        ])
+        setAccounts(currData.accounts)
+        setBalances(currData.balances)
+        setPrevBalances(prevData.balances)
+      } else {
+        const data = await fetchLedgerBalances(supabase, businessId, endD, startD, timezone, reportBasis)
+        setAccounts(data.accounts)
+        setBalances(data.balances)
+        setPrevBalances({})
+      }
       setErrorMsg(null)
     } catch (err: any) {
       console.error('Error loading ledger data:', err)
@@ -74,87 +195,38 @@ export default function ProfitLossPage() {
     } finally {
       setLoading(false)
     }
-  }, [supabase])
+  }, [])
 
   // Trigger load when business, date range, or basis change
   useEffect(() => {
     if (activeBizId && startDate && endDate && activeBizTimezone) {
-      loadData(activeBizId, startDate, endDate, activeBizTimezone, basis)
+      loadData(activeBizId, startDate, endDate, activeBizTimezone, basis, compMode, compStartDate, compEndDate)
     }
-  }, [activeBizId, startDate, endDate, activeBizTimezone, basis, loadData])
+  }, [activeBizId, startDate, endDate, activeBizTimezone, basis, compMode, compStartDate, compEndDate, loadData])
 
-  // Dynamic calculations based on selected date range
-  const reportData = useMemo(() => {
-    if (!startDate || !endDate || Object.keys(balances).length === 0) {
-      return {
-        revenueList: [],
-        totalRevenue: 0,
-        hppList: [],
-        totalHpp: 0,
-        grossProfit: 0,
-        expenseList: [],
-        totalExpenses: 0,
-        netProfit: 0
-      }
-    }
+  // Dynamic calculations based on selected date ranges
+  const reportData = useMemo(() => computePLReportData(accounts, balances), [accounts, balances])
+  
+  const prevReportData = useMemo(() => {
+    if (compMode === 'none' || Object.keys(prevBalances).length === 0) return null
+    return computePLReportData(accounts, prevBalances)
+  }, [accounts, prevBalances, compMode])
 
-    // Group accounts and sum balances
-    const revenueList: { account: Account; balance: number }[] = []
-    const hppList: { account: Account; balance: number }[] = []
-    const expenseList: { account: Account; balance: number }[] = []
-
-    accounts.forEach(acc => {
-      const b = balances[acc.id] || { debit: 0, credit: 0 }
-      let bal = 0
-      
-      // Calculate based on account type normal balances
-      if (acc.type === 'REVENUE') {
-        // Normal balance: Credit
-        bal = b.credit - b.debit
-      } else if (acc.type === 'EXPENSE') {
-        // Normal balance: Debit
-        bal = b.debit - b.credit
-      }
-
-      if (acc.type === 'REVENUE') {
-        revenueList.push({ account: acc, balance: bal })
-      } else if (acc.type === 'EXPENSE') {
-        const isHpp = acc.sub_type === 'cogs' || 
-                      (!acc.sub_type && (
-                        acc.code.startsWith('501') || 
-                        acc.code === '501000' || 
-                        acc.name.toLowerCase().includes('harga pokok') || 
-                        acc.name.toLowerCase().includes('hpp')
-                      ));
-        if (isHpp) {
-          hppList.push({ account: acc, balance: bal })
-        } else {
-          expenseList.push({ account: acc, balance: bal })
-        }
-      }
-    })
-
-    const totalRevenue = revenueList.reduce((sum, item) => sum + item.balance, 0)
-    const totalHpp = hppList.reduce((sum, item) => sum + item.balance, 0)
-    const grossProfit = totalRevenue - totalHpp
-    const totalExpenses = expenseList.reduce((sum, item) => sum + item.balance, 0)
-    const netProfit = grossProfit - totalExpenses
-
-    return {
-      revenueList: revenueList.filter(item => item.balance !== 0),
-      totalRevenue,
-      hppList: hppList.filter(item => item.balance !== 0),
-      totalHpp,
-      grossProfit,
-      expenseList: expenseList.filter(item => item.balance !== 0),
-      totalExpenses,
-      netProfit
-    }
-  }, [accounts, balances, startDate, endDate])
+  // Map previous balances by account id for easy inline lookup
+  const prevBalancesByAccount = useMemo(() => {
+    const map = new Map<string, number>()
+    if (!prevReportData) return map
+    prevReportData.revenueList.forEach(item => map.set(item.account.id, item.balance))
+    prevReportData.hppList.forEach(item => map.set(item.account.id, item.balance))
+    prevReportData.expenseList.forEach(item => map.set(item.account.id, item.balance))
+    return map
+  }, [prevReportData])
 
   const handlePrint = () => {
     window.print()
   }
+
+  const isComparisonActive = compMode !== 'none' && Boolean(prevReportData)
 
   return (
     <div className="space-y-6">
@@ -178,97 +250,64 @@ export default function ProfitLossPage() {
             box-shadow: none !important;
             border: none !important;
             background: transparent !important;
-            padding: 0 !important;
-          }
-          .print-header {
-            display: block !important;
-            text-align: center;
-            margin-bottom: 30px;
           }
           .kpi-grid {
             display: grid !important;
             grid-template-columns: repeat(4, 1fr) !important;
-            gap: 10px !important;
-            margin-bottom: 30px !important;
+            gap: 8px !important;
           }
           .kpi-card {
             border: 1px solid #ccc !important;
-            background: #fafafa !important;
             padding: 10px !important;
           }
         }
       `}</style>
 
-      {/* Page Header (Hides on print, printed header is defined separately below) */}
-      <div className="border-b border-gray-200 pb-5 flex flex-col md:flex-row justify-between items-start md:items-end gap-4 no-print">
+      {/* Top Header Actions */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-2 border-b border-gray-200 no-print">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[9px] font-black tracking-widest text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 uppercase">
-              Laporan Akuntansi
-            </span>
-            {activeBizName && (
-              <span className="text-[9px] font-black tracking-widest text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 uppercase">
-                📍 {activeBizName}
-              </span>
-            )}
-            <span className={`text-[9px] font-black tracking-widest px-2 py-0.5 rounded-full border uppercase ${
-              basis === 'cash' 
-                ? 'text-emerald-700 bg-emerald-50 border-emerald-100' 
-                : 'text-blue-700 bg-blue-50 border-blue-100'
-            }`}>
-              {basis === 'cash' ? '💵 Cash Basis' : '📈 Accrual Basis'}
-            </span>
-          </div>
-          <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight leading-none uppercase">
-            Laporan Laba Rugi
-          </h1>
-          <p className="text-sm text-gray-500 mt-1.5 font-medium">
-            Tinjau pendapatan, beban, dan profitabilitas bersih bisnis Anda dalam suatu periode.
+          <h1 className="text-xl font-black text-gray-900 tracking-tight">Laporan Laba Rugi</h1>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Evaluasi pendapatan, beban, dan profitabilitas bersih unit usaha {activeBizName || ''}.
           </p>
         </div>
-        <button
-          onClick={handlePrint}
-          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 active:scale-98 cursor-pointer"
-        >
-          🖨️ Cetak Laporan
-        </button>
+        
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handlePrint}
+            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold text-gray-700 hover:bg-gray-50 transition cursor-pointer shadow-xs active:scale-95"
+          >
+            🖨️ Cetak Laporan
+          </button>
+        </div>
       </div>
 
-      {/* Printed Brand Header (Only shown when printing) */}
-      <div className="hidden print-header">
-        <h1 className="text-xl font-bold uppercase tracking-wide">{activeBizName || 'ShapeUp CRM'}</h1>
+      {/* Print-Only Header */}
+      <div className="hidden print:block text-center mb-6">
+        <h1 className="text-2xl font-black text-gray-900 uppercase tracking-wider">{activeBizName || 'ShapeUp Business'}</h1>
         <h2 className="text-lg font-black uppercase text-blue-600 mt-1">
           Laporan Laba Rugi ({basis === 'cash' ? 'Cash Basis' : 'Accrual Basis'})
         </h2>
         <p className="text-xs text-gray-500 mt-1">
-          Periode: {startDate} s/d {endDate}
+          Periode: {startDate} s/d {endDate} {isComparisonActive ? `vs ${compStartDate} s/d ${compEndDate}` : ''}
         </p>
         <hr className="my-4 border-gray-300" />
       </div>
 
-      {/* Date Filter Bar */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-xs flex flex-wrap items-center gap-4 no-print">
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Rentang Periode</label>
-          <select
-            className="p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white min-w-40"
-            value={dateRangeType}
-            onChange={e => setDateRangeType(e.target.value as DateRangeKey)}
-          >
-            <option value="this-month">Bulan Ini</option>
-            <option value="this-quarter">Kuartal Ini</option>
-            <option value="this-year">Tahun Ini</option>
-            <option value="last-month">Bulan Lalu</option>
-            <option value="last-quarter">Kuartal Lalu</option>
-            <option value="last-year">Tahun Lalu</option>
-            <option value="custom">Kustom Tanggal</option>
-          </select>
-        </div>
+      {/* Date & Basis Filter Bar (Lifetimely-Grade) */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-xs flex flex-wrap items-end justify-between gap-4 no-print">
+        <TemporalDateFilter
+          value={temporalFilter}
+          onChange={setTemporalFilter}
+          timezone={activeBizTimezone}
+          showComparison={true}
+          allowAllTime={false}
+        />
 
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Basis Pelaporan</label>
           <select
-            className="p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white min-w-40"
+            className="p-2 border border-gray-300 rounded-xl text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white min-w-36"
             value={basis}
             onChange={e => {
               const val = e.target.value as 'accrual' | 'cash'
@@ -281,33 +320,6 @@ export default function ProfitLossPage() {
             <option value="accrual">Accrual Basis</option>
             <option value="cash">Cash Basis</option>
           </select>
-        </div>
-
-        {dateRangeType === 'custom' && (
-          <>
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Tanggal Mulai</label>
-              <input
-                type="date"
-                className="p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
-                value={startDate}
-                onChange={e => setStartDate(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Tanggal Selesai</label>
-              <input
-                type="date"
-                className="p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
-                value={endDate}
-                onChange={e => setEndDate(e.target.value)}
-              />
-            </div>
-          </>
-        )}
-
-        <div className="ml-auto text-[10px] font-black tracking-widest text-gray-400 uppercase self-end mb-1">
-          {startDate} s/d {endDate}
         </div>
       </div>
 
@@ -323,28 +335,61 @@ export default function ProfitLossPage() {
       ) : (
         <div className="print-container space-y-6">
           
-          {/* KPI Row (Waveapps style summary) */}
+          {/* KPI Row (Comparative Summary) */}
           <div className="kpi-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             
             {/* Revenue */}
             <div className="kpi-card bg-white border border-gray-200 rounded-xl p-5 shadow-xs transition-all">
-              <div className="text-[9px] font-extrabold text-gray-400 uppercase tracking-widest">Total Pendapatan</div>
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-extrabold text-gray-400 uppercase tracking-widest">Total Pendapatan</span>
+                {prevReportData && (
+                  <GrowthBadge current={reportData.totalRevenue} previous={prevReportData.totalRevenue} />
+                )}
+              </div>
               <div className="text-xl font-black text-gray-900 mt-1">{formatCurrencyIDR(reportData.totalRevenue)}</div>
-              <div className="text-[9px] text-emerald-600 font-bold mt-1.5 uppercase">Inflow kotor periode ini</div>
+              {prevReportData ? (
+                <div className="text-[10px] text-gray-500 font-semibold mt-1">
+                  vs {formatCurrencyIDR(prevReportData.totalRevenue)}
+                </div>
+              ) : (
+                <div className="text-[9px] text-emerald-600 font-bold mt-1.5 uppercase">Inflow kotor periode ini</div>
+              )}
             </div>
 
             {/* COGS (HPP) */}
             <div className="kpi-card bg-white border border-gray-200 rounded-xl p-5 shadow-xs transition-all">
-              <div className="text-[9px] font-extrabold text-gray-400 uppercase tracking-widest">Harga Pokok Penjualan (HPP)</div>
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-extrabold text-gray-400 uppercase tracking-widest">Harga Pokok Penjualan (HPP)</span>
+                {prevReportData && (
+                  <GrowthBadge current={reportData.totalHpp} previous={prevReportData.totalHpp} reversePolarity={true} />
+                )}
+              </div>
               <div className="text-xl font-black text-rose-600 mt-1">{formatCurrencyIDR(reportData.totalHpp)}</div>
-              <div className="text-[9px] text-gray-500 font-bold mt-1.5 uppercase">Biaya langsung persediaan</div>
+              {prevReportData ? (
+                <div className="text-[10px] text-gray-500 font-semibold mt-1">
+                  vs {formatCurrencyIDR(prevReportData.totalHpp)}
+                </div>
+              ) : (
+                <div className="text-[9px] text-gray-500 font-bold mt-1.5 uppercase">Biaya langsung persediaan</div>
+              )}
             </div>
 
             {/* Expenses */}
             <div className="kpi-card bg-white border border-gray-200 rounded-xl p-5 shadow-xs transition-all">
-              <div className="text-[9px] font-extrabold text-gray-400 uppercase tracking-widest">Total Beban Operasional</div>
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-extrabold text-gray-400 uppercase tracking-widest">Total Beban Operasional</span>
+                {prevReportData && (
+                  <GrowthBadge current={reportData.totalExpenses} previous={prevReportData.totalExpenses} reversePolarity={true} />
+                )}
+              </div>
               <div className="text-xl font-black text-orange-600 mt-1">{formatCurrencyIDR(reportData.totalExpenses)}</div>
-              <div className="text-[9px] text-gray-500 font-bold mt-1.5 uppercase">Beban OPEX umum</div>
+              {prevReportData ? (
+                <div className="text-[10px] text-gray-500 font-semibold mt-1">
+                  vs {formatCurrencyIDR(prevReportData.totalExpenses)}
+                </div>
+              ) : (
+                <div className="text-[9px] text-gray-500 font-bold mt-1.5 uppercase">Beban OPEX umum</div>
+              )}
             </div>
 
             {/* Net Income */}
@@ -353,7 +398,12 @@ export default function ProfitLossPage() {
                 ? 'bg-emerald-50/55 border-emerald-200' 
                 : 'bg-rose-50/55 border-rose-200'
             }`}>
-              <div className="text-[9px] font-extrabold text-gray-500 uppercase tracking-widest">Laba Bersih (Net Income)</div>
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-extrabold text-gray-500 uppercase tracking-widest">Laba Bersih (Net Income)</span>
+                {prevReportData && (
+                  <GrowthBadge current={reportData.netProfit} previous={prevReportData.netProfit} />
+                )}
+              </div>
               <div className={`text-xl font-black mt-1 ${
                 reportData.netProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'
               }`}>
@@ -366,14 +416,22 @@ export default function ProfitLossPage() {
             
           </div>
 
-          {/* Statement Report Table */}
+          {/* Statement Report Table (Comparative Ready) */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-xs overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200 uppercase text-[10px] text-gray-400 font-bold tracking-widest">
-                    <th className="p-4 w-2/3">Kategori Akun</th>
-                    <th className="p-4 text-right w-1/3">Jumlah</th>
+                    <th className="p-4">Kategori Akun</th>
+                    <th className="p-4 text-right">
+                      {isComparisonActive ? 'Periode Berjalan' : 'Jumlah'}
+                    </th>
+                    {isComparisonActive && (
+                      <>
+                        <th className="p-4 text-right">Pembanding</th>
+                        <th className="p-4 text-right">Perubahan</th>
+                      </>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="text-xs font-semibold text-gray-700 divide-y divide-gray-100">
@@ -392,6 +450,16 @@ export default function ProfitLossPage() {
                     <td className="p-4 text-right font-extrabold text-gray-900">
                       {formatCurrencyIDR(reportData.totalRevenue)}
                     </td>
+                    {isComparisonActive && (
+                      <>
+                        <td className="p-4 text-right font-semibold text-gray-500">
+                          {formatCurrencyIDR(prevReportData!.totalRevenue)}
+                        </td>
+                        <td className="p-4 text-right">
+                          <GrowthBadge current={reportData.totalRevenue} previous={prevReportData!.totalRevenue} />
+                        </td>
+                      </>
+                    )}
                   </tr>
 
                   {showRevenueDetail && (
@@ -400,18 +468,37 @@ export default function ProfitLossPage() {
                         <tr>
                           <td className="p-3 pl-10 text-gray-400 italic font-normal">Tidak ada transaksi pendapatan</td>
                           <td className="p-3 text-right text-gray-400">-</td>
+                          {isComparisonActive && (
+                            <>
+                              <td className="p-3 text-right text-gray-400">-</td>
+                              <td className="p-3 text-right text-gray-400">-</td>
+                            </>
+                          )}
                         </tr>
                       ) : (
-                        reportData.revenueList.map(item => (
-                          <tr key={item.account.id} className="hover:bg-gray-50/30 transition-colors">
-                            <td className="p-3 pl-10 text-gray-600 font-medium">
-                              ({item.account.code}) {item.account.name}
-                            </td>
-                            <td className="p-3 text-right font-semibold text-gray-800">
-                              {formatCurrencyIDR(item.balance)}
-                            </td>
-                          </tr>
-                        ))
+                        reportData.revenueList.map(item => {
+                          const prevBal = prevBalancesByAccount.get(item.account.id) ?? 0
+                          return (
+                            <tr key={item.account.id} className="hover:bg-gray-50/30 transition-colors">
+                              <td className="p-3 pl-10 text-gray-600 font-medium">
+                                ({item.account.code}) {item.account.name}
+                              </td>
+                              <td className="p-3 text-right font-semibold text-gray-800">
+                                {formatCurrencyIDR(item.balance)}
+                              </td>
+                              {isComparisonActive && (
+                                <>
+                                  <td className="p-3 text-right font-medium text-gray-500">
+                                    {formatCurrencyIDR(prevBal)}
+                                  </td>
+                                  <td className="p-3 text-right">
+                                    <GrowthBadge current={item.balance} previous={prevBal} />
+                                  </td>
+                                </>
+                              )}
+                            </tr>
+                          )
+                        })
                       )}
                     </>
                   )}
@@ -424,18 +511,41 @@ export default function ProfitLossPage() {
                     <td className="p-4 text-right font-extrabold text-rose-600">
                       ({formatCurrencyIDR(reportData.totalHpp)})
                     </td>
+                    {isComparisonActive && (
+                      <>
+                        <td className="p-4 text-right font-semibold text-rose-400">
+                          ({formatCurrencyIDR(prevReportData!.totalHpp)})
+                        </td>
+                        <td className="p-4 text-right">
+                          <GrowthBadge current={reportData.totalHpp} previous={prevReportData!.totalHpp} reversePolarity={true} />
+                        </td>
+                      </>
+                    )}
                   </tr>
 
-                  {showRevenueDetail && reportData.hppList.map(item => (
-                    <tr key={item.account.id} className="hover:bg-gray-50/30 transition-colors">
-                      <td className="p-3 pl-10 text-gray-600 font-medium">
-                        ({item.account.code}) {item.account.name}
-                      </td>
-                      <td className="p-3 text-right font-semibold text-rose-600">
-                        {formatCurrencyIDR(item.balance)}
-                      </td>
-                    </tr>
-                  ))}
+                  {showRevenueDetail && reportData.hppList.map(item => {
+                    const prevBal = prevBalancesByAccount.get(item.account.id) ?? 0
+                    return (
+                      <tr key={item.account.id} className="hover:bg-gray-50/30 transition-colors">
+                        <td className="p-3 pl-10 text-gray-600 font-medium">
+                          ({item.account.code}) {item.account.name}
+                        </td>
+                        <td className="p-3 text-right font-semibold text-rose-600">
+                          {formatCurrencyIDR(item.balance)}
+                        </td>
+                        {isComparisonActive && (
+                          <>
+                            <td className="p-3 text-right font-medium text-rose-400">
+                              {formatCurrencyIDR(prevBal)}
+                            </td>
+                            <td className="p-3 text-right">
+                              <GrowthBadge current={item.balance} previous={prevBal} reversePolarity={true} />
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    )
+                  })}
 
                   {/* GROSS PROFIT */}
                   <tr className="bg-gray-100/50 border-t border-b border-gray-200">
@@ -445,6 +555,16 @@ export default function ProfitLossPage() {
                     <td className="p-4 text-right font-black text-gray-900 text-sm">
                       {formatCurrencyIDR(reportData.grossProfit)}
                     </td>
+                    {isComparisonActive && (
+                      <>
+                        <td className="p-4 text-right font-extrabold text-gray-600 text-sm">
+                          {formatCurrencyIDR(prevReportData!.grossProfit)}
+                        </td>
+                        <td className="p-4 text-right">
+                          <GrowthBadge current={reportData.grossProfit} previous={prevReportData!.grossProfit} />
+                        </td>
+                      </>
+                    )}
                   </tr>
 
                   {/* 3. OPERATING EXPENSES SECTION */}
@@ -461,6 +581,16 @@ export default function ProfitLossPage() {
                     <td className="p-4 text-right font-extrabold text-orange-600">
                       ({formatCurrencyIDR(reportData.totalExpenses)})
                     </td>
+                    {isComparisonActive && (
+                      <>
+                        <td className="p-4 text-right font-semibold text-orange-400">
+                          ({formatCurrencyIDR(prevReportData!.totalExpenses)})
+                        </td>
+                        <td className="p-4 text-right">
+                          <GrowthBadge current={reportData.totalExpenses} previous={prevReportData!.totalExpenses} reversePolarity={true} />
+                        </td>
+                      </>
+                    )}
                   </tr>
 
                   {showExpenseDetail && (
@@ -469,18 +599,37 @@ export default function ProfitLossPage() {
                         <tr>
                           <td className="p-3 pl-10 text-gray-400 italic font-normal">Tidak ada transaksi beban</td>
                           <td className="p-3 text-right text-gray-400">-</td>
+                          {isComparisonActive && (
+                            <>
+                              <td className="p-3 text-right text-gray-400">-</td>
+                              <td className="p-3 text-right text-gray-400">-</td>
+                            </>
+                          )}
                         </tr>
                       ) : (
-                        reportData.expenseList.map(item => (
-                          <tr key={item.account.id} className="hover:bg-gray-50/30 transition-colors">
-                            <td className="p-3 pl-10 text-gray-600 font-medium">
-                              ({item.account.code}) {item.account.name}
-                            </td>
-                            <td className="p-3 text-right font-semibold text-orange-600">
-                              {formatCurrencyIDR(item.balance)}
-                            </td>
-                          </tr>
-                        ))
+                        reportData.expenseList.map(item => {
+                          const prevBal = prevBalancesByAccount.get(item.account.id) ?? 0
+                          return (
+                            <tr key={item.account.id} className="hover:bg-gray-50/30 transition-colors">
+                              <td className="p-3 pl-10 text-gray-600 font-medium">
+                                ({item.account.code}) {item.account.name}
+                              </td>
+                              <td className="p-3 text-right font-semibold text-orange-600">
+                                {formatCurrencyIDR(item.balance)}
+                              </td>
+                              {isComparisonActive && (
+                                <>
+                                  <td className="p-3 text-right font-medium text-orange-400">
+                                    {formatCurrencyIDR(prevBal)}
+                                  </td>
+                                  <td className="p-3 text-right">
+                                    <GrowthBadge current={item.balance} previous={prevBal} reversePolarity={true} />
+                                  </td>
+                                </>
+                              )}
+                            </tr>
+                          )
+                        })
                       )}
                     </>
                   )}
@@ -497,6 +646,18 @@ export default function ProfitLossPage() {
                     }`}>
                       {formatCurrencyIDR(reportData.netProfit)}
                     </td>
+                    {isComparisonActive && (
+                      <>
+                        <td className={`p-4 text-right text-base font-extrabold ${
+                          prevReportData!.netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                        }`}>
+                          {formatCurrencyIDR(prevReportData!.netProfit)}
+                        </td>
+                        <td className="p-4 text-right">
+                          <GrowthBadge current={reportData.netProfit} previous={prevReportData!.netProfit} />
+                        </td>
+                      </>
+                    )}
                   </tr>
 
                 </tbody>

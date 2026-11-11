@@ -49,6 +49,7 @@ type Props = {
     selectedVariant?: VariantOption
     selectedModifiers: { group: string; name: string; priceExtra: number; costPrice?: number }[]
     note: string
+    quantity?: number
     finalPrice: number
   }) => void
 }
@@ -250,11 +251,13 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
   const [selectedAttrValues, setSelectedAttrValues] = useState<Record<number, string>>({})
   const [selectedVariant, setSelectedVariant] = useState<VariantOption | null>(null)
   const [selectedModifiers, setSelectedModifiers] = useState<Record<string, { group: string; name: string; priceExtra: number; costPrice?: number }>>({})
+  const [quantity, setQuantity] = useState(1)
   const [note, setNote] = useState('')
 
   // Sync state when modal opens or product/variants change
   useEffect(() => {
     if (isOpen && product) {
+      setQuantity(1)
       if (isMultiAttribute && attributeDimensions.length > 0) {
         const initialAttrs: Record<number, string> = {}
         attributeDimensions.forEach((dim, idx) => {
@@ -279,6 +282,7 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
     } else {
       setSelectedVariant(null)
       setSelectedModifiers({})
+      setQuantity(1)
       setNote('')
       setSelectedAttrValues({})
     }
@@ -326,6 +330,7 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
       selectedVariant: resolvedVariant,
       selectedModifiers: Object.values(selectedModifiers),
       note,
+      quantity,
       finalPrice
     })
     onClose()
@@ -341,7 +346,13 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
           <div>
             <h3 className="font-bold text-gray-900 text-lg leading-tight">{product.name}</h3>
-            <p className="text-xs text-gray-500">Pilih opsi varian dan modifier produk</p>
+            <p className="text-xs text-gray-500">
+              {variants.length > 0 && modifierGroups.length > 0
+                ? 'Pilih opsi varian dan modifier produk'
+                : variants.length > 0
+                ? 'Pilih opsi varian produk'
+                : 'Pilih modifier produk'}
+            </p>
           </div>
           <button 
             onClick={onClose}
@@ -487,6 +498,38 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
             </div>
           ))}
 
+          {/* Quantity Stepper */}
+          <div className="pt-2">
+            <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">
+              Jumlah / Kuantitas
+            </label>
+            <div className="flex items-center justify-between bg-slate-50 border border-gray-200 rounded-xl p-1.5">
+              <button
+                type="button"
+                onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                disabled={quantity <= 1}
+                className="w-10 h-9 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100 disabled:opacity-40 flex items-center justify-center font-black text-base transition shadow-2xs cursor-pointer"
+              >
+                -
+              </button>
+              <input
+                type="number"
+                min="1"
+                value={quantity}
+                onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                onWheel={(e) => e.currentTarget.blur()}
+                className="w-20 text-center font-extrabold text-base bg-transparent text-gray-900 outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => setQuantity((q) => q + 1)}
+                className="w-10 h-9 rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100 flex items-center justify-center font-black text-base transition shadow-2xs cursor-pointer"
+              >
+                +
+              </button>
+            </div>
+          </div>
+
           {/* Catatan Item */}
           <div className="pt-2">
             <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">
@@ -505,14 +548,16 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
         {/* Footer */}
         <div className="p-4 border-t border-gray-100 bg-gray-50/80 flex items-center justify-between gap-3">
           <div>
-            <div className="text-[10px] text-gray-500 uppercase tracking-wide">Total Harga Item</div>
+            <div className="text-[10px] text-gray-500 uppercase tracking-wide">
+              Total Harga {quantity > 1 ? `(${quantity}x)` : 'Item'}
+            </div>
             <div className="text-lg font-bold text-gray-900">
-              Rp {finalPrice.toLocaleString('id-ID')}
+              Rp {(finalPrice * quantity).toLocaleString('id-ID')}
             </div>
           </div>
           <button
             onClick={handleConfirm}
-            className="flex-1 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold rounded-xl text-sm transition shadow-sm text-center"
+            className="flex-1 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold rounded-xl text-sm transition shadow-sm text-center cursor-pointer"
           >
             + Tambahkan ke Cart
           </button>

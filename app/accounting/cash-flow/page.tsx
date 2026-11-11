@@ -3,11 +3,11 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { 
   formatCurrencyIDR, 
-  getDateRangeLimits, 
-  DateRangeKey,
   getUtcTimestamp,
 } from '../utils'
 import { useUserContext } from '@/components/UserContext'
+import { TemporalDateFilter, TemporalFilterValue } from '@/components/ui/TemporalDateFilter'
+import { getLocalDateRangeLimits, resolveComparisonRange, getBusinessTimezone, DEFAULT_TIMEZONE } from '@/lib/localzone'
 
 type CashFlowItem = {
   account_id?: string
@@ -38,33 +38,38 @@ type CashFlowReport = {
 export default function CashFlowPage() {
   // Using singleton supabase client from @/lib/supabase
 
+  const { activeBusiness, bizLoading } = useUserContext()
+  const activeBizTimezone = getBusinessTimezone(activeBusiness?.timezone)
+
   const [activeBizId, setActiveBizId] = useState<string | null>(null)
   const [activeBizName, setActiveBizName] = useState<string | null>(null)
-  const [activeBizTimezone, setActiveBizTimezone] = useState<string>('Asia/Jakarta')
   const [loading, setLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   // Aggregated report state
   const [report, setReport] = useState<CashFlowReport | null>(null)
 
-  // Date range filters
-  const [dateRangeType, setDateRangeType] = useState<DateRangeKey>('this-month')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  // Temporal Date Filter (Lifetimely-Grade)
+  const [temporalFilter, setTemporalFilter] = useState<TemporalFilterValue>(() => {
+    const limits = getLocalDateRangeLimits('this-month', activeBizTimezone)
+    return {
+      startDate: limits.start,
+      endDate: limits.end,
+      preset: 'this-month',
+      comparisonMode: 'none',
+      comparisonStartDate: '',
+      comparisonEndDate: '',
+      comparisonLabel: '',
+    }
+  })
+
+  const startDate = temporalFilter.startDate
+  const endDate = temporalFilter.endDate
 
   // Collapsible UI sections
   const [showOpsDetail, setShowOpsDetail] = useState(true)
   const [showInvDetail, setShowInvDetail] = useState(true)
   const [showFinDetail, setShowFinDetail] = useState(true)
-
-  // Initialize dates using business localzone
-  useEffect(() => {
-    const limits = getDateRangeLimits(dateRangeType, activeBizTimezone)
-    setStartDate(limits.start)
-    setEndDate(limits.end)
-  }, [dateRangeType, activeBizTimezone])
-
-  const { activeBusiness, bizLoading } = useUserContext()
 
   // Load Active Business Profile from UserContext
   useEffect(() => {
@@ -72,7 +77,6 @@ export default function CashFlowPage() {
     if (activeBusiness?.id) {
       setActiveBizId(activeBusiness.id)
       setActiveBizName(activeBusiness.name || 'Bisnis Saya')
-      setActiveBizTimezone(activeBusiness.timezone || 'Asia/Jakarta')
     } else {
       setErrorMsg('Belum ada unit bisnis aktif yang dipilih.')
       setLoading(false)
@@ -248,47 +252,15 @@ export default function CashFlowPage() {
         <hr className="my-4 border-gray-300" />
       </div>
 
-      {/* Date Filter Bar */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-xs flex flex-wrap items-center gap-4 no-print">
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Rentang Periode</label>
-          <select
-            className="p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white min-w-40"
-            value={dateRangeType}
-            onChange={e => setDateRangeType(e.target.value as DateRangeKey)}
-          >
-            <option value="this-month">Bulan Ini</option>
-            <option value="this-quarter">Kuartal Ini</option>
-            <option value="this-year">Tahun Ini</option>
-            <option value="last-month">Bulan Lalu</option>
-            <option value="last-quarter">Kuartal Lalu</option>
-            <option value="last-year">Tahun Lalu</option>
-            <option value="custom">Kustom Tanggal</option>
-          </select>
-        </div>
-
-        {dateRangeType === 'custom' && (
-          <>
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Tanggal Mulai</label>
-              <input
-                type="date"
-                className="p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
-                value={startDate}
-                onChange={e => setStartDate(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Tanggal Selesai</label>
-              <input
-                type="date"
-                className="p-2 border border-gray-300 rounded-lg text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-white"
-                value={endDate}
-                onChange={e => setEndDate(e.target.value)}
-              />
-            </div>
-          </>
-        )}
+      {/* Date Filter Bar (Lifetimely-Grade) */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-xs flex flex-wrap items-center justify-between gap-4 no-print">
+        <TemporalDateFilter
+          value={temporalFilter}
+          onChange={setTemporalFilter}
+          timezone={activeBizTimezone}
+          showComparison={false}
+          allowAllTime={false}
+        />
 
         <div className="ml-auto text-[10px] font-black tracking-widest text-gray-400 uppercase self-end mb-1">
           {startDate} s/d {endDate}

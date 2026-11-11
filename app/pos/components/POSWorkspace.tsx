@@ -666,6 +666,8 @@ export default function POSWorkspace({
       ? `${rawName} - ${variantName}`
       : rawName
 
+    const addQty = Math.max(1, Number(itemData.quantity) || 1)
+
     setCart((prev) => {
       const existingIdx = prev.findIndex((item) =>
         item.product.id === itemData.product.id &&
@@ -676,7 +678,7 @@ export default function POSWorkspace({
 
       if (existingIdx > -1) {
         const copy = [...prev]
-        copy[existingIdx].quantity += 1
+        copy[existingIdx].quantity += addQty
         return copy
       }
 
@@ -691,7 +693,7 @@ export default function POSWorkspace({
           selectedVariant: itemData.selectedVariant,
           selectedModifiers: itemData.selectedModifiers,
           note: itemData.note,
-          quantity: 1,
+          quantity: addQty,
           finalPrice: itemData.finalPrice,
           discount: 0
         }
@@ -1089,10 +1091,13 @@ export default function POSWorkspace({
         variantId: item.selectedVariant?.id,
         variantName: item.selectedVariant?.name,
         costPrice: Number(
-          item.selectedVariant?.cost_price ??
-          item.selectedVariant?.costPrice ??
-          item.product?.cost_price ??
-          0
+          (item.selectedVariant?.cost_price ??
+            item.selectedVariant?.costPrice ??
+            item.product?.cost_price ??
+            0) +
+            (Array.isArray(item.selectedModifiers)
+              ? item.selectedModifiers.reduce((acc: number, m: any) => acc + Number(m?.costPrice || 0), 0)
+              : 0)
         ),
         modifiers: item.selectedModifiers,
         note: item.note,

@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
 import Link from 'next/link'
+import { TemporalDateFilter, TemporalFilterValue } from '@/components/ui/TemporalDateFilter'
+import { getLocalDateRangeLimits, resolveComparisonRange, DEFAULT_TIMEZONE, getBusinessTimezone } from '@/lib/localzone'
 
 // Types
 type RawRecord = Record<string, unknown>
@@ -94,7 +96,8 @@ const normalizeStatus = (status?: string | null) => (
 const isCountedOrderStatus = (status?: string | null) => countedStatuses.has(normalizeStatus(status))
 
 export default function DashboardPage() {
-  // Using singleton supabase client from @/lib/supabase
+  const { activeBusiness } = useUserContext()
+  const businessTz = getBusinessTimezone(activeBusiness?.timezone)
 
   // Helper to format Date to local YYYY-MM-DD string to avoid timezone offset shifts
   const formatDateToLocalYYYYMMDD = useCallback((d: Date) => {
@@ -113,19 +116,26 @@ export default function DashboardPage() {
   const [businessName, setBusinessName] = useState('')
   const [businessId, setBusinessId] = useState('')
 
-  // Date Filters (default to 'this-month')
-  const [datePreset, setDatePreset] = useState<string>('this-month')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  // Temporal Date & Comparison Filter (Lifetimely-Grade)
+  const [temporalFilter, setTemporalFilter] = useState<TemporalFilterValue>(() => {
+    const limits = getLocalDateRangeLimits('this-month', businessTz)
+    const comp = resolveComparisonRange('previous_period', limits.start, limits.end)
+    return {
+      startDate: limits.start,
+      endDate: limits.end,
+      preset: 'this-month',
+      comparisonMode: 'previous_period',
+      comparisonStartDate: comp.start,
+      comparisonEndDate: comp.end,
+      comparisonLabel: comp.label,
+    }
+  })
 
-  // Set default preset dates on mount to avoid hydration mismatches
-  useEffect(() => {
-    const today = new Date()
-    const start = new Date(today.getFullYear(), today.getMonth(), 1)
-    const end = new Date(today.getFullYear(), today.getMonth() + 1, 0)
-    setStartDate(formatDateToLocalYYYYMMDD(start))
-    setEndDate(formatDateToLocalYYYYMMDD(end))
-  }, [formatDateToLocalYYYYMMDD])
+  const startDate = temporalFilter.startDate
+  const endDate = temporalFilter.endDate
+  const compStartDate = temporalFilter.comparisonStartDate
+  const compEndDate = temporalFilter.comparisonEndDate
+  const compMode = temporalFilter.comparisonMode
 
   // Layout Personalization
   const [layout, setLayout] = useState<LayoutItem[]>([
@@ -233,8 +243,6 @@ export default function DashboardPage() {
     }
   }, [supabase])
 
-  const { activeBusiness } = useUserContext()
-
   // Initial Load & Caching
   useEffect(() => {
     let isMounted = true
@@ -325,34 +333,6 @@ export default function DashboardPage() {
   }, [activeBusiness, supabase, fetchAllData])
 
 
-  // Date Preset Handler
-  const handlePresetChange = (value: string) => {
-    setDatePreset(value)
-    if (value === 'all') {
-      setStartDate('')
-      setEndDate('')
-      return
-    }
-
-    const today = new Date()
-    let start = new Date()
-    let end = new Date()
-
-    if (value === 'this-month') {
-      start = new Date(today.getFullYear(), today.getMonth(), 1)
-      end = new Date(today.getFullYear(), today.getMonth() + 1, 0)
-    } else if (value === 'last-month') {
-      start = new Date(today.getFullYear(), today.getMonth() - 1, 1)
-      end = new Date(today.getFullYear(), today.getMonth(), 0)
-    } else if (value === 'last-30') {
-      start = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000)
-      end = today
-    }
-
-    setStartDate(formatDateToLocalYYYYMMDD(start))
-    setEndDate(formatDateToLocalYYYYMMDD(end))
-  }
-
   // Memoized enriched and filtered orders
   const processedOrders = useMemo(() => {
     return orders
@@ -379,23 +359,14 @@ export default function DashboardPage() {
     })
   }, [processedOrders, startDate, endDate, formatDateToLocalYYYYMMDD])
 
-  // Calculate Previous Period Orders for percentage changes
+  // Calculate Comparison Period Orders for percentage changes
   const prevPeriodOrders = useMemo(() => {
-    if (!startDate || !endDate) return []
-    const start = new Date(startDate)
-    const end = new Date(endDate)
-    const diffTime = Math.abs(end.getTime() - start.getTime())
-    const prevStart = new Date(start.getTime() - diffTime - 24 * 60 * 60 * 1000)
-    const prevEnd = new Date(start.getTime() - 24 * 60 * 60 * 1000)
-
-    const prevStartStr = formatDateToLocalYYYYMMDD(prevStart)
-    const prevEndStr = formatDateToLocalYYYYMMDD(prevEnd)
-
+    if (compMode === 'none' || !compStartDate || !compEndDate) return []
     return processedOrders.filter((o) => {
       const orderDateKey = formatDateToLocalYYYYMMDD(o.dateObj)
-      return orderDateKey >= prevStartStr && orderDateKey <= prevEndStr
+      return orderDateKey >= compStartDate && orderDateKey <= compEndDate
     })
-  }, [processedOrders, startDate, endDate, formatDateToLocalYYYYMMDD])
+  }, [processedOrders, compMode, compStartDate, compEndDate, formatDateToLocalYYYYMMDD])
 
   // Deduplicate and re-calculate customer metrics locally based only on valid orders (excl cancelled/returned)
   const uniqueCustomerMetrics = useMemo(() => {
@@ -958,47 +929,15 @@ export default function DashboardPage() {
         </button>
       </section>
 
-      {/* ── DATE FILTER PANEL ────────────────────────────────────────────── */}
+      {/* ── DATE FILTER PANEL (Lifetimely-Grade) ─────────────────────────── */}
       <section className="bg-white border border-[#E2E2DC] rounded-2xl p-4 shadow-sm flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div className="flex flex-wrap items-end gap-3 flex-1">
-          <label className="space-y-1.5 w-full sm:max-w-[200px]">
-            <span className="text-xs font-medium text-slate-600">Preset Periode</span>
-            <select
-              value={datePreset}
-              onChange={(e) => handlePresetChange(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition"
-            >
-              <option value="all">Semua Periode</option>
-              <option value="this-month">Bulan Ini</option>
-              <option value="last-month">Bulan Lalu</option>
-              <option value="last-30">30 Hari Terakhir</option>
-            </select>
-          </label>
-          <label className="space-y-1.5 w-full sm:max-w-[160px]">
-            <span className="text-xs font-medium text-slate-600">Tanggal Mulai</span>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value)
-                setDatePreset('')
-              }}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition"
-            />
-          </label>
-          <label className="space-y-1.5 w-full sm:max-w-[160px]">
-            <span className="text-xs font-medium text-slate-600">Tanggal Akhir</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => {
-                setEndDate(e.target.value)
-                setDatePreset('')
-              }}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition"
-            />
-          </label>
-        </div>
+        <TemporalDateFilter
+          value={temporalFilter}
+          onChange={setTemporalFilter}
+          timezone={businessTz}
+          allowAllTime={true}
+          showComparison={true}
+        />
       </section>
 
       {/* ── SECTIONS DYNAMIC RENDER ─────────────────────────────────────── */}
@@ -1036,12 +975,14 @@ export default function DashboardPage() {
                   <div className="flex items-center justify-between">
                     {loading ? (
                       <div className="h-4 w-12 bg-slate-200 animate-pulse rounded" />
-                    ) : (
+                    ) : compMode !== 'none' ? (
                       <div className={`text-xs font-bold px-2 py-0.5 rounded-md tabular-nums ${
                         metrics.revenueDiff >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
                       }`}>
                         {metrics.revenueDiff >= 0 ? '+' : ''}{metrics.revenueDiff.toFixed(1)}%
                       </div>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 font-medium">Omzet Kotor</span>
                     )}
                     <div className="w-16 h-5">
                       {loading ? (
@@ -1072,12 +1013,14 @@ export default function DashboardPage() {
                   <div className="flex items-center justify-between">
                     {loading ? (
                       <div className="h-4 w-12 bg-slate-200 animate-pulse rounded" />
-                    ) : (
+                    ) : compMode !== 'none' ? (
                       <div className={`text-xs font-bold px-2 py-0.5 rounded-md tabular-nums ${
                         metrics.customersDiff >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
                       }`}>
                         {metrics.customersDiff >= 0 ? '+' : ''}{metrics.customersDiff.toFixed(1)}%
                       </div>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 font-medium">Pembeli Unik</span>
                     )}
                     <span className="text-xs font-medium text-slate-500 tabular-nums">{metrics.ordersCount} orders</span>
                   </div>
@@ -1144,12 +1087,14 @@ export default function DashboardPage() {
                   <div className="flex items-center justify-between">
                     {loading ? (
                       <div className="h-4 w-12 bg-slate-200 animate-pulse rounded" />
-                    ) : (
+                    ) : compMode !== 'none' ? (
                       <div className={`text-xs font-bold px-2 py-0.5 rounded-md tabular-nums ${
                         metrics.clvDiff >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
                       }`}>
                         {metrics.clvDiff >= 0 ? '+' : ''}{metrics.clvDiff.toFixed(1)}%
                       </div>
+                    ) : (
+                      <span className="text-[10px] text-slate-400 font-medium">Estimasi Nilai</span>
                     )}
                     <span className="text-xs font-medium text-slate-500">Avg. CLV</span>
                   </div>

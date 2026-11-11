@@ -131,8 +131,12 @@ export default function CartItemEditModal({
     onClose()
   }
 
-  const subtitle = item.selectedVariant
-    ? `${item.product.name} — ${item.selectedVariant.name}`
+  const baseProductName = (item.product as any).baseName || item.product.name
+  const variantName = item.selectedVariant?.name || ''
+  const subtitle = variantName
+    ? (item.product.name.toLowerCase().includes(variantName.toLowerCase())
+        ? item.product.name
+        : `${baseProductName} — ${variantName}`)
     : item.product.name
 
   return (

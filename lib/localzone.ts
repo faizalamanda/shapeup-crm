@@ -24,11 +24,20 @@ export type DateRangeKey =
   | 'yesterday'
   | 'all'
 
+export type ComparisonMode = 'none' | 'previous_period' | 'previous_year' | 'custom'
+
+/**
+ * Checks whether a given year is a leap year (tahun kabisat).
+ */
+export function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0
+}
+
 /**
  * Pure UTC-calendar formatter: converts (year, 0-indexed month, day) into YYYY-MM-DD
  * without passing through local browser/server timezone or secondary Intl formatting.
  */
-function formatCalendarYMD(year: number, monthIndex0: number, day: number): string {
+export function formatCalendarYMD(year: number, monthIndex0: number, day: number): string {
   const d = new Date(Date.UTC(year, monthIndex0, day))
   const y = d.getUTCFullYear()
   const m = String(d.getUTCMonth() + 1).padStart(2, '0')
@@ -181,6 +190,89 @@ export function getPreviousDateRangeLimits(
   const prevEnd = shiftLocalCalendarDate(startLocal, -1)
   const prevStart = shiftLocalCalendarDate(startLocal, -spanDays)
   return { start: prevStart, end: prevEnd, daysCount: spanDays }
+}
+
+/**
+ * Given a local calendar range [startLocal, endLocal] (YYYY-MM-DD),
+ * calculates the corresponding same period in the previous year (Year-over-Year / YoY).
+ * Handles leap years safely (Feb 29 -> Feb 28 on non-leap years).
+ */
+export function getPreviousYearDateRangeLimits(
+  startLocal: string,
+  endLocal: string
+): { start: string; end: string; daysCount: number } {
+  const [sy, sm, sd] = (startLocal || '').split('-').map(Number)
+  const [ey, em, ed] = (endLocal || '').split('-').map(Number)
+  if (!sy || !sm || !sd || !ey || !em || !ed) {
+    return { start: startLocal, end: endLocal, daysCount: 1 }
+  }
+
+  const prevStartYear = sy - 1
+  const prevEndYear = ey - 1
+
+  const safeStartDay = sm === 2 && sd === 29 && !isLeapYear(prevStartYear) ? 28 : sd
+  const safeEndDay = em === 2 && ed === 29 && !isLeapYear(prevEndYear) ? 28 : ed
+
+  const prevStart = formatCalendarYMD(prevStartYear, sm - 1, safeStartDay)
+  const prevEnd = formatCalendarYMD(prevEndYear, em - 1, safeEndDay)
+
+  const [psy, psm, psd] = prevStart.split('-').map(Number)
+  const [pey, pem, ped] = prevEnd.split('-').map(Number)
+  const startUtcMs = Date.UTC(psy, psm - 1, psd)
+  const endUtcMs = Date.UTC(pey, pem - 1, ped)
+  const spanDays = Math.max(1, Math.round(Math.abs(endUtcMs - startUtcMs) / 86400000) + 1)
+
+  return { start: prevStart, end: prevEnd, daysCount: spanDays }
+}
+
+/**
+ * Universal resolver for comparison bounds based on comparison mode.
+ */
+export function resolveComparisonRange(
+  mode: ComparisonMode,
+  startLocal: string,
+  endLocal: string,
+  customCompStart?: string,
+  customCompEnd?: string
+): { start: string; end: string; daysCount: number; label: string } {
+  if (mode === 'none' || !startLocal || !endLocal) {
+    return { start: '', end: '', daysCount: 0, label: 'Tanpa Perbandingan' }
+  }
+
+  if (mode === 'previous_year') {
+    const limits = getPreviousYearDateRangeLimits(startLocal, endLocal)
+    return { ...limits, label: 'Tahun Lalu (YoY)' }
+  }
+
+  if (mode === 'custom' && customCompStart && customCompEnd) {
+    const [csy, csm, csd] = customCompStart.split('-').map(Number)
+    const [cey, cem, ced] = customCompEnd.split('-').map(Number)
+    const startUtcMs = Date.UTC(csy, csm - 1, csd)
+    const endUtcMs = Date.UTC(cey, cem - 1, ced)
+    const spanDays = Math.max(1, Math.round(Math.abs(endUtcMs - startUtcMs) / 86400000) + 1)
+    return { start: customCompStart, end: customCompEnd, daysCount: spanDays, label: 'Kustom' }
+  }
+
+  // Default: previous_period
+  const limits = getPreviousDateRangeLimits(startLocal, endLocal)
+  return { ...limits, label: 'Periode Sebelumnya' }
+}
+
+/**
+ * Localized label for Comparison Mode.
+ */
+export function getComparisonModeLabel(mode: ComparisonMode): string {
+  switch (mode) {
+    case 'previous_period':
+      return 'Periode Sebelumnya'
+    case 'previous_year':
+      return 'Tahun Lalu (YoY)'
+    case 'custom':
+      return 'Kustom'
+    case 'none':
+    default:
+      return 'Tanpa Perbandingan'
+  }
 }
 
 /**
@@ -390,7 +482,10 @@ export function getPeriodComparisonBounds(
   preset: DateRangeKey | string,
   timezone?: string | null,
   customStart?: string,
-  customEnd?: string
+  customEnd?: string,
+  comparisonMode: ComparisonMode = 'previous_period',
+  customCompStart?: string,
+  customCompEnd?: string
 ): PeriodComparisonBounds {
   const tz = getBusinessTimezone(timezone)
   const range =
@@ -398,9 +493,18 @@ export function getPeriodComparisonBounds(
       ? { start: customStart, end: customEnd }
       : getLocalDateRangeLimits(preset, tz)
 
-  const prevRange = getPreviousDateRangeLimits(range.start, range.end)
+  const compRange = resolveComparisonRange(
+    comparisonMode,
+    range.start,
+    range.end,
+    customCompStart,
+    customCompEnd
+  )
   const currBounds = localDateToUtcBounds(range.start, range.end, tz)
-  const prevBounds = localDateToUtcBounds(prevRange.start, prevRange.end, tz)
+  const prevBounds =
+    compRange.start && compRange.end
+      ? localDateToUtcBounds(compRange.start, compRange.end, tz)
+      : { startOfDayISO: '', endOfDayISO: '' }
 
   return {
     timezone: tz,
@@ -412,8 +516,8 @@ export function getPeriodComparisonBounds(
       endOfDayISO: currBounds.endOfDayISO || '',
     },
     previous: {
-      startLocal: prevRange.start,
-      endLocal: prevRange.end,
+      startLocal: compRange.start,
+      endLocal: compRange.end,
       startOfDayISO: prevBounds.startOfDayISO || '',
       endOfDayISO: prevBounds.endOfDayISO || '',
     },
