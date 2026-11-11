@@ -1313,10 +1313,6 @@ export default function DashboardPage() {
             )
           }
 
-              </section>
-            )
-          }
-
           // Customer Details & Actions
           if (item.id === 'bottom_details') {
             return (
