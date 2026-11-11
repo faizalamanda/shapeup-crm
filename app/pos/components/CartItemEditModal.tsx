@@ -6,6 +6,7 @@ import { FullScreenModal } from '@/components/ui/FullScreenModal'
 interface CartItemData {
   product: { id?: string; name: string; price?: number; cost_price?: number; prevent_below_hpp?: boolean }
   selectedVariant?: { id?: string; name: string; price?: number; cost_price?: number; costPrice?: number }
+  selectedModifiers?: { group?: string; name: string; priceExtra?: number; costPrice?: number }[]
   dimension_spec?: any
   finalPrice: number
   discount?: number
@@ -215,6 +216,22 @@ export default function CartItemEditModal({
                 Ubah Ukuran
               </button>
             )}
+          </div>
+        )}
+
+        {/* Selected Modifiers Info */}
+        {Array.isArray(item.selectedModifiers) && item.selectedModifiers.length > 0 && (
+          <div className="p-2.5 bg-purple-50/70 border border-purple-200/80 rounded-xl space-y-1">
+            <span className="text-[10px] font-bold text-purple-900 uppercase tracking-wider block">
+              ✨ Pilihan Kustomisasi / Modifier:
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {item.selectedModifiers.map((mod: any, idx: number) => (
+                <span key={idx} className="text-[11px] font-bold text-purple-800 bg-white border border-purple-200 px-2 py-0.5 rounded-lg shadow-2xs">
+                  {mod.group ? `${mod.group}: ` : ''}{mod.name} {mod.priceExtra > 0 ? `(+Rp ${mod.priceExtra.toLocaleString('id-ID')})` : ''}
+                </span>
+              ))}
+            </div>
           </div>
         )}
 

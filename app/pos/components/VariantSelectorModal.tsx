@@ -294,10 +294,17 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
   const handleToggleModifier = (group: ModifierGroup, opt: { id: string; name: string; priceExtra: number; costPrice?: number }) => {
     setSelectedModifiers((prev) => {
       const copy = { ...prev }
-      if (copy[group.id]?.name === opt.name && !group.required) {
-        delete copy[group.id]
-      } else {
+      if (group.required) {
+        // Single select (radio) for required groups
         copy[group.id] = { group: group.name, name: opt.name, priceExtra: opt.priceExtra, costPrice: opt.costPrice }
+      } else {
+        // Multi select (checkbox) for optional customization groups
+        const key = `${group.id}__${opt.id}`
+        if (copy[key]) {
+          delete copy[key]
+        } else {
+          copy[key] = { group: group.name, name: opt.name, priceExtra: opt.priceExtra, costPrice: opt.costPrice }
+        }
       }
       return copy
     })
@@ -456,14 +463,16 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {group.options.map((opt) => {
-                  const isSelected = selectedModifiers[group.id]?.name === opt.name
+                  const isSelected = group.required
+                    ? selectedModifiers[group.id]?.name === opt.name
+                    : Boolean(selectedModifiers[`${group.id}__${opt.id}`])
                   return (
                     <button
                       key={opt.id}
                       onClick={() => handleToggleModifier(group, opt)}
-                      className={`px-3 py-2.5 rounded-xl border text-left text-xs transition flex items-center justify-between ${
+                      className={`px-3 py-2.5 rounded-xl border text-left text-xs transition flex items-center justify-between cursor-pointer ${
                         isSelected 
-                          ? 'border-indigo-600 bg-indigo-50 text-indigo-900 font-medium' 
+                          ? 'border-indigo-600 bg-indigo-50 text-indigo-900 font-bold ring-1 ring-indigo-500/30' 
                           : 'border-gray-200 text-gray-700 hover:bg-gray-50'
                       }`}
                     >

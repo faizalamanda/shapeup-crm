@@ -493,37 +493,98 @@ export async function GET(req: Request) {
         }
       } catch (e) {}
 
+      // Fallback in JS if RPC is unavailable (ensuring variants are also fully calculated)
       let statsQuery = supabase
         .from('products')
-        .select('stock_quantity, cost_price, category_id')
+        .select('id, name, sku, stock_quantity, cost_price, category_id, product_variants(id, name, sku, stock_quantity, cost_price)')
         .eq('business_id', businessId)
-
-      if (search) {
-        statsQuery = statsQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%`)
-      }
 
       statsQuery = applyCategoryFilter(statsQuery)
 
-      const { data: prodStats } = await statsQuery
+      let prodStats: any[] | null = null
+      const { data: initialStats, error: statErr } = await statsQuery
+      prodStats = initialStats
 
+      if (statErr && statErr.message?.includes('product_variants')) {
+        let fallbackStatsQuery = supabase
+          .from('products')
+          .select('id, name, sku, stock_quantity, cost_price, category_id')
+          .eq('business_id', businessId)
+        fallbackStatsQuery = applyCategoryFilter(fallbackStatsQuery)
+        const fbRes = await fallbackStatsQuery
+        prodStats = (fbRes.data as any) || []
+      }
+
+      // Ensure variants are hydrated if nested join was missing or empty
+      if (prodStats && prodStats.length > 0) {
+        const needVariantIds = prodStats.filter((p: any) => !p.product_variants || !Array.isArray(p.product_variants)).map((p: any) => p.id)
+        if (needVariantIds.length > 0) {
+          try {
+            const { data: vData } = await supabase
+              .from('product_variants')
+              .select('id, product_id, name, sku, stock_quantity, cost_price')
+              .in('product_id', needVariantIds)
+            if (vData) {
+              const vMap = new Map<string, any[]>()
+              for (const v of vData) {
+                if (!vMap.has(v.product_id)) vMap.set(v.product_id, [])
+                vMap.get(v.product_id)!.push(v)
+              }
+              for (const p of prodStats) {
+                if (!p.product_variants || !Array.isArray(p.product_variants)) {
+                  p.product_variants = vMap.get(p.id) || []
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+
+      let totalProducts = 0
       let totalStockQty = 0
       let totalValuation = 0
       let outOfStockCount = 0
       let lowStockCount = 0
 
+      const searchLower = search ? search.toLowerCase().trim() : ''
+
       if (prodStats) {
-        prodStats.forEach(p => {
-          const q = Number(p.stock_quantity || 0)
-          const c = Number(p.cost_price || 0)
-          totalStockQty += q
-          totalValuation += (q * c)
-          if (q <= 0) outOfStockCount++
-          else if (q <= 5) lowStockCount++
-        })
+        for (const p of prodStats) {
+          const hasVariants = Array.isArray(p.product_variants) && p.product_variants.length > 0
+          if (hasVariants) {
+            for (const v of p.product_variants) {
+              const vName = `${p.name} - ${v.name}`.toLowerCase()
+              const vSku = (v.sku || p.sku || '').toLowerCase()
+              if (searchLower && !vName.includes(searchLower) && !vSku.includes(searchLower)) {
+                continue
+              }
+              const q = Number(v.stock_quantity || 0)
+              const c = Number(v.cost_price || p.cost_price || 0)
+              totalProducts++
+              totalStockQty += q
+              totalValuation += (q * c)
+              if (q <= 0) outOfStockCount++
+              else if (q <= 5) lowStockCount++
+            }
+          } else {
+            const pName = (p.name || '').toLowerCase()
+            const pSku = (p.sku || '').toLowerCase()
+            if (searchLower && !pName.includes(searchLower) && !pSku.includes(searchLower)) {
+              continue
+            }
+            const q = Number(p.stock_quantity || 0)
+            const c = Number(p.cost_price || 0)
+            totalProducts++
+            totalStockQty += q
+            totalValuation += (q * c)
+            if (q <= 0) outOfStockCount++
+            else if (q <= 5) lowStockCount++
+          }
+        }
       }
 
       return {
-        totalProducts: prodStats?.length || 0,
+        totalProducts,
         totalStockQty,
         totalValuation,
         outOfStockCount,

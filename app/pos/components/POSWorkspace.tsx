@@ -711,6 +711,7 @@ export default function POSWorkspace({
         copy[editingDimensionItemIndex] = {
           ...copy[editingDimensionItemIndex],
           product: itemData.product,
+          selectedVariant: itemData.selectedVariant,
           quantity: itemData.quantity,
           finalPrice: itemData.finalPrice,
           note: itemData.note,
@@ -723,6 +724,7 @@ export default function POSWorkspace({
       // Check if identical dimension item already exists
       const existingIdx = prev.findIndex((item) =>
         item.product.id === itemData.product.id &&
+        item.selectedVariant?.id === itemData.selectedVariant?.id &&
         item.dimension_spec?.length === itemData.dimension_spec?.length &&
         item.dimension_spec?.width === itemData.dimension_spec?.width &&
         item.dimension_spec?.input_unit === itemData.dimension_spec?.input_unit &&
@@ -740,6 +742,7 @@ export default function POSWorkspace({
         ...prev,
         {
           product: itemData.product,
+          selectedVariant: itemData.selectedVariant,
           quantity: itemData.quantity,
           finalPrice: itemData.finalPrice,
           discount: 0,
@@ -2261,6 +2264,7 @@ export default function POSWorkspace({
           setEditingDimensionItemIndex(null)
         }}
         product={selectedProductForDimension}
+        salesType={salesType}
         initialValues={
           editingDimensionItemIndex !== null && cart[editingDimensionItemIndex]?.dimension_spec
             ? {
@@ -2268,7 +2272,9 @@ export default function POSWorkspace({
                 width: cart[editingDimensionItemIndex].dimension_spec.width,
                 input_unit: cart[editingDimensionItemIndex].dimension_spec.input_unit,
                 quantity: cart[editingDimensionItemIndex].quantity,
-                note: cart[editingDimensionItemIndex].note
+                note: cart[editingDimensionItemIndex].note,
+                selectedVariant: cart[editingDimensionItemIndex].selectedVariant,
+                selectedModifiers: cart[editingDimensionItemIndex].selectedModifiers
               }
             : null
         }

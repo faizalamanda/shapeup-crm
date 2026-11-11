@@ -150,28 +150,35 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Required accounting accounts could not be resolved' }, { status: 500 })
     }
 
-    // Fetch all products and variants in batch for cost price and initial stock fallback
+    // Fetch all products and variants in batch for cost price and initial stock fallback (chunked for high cardinality)
     const productIds = Array.from(new Set(items.map((i: RequestOpnameItem) => i.product_id).filter(Boolean)))
     const variantIds = Array.from(new Set(items.map((i: RequestOpnameItem) => i.variant_id).filter(Boolean))) as string[]
 
-    const { data: products, error: prodErr } = await supabase
-      .from('products')
-      .select('id, cost_price, stock_quantity')
-      .in('id', productIds)
-      .eq('business_id', businessId)
-
-    if (prodErr) {
-      return NextResponse.json({ error: `Failed to fetch products: ${prodErr.message}` }, { status: 500 })
+    let products: any[] = []
+    if (productIds.length > 0) {
+      const CHUNK = 300
+      for (let i = 0; i < productIds.length; i += CHUNK) {
+        const slice = productIds.slice(i, i + CHUNK)
+        const { data: pChunk, error: pErr } = await supabase
+          .from('products')
+          .select('id, cost_price, stock_quantity')
+          .in('id', slice)
+          .eq('business_id', businessId)
+        if (pErr) return NextResponse.json({ error: `Failed to fetch products: ${pErr.message}` }, { status: 500 })
+        if (pChunk) products = products.concat(pChunk)
+      }
     }
 
     let variantsData: { id: string; cost_price: number | null; stock_quantity: number | null }[] = []
     if (variantIds.length > 0) {
-      const { data: vars, error: varErr } = await supabase
-        .from('product_variants')
-        .select('id, cost_price, stock_quantity')
-        .in('id', variantIds)
-      if (!varErr && vars) {
-        variantsData = vars
+      const CHUNK = 300
+      for (let i = 0; i < variantIds.length; i += CHUNK) {
+        const slice = variantIds.slice(i, i + CHUNK)
+        const { data: vChunk, error: vErr } = await supabase
+          .from('product_variants')
+          .select('id, cost_price, stock_quantity')
+          .in('id', slice)
+        if (!vErr && vChunk) variantsData = variantsData.concat(vChunk)
       }
     }
 
@@ -198,37 +205,44 @@ export async function POST(req: Request) {
     const journalLines: NewJournalLine[] = []
 
     // Fetch true system stock directly from ledger per discrete item (Variant or Non-Variant)
-    const balancePromises = items.map(async (item: RequestOpnameItem) => {
-      const itemKey = item.variant_id ? `${item.product_id}_${item.variant_id}` : item.product_id
+    // Processed in concurrency-safe chunks of 25 to protect DB connection pool from exhaustion on large lists
+    const resolvedBalances: { itemKey: string; system_stock: number }[] = []
+    const CONCURRENCY_CHUNK = 25
+    for (let i = 0; i < items.length; i += CONCURRENCY_CHUNK) {
+      const itemChunk = items.slice(i, i + CONCURRENCY_CHUNK)
+      const chunkRes = await Promise.all(
+        itemChunk.map(async (item: RequestOpnameItem) => {
+          const itemKey = item.variant_id ? `${item.product_id}_${item.variant_id}` : item.product_id
 
-      let query = supabase
-        .from('v_stock_moves_ledger')
-        .select('product_id, variant_id, system_stock')
-        .eq('product_id', item.product_id)
+          let query = supabase
+            .from('v_stock_moves_ledger')
+            .select('product_id, variant_id, system_stock')
+            .eq('product_id', item.product_id)
 
-      if (item.variant_id) {
-        query = query.eq('variant_id', item.variant_id)
-      } else {
-        query = query.is('variant_id', null)
-      }
+          if (item.variant_id) {
+            query = query.eq('variant_id', item.variant_id)
+          } else {
+            query = query.is('variant_id', null)
+          }
 
-      const { data } = await query
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
+          const { data } = await query
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
 
-      const fallbackStock = item.variant_id
-        ? (variantStockMap.get(item.variant_id) ?? 0)
-        : (productStockMap.get(item.product_id) ?? 0)
+          const fallbackStock = item.variant_id
+            ? (variantStockMap.get(item.variant_id) ?? 0)
+            : (productStockMap.get(item.product_id) ?? 0)
 
-      const resolvedSystemStock = data?.system_stock !== undefined && data?.system_stock !== null
-        ? data.system_stock
-        : fallbackStock
+          const resolvedSystemStock = data?.system_stock !== undefined && data?.system_stock !== null
+            ? data.system_stock
+            : fallbackStock
 
-      return { itemKey, system_stock: resolvedSystemStock }
-    })
-
-    const resolvedBalances = await Promise.all(balancePromises)
+          return { itemKey, system_stock: resolvedSystemStock }
+        })
+      )
+      resolvedBalances.push(...chunkRes)
+    }
 
     const balanceMap = new Map<string, number>()
     for (const row of resolvedBalances) {

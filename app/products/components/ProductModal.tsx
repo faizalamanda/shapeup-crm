@@ -190,9 +190,8 @@ function IngredientSearchCombobox({ options, selectedId, onSelect, placeholder =
                   setQuery('')
                   setIsOpen(false)
                 }}
-                className={`w-full text-left p-3 hover:bg-indigo-50/80 transition-colors flex items-center justify-between gap-3 ${
-                  selectedId === p.id ? 'bg-indigo-50 font-bold' : ''
-                }`}
+                className={`w-full text-left p-3 hover:bg-indigo-50/80 transition-colors flex items-center justify-between gap-3 ${selectedId === p.id ? 'bg-indigo-50 font-bold' : ''
+                  }`}
               >
                 <div className="min-w-0 flex-1 pr-2">
                   <p className="text-xs font-bold text-slate-800 break-words leading-tight">{p.name}</p>
@@ -1199,11 +1198,10 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
             <button
               type="button"
               onClick={() => setActiveTab('general')}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-                activeTab === 'general'
-                  ? 'bg-slate-50 text-blue-700 border-blue-600'
-                  : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60'
-              }`}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${activeTab === 'general'
+                ? 'bg-slate-50 text-blue-700 border-blue-600'
+                : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60'
+                }`}
             >
               <span>📦</span>
               <span>Info & Harga Utama</span>
@@ -1217,17 +1215,15 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
             <button
               type="button"
               onClick={() => setActiveTab('variants')}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-                activeTab === 'variants'
-                  ? 'bg-slate-50 text-blue-700 border-blue-600'
-                  : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60'
-              }`}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${activeTab === 'variants'
+                ? 'bg-slate-50 text-blue-700 border-blue-600'
+                : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60'
+                }`}
             >
               <span>🏷️</span>
               <span>Varian SKU</span>
-              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-                variantRows.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-200/80 text-slate-500'
-              }`}>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${variantRows.length > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-200/80 text-slate-500'
+                }`}>
                 {variantRows.length}
               </span>
             </button>
@@ -1235,17 +1231,15 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
             <button
               type="button"
               onClick={() => setActiveTab('modifiers')}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-                activeTab === 'modifiers'
-                  ? 'bg-slate-50 text-purple-700 border-purple-600'
-                  : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60'
-              }`}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${activeTab === 'modifiers'
+                ? 'bg-slate-50 text-purple-700 border-purple-600'
+                : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60'
+                }`}
             >
               <span>✨</span>
               <span>Opsi Tambahan / Modifier</span>
-              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-                modifierGroups.length > 0 ? 'bg-purple-100 text-purple-700' : 'bg-slate-200/80 text-slate-500'
-              }`}>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${modifierGroups.length > 0 ? 'bg-purple-100 text-purple-700' : 'bg-slate-200/80 text-slate-500'
+                }`}>
                 {modifierGroups.length}
               </span>
             </button>
@@ -1262,13 +1256,12 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                 if (hppType !== 'variable') return
                 setActiveTab('recipe')
               }}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap ${
-                hppType !== 'variable'
-                  ? 'text-slate-400 border-transparent opacity-60 cursor-not-allowed select-none'
-                  : activeTab === 'recipe'
-                    ? 'bg-slate-50 text-indigo-700 border-indigo-600 cursor-pointer'
-                    : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60 cursor-pointer'
-              }`}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap ${hppType !== 'variable'
+                ? 'text-slate-400 border-transparent opacity-60 cursor-not-allowed select-none'
+                : activeTab === 'recipe'
+                  ? 'bg-slate-50 text-indigo-700 border-indigo-600 cursor-pointer'
+                  : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60 cursor-pointer'
+                }`}
             >
               <span>🧪</span>
               <span>Resep & BOM HPP</span>
@@ -1277,9 +1270,8 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                   🔒 Nonaktif
                 </span>
               ) : (
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-                  recipeRows.length > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200/80 text-slate-500'
-                }`}>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${recipeRows.length > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200/80 text-slate-500'
+                  }`}>
                   {recipeRows.length}
                 </span>
               )}
@@ -1293,1394 +1285,1380 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
           className="flex-1 overflow-y-auto overscroll-contain px-4 sm:px-6 md:px-8 py-6"
         >
           <div className="max-w-4xl mx-auto space-y-6">
-          {/* ================================================================= */}
-          {/* TAB 1: INFO & HARGA UTAMA                                         */}
-          {/* ================================================================= */}
-          {activeTab === 'general' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start animate-in fade-in duration-150">
-              {/* LEFT COLUMN: Identitas & Stok */}
-              <div className="lg:col-span-6 space-y-5">
-                <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-2xs space-y-4">
-                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider border-b border-slate-200/60 pb-2">
-                    1. Identitas Produk
-                  </h4>
+            {/* ================================================================= */}
+            {/* TAB 1: INFO & HARGA UTAMA                                         */}
+            {/* ================================================================= */}
+            {activeTab === 'general' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start animate-in fade-in duration-150">
+                {/* LEFT COLUMN: Identitas & Stok */}
+                <div className="lg:col-span-6 space-y-5">
+                  <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-2xs space-y-4">
+                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider border-b border-slate-200/60 pb-2">
+                      1. Identitas Produk
+                    </h4>
 
-                  {/* Jenis Produk */}
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Jenis Produk</label>
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <button
-                        type="button"
-                        onClick={() => setType('physical')}
-                        className={`py-2.5 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 ${
-                          type === 'physical'
+                    {/* Jenis Produk */}
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Jenis Produk</label>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => setType('physical')}
+                          className={`py-2.5 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 ${type === 'physical'
                             ? 'border-blue-600 bg-blue-50/80 text-blue-700 shadow-xs ring-1 ring-blue-600/30'
                             : 'border-slate-200 hover:bg-white text-slate-600'
-                        }`}
-                      >
-                        <span>📦</span>
-                        <span>Produk Fisik / Menu</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setType('service')}
-                        className={`py-2.5 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 ${
-                          type === 'service'
+                            }`}
+                        >
+                          <span>📦</span>
+                          <span>Produk Fisik / Menu</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setType('service')}
+                          className={`py-2.5 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 ${type === 'service'
                             ? 'border-blue-600 bg-blue-50/80 text-blue-700 shadow-xs ring-1 ring-blue-600/30'
                             : 'border-slate-200 hover:bg-white text-slate-600'
-                        }`}
-                      >
-                        <span>⚡</span>
-                        <span>Jasa / Layanan</span>
-                      </button>
+                            }`}
+                        >
+                          <span>⚡</span>
+                          <span>Jasa / Layanan</span>
+                        </button>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Nama Produk */}
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nama Produk *</label>
-                    <input
-                      type="text"
-                      required
-                      className="w-full p-3 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-sm font-semibold text-slate-800 transition-all placeholder:text-slate-400 bg-white"
-                      placeholder="Contoh: Kopi Susu, Nasi Goreng Jawa, Kemeja Flannel..."
-                      value={name}
-                      onChange={e => setName(e.target.value)}
-                    />
-                  </div>
-
-                  {/* SKU & Satuan */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Nama Produk */}
                     <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">SKU / Kode Produk</label>
-                      <input
-                        type="text"
-                        className="w-full p-2.5 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 transition-all placeholder:text-slate-300 bg-white"
-                        placeholder="SKU-1002"
-                        value={sku}
-                        onChange={e => setSku(e.target.value)}
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Satuan Stok (Unit) *</label>
-                      <select
-                        className="w-full p-2.5 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 transition-all bg-white"
-                        value={unit}
-                        onChange={e => setUnit(e.target.value)}
-                      >
-                        {COMMON_UNITS.map(u => (
-                          <option key={u} value={u}>{u}</option>
-                        ))}
-                        <option value="custom">-- Kustom / Lainnya --</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {unit === 'custom' && (
-                    <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl animate-in fade-in duration-150">
-                      <label className="block text-[10px] font-bold text-amber-800 uppercase tracking-wider mb-1">Tulis Satuan Kustom *</label>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nama Produk *</label>
                       <input
                         type="text"
                         required
-                        className="w-full p-2 border border-amber-300 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-amber-500"
-                        placeholder="Contoh: porsi, botol, piring, yard..."
-                        value={customUnit}
-                        onChange={e => setCustomUnit(e.target.value)}
+                        className="w-full p-3 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-sm font-semibold text-slate-800 transition-all placeholder:text-slate-400 bg-white"
+                        placeholder="Contoh: Kopi Susu, Nasi Goreng Jawa, Kemeja Flannel..."
+                        value={name}
+                        onChange={e => setName(e.target.value)}
                       />
                     </div>
-                  )}
 
-                  {/* Kategori */}
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Kategori Produk</label>
-                    <select
-                      className="w-full p-2.5 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 transition-all bg-white"
-                      value={showNewCategoryInput ? 'NEW_CATEGORY' : categoryId}
-                      onChange={handleCategoryChange}
-                    >
-                      <option value="">-- Pilih Kategori --</option>
-                      {categories.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                      <option value="NEW_CATEGORY" className="text-blue-600 font-bold">
-                        ➕ Tambah Kategori Baru...
-                      </option>
-                    </select>
-                  </div>
-
-                  {showNewCategoryInput && (
-                    <div className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-2 animate-in slide-in-from-top-2 duration-150">
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Nama Kategori Baru *</label>
-                      <div className="flex gap-2">
+                    {/* SKU & Satuan */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">SKU / Kode Produk</label>
                         <input
                           type="text"
-                          className="flex-1 p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 bg-white"
-                          placeholder="Contoh: PANGANAN, MINUMAN..."
-                          value={newCategoryName}
-                          onChange={e => {
-                            setNewCategoryName(e.target.value)
-                            setCategoryError('')
-                          }}
+                          className="w-full p-2.5 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 transition-all placeholder:text-slate-300 bg-white"
+                          placeholder="SKU-1002"
+                          value={sku}
+                          onChange={e => setSku(e.target.value)}
                         />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Satuan Stok (Unit) *</label>
+                        <select
+                          className="w-full p-2.5 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 transition-all bg-white"
+                          value={unit}
+                          onChange={e => setUnit(e.target.value)}
+                        >
+                          {COMMON_UNITS.map(u => (
+                            <option key={u} value={u}>{u}</option>
+                          ))}
+                          <option value="custom">-- Kustom / Lainnya --</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {unit === 'custom' && (
+                      <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl animate-in fade-in duration-150">
+                        <label className="block text-[10px] font-bold text-amber-800 uppercase tracking-wider mb-1">Tulis Satuan Kustom *</label>
+                        <input
+                          type="text"
+                          required
+                          className="w-full p-2 border border-amber-300 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-amber-500"
+                          placeholder="Contoh: porsi, botol, piring, yard..."
+                          value={customUnit}
+                          onChange={e => setCustomUnit(e.target.value)}
+                        />
+                      </div>
+                    )}
+
+                    {/* Kategori */}
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Kategori Produk</label>
+                      <select
+                        className="w-full p-2.5 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 transition-all bg-white"
+                        value={showNewCategoryInput ? 'NEW_CATEGORY' : categoryId}
+                        onChange={handleCategoryChange}
+                      >
+                        <option value="">-- Pilih Kategori --</option>
+                        {categories.map(c => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                        <option value="NEW_CATEGORY" className="text-blue-600 font-bold">
+                          ➕ Tambah Kategori Baru...
+                        </option>
+                      </select>
+                    </div>
+
+                    {showNewCategoryInput && (
+                      <div className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-2 animate-in slide-in-from-top-2 duration-150">
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Nama Kategori Baru *</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            className="flex-1 p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 bg-white"
+                            placeholder="Contoh: PANGANAN, MINUMAN..."
+                            value={newCategoryName}
+                            onChange={e => {
+                              setNewCategoryName(e.target.value)
+                              setCategoryError('')
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowNewCategoryInput(false)
+                              setNewCategoryName('')
+                              setCategoryId('')
+                              setCategoryError('')
+                            }}
+                            className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-100"
+                          >
+                            Batal
+                          </button>
+                        </div>
+                        {categoryError && (
+                          <p className="text-[11px] font-bold text-red-600">{categoryError}</p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Skema Harga Standar vs Dimensi Unit */}
+                    <div>
+                      <div className="flex justify-between items-center mb-1.5">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Skema Kalkulasi Unit</label>
+                        <span className="text-[10px] font-bold text-slate-500">
+                          {pricingType === 'area' ? '📐 Dimensi Unit (P × L)' : '📌 Standar (Per Pcs/Unit)'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2.5">
                         <button
                           type="button"
                           onClick={() => {
-                            setShowNewCategoryInput(false)
-                            setNewCategoryName('')
-                            setCategoryId('')
-                            setCategoryError('')
+                            setPricingType('standard')
+                            if (unit === 'm2' || unit === 'cm2') setUnit('pcs')
                           }}
-                          className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-100"
+                          className={`py-2 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 cursor-pointer ${pricingType === 'standard'
+                            ? 'border-indigo-600 bg-indigo-50/80 text-indigo-700 shadow-xs ring-1 ring-indigo-600/30'
+                            : 'border-slate-200 hover:bg-slate-50 text-slate-600'
+                            }`}
                         >
-                          Batal
+                          <span>📌</span>
+                          <span>Standar / Tetap</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPricingType('area')
+                            if (unit !== 'm2' && unit !== 'cm2') setUnit('m2')
+                          }}
+                          className={`py-2 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 cursor-pointer ${pricingType === 'area'
+                            ? 'border-indigo-600 bg-indigo-50/80 text-indigo-700 shadow-xs ring-1 ring-indigo-600/30'
+                            : 'border-slate-200 hover:bg-slate-50 text-slate-600'
+                            }`}
+                        >
+                          <span>📐</span>
+                          <span>Dimensi Unit (P × L)</span>
                         </button>
                       </div>
-                      {categoryError && (
-                        <p className="text-[11px] font-bold text-red-600">{categoryError}</p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Skema Harga Standar vs Dimensi Unit */}
-                  <div>
-                    <div className="flex justify-between items-center mb-1.5">
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Skema Kalkulasi Unit</label>
-                      <span className="text-[10px] font-bold text-slate-500">
-                        {pricingType === 'area' ? '📐 Dimensi Unit (P × L)' : '📌 Standar (Per Pcs/Unit)'}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPricingType('standard')
-                          if (unit === 'm2' || unit === 'cm2') setUnit('pcs')
-                        }}
-                        className={`py-2 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                          pricingType === 'standard'
-                            ? 'border-indigo-600 bg-indigo-50/80 text-indigo-700 shadow-xs ring-1 ring-indigo-600/30'
-                            : 'border-slate-200 hover:bg-slate-50 text-slate-600'
-                        }`}
-                      >
-                        <span>📌</span>
-                        <span>Standar / Tetap</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPricingType('area')
-                          if (unit !== 'm2' && unit !== 'cm2') setUnit('m2')
-                        }}
-                        className={`py-2 px-3 border rounded-xl font-bold text-xs text-center transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                          pricingType === 'area'
-                            ? 'border-indigo-600 bg-indigo-50/80 text-indigo-700 shadow-xs ring-1 ring-indigo-600/30'
-                            : 'border-slate-200 hover:bg-slate-50 text-slate-600'
-                        }`}
-                      >
-                        <span>📐</span>
-                        <span>Dimensi Unit (P × L)</span>
-                      </button>
-                    </div>
-                    {pricingType === 'area' && (
-                      <div className="mt-2.5 p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2 text-xs">
-                        <p className="text-[10px] font-medium text-indigo-800/90 leading-relaxed">
-                          Kalkulasi otomatis berdasarkan ukuran <strong>Panjang × Lebar</strong> saat transaksi (cocok untuk kaca, kain, keramik, karpet, spanduk, akrilik, kayu, dll).
-                        </p>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="block text-[10px] font-bold text-indigo-950 uppercase">Ukuran Minimum Order</label>
-                            <div className="flex items-center gap-1 mt-1">
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                className="w-full p-2 border border-indigo-300 rounded-lg text-xs font-bold text-slate-800 bg-white outline-none"
-                                placeholder="0"
-                                value={minArea === 0 ? '' : minArea}
-                                onChange={e => setMinArea(e.target.value === '' ? 0 : Number(e.target.value))}
-                              />
-                              <span className="text-[11px] font-bold text-indigo-700 shrink-0">{unit}</span>
+                      {pricingType === 'area' && (
+                        <div className="mt-2.5 p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2 text-xs">
+                          <p className="text-[10px] font-medium text-indigo-800/90 leading-relaxed">
+                            Kalkulasi otomatis berdasarkan ukuran <strong>Panjang × Lebar</strong> saat transaksi (cocok untuk kaca, kain, keramik, karpet, spanduk, akrilik, kayu, dll).
+                          </p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[10px] font-bold text-indigo-950 uppercase">Ukuran Minimum Order</label>
+                              <div className="flex items-center gap-1 mt-1">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  className="w-full p-2 border border-indigo-300 rounded-lg text-xs font-bold text-slate-800 bg-white outline-none"
+                                  placeholder="0"
+                                  value={minArea === 0 ? '' : minArea}
+                                  onChange={e => setMinArea(e.target.value === '' ? 0 : Number(e.target.value))}
+                                />
+                                <span className="text-[11px] font-bold text-indigo-700 shrink-0">{unit}</span>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-indigo-950 uppercase">Satuan Dimensi</label>
+                              <select
+                                className="w-full mt-1 p-2 border border-indigo-300 rounded-lg text-xs font-bold text-slate-800 bg-white outline-none"
+                                value={unit}
+                                onChange={e => setUnit(e.target.value)}
+                              >
+                                <option value="m2">m² (Meter Persegi)</option>
+                                <option value="cm2">cm² (Centimeter Persegi)</option>
+                              </select>
                             </div>
                           </div>
-                          <div>
-                            <label className="block text-[10px] font-bold text-indigo-950 uppercase">Satuan Dimensi</label>
-                            <select
-                              className="w-full mt-1 p-2 border border-indigo-300 rounded-lg text-xs font-bold text-slate-800 bg-white outline-none"
-                              value={unit}
-                              onChange={e => setUnit(e.target.value)}
-                            >
-                              <option value="m2">m² (Meter Persegi)</option>
-                              <option value="cm2">cm² (Centimeter Persegi)</option>
-                            </select>
-                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                {/* Stok & Deskripsi */}
-                <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-2xs space-y-4">
-                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider border-b border-slate-200/60 pb-2">
-                    2. Manajemen Stok & Catatan
-                  </h4>
+                  {/* Stok & Deskripsi */}
+                  <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-2xs space-y-4">
+                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider border-b border-slate-200/60 pb-2">
+                      2. Manajemen Stok & Catatan
+                    </h4>
 
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Status Pelacakan Stok</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setStockType('available')}
-                        className={`py-2 px-2.5 border rounded-xl font-bold text-xs text-center transition-all ${
-                          stockType === 'available'
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Status Pelacakan Stok</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setStockType('available')}
+                          className={`py-2 px-2.5 border rounded-xl font-bold text-xs text-center transition-all ${stockType === 'available'
                             ? 'border-emerald-600 bg-emerald-50 text-emerald-700 shadow-xs'
                             : 'border-slate-200 hover:bg-white text-slate-600'
-                        }`}
-                      >
-                        Tersedia (Non-Lacak)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setStockType('unavailable')}
-                        className={`py-2 px-2.5 border rounded-xl font-bold text-xs text-center transition-all ${
-                          stockType === 'unavailable'
+                            }`}
+                        >
+                          Tersedia (Non-Lacak)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStockType('unavailable')}
+                          className={`py-2 px-2.5 border rounded-xl font-bold text-xs text-center transition-all ${stockType === 'unavailable'
                             ? 'border-rose-600 bg-rose-50 text-rose-700 shadow-xs'
                             : 'border-slate-200 hover:bg-white text-slate-600'
-                        }`}
+                            }`}
+                        >
+                          Habis / Nonaktif
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStockType('tracked')}
+                          className={`py-2 px-2.5 border rounded-xl font-bold text-xs text-center transition-all ${stockType === 'tracked'
+                            ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
+                            : 'border-slate-200 hover:bg-white text-slate-600'
+                            }`}
+                        >
+                          Ditrack (Lacak Stok)
+                        </button>
+                      </div>
+
+                      {stockType === 'tracked' && (
+                        <div className="mt-3 p-3 bg-blue-50/50 border border-blue-100 rounded-xl grid grid-cols-1 sm:grid-cols-2 gap-3 animate-in slide-in-from-top-2 duration-150">
+                          <div>
+                            <label className="block text-[10px] font-bold text-blue-800 uppercase tracking-wider mb-1">
+                              {variantRows.length > 0 ? 'Total Stok Varian' : 'Jumlah Stok Fisik *'}
+                            </label>
+                            {variantRows.length > 0 ? (
+                              <input
+                                type="number"
+                                disabled
+                                className="w-full p-2 border border-blue-200 rounded-lg text-xs font-bold text-blue-900 bg-blue-100/60 cursor-not-allowed"
+                                value={variantRows.reduce((sum, v) => sum + (Number(v.stock_quantity) || 0), 0)}
+                              />
+                            ) : (
+                              <input
+                                type="number"
+                                step="any"
+                                min="0"
+                                required
+                                className="w-full p-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 bg-white"
+                                value={stockQuantity === 0 ? '' : stockQuantity}
+                                onChange={e => setStockQuantity(e.target.value === '' ? 0 : Number(e.target.value))}
+                                placeholder="0"
+                              />
+                            )}
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-blue-800 uppercase tracking-wider mb-1">
+                              Batas Peringatan Stok (Alert)
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              className="w-full p-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 bg-white"
+                              value={minStockAlert === 0 ? '' : minStockAlert}
+                              onChange={e => setMinStockAlert(e.target.value === '' ? 0 : Number(e.target.value))}
+                              placeholder="Contoh: 5"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Deskripsi / Catatan Produk</label>
+                      <textarea
+                        className="w-full p-2.5 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-medium text-slate-800 transition-all min-h-[70px] bg-white"
+                        placeholder="Catatan atau spesifikasi produk..."
+                        value={description}
+                        onChange={e => setDescription(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* RIGHT COLUMN: Harga Jual, Multi-Harga (Dine-In/Take Away), & HPP */}
+                <div className="lg:col-span-6 space-y-5">
+                  <div className="border border-indigo-100 bg-gradient-to-br from-indigo-50/50 via-white to-purple-50/40 rounded-2xl p-5 space-y-4 shadow-xs">
+                    <div className="flex justify-between items-center border-b border-indigo-100/80 pb-3">
+                      <div>
+                        <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wider">
+                          3. Harga Jual & Modal HPP
+                        </h4>
+                        <p className="text-[11px] text-indigo-700/80 font-medium mt-0.5">
+                          Harga dasar, opsi harga Dine-In/Take Away, dan perhitungan modal
+                        </p>
+                      </div>
+                      <span className="px-3 py-1 rounded-full text-[10px] font-extrabold bg-indigo-100 text-indigo-800 border border-indigo-200/60">
+                        {hppType === 'variable' ? '🧪 Resep BOM' : '📌 HPP Flat'}
+                      </span>
+                    </div>
+
+                    {/* Toggle Skema HPP */}
+                    <div className="grid grid-cols-2 gap-2 bg-slate-200/60 p-1.5 rounded-xl">
+                      <button
+                        type="button"
+                        onClick={() => setHppType('fixed')}
+                        className={`py-2 px-3 rounded-lg font-bold text-xs text-center transition-all cursor-pointer ${hppType === 'fixed'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                          }`}
                       >
-                        Habis / Nonaktif
+                        📌 HPP Flat / Manual
                       </button>
                       <button
                         type="button"
-                        onClick={() => setStockType('tracked')}
-                        className={`py-2 px-2.5 border rounded-xl font-bold text-xs text-center transition-all ${
-                          stockType === 'tracked'
-                            ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
-                            : 'border-slate-200 hover:bg-white text-slate-600'
-                        }`}
+                        onClick={() => {
+                          setHppType('variable')
+                        }}
+                        className={`py-2 px-3 rounded-lg font-bold text-xs text-center transition-all cursor-pointer ${hppType === 'variable'
+                          ? 'bg-indigo-600 text-white shadow-md'
+                          : 'text-slate-600 hover:text-slate-900'
+                          }`}
                       >
-                        Ditrack (Lacak Stok)
+                        🧪 Variabel Resep (BOM)
                       </button>
                     </div>
 
-                    {stockType === 'tracked' && (
-                      <div className="mt-3 p-3 bg-blue-50/50 border border-blue-100 rounded-xl grid grid-cols-1 sm:grid-cols-2 gap-3 animate-in slide-in-from-top-2 duration-150">
-                        <div>
-                          <label className="block text-[10px] font-bold text-blue-800 uppercase tracking-wider mb-1">
-                            {variantRows.length > 0 ? 'Total Stok Varian' : 'Jumlah Stok Fisik *'}
-                          </label>
-                          {variantRows.length > 0 ? (
-                            <input
-                              type="number"
-                              disabled
-                              className="w-full p-2 border border-blue-200 rounded-lg text-xs font-bold text-blue-900 bg-blue-100/60 cursor-not-allowed"
-                              value={variantRows.reduce((sum, v) => sum + (Number(v.stock_quantity) || 0), 0)}
-                            />
-                          ) : (
-                            <input
-                              type="number"
-                              step="any"
-                              min="0"
-                              required
-                              className="w-full p-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 bg-white"
-                              value={stockQuantity === 0 ? '' : stockQuantity}
-                              onChange={e => setStockQuantity(e.target.value === '' ? 0 : Number(e.target.value))}
-                              placeholder="0"
-                            />
-                          )}
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-blue-800 uppercase tracking-wider mb-1">
-                            Batas Peringatan Stok (Alert)
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            className="w-full p-2 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-semibold text-slate-800 bg-white"
-                            value={minStockAlert === 0 ? '' : minStockAlert}
-                            onChange={e => setMinStockAlert(e.target.value === '' ? 0 : Number(e.target.value))}
-                            placeholder="Contoh: 5"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Deskripsi / Catatan Produk</label>
-                    <textarea
-                      className="w-full p-2.5 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-xs font-medium text-slate-800 transition-all min-h-[70px] bg-white"
-                      placeholder="Catatan atau spesifikasi produk..."
-                      value={description}
-                      onChange={e => setDescription(e.target.value)}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* RIGHT COLUMN: Harga Jual, Multi-Harga (Dine-In/Take Away), & HPP */}
-              <div className="lg:col-span-6 space-y-5">
-                <div className="border border-indigo-100 bg-gradient-to-br from-indigo-50/50 via-white to-purple-50/40 rounded-2xl p-5 space-y-4 shadow-xs">
-                  <div className="flex justify-between items-center border-b border-indigo-100/80 pb-3">
-                    <div>
-                      <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wider">
-                        3. Harga Jual & Modal HPP
-                      </h4>
-                      <p className="text-[11px] text-indigo-700/80 font-medium mt-0.5">
-                        Harga dasar, opsi harga Dine-In/Take Away, dan perhitungan modal
-                      </p>
-                    </div>
-                    <span className="px-3 py-1 rounded-full text-[10px] font-extrabold bg-indigo-100 text-indigo-800 border border-indigo-200/60">
-                      {hppType === 'variable' ? '🧪 Resep BOM' : '📌 HPP Flat'}
-                    </span>
-                  </div>
-
-                  {/* Toggle Skema HPP */}
-                  <div className="grid grid-cols-2 gap-2 bg-slate-200/60 p-1.5 rounded-xl">
-                    <button
-                      type="button"
-                      onClick={() => setHppType('fixed')}
-                      className={`py-2 px-3 rounded-lg font-bold text-xs text-center transition-all cursor-pointer ${
-                        hppType === 'fixed'
-                          ? 'bg-white text-slate-900 shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      📌 HPP Flat / Manual
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHppType('variable')
-                      }}
-                      className={`py-2 px-3 rounded-lg font-bold text-xs text-center transition-all cursor-pointer ${
-                        hppType === 'variable'
-                          ? 'bg-indigo-600 text-white shadow-md'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      🧪 Variabel Resep (BOM)
-                    </button>
-                  </div>
-
-                  {/* Harga Jual Utama & HPP */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">
-                        Harga Jual Dasar (Basic) *
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        required
-                        className="w-full p-3 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-sm font-bold text-slate-900 bg-white"
-                        value={price === 0 ? '' : price}
-                        onChange={e => setPrice(e.target.value === '' ? 0 : Number(e.target.value))}
-                        placeholder="0"
-                      />
-                    </div>
-
-                    {hppType === 'fixed' ? (
+                    {/* Harga Jual Utama & HPP */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
                       <div>
                         <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">
-                          HPP / Harga Modal (Rp)
+                          Harga Jual Dasar (Basic) *
                         </label>
                         <input
                           type="number"
                           min="0"
+                          required
                           className="w-full p-3 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-sm font-bold text-slate-900 bg-white"
-                          value={costPrice === 0 ? '' : costPrice}
-                          onChange={e => setCostPrice(e.target.value === '' ? 0 : Number(e.target.value))}
+                          value={price === 0 ? '' : price}
+                          onChange={e => setPrice(e.target.value === '' ? 0 : Number(e.target.value))}
                           placeholder="0"
                         />
                       </div>
-                    ) : (
-                      <div>
-                        <label className="block text-[10px] font-black text-indigo-700 uppercase tracking-widest mb-1.5">
-                          Total HPP Resep (Otomatis)
-                        </label>
-                        <div className="w-full p-3 border border-indigo-200 rounded-xl bg-indigo-50 text-sm font-black text-indigo-900 flex justify-between items-center">
-                          <span>Rp {calculatedDynamicHpp.toLocaleString('id-ID')}</span>
-                          <button
-                            type="button"
-                            onClick={() => setActiveTab('recipe')}
-                            className="text-[10px] text-white bg-indigo-600 hover:bg-indigo-700 font-bold px-2.5 py-1 rounded-lg transition cursor-pointer"
-                          >
-                            Atur Resep ({recipeRows.length}) →
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
 
-                  {/* Progressive Disclosure: Harga Khusus Channel / Tipe Layanan */}
-                  <div className="p-3.5 rounded-2xl border border-slate-200/90 bg-white space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
-                          <span>🍽️</span> Harga Khusus Tipe Layanan (Dine-In / Take Away)
-                        </span>
-                        <p className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">
-                          Opsional. Atur tarif berbeda berdasarkan tipe layanan (misal: Makan di Tempat vs Bungkus / Pesan Antar). Jika dikosongkan, sistem otomatis memakai Harga Jual Dasar.
-                        </p>
+                      {hppType === 'fixed' ? (
+                        <div>
+                          <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">
+                            HPP / Harga Modal (Rp)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="w-full p-3 border border-slate-200 rounded-xl shadow-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 outline-none text-sm font-bold text-slate-900 bg-white"
+                            value={costPrice === 0 ? '' : costPrice}
+                            onChange={e => setCostPrice(e.target.value === '' ? 0 : Number(e.target.value))}
+                            placeholder="0"
+                          />
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="block text-[10px] font-black text-indigo-700 uppercase tracking-widest mb-1.5">
+                            Total HPP Resep (Otomatis)
+                          </label>
+                          <div className="w-full p-3 border border-indigo-200 rounded-xl bg-indigo-50 text-sm font-black text-indigo-900 flex justify-between items-center">
+                            <span>Rp {calculatedDynamicHpp.toLocaleString('id-ID')}</span>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('recipe')}
+                              className="text-[10px] text-white bg-indigo-600 hover:bg-indigo-700 font-bold px-2.5 py-1 rounded-lg transition cursor-pointer"
+                            >
+                              Atur Resep ({recipeRows.length}) →
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Progressive Disclosure: Harga Khusus Channel / Tipe Layanan */}
+                    <div className="p-3.5 rounded-2xl border border-slate-200/90 bg-white space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                            <span>🍽️</span> Harga Khusus Tipe Layanan (Dine-In / Take Away)
+                          </span>
+                          <p className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">
+                            Opsional. Atur tarif berbeda berdasarkan tipe layanan (misal: Makan di Tempat vs Bungkus / Pesan Antar). Jika dikosongkan, sistem otomatis memakai Harga Jual Dasar.
+                          </p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={enableMultiPrice}
+                            onChange={e => setEnableMultiPrice(e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-10 h-5.5 bg-slate-200 rounded-full peer peer-checked:bg-emerald-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4.5 after:w-4.5 after:transition-all"></div>
+                        </label>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer shrink-0">
+
+                      {enableMultiPrice && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100 animate-in fade-in duration-150">
+                          <div>
+                            <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1">
+                              🍽️ Harga Dine-In (Makan di Tempat)
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              className="w-full p-2.5 border border-indigo-200 rounded-xl text-xs font-bold text-slate-800 bg-indigo-50/30 outline-none focus:border-indigo-600"
+                              placeholder={price > 0 ? `Sama dgn Dasar (Rp ${price.toLocaleString('id-ID')})` : 'Contoh: 15000'}
+                              value={dineInPrice === 0 ? '' : dineInPrice}
+                              onChange={e => setDineInPrice(e.target.value === '' ? 0 : Number(e.target.value))}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-emerald-700 uppercase mb-1">
+                              🛍️ Harga Take Away (Bungkus)
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              className="w-full p-2.5 border border-emerald-200 rounded-xl text-xs font-bold text-slate-800 bg-emerald-50/30 outline-none focus:border-emerald-600"
+                              placeholder={price > 0 ? `Sama dgn Dasar (Rp ${price.toLocaleString('id-ID')})` : 'Contoh: 15000'}
+                              value={takeAwayPrice === 0 ? '' : takeAwayPrice}
+                              onChange={e => setTakeAwayPrice(e.target.value === '' ? 0 : Number(e.target.value))}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Ringkasan Cepat Varian & Modifier (Quick Jump Cards) */}
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('variants')}
+                        className="p-3 rounded-xl border border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50/30 transition text-left flex items-center justify-between cursor-pointer"
+                      >
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">Varian Produk</p>
+                          <p className="text-xs font-extrabold text-slate-800 mt-0.5">
+                            {variantRows.length > 0 ? `${variantRows.length} Variasi Aktif` : 'Produk Tunggal'}
+                          </p>
+                        </div>
+                        <span className="text-xs font-bold text-blue-600">Kelola →</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('modifiers')}
+                        className="p-3 rounded-xl border border-slate-200 bg-white hover:border-purple-400 hover:bg-purple-50/30 transition text-left flex items-center justify-between cursor-pointer"
+                      >
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">Opsi Tambahan</p>
+                          <p className="text-xs font-extrabold text-slate-800 mt-0.5">
+                            {modifierGroups.length > 0 ? `${modifierGroups.length} Grup Opsi` : 'Belum Ada'}
+                          </p>
+                        </div>
+                        <span className="text-xs font-bold text-purple-600">Kelola →</span>
+                      </button>
+                    </div>
+
+                    {/* Proteksi Harga Jual Minimum HPP */}
+                    <div className={`p-3.5 rounded-2xl border transition-all ${globalPriceGuardEnabled || preventBelowHpp
+                      ? 'bg-blue-50/70 border-blue-200'
+                      : 'bg-slate-50 border-slate-200'
+                      }`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm">🛡️</span>
+                            <span className="text-xs font-bold text-slate-900">
+                              Proteksi Harga Jual Minimum HPP di POS
+                            </span>
+                            {globalPriceGuardEnabled && (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-600 text-white uppercase">
+                                Global Aktif
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate-600 mt-1 leading-relaxed">
+                            Cegah kasir menjual atau memberi diskon hingga jatuh di bawah modal HPP tanpa PIN Otorisasi.
+                          </p>
+                        </div>
+
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                          <input
+                            type="checkbox"
+                            disabled={globalPriceGuardEnabled}
+                            checked={globalPriceGuardEnabled || preventBelowHpp}
+                            onChange={(e) => setPreventBelowHpp(e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className={`w-10 h-5.5 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4.5 after:w-4.5 after:transition-all ${globalPriceGuardEnabled
+                            ? 'peer-checked:bg-blue-500 opacity-80 cursor-not-allowed'
+                            : 'peer-checked:bg-blue-600'
+                            }`}></div>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ================================================================= */}
+            {/* TAB 2: VARIAN SKU & MULTI-HARGA VARIAN                            */}
+            {/* ================================================================= */}
+            {activeTab === 'variants' && (
+              <div className="space-y-5 animate-in fade-in duration-150">
+                <div className="bg-slate-50/70 border border-slate-200/90 rounded-2xl p-5 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/60 pb-3">
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                        <span>🏷️</span> Variasi Produk (Panas/Es, Ukuran, Paket, atau Warna)
+                      </h4>
+                      <p className="text-xs text-slate-500 font-medium mt-0.5">
+                        Setiap variasi memiliki harga, SKU, HPP, dan kartu stok mandiri.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                      <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 bg-white px-3 py-1.5 rounded-xl border border-slate-200 cursor-pointer">
                         <input
                           type="checkbox"
                           checked={enableMultiPrice}
                           onChange={e => setEnableMultiPrice(e.target.checked)}
-                          className="sr-only peer"
+                          className="rounded text-emerald-600"
                         />
-                        <div className="w-10 h-5.5 bg-slate-200 rounded-full peer peer-checked:bg-emerald-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4.5 after:w-4.5 after:transition-all"></div>
+                        <span>🍽️ Harga Dine-In / Take Away</span>
                       </label>
-                    </div>
-
-                    {enableMultiPrice && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100 animate-in fade-in duration-150">
-                        <div>
-                          <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1">
-                            🍽️ Harga Dine-In (Makan di Tempat)
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            className="w-full p-2.5 border border-indigo-200 rounded-xl text-xs font-bold text-slate-800 bg-indigo-50/30 outline-none focus:border-indigo-600"
-                            placeholder={price > 0 ? `Sama dgn Dasar (Rp ${price.toLocaleString('id-ID')})` : 'Contoh: 15000'}
-                            value={dineInPrice === 0 ? '' : dineInPrice}
-                            onChange={e => setDineInPrice(e.target.value === '' ? 0 : Number(e.target.value))}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-emerald-700 uppercase mb-1">
-                            🛍️ Harga Take Away (Bungkus)
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            className="w-full p-2.5 border border-emerald-200 rounded-xl text-xs font-bold text-slate-800 bg-emerald-50/30 outline-none focus:border-emerald-600"
-                            placeholder={price > 0 ? `Sama dgn Dasar (Rp ${price.toLocaleString('id-ID')})` : 'Contoh: 15000'}
-                            value={takeAwayPrice === 0 ? '' : takeAwayPrice}
-                            onChange={e => setTakeAwayPrice(e.target.value === '' ? 0 : Number(e.target.value))}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Ringkasan Cepat Varian & Modifier (Quick Jump Cards) */}
-                  <div className="grid grid-cols-2 gap-3 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('variants')}
-                      className="p-3 rounded-xl border border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50/30 transition text-left flex items-center justify-between cursor-pointer"
-                    >
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase">Varian Produk</p>
-                        <p className="text-xs font-extrabold text-slate-800 mt-0.5">
-                          {variantRows.length > 0 ? `${variantRows.length} Variasi Aktif` : 'Produk Tunggal'}
-                        </p>
-                      </div>
-                      <span className="text-xs font-bold text-blue-600">Kelola →</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('modifiers')}
-                      className="p-3 rounded-xl border border-slate-200 bg-white hover:border-purple-400 hover:bg-purple-50/30 transition text-left flex items-center justify-between cursor-pointer"
-                    >
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase">Opsi Tambahan</p>
-                        <p className="text-xs font-extrabold text-slate-800 mt-0.5">
-                          {modifierGroups.length > 0 ? `${modifierGroups.length} Grup Opsi` : 'Belum Ada'}
-                        </p>
-                      </div>
-                      <span className="text-xs font-bold text-purple-600">Kelola →</span>
-                    </button>
-                  </div>
-
-                  {/* Proteksi Harga Jual Minimum HPP */}
-                  <div className={`p-3.5 rounded-2xl border transition-all ${
-                    globalPriceGuardEnabled || preventBelowHpp
-                      ? 'bg-blue-50/70 border-blue-200'
-                      : 'bg-slate-50 border-slate-200'
-                  }`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm">🛡️</span>
-                          <span className="text-xs font-bold text-slate-900">
-                            Proteksi Harga Jual Minimum HPP di POS
-                          </span>
-                          {globalPriceGuardEnabled && (
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-600 text-white uppercase">
-                              Global Aktif
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[10px] text-slate-600 mt-1 leading-relaxed">
-                          Cegah kasir menjual atau memberi diskon hingga jatuh di bawah modal HPP tanpa PIN Otorisasi.
-                        </p>
-                      </div>
-
-                      <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
-                        <input
-                          type="checkbox"
-                          disabled={globalPriceGuardEnabled}
-                          checked={globalPriceGuardEnabled || preventBelowHpp}
-                          onChange={(e) => setPreventBelowHpp(e.target.checked)}
-                          className="sr-only peer"
-                        />
-                        <div className={`w-10 h-5.5 bg-slate-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4.5 after:w-4.5 after:transition-all ${
-                          globalPriceGuardEnabled
-                            ? 'peer-checked:bg-blue-500 opacity-80 cursor-not-allowed'
-                            : 'peer-checked:bg-blue-600'
-                        }`}></div>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ================================================================= */}
-          {/* TAB 2: VARIAN SKU & MULTI-HARGA VARIAN                            */}
-          {/* ================================================================= */}
-          {activeTab === 'variants' && (
-            <div className="space-y-5 animate-in fade-in duration-150">
-              <div className="bg-slate-50/70 border border-slate-200/90 rounded-2xl p-5 space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/60 pb-3">
-                  <div>
-                    <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                      <span>🏷️</span> Variasi Produk (Panas/Es, Ukuran, Paket, atau Warna)
-                    </h4>
-                    <p className="text-xs text-slate-500 font-medium mt-0.5">
-                      Setiap variasi memiliki harga, SKU, HPP, dan kartu stok mandiri.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                    <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 bg-white px-3 py-1.5 rounded-xl border border-slate-200 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={enableMultiPrice}
-                        onChange={e => setEnableMultiPrice(e.target.checked)}
-                        className="rounded text-emerald-600"
-                      />
-                      <span>🍽️ Harga Dine-In / Take Away</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setShowMatrixGen(!showMatrixGen)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1 cursor-pointer ${
-                        showMatrixGen
-                          ? 'bg-purple-600 text-white'
-                          : 'bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200/60'
-                      }`}
-                    >
-                      <span>⚡</span>
-                      <span>{showMatrixGen ? 'Tutup Generator' : 'Generator Matriks'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setVariantRows(prev => [
-                          ...prev,
-                          {
-                            name: '',
-                            sku: sku ? `${sku}-${prev.length + 1}` : '',
-                            price: price || 0,
-                            dine_in_price: dineInPrice > 0 ? dineInPrice : null,
-                            take_away_price: takeAwayPrice > 0 ? takeAwayPrice : null,
-                            cost_price: hppType === 'variable' ? calculatedDynamicHpp : (costPrice || 0),
-                            stock_quantity: 0
-                          }
-                        ])
-                      }}
-                      className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>➕</span>
-                      <span>Tambah Varian</span>
-                    </button>
-                  </div>
-                </div>
-
-                {showMatrixGen && (
-                  <div className="p-4 sm:p-5 bg-purple-50/60 border border-purple-200/90 rounded-2xl space-y-4 animate-in fade-in duration-150">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-purple-200/60 pb-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-black text-purple-950 uppercase tracking-wide">
-                            ⚡ Generator Matriks Variasi (Standar Shopee / WooCommerce)
-                          </span>
-                          <span className="text-[10px] font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full border border-purple-200">
-                            {previewCombinationsCount > 0 ? `${previewCombinationsCount} Kombinasi` : '0 Kombinasi'}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-purple-800/80 font-medium mt-0.5">
-                          Kustomisasi nama grup atribut (misal: Warna, Ukuran, Rasa, Bahan) dan tambahkan opsi tak terbatas.
-                        </p>
-                      </div>
-
                       <button
                         type="button"
-                        onClick={() => setShowMatrixGen(false)}
-                        className="text-xs font-bold text-slate-500 hover:text-slate-800 self-end sm:self-auto cursor-pointer"
+                        onClick={() => setShowMatrixGen(!showMatrixGen)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1 cursor-pointer ${showMatrixGen
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200/60'
+                          }`}
                       >
-                        ✕ Tutup
+                        <span>⚡</span>
+                        <span>{showMatrixGen ? 'Tutup Generator' : 'Generator Matriks'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVariantRows(prev => [
+                            ...prev,
+                            {
+                              name: '',
+                              sku: sku ? `${sku}-${prev.length + 1}` : '',
+                              price: price || 0,
+                              dine_in_price: dineInPrice > 0 ? dineInPrice : null,
+                              take_away_price: takeAwayPrice > 0 ? takeAwayPrice : null,
+                              cost_price: hppType === 'variable' ? calculatedDynamicHpp : (costPrice || 0),
+                              stock_quantity: 0
+                            }
+                          ])
+                        }}
+                        className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>➕</span>
+                        <span>Tambah Varian</span>
                       </button>
                     </div>
+                  </div>
 
-                    {/* Dynamic Attribute Groups List (Shopee / WooCommerce Multi-tier) */}
-                    <div className="space-y-3">
-                      {matrixAttributes.map((attr, aIdx) => {
-                        const parsedOptions = attr.values.split(',').map(s => s.trim()).filter(Boolean)
-                        return (
-                          <div key={aIdx} className="bg-white border border-purple-200/90 rounded-xl p-3.5 space-y-2.5 shadow-2xs">
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                              <div className="flex items-center gap-2 flex-1">
-                                <span className="text-[10px] font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md uppercase shrink-0">
-                                  Tipe #{aIdx + 1}
-                                </span>
+                  {showMatrixGen && (
+                    <div className="p-4 sm:p-5 bg-purple-50/60 border border-purple-200/90 rounded-2xl space-y-4 animate-in fade-in duration-150">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-purple-200/60 pb-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-purple-950 uppercase tracking-wide">
+                              ⚡ Generator Matriks Variasi (Standar Shopee / WooCommerce)
+                            </span>
+                            <span className="text-[10px] font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full border border-purple-200">
+                              {previewCombinationsCount > 0 ? `${previewCombinationsCount} Kombinasi` : '0 Kombinasi'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-purple-800/80 font-medium mt-0.5">
+                            Kustomisasi nama grup atribut (misal: Warna, Ukuran, Rasa, Bahan) dan tambahkan opsi tak terbatas.
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setShowMatrixGen(false)}
+                          className="text-xs font-bold text-slate-500 hover:text-slate-800 self-end sm:self-auto cursor-pointer"
+                        >
+                          ✕ Tutup
+                        </button>
+                      </div>
+
+                      {/* Dynamic Attribute Groups List (Shopee / WooCommerce Multi-tier) */}
+                      <div className="space-y-3">
+                        {matrixAttributes.map((attr, aIdx) => {
+                          const parsedOptions = attr.values.split(',').map(s => s.trim()).filter(Boolean)
+                          return (
+                            <div key={aIdx} className="bg-white border border-purple-200/90 rounded-xl p-3.5 space-y-2.5 shadow-2xs">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 flex-1">
+                                  <span className="text-[10px] font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md uppercase shrink-0">
+                                    Tipe #{aIdx + 1}
+                                  </span>
+                                  <input
+                                    type="text"
+                                    placeholder="Nama Tipe Variasi (contoh: Warna, Ukuran, Rasa, Bahan)"
+                                    className="p-1.5 px-2.5 border border-slate-200 rounded-lg text-xs font-extrabold text-slate-900 outline-none focus:border-purple-600 w-full sm:max-w-xs bg-slate-50/50 focus:bg-white"
+                                    value={attr.name}
+                                    onChange={e => {
+                                      const val = e.target.value
+                                      setMatrixAttributes(prev => {
+                                        const copy = [...prev]
+                                        copy[aIdx] = { ...copy[aIdx], name: val }
+                                        return copy
+                                      })
+                                    }}
+                                  />
+                                </div>
+
+                                {/* Quick Preset Buttons */}
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-[10px] text-slate-400 font-semibold hidden md:inline">Preset:</span>
+                                  {['Warna', 'Ukuran', 'Rasa', 'Bahan', 'Level'].map(preset => (
+                                    <button
+                                      key={preset}
+                                      type="button"
+                                      onClick={() => {
+                                        setMatrixAttributes(prev => {
+                                          const copy = [...prev]
+                                          copy[aIdx] = { ...copy[aIdx], name: preset }
+                                          return copy
+                                        })
+                                      }}
+                                      className={`text-[10px] px-2 py-0.5 rounded-md border transition cursor-pointer ${attr.name.toLowerCase() === preset.toLowerCase()
+                                        ? 'bg-purple-600 text-white border-purple-600 font-bold'
+                                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-purple-50'
+                                        }`}
+                                    >
+                                      {preset}
+                                    </button>
+                                  ))}
+                                  {matrixAttributes.length > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setMatrixAttributes(prev => prev.filter((_, i) => i !== aIdx))}
+                                      className="text-xs text-rose-600 hover:bg-rose-50 px-2 py-1 rounded-md transition font-bold ml-1 cursor-pointer"
+                                      title="Hapus tipe variasi ini"
+                                    >
+                                      🗑️ Hapus
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                                  Pilihan Nilai / Opsi (Pisahkan dengan tanda koma)
+                                </label>
                                 <input
                                   type="text"
-                                  placeholder="Nama Tipe Variasi (contoh: Warna, Ukuran, Rasa, Bahan)"
-                                  className="p-1.5 px-2.5 border border-slate-200 rounded-lg text-xs font-extrabold text-slate-900 outline-none focus:border-purple-600 w-full sm:max-w-xs bg-slate-50/50 focus:bg-white"
-                                  value={attr.name}
+                                  placeholder={
+                                    attr.name.toLowerCase().includes('warna')
+                                      ? 'Contoh: Merah, Hitam, Putih, Navy, Hijau'
+                                      : attr.name.toLowerCase().includes('ukuran')
+                                        ? 'Contoh: S, M, L, XL, XXL'
+                                        : 'Contoh: Opsi 1, Opsi 2, Opsi 3'
+                                  }
+                                  className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                                  value={attr.values}
                                   onChange={e => {
                                     const val = e.target.value
                                     setMatrixAttributes(prev => {
                                       const copy = [...prev]
-                                      copy[aIdx] = { ...copy[aIdx], name: val }
+                                      copy[aIdx] = { ...copy[aIdx], values: val }
                                       return copy
                                     })
                                   }}
                                 />
                               </div>
 
-                              {/* Quick Preset Buttons */}
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-[10px] text-slate-400 font-semibold hidden md:inline">Preset:</span>
-                                {['Warna', 'Ukuran', 'Rasa', 'Bahan', 'Level'].map(preset => (
-                                  <button
-                                    key={preset}
-                                    type="button"
-                                    onClick={() => {
-                                      setMatrixAttributes(prev => {
-                                        const copy = [...prev]
-                                        copy[aIdx] = { ...copy[aIdx], name: preset }
-                                        return copy
-                                      })
-                                    }}
-                                    className={`text-[10px] px-2 py-0.5 rounded-md border transition cursor-pointer ${
-                                      attr.name.toLowerCase() === preset.toLowerCase()
-                                        ? 'bg-purple-600 text-white border-purple-600 font-bold'
-                                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-purple-50'
-                                    }`}
-                                  >
-                                    {preset}
-                                  </button>
-                                ))}
-                                {matrixAttributes.length > 1 && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setMatrixAttributes(prev => prev.filter((_, i) => i !== aIdx))}
-                                    className="text-xs text-rose-600 hover:bg-rose-50 px-2 py-1 rounded-md transition font-bold ml-1 cursor-pointer"
-                                    title="Hapus tipe variasi ini"
-                                  >
-                                    🗑️ Hapus
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-
-                            <div>
-                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                                Pilihan Nilai / Opsi (Pisahkan dengan tanda koma)
-                              </label>
-                              <input
-                                type="text"
-                                placeholder={
-                                  attr.name.toLowerCase().includes('warna')
-                                    ? 'Contoh: Merah, Hitam, Putih, Navy, Hijau'
-                                    : attr.name.toLowerCase().includes('ukuran')
-                                      ? 'Contoh: S, M, L, XL, XXL'
-                                      : 'Contoh: Opsi 1, Opsi 2, Opsi 3'
-                                }
-                                className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
-                                value={attr.values}
-                                onChange={e => {
-                                  const val = e.target.value
-                                  setMatrixAttributes(prev => {
-                                    const copy = [...prev]
-                                    copy[aIdx] = { ...copy[aIdx], values: val }
-                                    return copy
-                                  })
-                                }}
-                              />
-                            </div>
-
-                            {/* Live Parsed Badges */}
-                            {parsedOptions.length > 0 && (
-                              <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                                <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
-                                  {parsedOptions.length} opsi:
-                                </span>
-                                {parsedOptions.map((opt, oIdx) => (
-                                  <span key={oIdx} className="text-[11px] font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200/60">
-                                    {opt}
+                              {/* Live Parsed Badges */}
+                              {parsedOptions.length > 0 && (
+                                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                                  <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
+                                    {parsedOptions.length} opsi:
                                   </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
-
-                      {/* Add Attribute Group Button */}
-                      {matrixAttributes.length < 5 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMatrixAttributes(prev => [
-                              ...prev,
-                              {
-                                name: prev.length === 1 ? 'Ukuran' : (prev.length === 2 ? 'Bahan' : `Atribut ${prev.length + 1}`),
-                                values: ''
-                              }
-                            ])
-                          }}
-                          className="text-xs font-bold text-purple-700 hover:text-purple-900 bg-white hover:bg-purple-50 border border-dashed border-purple-300 px-3.5 py-2 rounded-xl transition inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                        >
-                          <span>➕</span>
-                          <span>Tambah Tipe Variasi / Atribut Baru (Maks. 5 Tingkat)</span>
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Bulk Setup for New Combinations & Preservation Settings */}
-                    <div className="p-3.5 bg-white border border-purple-200/80 rounded-xl space-y-3">
-                      <span className="text-xs font-black text-slate-800 uppercase tracking-wide block">
-                        Pengaturan Massal untuk Varian Baru:
-                      </span>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                            Harga Jual Massal (Rp)
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            placeholder={String(price || 10000)}
-                            className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
-                            value={bulkMatrixPrice === 0 ? '' : bulkMatrixPrice}
-                            onChange={e => setBulkMatrixPrice(Number(e.target.value) || 0)}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                            Modal HPP Massal (Rp)
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            placeholder={String(costPrice || 0)}
-                            className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
-                            value={bulkMatrixCostPrice === 0 ? '' : bulkMatrixCostPrice}
-                            onChange={e => setBulkMatrixCostPrice(Number(e.target.value) || 0)}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                            Stok Awal Massal
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            placeholder="10"
-                            className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
-                            value={bulkMatrixStock === 0 ? '' : bulkMatrixStock}
-                            onChange={e => setBulkMatrixStock(Number(e.target.value) || 0)}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="pt-2.5 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={preserveExistingVariants}
-                            onChange={e => setPreserveExistingVariants(e.target.checked)}
-                            className="rounded text-purple-600 w-4 h-4 cursor-pointer"
-                          />
-                          <span>Pertahankan ID, Harga, SKU & Stok varian lama yang namanya cocok (Aman)</span>
-                        </label>
-
-                        <div className="flex items-center gap-2 justify-end shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setShowMatrixGen(false)}
-                            className="px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
-                          >
-                            Batal
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleGenerateMatrix}
-                            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer flex items-center gap-1.5"
-                          >
-                            <span>⚡ Buat {previewCombinationsCount > 0 ? `${previewCombinationsCount} Kombinasi` : 'Variasi'}</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {variantRows.length === 0 ? (
-                  <div className="text-center py-10 border border-dashed border-slate-200 rounded-2xl bg-white">
-                    <p className="text-xs font-bold text-slate-600">Produk Tunggal (Belum Ada Varian)</p>
-                    <p className="text-[11px] text-slate-400 mt-1 max-w-md mx-auto">
-                      Tambahkan varian jika produk ini memiliki pilihan seperti <strong>Panas / Es</strong>, <strong>Kecil / Besar</strong>, atau <strong>Ukuran S / M / L</strong>.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {variantRows.map((v, vIdx) => (
-                      <div key={vIdx} className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-3">
-                        <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                          <span className="text-[11px] font-extrabold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-md border border-blue-100">
-                            Varian #{vIdx + 1}: {v.name || 'Baru'}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setVariantRows(prev => prev.filter((_, i) => i !== vIdx))}
-                            className="text-slate-400 hover:text-rose-600 text-xs font-bold px-2 py-0.5 rounded-md hover:bg-rose-50 transition cursor-pointer"
-                          >
-                            ✕ Hapus
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-                          <div className="sm:col-span-3">
-                            <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Nama Varian *</label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="Contoh: Panas / Es"
-                              className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
-                              value={v.name}
-                              onChange={e => {
-                                const val = e.target.value
-                                setVariantRows(prev => {
-                                  const copy = [...prev]
-                                  copy[vIdx] = { ...copy[vIdx], name: val }
-                                  return copy
-                                })
-                              }}
-                            />
-                          </div>
-
-                          <div className="sm:col-span-3">
-                            <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">SKU / ID Varian</label>
-                            <input
-                              type="text"
-                              placeholder="SKU-VAR"
-                              className="w-full p-2 border border-slate-200 rounded-lg text-xs font-mono font-semibold text-slate-800 outline-none focus:border-blue-600"
-                              value={v.sku}
-                              onChange={e => {
-                                const val = e.target.value
-                                setVariantRows(prev => {
-                                  const copy = [...prev]
-                                  copy[vIdx] = { ...copy[vIdx], sku: val }
-                                  return copy
-                                })
-                              }}
-                            />
-                          </div>
-
-                          <div className="sm:col-span-2">
-                            <label className="block text-[9px] font-bold text-slate-600 uppercase mb-1">Harga Dasar (Rp)</label>
-                            <input
-                              type="number"
-                              min="0"
-                              className="w-full p-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-blue-600"
-                              value={v.price}
-                              onChange={e => {
-                                const val = Number(e.target.value) || 0
-                                setVariantRows(prev => {
-                                  const copy = [...prev]
-                                  copy[vIdx] = { ...copy[vIdx], price: val }
-                                  return copy
-                                })
-                              }}
-                            />
-                          </div>
-
-                          <div className="sm:col-span-2">
-                            <label className="block text-[9px] font-bold text-indigo-700 uppercase mb-1">Modal HPP (Rp)</label>
-                            <input
-                              type="number"
-                              min="0"
-                              placeholder={costPrice > 0 ? `${costPrice} (Utama)` : 'Ikut HPP Utama'}
-                              className="w-full p-2 border border-indigo-200 bg-indigo-50/40 rounded-lg text-xs font-semibold text-indigo-900 outline-none focus:border-indigo-600"
-                              value={v.cost_price === 0 ? '' : v.cost_price}
-                              onChange={e => {
-                                const val = Number(e.target.value) || 0
-                                setVariantRows(prev => {
-                                  const copy = [...prev]
-                                  copy[vIdx] = { ...copy[vIdx], cost_price: val }
-                                  return copy
-                                })
-                              }}
-                            />
-                          </div>
-
-                          <div className="sm:col-span-2">
-                            <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Stok Varian</label>
-                            <input
-                              type="number"
-                              min="0"
-                              className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
-                              value={v.stock_quantity}
-                              onChange={e => {
-                                const val = Number(e.target.value) || 0
-                                setVariantRows(prev => {
-                                  const copy = [...prev]
-                                  copy[vIdx] = { ...copy[vIdx], stock_quantity: val }
-                                  return copy
-                                })
-                              }}
-                            />
-                          </div>
-                        </div>
-
-                        {enableMultiPrice && (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-slate-100 bg-slate-50/60 p-2.5 rounded-xl">
-                            <div>
-                              <label className="block text-[9px] font-bold text-indigo-700 uppercase mb-1">
-                                🍽️ Harga Dine-In Varian (Rp)
-                              </label>
-                              <input
-                                type="number"
-                                min="0"
-                                placeholder={`Default: Rp ${(v.price || 0).toLocaleString('id-ID')}`}
-                                className="w-full p-1.5 border border-indigo-200 rounded-lg text-xs font-bold text-slate-800 bg-white outline-none"
-                                value={v.dine_in_price ? v.dine_in_price : ''}
-                                onChange={e => {
-                                  const val = e.target.value === '' ? null : Number(e.target.value)
-                                  setVariantRows(prev => {
-                                    const copy = [...prev]
-                                    copy[vIdx] = { ...copy[vIdx], dine_in_price: val }
-                                    return copy
-                                  })
-                                }}
-                              />
+                                  {parsedOptions.map((opt, oIdx) => (
+                                    <span key={oIdx} className="text-[11px] font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200/60">
+                                      {opt}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                            <div>
-                              <label className="block text-[9px] font-bold text-emerald-700 uppercase mb-1">
-                                🛍️ Harga Take Away Varian (Rp)
-                              </label>
-                              <input
-                                type="number"
-                                min="0"
-                                placeholder={`Default: Rp ${(v.price || 0).toLocaleString('id-ID')}`}
-                                className="w-full p-1.5 border border-emerald-200 rounded-lg text-xs font-bold text-slate-800 bg-white outline-none"
-                                value={v.take_away_price ? v.take_away_price : ''}
-                                onChange={e => {
-                                  const val = e.target.value === '' ? null : Number(e.target.value)
-                                  setVariantRows(prev => {
-                                    const copy = [...prev]
-                                    copy[vIdx] = { ...copy[vIdx], take_away_price: val }
-                                    return copy
-                                  })
-                                }}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+                          )
+                        })}
 
-          {/* ================================================================= */}
-          {/* TAB 3: OPSI TAMBAHAN / MODIFIER & TAMBAHAN HARGA (+RP)            */}
-          {/* ================================================================= */}
-          {activeTab === 'modifiers' && (
-            <div className="space-y-5 animate-in fade-in duration-150">
-              <div className="bg-white border border-purple-200/80 rounded-2xl p-5 shadow-2xs space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-100 pb-3">
-                  <div>
-                    <h4 className="text-sm font-black text-purple-950 flex items-center gap-2">
-                      <span>✨</span> Grup Opsi Tambahan (Modifier / Topping / Kustomisasi)
-                    </h4>
-                    <p className="text-xs text-slate-600 font-medium mt-0.5">
-                      Atur pilihan tambahan seperti <strong>Level</strong>, <strong>Topping</strong>, <strong>Ekstra Komponen</strong>, atau <strong>Kustomisasi Layanan</strong> beserta tambahan harga (+Rp) dan modal HPP.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setModifierGroups(prev => [
-                        ...prev,
-                        {
-                          group_name: prev.length === 0 ? 'Pilihan Tambahan' : `Grup Opsi ${prev.length + 1}`,
-                          is_required: false,
-                          options: [
-                            { option_name: 'Opsi 1', price_extra: 0, cost_price: 0 },
-                            { option_name: 'Opsi 2', price_extra: 2000, cost_price: 0 }
-                          ]
-                        }
-                      ])
-                    }}
-                    className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition shadow-xs shrink-0 cursor-pointer"
-                  >
-                    ➕ Tambah Grup Opsi
-                  </button>
-                </div>
-
-                {/* Reusable Master Modifier Templates (1-Click Apply from other products in the same business) */}
-                {businessModifierTemplates.length > 0 && (
-                  <div className="p-3 bg-white border border-purple-200/80 rounded-xl flex items-center justify-between gap-3 flex-wrap">
-                    <div className="text-xs">
-                      <span className="font-extrabold text-purple-950">📋 Gunakan Grup Modifier yang Sudah Ada:</span>
-                      <span className="text-slate-500 ml-1 text-[11px]">Klik untuk menempelkan grup beserta opsi & harganya ke produk ini</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {businessModifierTemplates.map((tpl, idx) => {
-                        const alreadyAdded = modifierGroups.some(
-                          g => g.group_name.trim().toLowerCase() === tpl.group_name.trim().toLowerCase()
-                        )
-                        return (
+                        {/* Add Attribute Group Button */}
+                        {matrixAttributes.length < 5 && (
                           <button
-                            key={idx}
                             type="button"
-                            disabled={alreadyAdded}
                             onClick={() => {
-                              setModifierGroups(prev => [
+                              setMatrixAttributes(prev => [
                                 ...prev,
                                 {
-                                  group_name: tpl.group_name,
-                                  is_required: tpl.is_required,
-                                  options: tpl.options.map(o => ({ ...o }))
+                                  name: prev.length === 1 ? 'Ukuran' : (prev.length === 2 ? 'Bahan' : `Atribut ${prev.length + 1}`),
+                                  values: ''
                                 }
                               ])
                             }}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
-                              alreadyAdded
-                                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                                : 'bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-200'
-                            }`}
+                            className="text-xs font-bold text-purple-700 hover:text-purple-900 bg-white hover:bg-purple-50 border border-dashed border-purple-300 px-3.5 py-2 rounded-xl transition inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
                           >
-                            {alreadyAdded ? `✓ ${tpl.group_name}` : `+ ${tpl.group_name} (${tpl.options.length} opsi)`}
+                            <span>➕</span>
+                            <span>Tambah Tipe Variasi / Atribut Baru (Maks. 5 Tingkat)</span>
                           </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
+                        )}
+                      </div>
 
-                {modifierGroups.length === 0 ? (
-                  <div className="text-center py-10 border border-dashed border-purple-200 rounded-2xl bg-white">
-                    <p className="text-xs font-bold text-slate-600">Belum Ada Grup Modifier pada Produk Ini</p>
-                    <p className="text-[11px] text-slate-400 mt-1 max-w-md mx-auto">
-                      Klik <strong>"+ Tambah Grup Modifier"</strong> di atas untuk membuat pilihan seperti Level Pedas (+Rp) atau Extra Topping (+Rp).
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {modifierGroups.map((grp, gIdx) => (
-                      <div key={gIdx} className="p-4 bg-white border border-purple-200 rounded-2xl shadow-2xs space-y-3">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-slate-100 pb-3">
-                          <div className="flex items-center gap-2.5 flex-1">
-                            <span className="text-xs font-black text-purple-700 bg-purple-100 px-2.5 py-1 rounded-lg">
-                              Grup #{gIdx + 1}
-                            </span>
+                      {/* Bulk Setup for New Combinations & Preservation Settings */}
+                      <div className="p-3.5 bg-white border border-purple-200/80 rounded-xl space-y-3">
+                        <span className="text-xs font-black text-slate-800 uppercase tracking-wide block">
+                          Pengaturan Massal untuk Varian Baru:
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Harga Jual Massal (Rp)
+                            </label>
                             <input
-                              type="text"
-                              placeholder="Nama Grup (Contoh: Level Pedas, Topping)"
-                              className="flex-1 max-w-xs p-2 border border-slate-200 rounded-xl text-xs font-extrabold text-slate-900 outline-none focus:border-purple-600"
-                              value={grp.group_name}
-                              onChange={e => {
-                                const val = e.target.value
-                                setModifierGroups(prev => {
-                                  const copy = [...prev]
-                                  copy[gIdx] = { ...copy[gIdx], group_name: val }
-                                  return copy
-                                })
-                              }}
+                              type="number"
+                              min="0"
+                              placeholder={String(price || 10000)}
+                              className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                              value={bulkMatrixPrice === 0 ? '' : bulkMatrixPrice}
+                              onChange={e => setBulkMatrixPrice(Number(e.target.value) || 0)}
                             />
                           </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Modal HPP Massal (Rp)
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder={String(costPrice || 0)}
+                              className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                              value={bulkMatrixCostPrice === 0 ? '' : bulkMatrixCostPrice}
+                              onChange={e => setBulkMatrixCostPrice(Number(e.target.value) || 0)}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Stok Awal Massal
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="10"
+                              className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-white outline-none focus:border-purple-600"
+                              value={bulkMatrixStock === 0 ? '' : bulkMatrixStock}
+                              onChange={e => setBulkMatrixStock(Number(e.target.value) || 0)}
+                            />
+                          </div>
+                        </div>
 
-                          <div className="flex items-center gap-3">
-                            <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer">
+                        <div className="pt-2.5 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={preserveExistingVariants}
+                              onChange={e => setPreserveExistingVariants(e.target.checked)}
+                              className="rounded text-purple-600 w-4 h-4 cursor-pointer"
+                            />
+                            <span>Pertahankan ID, Harga, SKU & Stok varian lama yang namanya cocok (Aman)</span>
+                          </label>
+
+                          <div className="flex items-center gap-2 justify-end shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setShowMatrixGen(false)}
+                              className="px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                            >
+                              Batal
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleGenerateMatrix}
+                              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer flex items-center gap-1.5"
+                            >
+                              <span>⚡ Buat {previewCombinationsCount > 0 ? `${previewCombinationsCount} Kombinasi` : 'Variasi'}</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {variantRows.length === 0 ? (
+                    <div className="text-center py-10 border border-dashed border-slate-200 rounded-2xl bg-white">
+                      <p className="text-xs font-bold text-slate-600">Produk Tunggal (Belum Ada Varian)</p>
+                      <p className="text-[11px] text-slate-400 mt-1 max-w-md mx-auto">
+                        Tambahkan varian jika produk ini memiliki pilihan seperti <strong>Panas / Es</strong>, <strong>Kecil / Besar</strong>, atau <strong>Ukuran S / M / L</strong>.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {variantRows.map((v, vIdx) => (
+                        <div key={vIdx} className="p-3.5 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-3">
+                          <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                            <span className="text-[11px] font-extrabold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-md border border-blue-100">
+                              Varian #{vIdx + 1}: {v.name || 'Baru'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setVariantRows(prev => prev.filter((_, i) => i !== vIdx))}
+                              className="text-slate-400 hover:text-rose-600 text-xs font-bold px-2 py-0.5 rounded-md hover:bg-rose-50 transition cursor-pointer"
+                            >
+                              ✕ Hapus
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                            <div className="sm:col-span-3">
+                              <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Nama Varian *</label>
                               <input
-                                type="checkbox"
-                                checked={grp.is_required}
+                                type="text"
+                                required
+                                placeholder="Contoh: Panas / Es"
+                                className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
+                                value={v.name}
                                 onChange={e => {
-                                  const checked = e.target.checked
-                                  setModifierGroups(prev => {
+                                  const val = e.target.value
+                                  setVariantRows(prev => {
                                     const copy = [...prev]
-                                    copy[gIdx] = { ...copy[gIdx], is_required: checked }
+                                    copy[vIdx] = { ...copy[vIdx], name: val }
                                     return copy
                                   })
                                 }}
-                                className="rounded text-purple-600"
                               />
-                              <span>Wajib Dipilih Kasir</span>
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => setModifierGroups(prev => prev.filter((_, i) => i !== gIdx))}
-                              className="text-xs font-bold text-rose-600 hover:bg-rose-50 px-2.5 py-1 rounded-lg transition cursor-pointer"
-                            >
-                              🗑️ Hapus Grup
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Options Table */}
-                        <div className="space-y-2">
-                          <div className="grid grid-cols-12 gap-2 text-[10px] font-black text-slate-400 uppercase px-1">
-                            <div className="col-span-5">Nama Opsi (Contoh: Level 3 / Extra Keju)</div>
-                            <div className="col-span-3">Tambahan Harga (+Rp)</div>
-                            <div className="col-span-3">Tambahan Modal HPP (Rp)</div>
-                            <div className="col-span-1 text-right">Aksi</div>
-                          </div>
-
-                          {grp.options.map((opt, oIdx) => (
-                            <div key={oIdx} className="grid grid-cols-12 gap-2 items-center">
-                              <div className="col-span-5">
-                                <input
-                                  type="text"
-                                  placeholder="Nama opsi..."
-                                  className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-purple-600"
-                                  value={opt.option_name}
-                                  onChange={e => {
-                                    const val = e.target.value
-                                    setModifierGroups(prev => {
-                                      const copy = [...prev]
-                                      const opts = [...copy[gIdx].options]
-                                      opts[oIdx] = { ...opts[oIdx], option_name: val }
-                                      copy[gIdx] = { ...copy[gIdx], options: opts }
-                                      return copy
-                                    })
-                                  }}
-                                />
-                              </div>
-                              <div className="col-span-3">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  placeholder="0 (Gratis)"
-                                  className="w-full p-2 border border-purple-200 bg-purple-50/30 rounded-lg text-xs font-bold text-purple-900 outline-none focus:border-purple-600"
-                                  value={opt.price_extra === 0 ? '' : opt.price_extra}
-                                  onChange={e => {
-                                    const val = e.target.value === '' ? 0 : Number(e.target.value)
-                                    setModifierGroups(prev => {
-                                      const copy = [...prev]
-                                      const opts = [...copy[gIdx].options]
-                                      opts[oIdx] = { ...opts[oIdx], price_extra: val }
-                                      copy[gIdx] = { ...copy[gIdx], options: opts }
-                                      return copy
-                                    })
-                                  }}
-                                />
-                              </div>
-                              <div className="col-span-3">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  placeholder="0"
-                                  className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 outline-none focus:border-purple-600"
-                                  value={opt.cost_price === 0 ? '' : opt.cost_price}
-                                  onChange={e => {
-                                    const val = e.target.value === '' ? 0 : Number(e.target.value)
-                                    setModifierGroups(prev => {
-                                      const copy = [...prev]
-                                      const opts = [...copy[gIdx].options]
-                                      opts[oIdx] = { ...opts[oIdx], cost_price: val }
-                                      copy[gIdx] = { ...copy[gIdx], options: opts }
-                                      return copy
-                                    })
-                                  }}
-                                />
-                              </div>
-                              <div className="col-span-1 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setModifierGroups(prev => {
-                                      const copy = [...prev]
-                                      copy[gIdx] = {
-                                        ...copy[gIdx],
-                                        options: copy[gIdx].options.filter((_, i) => i !== oIdx)
-                                      }
-                                      return copy
-                                    })
-                                  }}
-                                  className="text-slate-400 hover:text-rose-600 font-bold text-xs p-1 cursor-pointer"
-                                >
-                                  ✕
-                                </button>
-                              </div>
                             </div>
-                          ))}
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setModifierGroups(prev => {
-                                const copy = [...prev]
-                                copy[gIdx] = {
-                                  ...copy[gIdx],
-                                  options: [
-                                    ...copy[gIdx].options,
-                                    { option_name: '', price_extra: 0, cost_price: 0 }
-                                  ]
-                                }
-                                return copy
-                              })
-                            }}
-                            className="text-xs font-bold text-purple-700 hover:text-purple-900 bg-purple-50 hover:bg-purple-100 px-3 py-1.5 rounded-lg transition inline-flex items-center gap-1 cursor-pointer"
-                          >
-                            <span>+ Tambah Opsi Pilihan</span>
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* ================================================================= */}
-          {/* TAB 4: RESEP & BOM HPP                                            */}
-          {/* ================================================================= */}
-          {activeTab === 'recipe' && (
-            <div className="space-y-4 animate-in fade-in duration-150">
-              <div className="bg-indigo-50/60 border border-indigo-200 rounded-2xl p-5 space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-indigo-200/60 pb-3">
-                  <div>
-                    <h4 className="text-sm font-black text-indigo-950 flex items-center gap-2">
-                      <span>🧪</span> Formulasi Resep & Komponen Penyusun (Bill of Materials)
-                    </h4>
-                    <p className="text-xs text-indigo-800/80 font-medium mt-0.5">
-                      Hitung HPP otomatis berdasarkan takaran bahan baku atau paket menu (Bundle).
-                    </p>
-                  </div>
-                  <div className="px-4 py-2 rounded-xl bg-white border border-indigo-200 text-right shrink-0">
-                    <span className="text-[10px] font-bold text-indigo-600 uppercase block">Total HPP Resep</span>
-                    <span className="text-sm font-black text-indigo-950">
-                      Rp {calculatedDynamicHpp.toLocaleString('id-ID')}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Add Ingredient Bar */}
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 max-w-full relative z-20">
-                  <IngredientSearchCombobox
-                    options={availableIngredientsOptions}
-                    selectedId={selectedIngredientId}
-                    onSelect={productId => setSelectedIngredientId(productId)}
-                    placeholder="Cari komponen, bahan baku, atau SKU..."
-                  />
-
-                  <div className="flex items-center gap-2 shrink-0 justify-between sm:justify-start">
-                    <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl p-1 pr-2.5 shadow-2xs">
-                      <input
-                        type="number"
-                        step="any"
-                        min="0.0001"
-                        className="w-20 p-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-indigo-600 bg-white text-center"
-                        placeholder="Jumlah"
-                        value={ingredientQtyInput}
-                        onChange={e => setIngredientQtyInput(e.target.value)}
-                      />
-                      <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded-md border border-indigo-100 uppercase select-none">
-                        {selectedIngredientUnit}
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleAddIngredient}
-                      className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs shrink-0 flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>+</span>
-                      <span>Tambah Bahan</span>
-                    </button>
-                  </div>
-                </div>
-
-                {recipeRows.length === 0 ? (
-                  <div className="text-center py-10 border border-dashed border-indigo-200 rounded-2xl bg-white">
-                    <p className="text-xs font-bold text-slate-500">Belum Ada Bahan Baku / Komponen Paket</p>
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      Cari dan tambahkan komponen di atas untuk menghitung HPP otomatis.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {recipeRows.map((r) => {
-                      const rowCost = r.quantity * r.cost_price
-                      return (
-                        <div
-                          key={r.ingredient_product_id}
-                          className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white border border-slate-200 rounded-xl shadow-2xs"
-                        >
-                          <div className="flex-1 min-w-0 pr-2">
-                            <p className="text-xs font-bold text-slate-800 break-words leading-snug">
-                              {r.ingredient_name}
-                            </p>
-                            <div className="flex items-center gap-2 mt-1 flex-wrap">
-                              <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
-                                Modal: Rp {(r.cost_price || 0).toLocaleString('id-ID')} / {r.unit}
-                              </span>
+                            <div className="sm:col-span-3">
+                              <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">SKU / ID Varian</label>
+                              <input
+                                type="text"
+                                placeholder="SKU-VAR"
+                                className="w-full p-2 border border-slate-200 rounded-lg text-xs font-mono font-semibold text-slate-800 outline-none focus:border-blue-600"
+                                value={v.sku}
+                                onChange={e => {
+                                  const val = e.target.value
+                                  setVariantRows(prev => {
+                                    const copy = [...prev]
+                                    copy[vIdx] = { ...copy[vIdx], sku: val }
+                                    return copy
+                                  })
+                                }}
+                              />
                             </div>
-                          </div>
 
-                          <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
-                            <div className="flex items-center gap-1.5">
+                            <div className="sm:col-span-2">
+                              <label className="block text-[9px] font-bold text-slate-600 uppercase mb-1">Harga Dasar (Rp)</label>
                               <input
                                 type="number"
-                                step="any"
-                                min="0.0001"
-                                className="w-20 p-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-center text-slate-800 outline-none focus:border-indigo-500 bg-white"
-                                value={r.quantity}
-                                onChange={e => handleUpdateIngredientQty(r.ingredient_product_id, e.target.value)}
+                                min="0"
+                                className="w-full p-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-blue-600"
+                                value={v.price}
+                                onChange={e => {
+                                  const val = Number(e.target.value) || 0
+                                  setVariantRows(prev => {
+                                    const copy = [...prev]
+                                    copy[vIdx] = { ...copy[vIdx], price: val }
+                                    return copy
+                                  })
+                                }}
                               />
-                              <span className="text-[11px] font-bold text-slate-600 min-w-[32px]">{r.unit}</span>
                             </div>
 
-                            <div className="text-right min-w-[95px]">
-                              <p className="text-[9px] text-slate-400 font-bold uppercase">Subtotal HPP</p>
-                              <p className="text-xs font-black text-indigo-900">
-                                Rp {rowCost.toLocaleString('id-ID')}
-                              </p>
+                            <div className="sm:col-span-2">
+                              <label className="block text-[9px] font-bold text-indigo-700 uppercase mb-1">Modal HPP (Rp)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                placeholder={costPrice > 0 ? `${costPrice} (Utama)` : 'Ikut HPP Utama'}
+                                className="w-full p-2 border border-indigo-200 bg-indigo-50/40 rounded-lg text-xs font-semibold text-indigo-900 outline-none focus:border-indigo-600"
+                                value={v.cost_price === 0 ? '' : v.cost_price}
+                                onChange={e => {
+                                  const val = Number(e.target.value) || 0
+                                  setVariantRows(prev => {
+                                    const copy = [...prev]
+                                    copy[vIdx] = { ...copy[vIdx], cost_price: val }
+                                    return copy
+                                  })
+                                }}
+                              />
                             </div>
+
+                            <div className="sm:col-span-2">
+                              <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Stok Varian</label>
+                              <input
+                                type="number"
+                                min="0"
+                                className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-blue-600"
+                                value={v.stock_quantity}
+                                onChange={e => {
+                                  const val = Number(e.target.value) || 0
+                                  setVariantRows(prev => {
+                                    const copy = [...prev]
+                                    copy[vIdx] = { ...copy[vIdx], stock_quantity: val }
+                                    return copy
+                                  })
+                                }}
+                              />
+                            </div>
+                          </div>
+
+                          {enableMultiPrice && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-slate-100 bg-slate-50/60 p-2.5 rounded-xl">
+                              <div>
+                                <label className="block text-[9px] font-bold text-indigo-700 uppercase mb-1">
+                                  🍽️ Harga Dine-In Varian (Rp)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  placeholder={`Default: Rp ${(v.price || 0).toLocaleString('id-ID')}`}
+                                  className="w-full p-1.5 border border-indigo-200 rounded-lg text-xs font-bold text-slate-800 bg-white outline-none"
+                                  value={v.dine_in_price ? v.dine_in_price : ''}
+                                  onChange={e => {
+                                    const val = e.target.value === '' ? null : Number(e.target.value)
+                                    setVariantRows(prev => {
+                                      const copy = [...prev]
+                                      copy[vIdx] = { ...copy[vIdx], dine_in_price: val }
+                                      return copy
+                                    })
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] font-bold text-emerald-700 uppercase mb-1">
+                                  🛍️ Harga Take Away Varian (Rp)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  placeholder={`Default: Rp ${(v.price || 0).toLocaleString('id-ID')}`}
+                                  className="w-full p-1.5 border border-emerald-200 rounded-lg text-xs font-bold text-slate-800 bg-white outline-none"
+                                  value={v.take_away_price ? v.take_away_price : ''}
+                                  onChange={e => {
+                                    const val = e.target.value === '' ? null : Number(e.target.value)
+                                    setVariantRows(prev => {
+                                      const copy = [...prev]
+                                      copy[vIdx] = { ...copy[vIdx], take_away_price: val }
+                                      return copy
+                                    })
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ================================================================= */}
+            {/* TAB 3: OPSI TAMBAHAN / MODIFIER & TAMBAHAN HARGA (+RP)            */}
+            {/* ================================================================= */}
+            {activeTab === 'modifiers' && (
+              <div className="space-y-5 animate-in fade-in duration-150">
+                <div className="bg-white border border-purple-200/80 rounded-2xl p-5 shadow-2xs space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-100 pb-3">
+                    <div>
+                      <h4 className="text-sm font-black text-purple-950 flex items-center gap-2">
+                        <span>✨</span> Grup Opsi Tambahan (Modifier / Topping / Kustomisasi)
+                      </h4>
+                      <p className="text-xs text-slate-600 font-medium mt-0.5">
+                        Atur pilihan tambahan seperti <strong>Level</strong>, <strong>Topping</strong>, <strong>Ekstra Komponen</strong>, atau <strong>Kustomisasi Layanan</strong> beserta tambahan harga (+Rp) dan modal HPP.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setModifierGroups(prev => [
+                          ...prev,
+                          {
+                            group_name: prev.length === 0 ? 'Pilihan Tambahan' : `Grup Opsi ${prev.length + 1}`,
+                            is_required: false,
+                            options: [
+                              { option_name: 'Opsi 1', price_extra: 0, cost_price: 0 },
+                              { option_name: 'Opsi 2', price_extra: 2000, cost_price: 0 }
+                            ]
+                          }
+                        ])
+                      }}
+                      className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition shadow-xs shrink-0 cursor-pointer"
+                    >
+                      ➕ Tambah Grup Opsi
+                    </button>
+                  </div>
+
+                  {/* Reusable Master Modifier Templates (1-Click Apply from other products in the same business) */}
+                  {businessModifierTemplates.length > 0 && (
+                    <div className="p-3 bg-white border border-purple-200/80 rounded-xl flex items-center justify-between gap-3 flex-wrap">
+                      <div className="text-xs">
+                        <span className="font-extrabold text-purple-950">📋 Gunakan Grup Modifier yang Sudah Ada:</span>
+                        <span className="text-slate-500 ml-1 text-[11px]">Klik untuk menempelkan grup beserta opsi & harganya ke produk ini</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {businessModifierTemplates.map((tpl, idx) => {
+                          const alreadyAdded = modifierGroups.some(
+                            g => g.group_name.trim().toLowerCase() === tpl.group_name.trim().toLowerCase()
+                          )
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              disabled={alreadyAdded}
+                              onClick={() => {
+                                setModifierGroups(prev => [
+                                  ...prev,
+                                  {
+                                    group_name: tpl.group_name,
+                                    is_required: tpl.is_required,
+                                    options: tpl.options.map(o => ({ ...o }))
+                                  }
+                                ])
+                              }}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${alreadyAdded
+                                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                                : 'bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-200'
+                                }`}
+                            >
+                              {alreadyAdded ? `✓ ${tpl.group_name}` : `+ ${tpl.group_name} (${tpl.options.length} opsi)`}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {modifierGroups.length === 0 ? (
+                    <div className="text-center py-10 border border-dashed border-purple-200 rounded-2xl bg-white">
+                      <p className="text-xs font-bold text-slate-600">Belum Ada Grup Modifier pada Produk Ini</p>
+                      <p className="text-[11px] text-slate-400 mt-1 max-w-md mx-auto">
+                        Klik <strong>"+ Tambah Grup Modifier"</strong> di atas untuk membuat pilihan seperti Level Pedas (+Rp) atau Extra Topping (+Rp).
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {modifierGroups.map((grp, gIdx) => (
+                        <div key={gIdx} className="p-4 bg-white border border-purple-200 rounded-2xl shadow-2xs space-y-3">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-slate-100 pb-3">
+                            <div className="flex items-center gap-2.5 flex-1">
+                              <span className="text-xs font-black text-purple-700 bg-purple-100 px-2.5 py-1 rounded-lg">
+                                Grup #{gIdx + 1}
+                              </span>
+                              <input
+                                type="text"
+                                placeholder="Nama Grup (Contoh: Level Pedas, Topping)"
+                                className="flex-1 max-w-xs p-2 border border-slate-200 rounded-xl text-xs font-extrabold text-slate-900 outline-none focus:border-purple-600"
+                                value={grp.group_name}
+                                onChange={e => {
+                                  const val = e.target.value
+                                  setModifierGroups(prev => {
+                                    const copy = [...prev]
+                                    copy[gIdx] = { ...copy[gIdx], group_name: val }
+                                    return copy
+                                  })
+                                }}
+                              />
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={grp.is_required}
+                                  onChange={e => {
+                                    const checked = e.target.checked
+                                    setModifierGroups(prev => {
+                                      const copy = [...prev]
+                                      copy[gIdx] = { ...copy[gIdx], is_required: checked }
+                                      return copy
+                                    })
+                                  }}
+                                  className="rounded text-purple-600"
+                                />
+                                <span>Wajib Dipilih Kasir</span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => setModifierGroups(prev => prev.filter((_, i) => i !== gIdx))}
+                                className="text-xs font-bold text-rose-600 hover:bg-rose-50 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                              >
+                                🗑️ Hapus Grup
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Options Table */}
+                          <div className="space-y-2">
+                            <div className="grid grid-cols-12 gap-2 text-[10px] font-black text-slate-400 uppercase px-1">
+                              <div className="col-span-5">Nama Opsi (Contoh: Level 3 / Extra Keju)</div>
+                              <div className="col-span-3">Tambahan Harga (+Rp)</div>
+                              <div className="col-span-3">Tambahan Modal HPP (Rp)</div>
+                              <div className="col-span-1 text-right">Aksi</div>
+                            </div>
+
+                            {grp.options.map((opt, oIdx) => (
+                              <div key={oIdx} className="grid grid-cols-12 gap-2 items-center">
+                                <div className="col-span-5">
+                                  <input
+                                    type="text"
+                                    placeholder="Nama opsi..."
+                                    className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-purple-600"
+                                    value={opt.option_name}
+                                    onChange={e => {
+                                      const val = e.target.value
+                                      setModifierGroups(prev => {
+                                        const copy = [...prev]
+                                        const opts = [...copy[gIdx].options]
+                                        opts[oIdx] = { ...opts[oIdx], option_name: val }
+                                        copy[gIdx] = { ...copy[gIdx], options: opts }
+                                        return copy
+                                      })
+                                    }}
+                                  />
+                                </div>
+                                <div className="col-span-3">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    placeholder="0 (Gratis)"
+                                    className="w-full p-2 border border-purple-200 bg-purple-50/30 rounded-lg text-xs font-bold text-purple-900 outline-none focus:border-purple-600"
+                                    value={opt.price_extra === 0 ? '' : opt.price_extra}
+                                    onChange={e => {
+                                      const val = e.target.value === '' ? 0 : Number(e.target.value)
+                                      setModifierGroups(prev => {
+                                        const copy = [...prev]
+                                        const opts = [...copy[gIdx].options]
+                                        opts[oIdx] = { ...opts[oIdx], price_extra: val }
+                                        copy[gIdx] = { ...copy[gIdx], options: opts }
+                                        return copy
+                                      })
+                                    }}
+                                  />
+                                </div>
+                                <div className="col-span-3">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    placeholder="0"
+                                    className="w-full p-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 outline-none focus:border-purple-600"
+                                    value={opt.cost_price === 0 ? '' : opt.cost_price}
+                                    onChange={e => {
+                                      const val = e.target.value === '' ? 0 : Number(e.target.value)
+                                      setModifierGroups(prev => {
+                                        const copy = [...prev]
+                                        const opts = [...copy[gIdx].options]
+                                        opts[oIdx] = { ...opts[oIdx], cost_price: val }
+                                        copy[gIdx] = { ...copy[gIdx], options: opts }
+                                        return copy
+                                      })
+                                    }}
+                                  />
+                                </div>
+                                <div className="col-span-1 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setModifierGroups(prev => {
+                                        const copy = [...prev]
+                                        copy[gIdx] = {
+                                          ...copy[gIdx],
+                                          options: copy[gIdx].options.filter((_, i) => i !== oIdx)
+                                        }
+                                        return copy
+                                      })
+                                    }}
+                                    className="text-slate-400 hover:text-rose-600 font-bold text-xs p-1 cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
 
                             <button
                               type="button"
-                              onClick={() => handleRemoveIngredient(r.ingredient_product_id)}
-                              className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors text-sm font-bold cursor-pointer"
+                              onClick={() => {
+                                setModifierGroups(prev => {
+                                  const copy = [...prev]
+                                  copy[gIdx] = {
+                                    ...copy[gIdx],
+                                    options: [
+                                      ...copy[gIdx].options,
+                                      { option_name: '', price_extra: 0, cost_price: 0 }
+                                    ]
+                                  }
+                                  return copy
+                                })
+                              }}
+                              className="text-xs font-bold text-purple-700 hover:text-purple-900 bg-purple-50 hover:bg-purple-100 px-3 py-1.5 rounded-lg transition inline-flex items-center gap-1 cursor-pointer"
                             >
-                              ✕
+                              <span>+ Tambah Opsi Pilihan</span>
                             </button>
                           </div>
                         </div>
-                      )
-                    })}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+
+            {/* ================================================================= */}
+            {/* TAB 4: RESEP & BOM HPP                                            */}
+            {/* ================================================================= */}
+            {activeTab === 'recipe' && (
+              <div className="space-y-4 animate-in fade-in duration-150">
+                <div className="bg-indigo-50/60 border border-indigo-200 rounded-2xl p-5 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-indigo-200/60 pb-3">
+                    <div>
+                      <h4 className="text-sm font-black text-indigo-950 flex items-center gap-2">
+                        <span>🧪</span> Formulasi Resep & Komponen Penyusun (Bill of Materials)
+                      </h4>
+                      <p className="text-xs text-indigo-800/80 font-medium mt-0.5">
+                        Hitung HPP otomatis berdasarkan takaran bahan baku atau paket menu (Bundle).
+                      </p>
+                    </div>
+                    <div className="px-4 py-2 rounded-xl bg-white border border-indigo-200 text-right shrink-0">
+                      <span className="text-[10px] font-bold text-indigo-600 uppercase block">Total HPP Resep</span>
+                      <span className="text-sm font-black text-indigo-950">
+                        Rp {calculatedDynamicHpp.toLocaleString('id-ID')}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Add Ingredient Bar */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 max-w-full relative z-20">
+                    <IngredientSearchCombobox
+                      options={availableIngredientsOptions}
+                      selectedId={selectedIngredientId}
+                      onSelect={productId => setSelectedIngredientId(productId)}
+                      placeholder="Cari komponen, bahan baku, atau SKU..."
+                    />
+
+                    <div className="flex items-center gap-2 shrink-0 justify-between sm:justify-start">
+                      <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl p-1 pr-2.5 shadow-2xs">
+                        <input
+                          type="number"
+                          step="any"
+                          min="0.0001"
+                          className="w-20 p-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-indigo-600 bg-white text-center"
+                          placeholder="Jumlah"
+                          value={ingredientQtyInput}
+                          onChange={e => setIngredientQtyInput(e.target.value)}
+                        />
+                        <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded-md border border-indigo-100 uppercase select-none">
+                          {selectedIngredientUnit}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleAddIngredient}
+                        className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs shrink-0 flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>+</span>
+                        <span>Tambah Bahan</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {recipeRows.length === 0 ? (
+                    <div className="text-center py-10 border border-dashed border-indigo-200 rounded-2xl bg-white">
+                      <p className="text-xs font-bold text-slate-500">Belum Ada Bahan Baku / Komponen Paket</p>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Cari dan tambahkan komponen di atas untuk menghitung HPP otomatis.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {recipeRows.map((r) => {
+                        const rowCost = r.quantity * r.cost_price
+                        return (
+                          <div
+                            key={r.ingredient_product_id}
+                            className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white border border-slate-200 rounded-xl shadow-2xs"
+                          >
+                            <div className="flex-1 min-w-0 pr-2">
+                              <p className="text-xs font-bold text-slate-800 break-words leading-snug">
+                                {r.ingredient_name}
+                              </p>
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                                  Modal: Rp {(r.cost_price || 0).toLocaleString('id-ID')} / {r.unit}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0.0001"
+                                  className="w-20 p-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-center text-slate-800 outline-none focus:border-indigo-500 bg-white"
+                                  value={r.quantity}
+                                  onChange={e => handleUpdateIngredientQty(r.ingredient_product_id, e.target.value)}
+                                />
+                                <span className="text-[11px] font-bold text-slate-600 min-w-[32px]">{r.unit}</span>
+                              </div>
+
+                              <div className="text-right min-w-[95px]">
+                                <p className="text-[9px] text-slate-400 font-bold uppercase">Subtotal HPP</p>
+                                <p className="text-xs font-black text-indigo-900">
+                                  Rp {rowCost.toLocaleString('id-ID')}
+                                </p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveIngredient(r.ingredient_product_id)}
+                                className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors text-sm font-bold cursor-pointer"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </form>
 

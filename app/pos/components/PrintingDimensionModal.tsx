@@ -2,6 +2,8 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useModalBackHandler } from '@/hooks/useModalBackHandler'
+import { supabase } from '@/lib/supabase'
+import { PosSalesType, resolvePosItemPrice } from '@/lib/posCatalogStore'
 
 export interface DimensionSpec {
   length: number
@@ -15,16 +17,28 @@ export interface DimensionSpec {
   min_area: number
 }
 
-interface ModifierOption {
+export type VariantOption = {
   id: string
   name: string
   price: number
+  price_tiers?: any
+  costPrice?: number
+  cost_price?: number
+  stockQuantity?: number
+}
+
+interface ModifierOption {
+  id: string
+  name: string
+  priceExtra: number
+  costPrice?: number
 }
 
 interface ModifierGroup {
   id: string
   name: string
-  type?: 'radio' | 'checkbox'
+  required?: boolean
+  type: 'radio' | 'checkbox'
   options: ModifierOption[]
 }
 
@@ -32,21 +46,24 @@ interface Props {
   isOpen: boolean
   onClose: () => void
   product: any | null
+  salesType?: PosSalesType
   initialValues?: {
     length?: number
     width?: number
     input_unit?: 'cm' | 'm'
     quantity?: number
     note?: string
+    selectedVariant?: VariantOption | null
     selectedModifiers?: any[]
   } | null
   onAddToCart: (itemData: {
     product: any
+    selectedVariant?: VariantOption
     quantity: number
     finalPrice: number
     note: string
     dimension_spec: DimensionSpec
-    selectedModifiers?: any[]
+    selectedModifiers?: { group: string; name: string; priceExtra: number; costPrice?: number }[]
   }) => void
 }
 
@@ -54,6 +71,7 @@ export default function PrintingDimensionModal({
   isOpen,
   onClose,
   product,
+  salesType = 'basic',
   initialValues,
   onAddToCart,
 }: Props) {
@@ -74,6 +92,152 @@ export default function PrintingDimensionModal({
   const [quantityInput, setQuantityInput] = useState<string>('1')
   const [note, setNote] = useState<string>('')
   const [selectedModifiers, setSelectedModifiers] = useState<Record<string, string[]>>({})
+  const [selectedVariant, setSelectedVariant] = useState<VariantOption | null>(null)
+
+  // Fallback state if variants or modifiers need on-the-fly fetch (Self-Healing resilience)
+  const [fetchedVariants, setFetchedVariants] = useState<VariantOption[]>([])
+  const [fetchedModifiers, setFetchedModifiers] = useState<any[]>([])
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false)
+
+  // Fetch variants & modifiers from DB if not preloaded
+  useEffect(() => {
+    if (!isOpen || !product?.id) {
+      setFetchedVariants([])
+      setFetchedModifiers([])
+      setIsLoadingDetails(false)
+      return
+    }
+
+    const rawVars = (product as any).product_variants || product.variants
+    const hasPreloadedVars = Array.isArray(rawVars) && rawVars.length > 0
+    const rawMods = (product as any).product_modifiers || product.modifiers
+    const hasPreloadedMods = Array.isArray(rawMods) && rawMods.length > 0
+
+    if (!hasPreloadedVars || !hasPreloadedMods) {
+      let active = true
+      setIsLoadingDetails(true)
+
+      Promise.all([
+        !hasPreloadedVars
+          ? supabase
+              .from('product_variants')
+              .select('*')
+              .eq('product_id', product.id)
+              .order('created_at', { ascending: true })
+          : Promise.resolve({ data: null, error: null }),
+        !hasPreloadedMods
+          ? supabase
+              .from('product_modifiers')
+              .select('*')
+              .eq('product_id', product.id)
+              .order('created_at', { ascending: true })
+          : Promise.resolve({ data: null, error: null })
+      ]).then(([varRes, modRes]) => {
+        if (!active) return
+        setIsLoadingDetails(false)
+        if (!varRes.error && varRes.data && varRes.data.length > 0) {
+          const parentFallbackPrice = resolvePosItemPrice(product, salesType, Number(product.price || 0))
+          setFetchedVariants(
+            varRes.data.map((v: any) => ({
+              id: v.id,
+              name: v.name || '',
+              price: resolvePosItemPrice(v, salesType, parentFallbackPrice),
+              price_tiers: v.price_tiers || null,
+              costPrice: Number(v.cost_price ?? v.costPrice ?? 0),
+              cost_price: Number(v.cost_price ?? v.costPrice ?? 0),
+              stockQuantity: Number(v.stock_quantity ?? 0)
+            }))
+          )
+        }
+        if (!modRes.error && modRes.data && modRes.data.length > 0) {
+          setFetchedModifiers(modRes.data)
+        }
+      })
+
+      return () => {
+        active = false
+      }
+    } else {
+      setFetchedVariants([])
+      setFetchedModifiers([])
+      setIsLoadingDetails(false)
+    }
+  }, [isOpen, product, salesType])
+
+  // Resolve variants with Sales Type awareness
+  const variants: VariantOption[] = useMemo(() => {
+    if (!product) return []
+    const parentFallbackPrice = resolvePosItemPrice(product, salesType, Number(product.price || 0))
+    const raw = (product as any).product_variants || product.variants
+    if (Array.isArray(raw) && raw.length > 0) {
+      return raw.map((v: any) => ({
+        id: v?.id || '',
+        name: v?.name || '',
+        price: resolvePosItemPrice(v, salesType, parentFallbackPrice),
+        price_tiers: v?.price_tiers || null,
+        costPrice: Number(v?.cost_price ?? v?.costPrice ?? 0),
+        cost_price: Number(v?.cost_price ?? v?.costPrice ?? 0),
+        stockQuantity: Number(v?.stock_quantity ?? 0)
+      }))
+    }
+    if (fetchedVariants.length > 0) {
+      return fetchedVariants
+    }
+    return []
+  }, [product, fetchedVariants, salesType])
+
+  // Parse & normalize modifier groups from database flat rows or object models
+  const modifierGroups: ModifierGroup[] = useMemo(() => {
+    if (!product) return []
+    const raw =
+      (Array.isArray((product as any).product_modifiers) && (product as any).product_modifiers.length > 0
+        ? (product as any).product_modifiers
+        : null) ||
+      (Array.isArray(product.modifiers) && product.modifiers.length > 0 ? product.modifiers : null) ||
+      fetchedModifiers
+
+    if (!Array.isArray(raw) || raw.length === 0) return []
+
+    // Case 1: Database flat rows format (from product_modifiers table or posCatalogStore)
+    if (raw[0]?.group_name || raw[0]?.option_name) {
+      const map: Record<string, ModifierGroup> = {}
+      for (const m of raw) {
+        if (!m) continue
+        const gName = (m.group_name || 'Finishing / Add-on').trim()
+        const groupId = `g-${gName}`
+        if (!map[groupId]) {
+          map[groupId] = {
+            id: groupId,
+            name: gName,
+            required: Boolean(m.is_required),
+            type: m.is_required ? 'radio' : 'checkbox',
+            options: []
+          }
+        }
+        map[groupId].options.push({
+          id: m.id || `${gName}-${m.option_name}`,
+          name: m.option_name || '',
+          priceExtra: Number(m.price_extra ?? m.price ?? 0),
+          costPrice: Number(m.cost_price || 0)
+        })
+      }
+      return Object.values(map)
+    }
+
+    // Case 2: Pre-grouped options format (fallback)
+    return raw.map((m: any) => ({
+      id: m.id || m.group_name || m.name,
+      name: m.group_name || m.name || 'Finishing / Add-on',
+      required: Boolean(m.is_required),
+      type: m.type === 'multiple' ? 'checkbox' : (m.is_required ? 'radio' : 'checkbox'),
+      options: (m.options || []).map((opt: any) => ({
+        id: opt.id || opt.name,
+        name: opt.name || opt.option_name,
+        priceExtra: Number(opt.priceExtra ?? opt.price_extra ?? opt.price ?? 0),
+        costPrice: Number(opt.costPrice ?? opt.cost_price ?? 0)
+      }))
+    }))
+  }, [product, fetchedModifiers])
 
   const quantity = useMemo(() => {
     const val = parseInt(quantityInput, 10)
@@ -89,6 +253,34 @@ export default function PrintingDimensionModal({
         setInputUnit(initialValues.input_unit || 'cm')
         setQuantityInput(String(initialValues.quantity && initialValues.quantity > 0 ? initialValues.quantity : 1))
         setNote(initialValues.note || '')
+
+        // Restore selected variant if editing
+        if (initialValues.selectedVariant) {
+          const matched = variants.find(v => v.id === initialValues.selectedVariant?.id)
+          setSelectedVariant(matched || initialValues.selectedVariant)
+        } else if (variants.length > 0) {
+          setSelectedVariant(variants[0])
+        } else {
+          setSelectedVariant(null)
+        }
+
+        // Restore selected modifiers if editing
+        if (Array.isArray(initialValues.selectedModifiers) && initialValues.selectedModifiers.length > 0) {
+          const restored: Record<string, string[]> = {}
+          for (const m of initialValues.selectedModifiers) {
+            const grp = modifierGroups.find(g => g.name.toLowerCase() === (m.group || '').toLowerCase())
+            if (grp) {
+              const opt = grp.options.find(o => o.name.toLowerCase() === (m.name || '').toLowerCase())
+              if (opt) {
+                if (!restored[grp.id]) restored[grp.id] = []
+                restored[grp.id].push(opt.id)
+              }
+            }
+          }
+          setSelectedModifiers(restored)
+        } else {
+          setSelectedModifiers({})
+        }
       } else {
         // Defaults: 0 x 0
         setInputUnit('cm')
@@ -96,7 +288,16 @@ export default function PrintingDimensionModal({
         setWidth('0')
         setQuantityInput('1')
         setNote('')
-        setSelectedModifiers({})
+        setSelectedVariant(variants.length > 0 ? variants[0] : null)
+
+        // Set default required modifiers
+        const initialMods: Record<string, string[]> = {}
+        for (const g of modifierGroups) {
+          if (g.required && g.options.length > 0) {
+            initialMods[g.id] = [g.options[0].id]
+          }
+        }
+        setSelectedModifiers(initialMods)
       }
 
       // Auto-focus length input after mount
@@ -105,22 +306,7 @@ export default function PrintingDimensionModal({
         lengthInputRef.current?.select()
       }, 100)
     }
-  }, [isOpen, product, initialValues])
-
-  // Parse modifier groups from product
-  const modifierGroups: ModifierGroup[] = useMemo(() => {
-    if (!product?.product_modifiers || !Array.isArray(product.product_modifiers)) return []
-    return product.product_modifiers.map((m: any) => ({
-      id: m.id || m.group_name || m.name,
-      name: m.group_name || m.name || 'Finishing / Add-on',
-      type: m.type === 'multiple' ? 'checkbox' : 'radio',
-      options: (m.options || []).map((opt: any) => ({
-        id: opt.id || opt.name,
-        name: opt.name,
-        price: Number(opt.price || 0)
-      }))
-    }))
-  }, [product?.product_modifiers])
+  }, [isOpen, product, initialValues, variants, modifierGroups])
 
   // Numerical inputs
   const numLength = Math.max(0, parseFloat(length) || 0)
@@ -162,6 +348,22 @@ export default function PrintingDimensionModal({
 
   const isMinAreaApplied = minArea > 0 && calcArea > 0 && calcArea < minArea
 
+  // Rates & Totals (Variant-Aware)
+  const ratePerUnit = useMemo(() => {
+    if (selectedVariant) {
+      return Number(selectedVariant.price || 0)
+    }
+    return resolvePosItemPrice(product, salesType, Number(product?.price || 0))
+  }, [selectedVariant, product, salesType])
+
+  const costPricePerUnit = useMemo(() => {
+    if (selectedVariant) {
+      const vCost = Number(selectedVariant.cost_price ?? selectedVariant.costPrice ?? 0)
+      if (vCost > 0) return vCost
+    }
+    return Number(product?.cost_price ?? 0)
+  }, [selectedVariant, product])
+
   // Calculate modifiers extra cost
   const modifiersCost = useMemo(() => {
     let sum = 0
@@ -169,16 +371,25 @@ export default function PrintingDimensionModal({
       const selected = selectedModifiers[group.id] || []
       group.options.forEach((opt) => {
         if (selected.includes(opt.id)) {
-          sum += opt.price
+          sum += opt.priceExtra
         }
       })
     })
     return sum
   }, [modifierGroups, selectedModifiers])
 
-  // Rates & Totals
-  const ratePerUnit = Number(product?.price || 0)
-  const costPricePerUnit = Number(product?.cost_price || 0)
+  const modifiersCostPrice = useMemo(() => {
+    let sum = 0
+    modifierGroups.forEach((group) => {
+      const selected = selectedModifiers[group.id] || []
+      group.options.forEach((opt) => {
+        if (selected.includes(opt.id)) {
+          sum += Number(opt.costPrice || 0)
+        }
+      })
+    })
+    return sum
+  }, [modifierGroups, selectedModifiers])
 
   // Piece price (1 sheet)
   const pieceBasePrice = Math.round(billableArea * ratePerUnit)
@@ -196,7 +407,7 @@ export default function PrintingDimensionModal({
     }
   }
 
-  const handleModifierToggle = (groupId: string, optionId: string, isMultiple = false) => {
+  const handleModifierToggle = (groupId: string, optionId: string, isMultiple = false, isRequired = false) => {
     setSelectedModifiers((prev) => {
       const curr = prev[groupId] || []
       if (isMultiple) {
@@ -208,7 +419,10 @@ export default function PrintingDimensionModal({
       } else {
         // Single select (radio)
         if (curr.includes(optionId)) {
-          return { ...prev, [groupId]: [] }
+          if (!isRequired) {
+            return { ...prev, [groupId]: [] }
+          }
+          return prev
         } else {
           return { ...prev, [groupId]: [optionId] }
         }
@@ -224,8 +438,8 @@ export default function PrintingDimensionModal({
     const widthInCm = inputUnit === 'cm' ? numWidth : numWidth * 100
     const dimDisplay = `${lengthInCm} × ${widthInCm} cm`
 
-    // Extract selected modifier objects
-    const flattenedModifiers: any[] = []
+    // Extract selected modifier objects with standard POS attributes (group, name, priceExtra, costPrice)
+    const flattenedModifiers: { group: string; name: string; priceExtra: number; costPrice?: number }[] = []
     modifierGroups.forEach((group) => {
       const selected = selectedModifiers[group.id] || []
       group.options.forEach((opt) => {
@@ -233,7 +447,8 @@ export default function PrintingDimensionModal({
           flattenedModifiers.push({
             group: group.name,
             name: opt.name,
-            price: opt.price
+            priceExtra: opt.priceExtra,
+            costPrice: opt.costPrice || 0
           })
         }
       })
@@ -251,9 +466,19 @@ export default function PrintingDimensionModal({
       min_area: minArea
     }
 
-    // Compose formatted product display name
-    const rawName = product.name
-    const displayName = `${rawName} (${dimDisplay})`
+    // Compose formatted product display name: e.g. "Spanduk Flexi - 340g (200 × 100 cm)"
+    const rawName = product.baseName || product.name
+    const variantName = selectedVariant?.name
+    const baseNameWithVariant = (variantName && !rawName.toLowerCase().includes(variantName.toLowerCase()))
+      ? `${rawName} - ${variantName}`
+      : rawName
+    const displayName = `${baseNameWithVariant} (${dimDisplay})`
+
+    const resolvedVariant = selectedVariant ? {
+      ...selectedVariant,
+      cost_price: costPricePerUnit,
+      costPrice: costPricePerUnit
+    } : undefined
 
     onAddToCart({
       product: {
@@ -261,8 +486,9 @@ export default function PrintingDimensionModal({
         name: displayName,
         baseName: rawName,
         price: finalPiecePrice,
-        cost_price: Math.round(billableArea * costPricePerUnit)
+        cost_price: Math.round(billableArea * costPricePerUnit) + modifiersCostPrice
       },
+      selectedVariant: resolvedVariant,
       quantity,
       finalPrice: finalPiecePrice,
       note: note.trim(),
@@ -293,7 +519,7 @@ export default function PrintingDimensionModal({
               </span>
             </div>
             <h3 className="font-black text-slate-900 text-base mt-1 truncate">
-              {product.name}
+              {product.baseName || product.name}
             </h3>
           </div>
           <button
@@ -307,6 +533,62 @@ export default function PrintingDimensionModal({
 
         {/* Scrollable Content */}
         <div className="p-5 overflow-y-auto space-y-4 flex-1">
+          {/* Loading indicator if fetching on-the-fly */}
+          {isLoadingDetails && (
+            <div className="py-2 px-3 bg-indigo-50/60 border border-indigo-100 rounded-xl flex items-center justify-center gap-2 text-indigo-700 text-xs font-bold">
+              <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+              <span>Memuat variasi dan opsi kustomisasi...</span>
+            </div>
+          )}
+
+          {/* Varian Selection (If Product has Variants e.g. Flexi 280g vs 340g, Tebal 5mm vs 8mm) */}
+          {!isLoadingDetails && variants.length > 0 && (
+            <div>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>🏷️ Pilihan Bahan / Variasi SKU</span>
+                  <span className="text-rose-500">*</span>
+                </label>
+                {selectedVariant && (
+                  <span className="text-xs font-black text-indigo-700">
+                    Rp {Number(selectedVariant.price || 0).toLocaleString('id-ID')} / {areaUnit === 'm2' ? 'm²' : 'cm²'}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {variants.map((v) => {
+                  const isSelected = selectedVariant?.id === v.id
+                  return (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => setSelectedVariant(v)}
+                      className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                        isSelected
+                          ? 'border-indigo-600 bg-indigo-600 text-white shadow-xs ring-1 ring-indigo-600'
+                          : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-800'
+                      }`}
+                    >
+                      <span className="text-xs font-black leading-snug line-clamp-2">{v.name}</span>
+                      <div className="mt-1 flex items-center justify-between gap-1 flex-wrap">
+                        <span className={`text-[11px] font-black ${isSelected ? 'text-indigo-100' : 'text-indigo-600'}`}>
+                          Rp {Number(v.price || 0).toLocaleString('id-ID')}
+                        </span>
+                        {v.stockQuantity !== undefined && v.stockQuantity > 0 && (
+                          <span className={`text-[9px] font-bold px-1 rounded ${
+                            isSelected ? 'bg-indigo-700 text-indigo-100' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            Stok: {v.stockQuantity}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Unit Toggle & Input Row */}
           <div>
             <div className="flex justify-between items-center mb-2">
@@ -449,13 +731,20 @@ export default function PrintingDimensionModal({
 
           {/* Modifiers / Finishing (If any) */}
           {modifierGroups.length > 0 && (
-            <div className="space-y-3 pt-1 border-t border-slate-100">
+            <div className="space-y-3 pt-2 border-t border-slate-100">
               <label className="text-xs font-black text-slate-700 uppercase tracking-wider block">
                 🛠️ Opsi Finishing / Tambahan
               </label>
               {modifierGroups.map((group) => (
                 <div key={group.id} className="space-y-1.5">
-                  <span className="text-[11px] font-bold text-slate-600">{group.name}</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-700">{group.name}</span>
+                    {group.required ? (
+                      <span className="text-[9px] bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.2 rounded font-bold">Wajib</span>
+                    ) : (
+                      <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.2 rounded font-semibold">Opsional</span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     {group.options.map((opt) => {
                       const isSelected = (selectedModifiers[group.id] || []).includes(opt.id)
@@ -463,7 +752,7 @@ export default function PrintingDimensionModal({
                         <button
                           key={opt.id}
                           type="button"
-                          onClick={() => handleModifierToggle(group.id, opt.id, group.type === 'checkbox')}
+                          onClick={() => handleModifierToggle(group.id, opt.id, group.type === 'checkbox', Boolean(group.required))}
                           className={`p-2.5 rounded-xl border text-left text-xs font-bold transition flex items-center justify-between cursor-pointer ${
                             isSelected
                               ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-600/30'
@@ -472,7 +761,7 @@ export default function PrintingDimensionModal({
                         >
                           <span className="truncate">{opt.name}</span>
                           <span className="text-[10px] text-slate-500 font-semibold shrink-0 ml-1">
-                            {opt.price > 0 ? `+Rp ${opt.price.toLocaleString('id-ID')}` : 'Gratis'}
+                            {opt.priceExtra > 0 ? `+Rp ${opt.priceExtra.toLocaleString('id-ID')}` : 'Gratis'}
                           </span>
                         </button>
                       )

@@ -143,6 +143,7 @@ export default function StockOpnamePage() {
   // Sub-Modal Product Selector state
   const [isSelectorOpen, setIsSelectorOpen] = useState(false)
   const [selectorSearch, setSelectorSearch] = useState('')
+  const [selectorDisplayLimit, setSelectorDisplayLimit] = useState(80)
   const [tempSelectedIds, setTempSelectedIds] = useState<string[]>([])
 
   const { activeBusiness } = useUserContext()
@@ -279,53 +280,74 @@ export default function StockOpnamePage() {
     let mounted = true
     const fetchProducts = async () => {
       try {
-        let data: Product[] = []
+        let prodsData: Product[] = []
+        let directVars: any[] = []
+
         try {
-          data = await fetchAllSupabaseRows<Product>((from, to) =>
-            supabase
-              .from('products')
-              .select('id, name, sku, stock_quantity, cost_price, product_variants(id, name, sku, stock_quantity, cost_price)')
-              .eq('business_id', activeBizId)
-              .eq('type', 'physical')
-              .eq('stock_type', 'tracked')
-              .order('name', { ascending: true })
-              .order('id', { ascending: true })
-              .range(from, to)
-          )
-        } catch {
-          data = await fetchAllSupabaseRows<Product>((from, to) =>
+          const [fetchedProds, fetchedVars] = await Promise.all([
+            fetchAllSupabaseRows<Product>((from, to) =>
+              supabase
+                .from('products')
+                .select('id, name, sku, stock_quantity, cost_price, type, stock_type')
+                .eq('business_id', activeBizId)
+                .neq('type', 'service')
+                .order('name', { ascending: true })
+                .order('id', { ascending: true })
+                .range(from, to)
+            ),
+            fetchAllSupabaseRows<any>((from, to) =>
+              supabase
+                .from('product_variants')
+                .select('id, product_id, name, sku, stock_quantity, cost_price')
+                .eq('business_id', activeBizId)
+                .order('name', { ascending: true })
+                .order('id', { ascending: true })
+                .range(from, to)
+            ).catch(() => [])
+          ])
+          prodsData = fetchedProds
+          directVars = fetchedVars
+        } catch (fetchErr) {
+          console.warn('Fallback product fetch in stock opname:', fetchErr)
+          prodsData = await fetchAllSupabaseRows<Product>((from, to) =>
             supabase
               .from('products')
               .select('id, name, sku, stock_quantity, cost_price')
               .eq('business_id', activeBizId)
-              .eq('type', 'physical')
-              .eq('stock_type', 'tracked')
               .order('name', { ascending: true })
               .order('id', { ascending: true })
               .range(from, to)
           )
-          if (data.length > 0) {
-            try {
-              const { data: directVars } = await supabase
-                .from('product_variants')
-                .select('id, product_id, name, sku, stock_quantity, cost_price')
-                .eq('business_id', activeBizId)
-              if (directVars) {
-                const vMap = new Map<string, ProductVariant[]>()
-                for (const v of directVars) {
-                  if (!vMap.has(v.product_id)) vMap.set(v.product_id, [])
-                  vMap.get(v.product_id)!.push(v)
-                }
-                data = data.map(p => ({ ...p, product_variants: vMap.get(p.id) || [] }))
-              }
-            } catch {}
-          }
         }
 
-        if (mounted && data) {
-          setProducts(data)
+        // Map variants onto parent products
+        if (directVars && directVars.length > 0) {
+          const vMap = new Map<string, ProductVariant[]>()
+          for (const v of directVars) {
+            if (!vMap.has(v.product_id)) vMap.set(v.product_id, [])
+            vMap.get(v.product_id)!.push({
+              id: v.id,
+              name: v.name,
+              sku: v.sku || null,
+              stock_quantity: Number(v.stock_quantity || 0),
+              cost_price: Number(v.cost_price || 0)
+            })
+          }
+          prodsData = prodsData.map(p => ({
+            ...p,
+            product_variants: vMap.get(p.id) || []
+          }))
+        } else {
+          prodsData = prodsData.map(p => ({
+            ...p,
+            product_variants: p.product_variants || []
+          }))
+        }
+
+        if (mounted && prodsData) {
+          setProducts(prodsData)
           try {
-            localStorage.setItem(`su_stock_products_${activeBizId}`, JSON.stringify(data))
+            localStorage.setItem(`su_stock_products_${activeBizId}`, JSON.stringify(prodsData))
           } catch (e) {
             console.warn('Failed to cache products:', e)
           }
@@ -452,6 +474,7 @@ export default function StockOpnamePage() {
   const openSelectorModal = () => {
     setTempSelectedIds(formItems.map(getOpnameKey))
     setSelectorSearch('')
+    setSelectorDisplayLimit(80)
     setIsSelectorOpen(true)
   }
 
@@ -1368,53 +1391,66 @@ export default function StockOpnamePage() {
                   Tidak ada produk yang cocok dengan pencarian &quot;{selectorSearch}&quot;
                 </div>
               ) : (
-                selectorFilteredProducts.map(p => {
-                  const isChecked = tempSelectedIds.includes(p.uniqueKey)
-                  return (
-                    <div
-                      key={p.uniqueKey}
-                      onClick={() => toggleTempSelect(p.uniqueKey)}
-                      className={`p-3 rounded-lg transition-all cursor-pointer flex justify-between items-center my-1 border select-none ${
-                        isChecked
-                          ? 'bg-blue-50/90 border-blue-200 text-blue-900 shadow-2xs'
-                          : 'bg-white border-transparent hover:border-gray-200 text-gray-800'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => {}} 
-                          className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer pointer-events-none"
-                        />
-                        <div>
-                          <div className="font-bold text-xs flex items-center gap-1.5 flex-wrap">
-                            <span>{p.name}</span>
-                            {p.isVariant && (
-                              <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100/70 px-1.5 py-0.2 rounded">
-                                Varian
-                              </span>
+                <>
+                  {selectorFilteredProducts.slice(0, selectorDisplayLimit).map(p => {
+                    const isChecked = tempSelectedIds.includes(p.uniqueKey)
+                    return (
+                      <div
+                        key={p.uniqueKey}
+                        onClick={() => toggleTempSelect(p.uniqueKey)}
+                        className={`p-3 rounded-lg transition-all cursor-pointer flex justify-between items-center my-1 border select-none ${
+                          isChecked
+                            ? 'bg-blue-50/90 border-blue-200 text-blue-900 shadow-2xs'
+                            : 'bg-white border-transparent hover:border-gray-200 text-gray-800'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {}} 
+                            className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer pointer-events-none"
+                          />
+                          <div>
+                            <div className="font-bold text-xs flex items-center gap-1.5 flex-wrap">
+                              <span>{p.name}</span>
+                              {p.isVariant && (
+                                <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100/70 px-1.5 py-0.2 rounded">
+                                  Varian
+                                </span>
+                              )}
+                            </div>
+                            {p.sku && (
+                              <div className="text-[10px] text-gray-400 font-mono mt-0.5">
+                                SKU: {p.sku}
+                              </div>
                             )}
                           </div>
-                          {p.sku && (
-                            <div className="text-[10px] text-gray-400 font-mono mt-0.5">
-                              SKU: {p.sku}
-                            </div>
-                          )}
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            isChecked
+                              ? 'bg-blue-100 text-blue-800 border-blue-200'
+                              : 'bg-slate-100 text-slate-600 border-slate-200'
+                          }`}>
+                            Stok: {p.stockQuantity}
+                          </span>
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                          isChecked
-                            ? 'bg-blue-100 text-blue-800 border-blue-200'
-                            : 'bg-slate-100 text-slate-600 border-slate-200'
-                        }`}>
-                          Stok: {p.stockQuantity}
-                        </span>
-                      </div>
+                    )
+                  })}
+                  {selectorFilteredProducts.length > selectorDisplayLimit && (
+                    <div className="p-2 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setSelectorDisplayLimit(prev => prev + 100)}
+                        className="w-full py-2.5 bg-white hover:bg-blue-50 text-blue-600 border border-blue-200 rounded-lg text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                      >
+                        ⬇️ Tampilkan Lebih Banyak (+100 dari {selectorFilteredProducts.length - selectorDisplayLimit} produk tersisa)
+                      </button>
                     </div>
-                  )
-                })
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -1522,9 +1558,24 @@ export default function StockOpnamePage() {
                       <tbody className="divide-y divide-gray-100 font-semibold text-gray-700">
                         {(Array.isArray(selectedOpname.items_json) ? selectedOpname.items_json : []).map((item, idx) => {
                           const diff = item.actual_quantity - item.recorded_quantity
+                          let displayName = item.name
+                          if (item.variant_id && (!displayName || !displayName.includes(' - '))) {
+                            const p = products.find(prod => prod.id === item.product_id)
+                            const v = p?.product_variants?.find(varItem => varItem.id === item.variant_id)
+                            if (v && p) displayName = `${p.name} - ${v.name}`
+                          }
                           return (
                             <tr key={idx} className="hover:bg-gray-50/50">
-                              <td className="p-3 font-bold text-gray-900">{item.name}</td>
+                              <td className="p-3 font-bold text-gray-900">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span>{displayName}</span>
+                                  {item.variant_id && (
+                                    <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100/70 px-1.5 py-0.2 rounded">
+                                      Varian
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
                               <td className="p-3 text-center text-gray-400">{item.recorded_quantity}</td>
                               <td className="p-3 text-center text-gray-950 font-bold">{item.actual_quantity}</td>
                               <td className="p-3 text-right">
@@ -1543,9 +1594,22 @@ export default function StockOpnamePage() {
                   <div className="grid grid-cols-1 gap-2.5 md:hidden">
                     {(Array.isArray(selectedOpname.items_json) ? selectedOpname.items_json : []).map((item, idx) => {
                       const diff = item.actual_quantity - item.recorded_quantity
+                      let displayName = item.name
+                      if (item.variant_id && (!displayName || !displayName.includes(' - '))) {
+                        const p = products.find(prod => prod.id === item.product_id)
+                        const v = p?.product_variants?.find(varItem => varItem.id === item.variant_id)
+                        if (v && p) displayName = `${p.name} - ${v.name}`
+                      }
                       return (
                         <div key={idx} className="bg-white border border-gray-200 rounded-lg p-3 space-y-2">
-                          <div className="font-bold text-xs text-gray-900">{item.name}</div>
+                          <div className="font-bold text-xs text-gray-900 flex items-center gap-1.5 flex-wrap">
+                            <span>{displayName}</span>
+                            {item.variant_id && (
+                              <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100/70 px-1.5 py-0.2 rounded">
+                                Varian
+                              </span>
+                            )}
+                          </div>
                           <div className="flex items-center justify-between text-xs pt-1 border-t border-gray-100">
                             <div className="text-[11px] text-gray-500">
                               Sistem: <span className="font-semibold text-gray-700">{item.recorded_quantity}</span> | Fisik: <span className="font-bold text-gray-950">{item.actual_quantity}</span>
