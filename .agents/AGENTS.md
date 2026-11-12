@@ -1,5 +1,22 @@
 # ShapeUp CRM — Development Rules
 
+## Core Workflow Protocol (WAJIB DIIKUTI SEBELUM BERAKSI)
+
+1. **Wajib Baca Skill & Knowledge Base Terlebih Dahulu (Knowledge-First Protocol):**
+   - Sebelum menganalisis, merancang solusi, atau melakukan perubahan kode apapun, asisten AI **WAJIB MEMERIKSA DAN MEMBACA** dokumen skill (`.agents/skills/*/SKILL.md`) dan basis pengetahuan (`.agents/knowledge/*.md`) yang relevan dengan domain tugas (misalnya: `pos-session-ledger`, `mobile-modal-ux`, `high-cardinality-data`, `inventory-ledger`, `invoice-ledger`, `api-modules`, `auth-lifecycle`, dll).
+   - Dilarang keras berimprovisasi atau mengubah logika inti aplikasi (terutama alur pembayaran POS, multi-tender split payment, sinkronisasi shift kasir, dan pembukuan ledger) hanya berdasarkan tebakan/asumsi tanpa merujuk pada standar arsitektur tertulis.
+
+2. **Wajib Beri Rencana & Minta Konfirmasi Sebelum Mengubah Kode (Confirmation First):**
+   - Sebelum mengeksekusi modifikasi kode (`edit_file` / `write_file`) pada fitur, logika bisnis, atau UI yang sudah berjalan, asisten AI **WAJIB** menyajikan:
+     1. Temuan akar masalah yang disinkronkan dengan rujukan skill/knowledge base terkait.
+     2. Rencana perubahan terperinci dan dampaknya terhadap alur fungsional lainnya.
+     3. Meminta konfirmasi atau persetujuan pengguna sebelum melakukan perubahan besar, agar tidak merusak fitur lain yang sudah berjalan (seperti hilangnya multi-tender split bill saat menangani switch kasir).
+
+3. **Verifikasi Kepatuhan Pasca-Implementasi:**
+   - Setelah modifikasi diterapkan, asisten wajib memverifikasi bahwa perubahan tersebut patuh 100% terhadap seluruh klausul di skill & knowledge terkait tanpa ada efek samping (*regresi*).
+
+---
+
 ## API Route Standards
 
 1. **Auth + Business Context:** Selalu gunakan `getApiContext()` dari `@/lib/apiContext.ts`. Jangan pernah duplikasi pola `createClient → getAuthUser → profiles.select` secara manual.

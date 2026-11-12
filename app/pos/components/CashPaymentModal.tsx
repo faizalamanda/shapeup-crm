@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
-import { resolveBusinessTenders, type POSTender } from '@/lib/pos/tenderResolver'
+import { resolveBusinessTenders, getPosTendersCache, setPosTendersCache, type POSTender } from '@/lib/pos/tenderResolver'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 import {
@@ -65,7 +65,7 @@ type Props = {
   grandTotal: number
   cartItems?: CartItemForSplit[]
   accounts?: CashBankAccount[]
-  customTenders?: POSTender[]
+  customTenders?: POSTender[] | null
   activeRegisterAccountId?: string | null
   activeShift?: any
   businessId?: string
@@ -139,10 +139,12 @@ export default function CashPaymentModal({
   useModalBackHandler(isSplitBillOpen, () => setIsSplitBillOpen(false))
   useModalBackHandler(isReceiptDetailsOpen, () => setIsReceiptDetailsOpen(false))
 
-  // 3. Akun Kas & Bank dan Metode Tender dari Pengaturan
+  // 3. Akun Kas & Bank dan Metode Tender dari Pengaturan (0ms Instant Hydration via Cache)
   const [fetchedAccounts, setFetchedAccounts] = useState<CashBankAccount[]>([])
   const [loadingAccounts, setLoadingAccounts] = useState<boolean>(false)
-  const [fetchedCustomTenders, setFetchedCustomTenders] = useState<POSTender[] | null>(null)
+  const [fetchedCustomTenders, setFetchedCustomTenders] = useState<POSTender[] | null>(() => {
+    return propCustomTenders || getPosTendersCache(businessId) || null
+  })
 
   // 4. Odoo-Style Multi-Tender Lines & Numpad State
   const [tenderLines, setTenderLines] = useState<KeypadTenderLine[]>([])
@@ -190,9 +192,16 @@ export default function CashPaymentModal({
     return () => { isSubscribed = false }
   }, [isOpen, propAccounts, businessId])
 
-  // Fetch Pengaturan Tender Kustom dari /api/settings/pos/tenders
+  // Fetch Pengaturan Tender Kustom dari /api/settings/pos/tenders (Pre-fetch Latar Belakang 0ms + Cache SWR)
   useEffect(() => {
-    if (!isOpen || !businessId || propCustomTenders) return
+    if (!businessId) return
+
+    // Jika belum ada di state, baca segera dari L1/L2 cache (0ms)
+    if (!fetchedCustomTenders && !propCustomTenders) {
+      const cached = getPosTendersCache(businessId)
+      if (cached) setFetchedCustomTenders(cached)
+    }
+
     let isSubscribed = true
     fetch('/api/settings/pos/tenders', {
       headers: {
@@ -201,13 +210,17 @@ export default function CashPaymentModal({
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (isSubscribed && (data?.customTenders || data?.resolvedTenders)) {
-          setFetchedCustomTenders(data.customTenders || data.resolvedTenders)
+        if (!isSubscribed) return
+        const list = data?.customTenders || data?.resolvedTenders
+        if (Array.isArray(list) && list.length > 0) {
+          setPosTendersCache(businessId, list)
+          setFetchedCustomTenders(list)
         }
       })
       .catch(() => null)
+
     return () => { isSubscribed = false }
-  }, [isOpen, businessId, propCustomTenders])
+  }, [businessId, propCustomTenders])
 
   // Filter Akun Kas & Bank
   const cashBankAccounts = useMemo(() => {

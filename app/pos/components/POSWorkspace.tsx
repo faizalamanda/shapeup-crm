@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import VariantSelectorModal from './VariantSelectorModal'
 import CashPaymentModal, { type PaymentResult } from './CashPaymentModal'
+import { getPosTendersCache, setPosTendersCache, type POSTender } from '@/lib/pos/tenderResolver'
 import ReceiptPreviewModal from './ReceiptPreviewModal'
 import PaymentSuccessView from './PaymentSuccessView'
 import ShiftModal from './ShiftModal'
@@ -94,6 +95,7 @@ export default function POSWorkspace({
   const [posRegisters, setPosRegisters] = useState<any[]>(preloadedSession?.posRegisters ?? [])
   const [heldOrders, setHeldOrders] = useState<any[]>([])
   const [activeHoldId, setActiveHoldId] = useState<string | null>(null)
+  const [customTenders, setCustomTenders] = useState<POSTender[] | null>(() => getPosTendersCache(activeBusiness?.id) || null)
 
   // Search, Filter & Windowing State
   const [searchQuery, setSearchQuery] = useState('')
@@ -405,6 +407,22 @@ export default function POSWorkspace({
             }
           }, () => null)
       } catch {}
+
+      // Pre-fetch POS payment tenders for 0ms payment modal opening (anti-flicker)
+      if (bId) {
+        fetch('/api/settings/pos/tenders', {
+          headers: { 'x-business-id': bId }
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            const list = data?.customTenders || data?.resolvedTenders
+            if (Array.isArray(list) && list.length > 0) {
+              setPosTendersCache(bId, list)
+              setCustomTenders(list)
+            }
+          })
+          .catch(() => null)
+      }
     } catch (err) {
       console.warn('[POSWorkspace] Secondary data load warning:', err)
     }
@@ -2306,6 +2324,7 @@ export default function POSWorkspace({
         activeShift={activeShift}
         activeRegisterAccountId={activeShift?.register_id ? posRegisters.find((r) => r.id === activeShift.register_id)?.account_id : null}
         businessId={activeBusiness?.id}
+        customTenders={customTenders || undefined}
         onConfirmPayment={handleConfirmCheckout}
       />
 

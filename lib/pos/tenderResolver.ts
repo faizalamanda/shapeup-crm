@@ -222,3 +222,58 @@ export function resolveBusinessTenders(options: {
     return a.sort_order - b.sort_order
   })
 }
+
+// ============================================================================
+// L1 RAM + L2 SessionStorage Cache Coherence Protocol (0ms Instant POS Access)
+// ============================================================================
+const tenderL1Cache = new Map<string, { tenders: POSTender[]; timestamp: number }>()
+const TENDER_CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes TTL
+
+export function getPosTendersCache(businessId?: string | null): POSTender[] | null {
+  if (!businessId) return null
+
+  // 1. Check L1 in-memory RAM
+  const l1 = tenderL1Cache.get(businessId)
+  if (l1 && Date.now() - l1.timestamp < TENDER_CACHE_TTL_MS) {
+    return l1.tenders
+  }
+
+  // 2. Check L2 sessionStorage
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      const raw = window.sessionStorage.getItem(`su_pos_tenders_${businessId}`)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          tenderL1Cache.set(businessId, { tenders: parsed, timestamp: Date.now() })
+          return parsed
+        }
+      }
+    } catch {}
+  }
+
+  return l1?.tenders || null
+}
+
+export function setPosTendersCache(businessId: string, tenders: POSTender[]): void {
+  if (!businessId || !Array.isArray(tenders)) return
+  tenderL1Cache.set(businessId, { tenders, timestamp: Date.now() })
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      window.sessionStorage.setItem(`su_pos_tenders_${businessId}`, JSON.stringify(tenders))
+    } catch {}
+  }
+}
+
+export function clearPosTendersCache(businessId?: string | null): void {
+  if (businessId) {
+    tenderL1Cache.delete(businessId)
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        window.sessionStorage.removeItem(`su_pos_tenders_${businessId}`)
+      } catch {}
+    }
+  } else {
+    tenderL1Cache.clear()
+  }
+}

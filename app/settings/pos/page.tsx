@@ -5,6 +5,7 @@ import SettingsLayout from '@/components/SettingsLayout'
 import { useUserContext } from '@/components/UserContext'
 import Link from 'next/link'
 import POSPrinterProductionManager from '@/app/pos/components/POSPrinterProductionManager'
+import { setPosTendersCache } from '@/lib/pos/tenderResolver'
 
 interface ApproverItem {
   user_id: string
@@ -296,6 +297,10 @@ export default function POSSettingsPage() {
       const json = await res.json()
       if (!res.ok || !json.success) {
         throw new Error(json.error || 'Gagal menyimpan metode pembayaran')
+      }
+
+      if (activeBusinessId) {
+        setPosTendersCache(activeBusinessId, tenders)
       }
 
       setTenderSuccess(true)

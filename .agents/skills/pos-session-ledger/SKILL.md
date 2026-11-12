@@ -11,6 +11,10 @@ Dokumen skill ini menetapkan arsitektur standar untuk sistem Kasir / Point of Sa
 
 ## 1. Prinsip Utama (Core Principles)
 
+### 1.0 SOP Pengembangan POS: Wajib Rujuk Skill & Minta Konfirmasi Sebelum Beraksi
+- **Knowledge-First Rule:** Setiap modifikasi modul kasir POS (`CashPaymentModal`, `POSWorkspace`, `ShiftModal`, `/api/pos/*`) **WAJIB diawali dengan membaca isi skill ini (`pos-session-ledger`) dan knowledge base terkait**. Dilarang keras berasumsi atau mengubah mekanisme alur kasir tanpa mencocokkannya dengan Bab 2 (*Multi-Tender Split Payment & Dual Split Bill Architecture*).
+- **Konfirmasi Rencana Sebelum Eksekusi:** Sebelum mengubah logika pembayaran atau tombol kasir, AI wajib menjelaskan pemahaman masalah, menguraikan rencana perubahan, serta meminta konfirmasi pengguna untuk mencegah regresi fitur kritis (seperti terganggunya fitur kombinasi pembayaran/split tender).
+
 ### 1.1 Strict Session Gating (Zero-Bypass Policy)
 - **Aturan:** Transaksi kasir (checkout, pembayaran cicilan, atau void pembayaran) **DILARANG KERAS** diproses tanpa sesi kasir aktif (`pos_shifts.status = 'open'`).
 - **Implementasi:** 
