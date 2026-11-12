@@ -18,9 +18,19 @@ Semua API route **WAJIB** menggunakan modul-modul berikut. Jangan duplikasi kode
 ```typescript
 import { getApiContext } from '@/lib/apiContext'
 
+export async function GET(req: Request) {
+  // Selalu teruskan `req` agar query `?business_id=...` atau header `x-business-id` terbaca
+  const ctx = await getApiContext({ req })
+  if (ctx.error) return ctx.error  // Returns NextResponse 401/400/403
+  const { user, businessId, supabase, supabaseAdmin } = ctx
+  // ... business logic
+}
+
 export async function POST(req: Request) {
-  const ctx = await getApiContext()
-  if (ctx.error) return ctx.error  // Returns NextResponse 401/400
+  const body = await req.json().catch(() => null)
+  const reqBizId = typeof body?.business_id === 'string' ? body.business_id : undefined
+  const ctx = await getApiContext({ req, requestedBusinessId: reqBizId })
+  if (ctx.error) return ctx.error
   const { user, businessId, supabase, supabaseAdmin } = ctx
   // ... business logic
 }
@@ -29,6 +39,8 @@ export async function POST(req: Request) {
 **Fitur:**
 - JWT fast-path (tanpa network call jika token valid, ~0-5ms)
 - In-memory profile cache (30s TTL)
+- **Zero-Drift Explicit Business ID Support:** Mendukung ekstraksi ID bisnis target dari `req.url` (`?business_id=...`), header (`x-business-id`), atau `requestedBusinessId`.
+- **0ms In-Memory Authorization Fast-Path:** Otorisasi unit bisnis target divalidasi dan di-cache dalam RAM (`userBizAccessCache`, TTL 60s) serta dicocokkan instan dengan cache profil aktif (`cached.activeBusinessId === reqBizId`), sehingga request berulang berjalan dalam **0ms** tanpa query DB berulang.
 - Singleton admin client (tidak buat baru setiap request)
 - Discriminated union return type (type-safe error handling)
 

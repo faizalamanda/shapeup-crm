@@ -1,5 +1,5 @@
 "use client"
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 import { supabase } from '@/lib/supabase'
 import { PosSalesType, PosPriceTiers, resolvePosItemPrice } from '@/lib/posCatalogStore'
@@ -253,40 +253,54 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
   const [selectedModifiers, setSelectedModifiers] = useState<Record<string, { group: string; name: string; priceExtra: number; costPrice?: number }>>({})
   const [quantity, setQuantity] = useState(1)
   const [note, setNote] = useState('')
+  const prevIsOpenRef = useRef(false)
 
-  // Sync state when modal opens or product/variants change
+  // Sync state ONLY when modal first opens (prevents wiping quantity/note if variants load later)
   useEffect(() => {
-    if (isOpen && product) {
-      setQuantity(1)
-      if (isMultiAttribute && attributeDimensions.length > 0) {
-        const initialAttrs: Record<number, string> = {}
-        attributeDimensions.forEach((dim, idx) => {
-          initialAttrs[idx] = dim.values[0] || ''
-        })
-        setSelectedAttrValues(initialAttrs)
-        const targetName = attributeDimensions.map((_, i) => initialAttrs[i]).filter(Boolean).join(' - ')
-        const found = variants.find((v) => (v?.name || '').trim() === targetName)
-        setSelectedVariant(found || variants[0] || null)
-      } else {
-        setSelectedVariant(variants[0] || null)
-      }
+    const isTransitionToOpen = isOpen && !prevIsOpenRef.current
+    prevIsOpenRef.current = isOpen
 
-      const initialMods: Record<string, { group: string; name: string; priceExtra: number; costPrice?: number }> = {}
-      for (const g of modifierGroups) {
-        if (g.required && g.options.length > 0) {
-          initialMods[g.id] = { group: g.name, name: g.options[0].name, priceExtra: g.options[0].priceExtra, costPrice: g.options[0].costPrice }
-        }
-      }
-      setSelectedModifiers(initialMods)
-      setNote('')
-    } else {
+    if (!isOpen) {
       setSelectedVariant(null)
       setSelectedModifiers({})
       setQuantity(1)
       setNote('')
       setSelectedAttrValues({})
+      return
     }
+
+    if (!isTransitionToOpen) return
+
+    setQuantity(1)
+    setNote('')
+    if (isMultiAttribute && attributeDimensions.length > 0) {
+      const initialAttrs: Record<number, string> = {}
+      attributeDimensions.forEach((dim, idx) => {
+        initialAttrs[idx] = dim.values[0] || ''
+      })
+      setSelectedAttrValues(initialAttrs)
+      const targetName = attributeDimensions.map((_, i) => initialAttrs[i]).filter(Boolean).join(' - ')
+      const found = variants.find((v) => (v?.name || '').trim() === targetName)
+      setSelectedVariant(found || variants[0] || null)
+    } else {
+      setSelectedVariant(variants[0] || null)
+    }
+
+    const initialMods: Record<string, { group: string; name: string; priceExtra: number; costPrice?: number }> = {}
+    for (const g of modifierGroups) {
+      if (g.required && g.options.length > 0) {
+        initialMods[g.id] = { group: g.name, name: g.options[0].name, priceExtra: g.options[0].priceExtra, costPrice: g.options[0].costPrice }
+      }
+    }
+    setSelectedModifiers(initialMods)
   }, [isOpen, product, variants, modifierGroups, isMultiAttribute, attributeDimensions])
+
+  // Fallback: jika varian baru selesai dimuat setelah modal terbuka dan varian belum terpilih
+  useEffect(() => {
+    if (isOpen && variants.length > 0 && !selectedVariant) {
+      setSelectedVariant(variants[0])
+    }
+  }, [isOpen, variants, selectedVariant])
 
   // Calculate final unit price
   const extraTotal = Object.values(selectedModifiers).reduce((acc, m) => acc + (m?.priceExtra || 0), 0)

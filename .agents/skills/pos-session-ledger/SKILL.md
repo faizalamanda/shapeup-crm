@@ -63,6 +63,12 @@ Dokumen skill ini menetapkan arsitektur standar untuk sistem Kasir / Point of Sa
   - Saldo `Petty Cash Masuk` dan `Petty Cash Keluar` pada Z-Report dihitung secara bersih (*Net Active*) mengecualikan transaksi yang di-void.
   - Jika terdapat transaksi yang dibatalkan pada shift tersebut, Z-Report mencetak 1 baris catatan audit ringkas di bagian bawah: `*Catatan: {count} mutasi di-void ({totalIDR})`.
 
+### 1.6 Multi-Unit Business Isolation & Explicit Scope Protocol
+- **Strict Business Scoping:** Setiap sesi kasir POS (`pos_shifts`), transaksi laci kasir (`pos_shift_movements`), hold orders (`pos_held_orders`), dan transaksi penjualan (`orders`) terikat kuat pada `business_id` unit bisnis yang aktif.
+- **Client-to-Server Explicit Attribution:** Komponen frontend POS (`POSHub.tsx`, `POSWorkspace.tsx`) wajib menyertakan `business_id` di query string (`?business_id=${activeBusiness.id}`) serta header HTTP `x-business-id` pada setiap panggilan fetch ke `/api/pos/shifts` dan `/api/pos/order`. Endpoint backend memverifikasi kepemilikan/penugasan staf via `getApiContext({ req })` dalam 0ms fast-path.
+- **Isolasi L2 Session Cache Kasir:** Data sesi kasir di browser (`sessionStorage`) wajib disimpan menggunakan kunci terisolasi `su_pos_hub_v2_${businessId}` tanpa fallback ke key global `'default'`. Jika `businessId` belum tersedia, pembacaan cache mengembalikan `null` untuk mencegah pencemaran data antar bisnis.
+- **Immediate Purge on Business Switch:** Saat pengguna beralih unit bisnis melalui `handleSwitchBusiness` di CRM, sistem otomatis menghapus seluruh entri cache kasir di `sessionStorage` dan `localStorage` (`su_pos_`) serta memanggil `invalidateProfileCache(userId)` di server agar sesi kasir unit bisnis sebelumnya tidak pernah bocor ke unit bisnis yang baru dibuka.
+
 ---
 
 ## 2. Multi-Tender Split Payment & Dual Split Bill Architecture

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
@@ -123,6 +123,7 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
 
   // Collapsible Manager Section State
   const [isManagerMonitoringOpen, setIsManagerMonitoringOpen] = useState(false)
+  const hasLoadedDataRef = useRef(false)
 
   // Format IDR currency
   const formatIDR = (val: number) => {
@@ -137,7 +138,7 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
   const loadData = useCallback(async (options?: { silent?: boolean }) => {
     if (!activeBusiness?.id) return
     const isSilent = Boolean(options?.silent)
-    if (!isSilent && pastShifts.length === 0 && !activeShift) {
+    if (!isSilent && !hasLoadedDataRef.current) {
       setLoading(true)
     }
 
@@ -172,6 +173,7 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
         setAvailableCashiers(newCashiers)
         setMonitoredShifts(newMonitoredShifts)
         setTotalDrawerCash(newTotalDrawer)
+        hasLoadedDataRef.current = true
 
         // Persist to L2 cache for instant 0ms access on future visits
         writeHubCache(activeBusiness.id, {
@@ -210,13 +212,14 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
         }
         if (accRes && 'data' in accRes && accRes.data) setAccounts(accRes.data)
         if (regRes && 'data' in regRes && regRes.data) setPosRegisters(regRes.data)
+        hasLoadedDataRef.current = true
       }
     } catch (err) {
       console.error('Error loading POS Hub data:', err)
     } finally {
       setLoading(false)
     }
-  }, [activeBusiness?.id, shiftStatusFilter, selectedCashierId, isAdmin, pastShifts.length, activeShift])
+  }, [activeBusiness?.id, shiftStatusFilter, selectedCashierId, isAdmin])
 
   // Immediate fetch on mount & revalidate when filters change (Performance Rule #6: don't wait for bizLoading)
   useEffect(() => {

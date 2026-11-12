@@ -74,6 +74,12 @@
    - **Compensating Reversal Entry:** Sistem wajib memposting jurnal pembalik otomatis (Debit Kas POS & Credit Beban untuk void Cash Out; Debit Sumber Dana & Credit Kas POS untuk void Cash In).
    - **Role-Aware PIN Gating:** Staf wajib memasukkan 6 digit PIN jika bisnis telah mengonfigurasi akun approver di `pos_approver_pins`.
 
+17. **Multi-Unit POS Session Isolation & Zero-Drift Business Context Fast-Path:**
+   - **Explicit Business ID Scope:** Seluruh pemanggilan API kasir POS (`/api/pos/shifts`, `/api/pos/order`, `/api/pos/hold`) **WAJIB** menyertakan parameter `business_id` aktif dari frontend serta header `x-business-id`. Endpoint API dilarang hanya mengandalkan profil pasif server jika frontend mengirimkan unit bisnis spesifik.
+   - **In-Memory Fast-Path (0ms) di `lib/apiContext.ts`:** Pengecekan otorisasi unit bisnis yang diminta wajib memanfaatkan fast-path kesesuaian profil aktif (`cached.activeBusinessId === reqBizId`) dan in-memory permission cache (`userBizAccessCache` TTL 60 detik) untuk menjamin respon instan 0ms tanpa kueri database berulang pada setiap transaksi kasir.
+   - **Strict L2 Cache Namespacing:** Cache antarmuka kasir (`sessionStorage`) wajib diikat ketat ke ID unit bisnis (`su_pos_hub_v2_${businessId}`) tanpa pernah fallback ke key umum `'default'`. Jika `businessId` belum terdefinisi saat mount, pembacaan cache wajib mengembalikan `null`.
+   - **Immediate POS Cache Purge on Business Switch:** Fungsi `handleSwitchBusiness` di `UserContext.tsx` wajib membersihkan seluruh entri cache POS di `sessionStorage` dan `localStorage` (`su_pos_`) serta memanggil `invalidateProfileCache(userId)` agar sesi kasir unit bisnis sebelumnya tidak pernah bocor ke unit bisnis yang baru dibuka.
+
 
 ## Performance Rules
 

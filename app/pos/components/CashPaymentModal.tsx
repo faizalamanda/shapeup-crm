@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { resolveBusinessTenders, type POSTender } from '@/lib/pos/tenderResolver'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
@@ -148,6 +148,7 @@ export default function CashPaymentModal({
   const [tenderLines, setTenderLines] = useState<KeypadTenderLine[]>([])
   const [activeLineId, setActiveLineId] = useState<string>('')
   const [isFirstTouch, setIsFirstTouch] = useState<boolean>(true)
+  const prevIsOpenRef = useRef<boolean>(false)
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -283,47 +284,50 @@ export default function CashPaymentModal({
     return list.slice(0, 4)
   }, [activeBillTarget])
 
-  // Inisialisasi awal saat modal dibuka
+  // Inisialisasi awal HANYA saat modal pertama kali dibuka (mencegah reset saat kasir sedang mengetik/numpad)
   useEffect(() => {
-    if (isOpen) {
-      setBillMode(defaultMode === 'split' ? 'split_equal' : (defaultMode as any))
-      setErrorMsg(null)
-      setIsSubmitting(false)
-      setSplitCount(2)
-      setPartialAmountInput(String(Math.floor(grandTotal / 2)))
+    const isTransitionToOpen = isOpen && !prevIsOpenRef.current
+    prevIsOpenRef.current = isOpen
 
-      if (cartItems.length > 0) {
-        setSelectedItemIds(new Set([cartItems[0].id]))
-      } else {
-        setSelectedItemIds(new Set())
-      }
+    if (!isTransitionToOpen) return
 
-      const defaultTender = tenderOptions.find((t) => t.category === 'cash') || tenderOptions[0]
-      const defaultAcc = defaultTender
-        ? cashBankAccounts.find((a) => a.id === defaultTender.account_id)
-        : cashBankAccounts[0]
+    setBillMode(defaultMode === 'split' ? 'split_equal' : (defaultMode as any))
+    setErrorMsg(null)
+    setIsSubmitting(false)
+    setSplitCount(2)
+    setPartialAmountInput(String(Math.floor(grandTotal / 2)))
 
-      const fallbackAccId = defaultTender?.account_id || defaultAcc?.id || 'default-pos-cash'
-      const lineId = 'line-' + Date.now()
-
-      setTenderLines([
-        {
-          id: lineId,
-          tenderId: defaultTender?.id,
-          accountId: fallbackAccId,
-          accountCode: defaultAcc?.code,
-          accountName: defaultAcc?.name,
-          tenderName: defaultTender?.name || defaultAcc?.name || 'Tunai (Laci Kasir)',
-          category: defaultTender?.category || 'cash',
-          amount: grandTotal,
-          cashReceived: grandTotal,
-          referenceNumber: ''
-        }
-      ])
-      setActiveLineId(lineId)
-      setIsFirstTouch(true)
+    if (cartItems.length > 0) {
+      setSelectedItemIds(new Set([cartItems[0].id]))
+    } else {
+      setSelectedItemIds(new Set())
     }
-  }, [isOpen, grandTotal, defaultMode, tenderOptions]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    const defaultTender = tenderOptions.find((t) => t.category === 'cash') || tenderOptions[0]
+    const defaultAcc = defaultTender
+      ? cashBankAccounts.find((a) => a.id === defaultTender.account_id)
+      : cashBankAccounts[0]
+
+    const fallbackAccId = defaultTender?.account_id || defaultAcc?.id || 'default-pos-cash'
+    const lineId = 'line-' + Date.now()
+
+    setTenderLines([
+      {
+        id: lineId,
+        tenderId: defaultTender?.id,
+        accountId: fallbackAccId,
+        accountCode: defaultAcc?.code,
+        accountName: defaultAcc?.name,
+        tenderName: defaultTender?.name || defaultAcc?.name || 'Tunai (Laci Kasir)',
+        category: defaultTender?.category || 'cash',
+        amount: grandTotal,
+        cashReceived: grandTotal,
+        referenceNumber: ''
+      }
+    ])
+    setActiveLineId(lineId)
+    setIsFirstTouch(true)
+  }, [isOpen, grandTotal, defaultMode, tenderOptions, cartItems, cashBankAccounts])
 
   // Sinkronisasi jika target bill berubah (karena split bill diubah)
   useEffect(() => {

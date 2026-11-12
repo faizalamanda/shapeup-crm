@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { formatDisplayDate } from '@/lib/timeUtils'
 
@@ -24,9 +24,11 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [registerId, setRegisterId] = useState<string>('')
+  const prevIsOpenRef = useRef(false)
 
+  // Only reset form inputs when modal transitions from closed to open
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !prevIsOpenRef.current) {
       if (!activeShift) {
         setInitialCash('0')
         setNote('')
@@ -37,6 +39,7 @@ export default function ShiftModal({ isOpen, onClose, activeShift, cashierName, 
         setErrorMsg(null)
       }
     }
+    prevIsOpenRef.current = isOpen
   }, [isOpen, activeShift])
 
   // Filter only Cash & Bank accounts (exclude receivables, inventory, and equity)

@@ -93,6 +93,7 @@ export default function PrintingDimensionModal({
   const [note, setNote] = useState<string>('')
   const [selectedModifiers, setSelectedModifiers] = useState<Record<string, string[]>>({})
   const [selectedVariant, setSelectedVariant] = useState<VariantOption | null>(null)
+  const prevIsOpenRef = useRef(false)
 
   // Fallback state if variants or modifiers need on-the-fly fetch (Self-Healing resilience)
   const [fetchedVariants, setFetchedVariants] = useState<VariantOption[]>([])
@@ -244,69 +245,85 @@ export default function PrintingDimensionModal({
     return isNaN(val) || val < 1 ? 1 : val
   }, [quantityInput])
 
-  // Initialize form when opened or product changes
+  // Initialize form ONLY when first opened or product changes (prevents reset while typing)
   useEffect(() => {
-    if (isOpen && product) {
-      if (initialValues) {
-        setLength(String(initialValues.length ?? 0))
-        setWidth(String(initialValues.width ?? 0))
-        setInputUnit(initialValues.input_unit || 'cm')
-        setQuantityInput(String(initialValues.quantity && initialValues.quantity > 0 ? initialValues.quantity : 1))
-        setNote(initialValues.note || '')
+    const isTransitionToOpen = isOpen && !prevIsOpenRef.current
+    prevIsOpenRef.current = isOpen
 
-        // Restore selected variant if editing
-        if (initialValues.selectedVariant) {
-          const matched = variants.find(v => v.id === initialValues.selectedVariant?.id)
-          setSelectedVariant(matched || initialValues.selectedVariant)
-        } else if (variants.length > 0) {
-          setSelectedVariant(variants[0])
-        } else {
-          setSelectedVariant(null)
-        }
+    if (!isTransitionToOpen) return
+    if (!product) return
 
-        // Restore selected modifiers if editing
-        if (Array.isArray(initialValues.selectedModifiers) && initialValues.selectedModifiers.length > 0) {
-          const restored: Record<string, string[]> = {}
-          for (const m of initialValues.selectedModifiers) {
-            const grp = modifierGroups.find(g => g.name.toLowerCase() === (m.group || '').toLowerCase())
-            if (grp) {
-              const opt = grp.options.find(o => o.name.toLowerCase() === (m.name || '').toLowerCase())
-              if (opt) {
-                if (!restored[grp.id]) restored[grp.id] = []
-                restored[grp.id].push(opt.id)
-              }
-            }
-          }
-          setSelectedModifiers(restored)
-        } else {
-          setSelectedModifiers({})
-        }
+    if (initialValues) {
+      setLength(String(initialValues.length ?? 0))
+      setWidth(String(initialValues.width ?? 0))
+      setInputUnit(initialValues.input_unit || 'cm')
+      setQuantityInput(String(initialValues.quantity && initialValues.quantity > 0 ? initialValues.quantity : 1))
+      setNote(initialValues.note || '')
+
+      // Restore selected variant if editing
+      if (initialValues.selectedVariant) {
+        const matched = variants.find(v => v.id === initialValues.selectedVariant?.id)
+        setSelectedVariant(matched || initialValues.selectedVariant)
+      } else if (variants.length > 0) {
+        setSelectedVariant(variants[0])
       } else {
-        // Defaults: 0 x 0
-        setInputUnit('cm')
-        setLength('0')
-        setWidth('0')
-        setQuantityInput('1')
-        setNote('')
-        setSelectedVariant(variants.length > 0 ? variants[0] : null)
-
-        // Set default required modifiers
-        const initialMods: Record<string, string[]> = {}
-        for (const g of modifierGroups) {
-          if (g.required && g.options.length > 0) {
-            initialMods[g.id] = [g.options[0].id]
-          }
-        }
-        setSelectedModifiers(initialMods)
+        setSelectedVariant(null)
       }
 
-      // Auto-focus length input after mount
-      setTimeout(() => {
-        lengthInputRef.current?.focus()
-        lengthInputRef.current?.select()
-      }, 100)
+      // Restore selected modifiers if editing
+      if (Array.isArray(initialValues.selectedModifiers) && initialValues.selectedModifiers.length > 0) {
+        const restored: Record<string, string[]> = {}
+        for (const m of initialValues.selectedModifiers) {
+          const grp = modifierGroups.find(g => g.name.toLowerCase() === (m.group || '').toLowerCase())
+          if (grp) {
+            const opt = grp.options.find(o => o.name.toLowerCase() === (m.name || '').toLowerCase())
+            if (opt) {
+              if (!restored[grp.id]) restored[grp.id] = []
+              restored[grp.id].push(opt.id)
+            }
+          }
+        }
+        setSelectedModifiers(restored)
+      } else {
+        setSelectedModifiers({})
+      }
+    } else {
+      // Defaults: 0 x 0
+      setInputUnit('cm')
+      setLength('0')
+      setWidth('0')
+      setQuantityInput('1')
+      setNote('')
+      setSelectedVariant(variants.length > 0 ? variants[0] : null)
+
+      // Set default required modifiers
+      const initialMods: Record<string, string[]> = {}
+      for (const g of modifierGroups) {
+        if (g.required && g.options.length > 0) {
+          initialMods[g.id] = [g.options[0].id]
+        }
+      }
+      setSelectedModifiers(initialMods)
     }
+
+    // Auto-focus length input after mount
+    setTimeout(() => {
+      lengthInputRef.current?.focus()
+      lengthInputRef.current?.select()
+    }, 100)
   }, [isOpen, product, initialValues, variants, modifierGroups])
+
+  // Fallback: jika varian baru selesai di-fetch setelah modal terbuka dan belum ada varian terpilih
+  useEffect(() => {
+    if (isOpen && variants.length > 0 && !selectedVariant) {
+      if (initialValues?.selectedVariant) {
+        const matched = variants.find(v => v.id === initialValues.selectedVariant?.id)
+        setSelectedVariant(matched || initialValues.selectedVariant)
+      } else {
+        setSelectedVariant(variants[0])
+      }
+    }
+  }, [isOpen, variants, selectedVariant, initialValues])
 
   // Numerical inputs
   const numLength = Math.max(0, parseFloat(length) || 0)
