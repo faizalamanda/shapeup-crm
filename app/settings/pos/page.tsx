@@ -74,7 +74,11 @@ export default function POSSettingsPage() {
     setLoadingTenders(true)
     setTenderError(null)
     try {
-      const res = await fetch('/api/settings/pos/tenders')
+      const res = await fetch('/api/settings/pos/tenders', {
+        headers: {
+          'x-business-id': activeBusinessId
+        }
+      })
       const json = await res.json()
       if (res.ok && json.success) {
         setTenders(json.customTenders || json.resolvedTenders || [])
@@ -282,7 +286,10 @@ export default function POSSettingsPage() {
     try {
       const res = await fetch('/api/settings/pos/tenders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-business-id': activeBusinessId
+        },
         body: JSON.stringify({ tenders })
       })
 
@@ -490,7 +497,7 @@ export default function POSSettingsPage() {
                 {/* Tender List Table/Cards */}
                 <div className="space-y-3">
                   {tenders.map((tender, idx) => {
-                    const isCash = tender.category === 'cash'
+                    const isPrimaryCash = idx === 0 && tender.category === 'cash'
                     const categoryBadges: Record<string, { label: string; icon: string; style: string }> = {
                       cash: { label: 'Tunai Laci', icon: '💵', style: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
                       qris: { label: 'QRIS', icon: '📱', style: 'bg-blue-50 text-blue-800 border-blue-200' },
@@ -541,7 +548,7 @@ export default function POSSettingsPage() {
                             <span>{tender.is_active ? 'Aktif di Kasir' : 'Nonaktif'}</span>
                           </label>
 
-                          {!isCash && (
+                          {!isPrimaryCash && (
                             <button
                               type="button"
                               onClick={() => handleRemoveTender(tender.id)}

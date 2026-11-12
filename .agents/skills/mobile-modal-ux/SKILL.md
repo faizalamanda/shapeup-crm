@@ -66,6 +66,25 @@ Semua modal fitur yang berfungsi sebagai layar kerja/detail (misal: Detail Pesan
     - **WAJIB** menempatkan semua Hooks di bagian paling atas badan fungsi komponen modal. Guard `if (!isOpen || !data) return null` **HANYA BOLEH DILETAKKAN DI PALING BAWAH** tepat sebelum sintaks pengembalian elemen JSX.
     - **Pencegahan Crash "Client-Side Exception":** Pelanggaran aturan urutan Hooks menyebabkan Next.js / React melempar fatal exception `Rendered more hooks than during the previous render` saat modal yang semula tertutup dibuka oleh pengguna. Seluruh kalkulasi data di dalam `useMemo` saat modal tertutup (`data === null`) wajib dilengkapi proteksi fallback kenihilan (`if (!data) return []`).
 
+11. **Modal Input State Stability & One-Time Transition Guard (`prevIsOpenRef` Invariant):**
+    Pada modal yang memiliki form input, keypad angka, catatan, atau pemilihan dinamis (seperti `ShiftModal`, `CashPaymentModal`, `PrintingDimensionModal`, `VariantSelectorModal`):
+    - **DILARANG KERAS** memasukkan objek relasional atau array mutable yang sering berubah (seperti `activeShift`, `variants`, `tenderOptions`, `accounts`) secara mentah ke dalam *dependency array* dari `useEffect` yang mereset input form pengguna. Jika parent komponen memuat ulang data atau re-render, efek tersebut akan memicu pembersihan (*wiping*) teks saat pengguna sedang aktif mengetik/menekan tombol.
+    - **WAJIB** menggunakan transisi pembukaan satu kali (*one-time transition guard*) via `useRef`:
+      ```tsx
+      const prevIsOpenRef = useRef(false)
+
+      useEffect(() => {
+        const isTransitionToOpen = isOpen && !prevIsOpenRef.current
+        prevIsOpenRef.current = isOpen
+
+        if (!isTransitionToOpen) return
+        // Reset/inisialisasi form HANYA ketika modal pertama kali dibuka
+        setActualCash('')
+        setNote('')
+      }, [isOpen, ...])
+      ```
+    - **Asynchronous Data Isolation:** Jika modal membutuhkan data relasi yang dimuat secara asinkron dari server saat modal sudah terbuka (misal akun kas, varian, atau modifier), pembaruan metadata harus dieksekusi di `useEffect` terpisah yang hanya melengkapi opsi kosong (`if (isOpen && variants.length > 0 && !selectedVariant) setSelectedVariant(variants[0])`), **TANPA** menyentuh nilai input yang sedang diketik oleh kasir.
+
 ---
 
 Untuk contoh implementasi lengkap, batasan, dan studi kasus, baca [knowledge mobile modal UX](../../knowledge/mobile-modal-ux.md).

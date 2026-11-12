@@ -80,6 +80,12 @@
    - **Strict L2 Cache Namespacing:** Cache antarmuka kasir (`sessionStorage`) wajib diikat ketat ke ID unit bisnis (`su_pos_hub_v2_${businessId}`) tanpa pernah fallback ke key umum `'default'`. Jika `businessId` belum terdefinisi saat mount, pembacaan cache wajib mengembalikan `null`.
    - **Immediate POS Cache Purge on Business Switch:** Fungsi `handleSwitchBusiness` di `UserContext.tsx` wajib membersihkan seluruh entri cache POS di `sessionStorage` dan `localStorage` (`su_pos_`) serta memanggil `invalidateProfileCache(userId)` agar sesi kasir unit bisnis sebelumnya tidak pernah bocor ke unit bisnis yang baru dibuka.
 
+18. **Modal Input State Stability & One-Time Transition Guard (`prevIsOpenRef` Invariant):**
+   - **Pencegahan Reset Input Kasir / Form Wiping:** Pada komponen modal yang mengelola form input lokal (`useState`, misal: hitung kas faktual `actualCash`, keypad pembayaran `CashPaymentModal`, dimensi cetak meteran `PrintingDimensionModal`, diskon, catatan), `useEffect` yang mereset nilai form **DILARANG KERAS** memasukkan objek relasional atau array mutable yang sering berubah (seperti `activeShift`, `variants`, `tenderOptions`, `accounts`) secara mentah ke dalam *dependency array*.
+   - **One-Time Transition Guard:** Reset form hanya boleh dipicu saat modal bertransisi dari keadaan tertutup ke terbuka (`isOpen && !prevIsOpenRef.current`). Selalu gunakan `const prevIsOpenRef = useRef(false)` untuk mengunci siklus hidup inisialisasi.
+   - **Asynchronous Data Isolation:** Jika modal membutuhkan data relasi (seperti akun kas atau varian produk) yang dimuat secara asinkron dari server saat modal sudah terbuka, pembaruan metadata harus dieksekusi di `useEffect` terpisah yang hanya mengisi data relasi kosong (`!selectedVariant`), **TANPA** menyentuh nilai input yang sedang diketik oleh pengguna.
+   - **Pencegahan Circular Dependency pada `useCallback` Parent:** Fungsi fetch pada parent container (seperti `loadData` di `POSHub.tsx`) **DILARANG KERAS** menyertakan variabel state yang dimutasi oleh fungsi itu sendiri (seperti `activeShift` atau panjang array data) ke dalam `useCallback` dependency array guna mencegah loop tak terbatas (*infinite re-fetch loop*).
+
 
 ## Performance Rules
 

@@ -2,24 +2,25 @@ import { NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
 import { resolveBusinessTenders, POSTender, COAAssetAccount } from '@/lib/pos/tenderResolver'
 
-// Helper to verify caller is Owner or Admin of the active business
-async function checkOwnerOrAdmin(businessId: string, userId: string, adminClient: any) {
+// Helper to verify caller permissions for the business
+async function checkBusinessAccess(businessId: string, userId: string, adminClient: any) {
   const [bizRes, staffRes] = await Promise.all([
     adminClient.from('businesses').select('id, owner_id').eq('id', businessId).maybeSingle(),
     adminClient.from('business_staff').select('role, permissions').eq('business_id', businessId).eq('profile_id', userId).maybeSingle()
   ])
 
   const isOwner = bizRes.data?.owner_id === userId
+  const isStaff = Boolean(staffRes.data)
   const staffRole = staffRes.data?.role
   const staffPerms: string[] = Array.isArray(staffRes.data?.permissions) ? staffRes.data.permissions : []
   const isAdmin = isOwner || staffRole === 'admin' || staffPerms.includes('full_access')
-  return { isOwner, isAdmin, ownerId: bizRes.data?.owner_id }
+  return { isOwner, isStaff, isAdmin, ownerId: bizRes.data?.owner_id }
 }
 
 // GET: Load POS Tender Configuration and available COA Asset Accounts
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const ctx = await getApiContext()
+    const ctx = await getApiContext({ req })
     if (ctx.error) return ctx.error
     const { user, businessId, supabaseAdmin } = ctx
 
@@ -27,9 +28,10 @@ export async function GET() {
       return NextResponse.json({ error: 'Unit bisnis aktif tidak ditemukan' }, { status: 400 })
     }
 
-    const { isAdmin } = await checkOwnerOrAdmin(businessId, user.id, supabaseAdmin)
-    if (!isAdmin) {
-      return NextResponse.json({ error: 'Akses ditolak. Hanya Pemilik atau Admin yang dapat mengakses Pengaturan Metode Pembayaran POS.' }, { status: 403 })
+    // Owner and Staff (Cashiers) can read tender configurations
+    const { isOwner, isStaff } = await checkBusinessAccess(businessId, user.id, supabaseAdmin)
+    if (!isOwner && !isStaff) {
+      return NextResponse.json({ error: 'Akses ditolak ke unit bisnis ini.' }, { status: 403 })
     }
 
     // 1. Fetch COA asset accounts
@@ -44,22 +46,40 @@ export async function GET() {
       (a: any) => a.code?.startsWith('101') || a.sub_type === 'bank_cash'
     )
 
-    // 2. Fetch custom tenders from integrations table
+    // 2. Fetch custom tenders: first check business_integrations table, fallback to integrations table
     let customTenders: POSTender[] | null = null
-    try {
-      const { data: intRows } = await supabaseAdmin
-        .from('integrations')
-        .select('api_credentials')
-        .eq('platform_name', 'pos_tenders')
-        .filter('api_credentials->>business_id', 'eq', businessId)
-        .limit(1)
 
-      const creds = intRows?.[0]?.api_credentials
-      if (creds && Array.isArray(creds.tenders)) {
-        customTenders = creds.tenders
+    try {
+      const { data: bRow } = await supabaseAdmin
+        .from('business_integrations')
+        .select('config')
+        .eq('business_id', businessId)
+        .eq('provider', 'pos_tenders')
+        .maybeSingle()
+
+      if (bRow?.config && Array.isArray(bRow.config.tenders)) {
+        customTenders = bRow.config.tenders
       }
-    } catch (err) {
-      console.warn('[API /api/settings/pos/tenders] Notice loading custom tenders:', err)
+    } catch (bErr) {
+      console.warn('[API /api/settings/pos/tenders GET] business_integrations check notice:', bErr)
+    }
+
+    if (!customTenders) {
+      try {
+        const { data: intRows } = await supabaseAdmin
+          .from('integrations')
+          .select('api_credentials')
+          .eq('platform_name', 'pos_tenders')
+          .filter('api_credentials->>business_id', 'eq', businessId)
+          .limit(1)
+
+        const creds = intRows?.[0]?.api_credentials
+        if (creds && Array.isArray(creds.tenders)) {
+          customTenders = creds.tenders
+        }
+      } catch (err) {
+        console.warn('[API /api/settings/pos/tenders] Notice loading custom tenders:', err)
+      }
     }
 
     // 3. Resolve active tenders (hybrid)
@@ -83,7 +103,7 @@ export async function GET() {
 // POST: Save custom POS Tenders
 export async function POST(req: Request) {
   try {
-    const ctx = await getApiContext()
+    const ctx = await getApiContext({ req })
     if (ctx.error) return ctx.error
     const { user, businessId, supabaseAdmin } = ctx
 
@@ -91,7 +111,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Unit bisnis aktif tidak ditemukan' }, { status: 400 })
     }
 
-    const { isAdmin } = await checkOwnerOrAdmin(businessId, user.id, supabaseAdmin)
+    const { isAdmin } = await checkBusinessAccess(businessId, user.id, supabaseAdmin)
     if (!isAdmin) {
       return NextResponse.json({ error: 'Akses ditolak. Hanya Pemilik atau Admin yang dapat mengubah Pengaturan Metode Pembayaran POS.' }, { status: 403 })
     }
@@ -112,14 +132,6 @@ export async function POST(req: Request) {
       sort_order: Number(t.sort_order ?? idx + 1)
     }))
 
-    // Save to integrations table (platform_name = 'pos_tenders')
-    const { data: existing } = await supabaseAdmin
-      .from('integrations')
-      .select('id, api_credentials')
-      .eq('platform_name', 'pos_tenders')
-      .filter('api_credentials->>business_id', 'eq', businessId)
-      .limit(1)
-
     const payload = {
       business_id: businessId,
       tenders: sanitizedTenders,
@@ -127,24 +139,69 @@ export async function POST(req: Request) {
       updated_at: new Date().toISOString()
     }
 
-    if (existing && existing.length > 0) {
-      await supabaseAdmin
-        .from('integrations')
-        .update({
-          api_credentials: payload,
-          status: 'active',
+    // 1. Primary Save: business_integrations table (multi-tenant safe, UUID business_id)
+    let saveSucceeded = false
+    try {
+      const { error: bErr } = await supabaseAdmin
+        .from('business_integrations')
+        .upsert({
+          business_id: businessId,
+          provider: 'pos_tenders',
+          name: 'POS Payment Tenders',
+          is_active: true,
+          config: payload,
           updated_at: new Date().toISOString()
-        })
-        .eq('id', existing[0].id)
-    } else {
-      await supabaseAdmin
+        }, { onConflict: 'business_id,provider' })
+
+      if (!bErr) {
+        saveSucceeded = true
+      } else {
+        console.warn('[API /api/settings/pos/tenders POST] business_integrations upsert error:', bErr)
+      }
+    } catch (bErr) {
+      console.warn('[API /api/settings/pos/tenders POST] business_integrations exception:', bErr)
+    }
+
+    // 2. Secondary Sync: integrations table (with valid schema columns)
+    try {
+      const { data: existing } = await supabaseAdmin
         .from('integrations')
-        .insert({
-          platform_name: 'pos_tenders',
-          status: 'active',
-          api_credentials: payload,
-          business_id: businessId
-        })
+        .select('id')
+        .eq('platform_name', 'pos_tenders')
+        .filter('api_credentials->>business_id', 'eq', businessId)
+        .limit(1)
+
+      if (existing && existing.length > 0) {
+        const { error: uErr } = await supabaseAdmin
+          .from('integrations')
+          .update({
+            api_credentials: payload,
+            is_active: true,
+            last_sync_at: new Date().toISOString()
+          })
+          .eq('id', existing[0].id)
+
+        if (!uErr) saveSucceeded = true
+      } else {
+        const { error: iErr } = await supabaseAdmin
+          .from('integrations')
+          .insert({
+            user_id: user.id,
+            platform_name: 'pos_tenders',
+            store_url: 'pos://tenders',
+            api_credentials: payload,
+            is_active: true,
+            last_sync_at: new Date().toISOString()
+          })
+
+        if (!iErr) saveSucceeded = true
+      }
+    } catch (iErr) {
+      console.warn('[API /api/settings/pos/tenders POST] integrations sync exception:', iErr)
+    }
+
+    if (!saveSucceeded) {
+      throw new Error('Gagal menyimpan metode pembayaran ke basis data.')
     }
 
     return NextResponse.json({

@@ -194,11 +194,15 @@ export default function CashPaymentModal({
   useEffect(() => {
     if (!isOpen || !businessId || propCustomTenders) return
     let isSubscribed = true
-    fetch('/api/settings/pos/tenders')
+    fetch('/api/settings/pos/tenders', {
+      headers: {
+        'x-business-id': businessId
+      }
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (data?.customTenders && isSubscribed) {
-          setFetchedCustomTenders(data.customTenders)
+        if (isSubscribed && (data?.customTenders || data?.resolvedTenders)) {
+          setFetchedCustomTenders(data.customTenders || data.resolvedTenders)
         }
       })
       .catch(() => null)

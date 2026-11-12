@@ -69,6 +69,18 @@ Dokumen skill ini menetapkan arsitektur standar untuk sistem Kasir / Point of Sa
 - **Isolasi L2 Session Cache Kasir:** Data sesi kasir di browser (`sessionStorage`) wajib disimpan menggunakan kunci terisolasi `su_pos_hub_v2_${businessId}` tanpa fallback ke key global `'default'`. Jika `businessId` belum tersedia, pembacaan cache mengembalikan `null` untuk mencegah pencemaran data antar bisnis.
 - **Immediate Purge on Business Switch:** Saat pengguna beralih unit bisnis melalui `handleSwitchBusiness` di CRM, sistem otomatis menghapus seluruh entri cache kasir di `sessionStorage` dan `localStorage` (`su_pos_`) serta memanggil `invalidateProfileCache(userId)` di server agar sesi kasir unit bisnis sebelumnya tidak pernah bocor ke unit bisnis yang baru dibuka.
 
+### 1.7 Stabilitas Form Modal Operasional POS & Pencegahan Input Ke-Reset Saat Mengetik
+- **Akar Masalah (*Input Wiping Bug*):** Pada antarmuka kasir yang memuat data secara reaktif, parent container (`POSHub.tsx`) sering memuat data shift secara periodik. Jika modal form (`ShiftModal.tsx`, `CashPaymentModal.tsx`, `PrintingDimensionModal.tsx`, `VariantSelectorModal.tsx`) memiliki `useEffect` yang mereset input form berdasarkan objek mutable (`activeShift`, `variants`, `tenderOptions`), setiap kali parent selesai melakukan fetch, efek akan terpicu ulang dan menghapus teks/angka yang sedang diketik oleh kasir.
+- **Standar Solusi (One-Time Transition Guard via `prevIsOpenRef`):**
+  - Setiap modal form wajib menggunakan `const prevIsOpenRef = useRef(false)`.
+  - Reset form (`setActualCash('')`, `setNote('')`, dsb.) **HANYA BOLEH DIEKSEKUSI** pada saat transisi pembukaan pertama kali (`isOpen && !prevIsOpenRef.current`).
+  - Baris `prevIsOpenRef.current = isOpen` dicatat di awal effect untuk mengunci siklus hidup inisialisasi.
+- **Pemisahan Resolusi Data Asinkron:**
+  - Jika data relasi (seperti akun kas atau varian produk) baru selesai di-fetch beberapa milidetik setelah modal dibuka, update metadata di `useEffect` terpisah dengan guard kondisi kosong (`if (isOpen && variants.length > 0 && !selectedVariant)`), **TANPA** menyentuh input teks yang sedang diisi oleh kasir.
+- **Pencegahan Infinite Re-fetch Loop pada Parent:**
+  - Fungsi `useCallback` untuk memuat data di parent container (`loadData` di `POSHub.tsx`) **DILARANG KERAS** menyertakan variabel state yang di-set oleh fungsi itu sendiri (`activeShift`, `pastShifts.length`) dalam dependency array.
+  - Gunakan `hasLoadedDataRef` untuk memastikan inisialisasi awal hanya berjalan 1 kali per perubahan unit bisnis aktif (`activeBusiness?.id`).
+
 ---
 
 ## 2. Multi-Tender Split Payment & Dual Split Bill Architecture

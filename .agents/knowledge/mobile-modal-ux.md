@@ -254,16 +254,32 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
     return fetchedVariants
   }, [product, fetchedVariants])
 
-  // 4. Sinkronisasi state saat modal terbuka
+  // 4. Sinkronisasi state saat modal terbuka dengan Transition Guard (prevIsOpenRef)
+  const prevIsOpenRef = useRef(false)
+
   useEffect(() => {
-    if (isOpen && product) {
-      setSelectedVariant(variants[0] || null)
-      setNote('')
-    } else {
+    const isTransitionToOpen = isOpen && !prevIsOpenRef.current
+    prevIsOpenRef.current = isOpen
+
+    if (!isOpen) {
       setSelectedVariant(null)
       setNote('')
+      return
     }
+
+    if (!isTransitionToOpen) return
+
+    // Inisialisasi HANYA saat modal pertama kali terbuka (anti-wiping saat mengetik)
+    setSelectedVariant(variants[0] || null)
+    setNote('')
   }, [isOpen, product, variants])
+
+  // 4b. Fallback asinkron: set varian jika baru selesai di-fetch tanpa menghapus input note
+  useEffect(() => {
+    if (isOpen && variants.length > 0 && !selectedVariant) {
+      setSelectedVariant(variants[0])
+    }
+  }, [isOpen, variants, selectedVariant])
 
   // 5. GUARD RETURN ditaruh di paling bawah setelah SEMUA hook tereksekusi
   if (!isOpen || !product) return null
@@ -276,4 +292,61 @@ export default function VariantSelectorModal({ isOpen, onClose, product, onAddTo
     </div>
   )
 }
+```
+
+---
+
+## 8. Modal Input State Stability & One-Time Transition Guard (`prevIsOpenRef`)
+
+### 8.1 Anatomi Masalah (*Input Wiping Bug*)
+Pada antarmuka dinamis seperti POS kasir atau manajemen transaksi, modal sering kali menerima data dari parent yang terus diperbarui di latar belakang (re-fetch otomatis, interval polling, WebSocket/realtime subscription, atau re-render parent akibat interaksi kasir).
+
+Jika `useEffect` pereset input form mendengarkan objek relasi:
+```tsx
+// ❌ ANTI-PATTERN: Input ke-reset setiap kali parent re-render / fetch data
+useEffect(() => {
+  if (isOpen) {
+    setActualCash('')
+    setNote('')
+  }
+}, [isOpen, activeShift]) // <--- activeShift berganti referensi objek setiap kali fetch!
+```
+Akibatnya:
+1. Kasir membuka modal tutup shift dan mulai mengetik `2.000.000`.
+2. Parent container (`POSHub`) menyelesaikan fetch data periodik di latar belakang dan meng-update objek `activeShift`.
+3. `useEffect` di atas terpicu kembali karena referensi memori `activeShift` berubah.
+4. Nilai `actualCash` di-reset kembali kosong `''` di saat kasir sedang mengetik.
+
+### 8.2 Solusi Standar: One-Time Transition Guard
+Setiap modal form wajib mengunci inisialisasi state hanya pada momen transisi `isOpen` dari `false` ke `true`:
+
+```tsx
+// ✅ POLA AMAN: Inisialisasi hanya saat bertransisi dari closed -> open
+const prevIsOpenRef = useRef(false)
+
+useEffect(() => {
+  const isTransitionToOpen = isOpen && !prevIsOpenRef.current
+  prevIsOpenRef.current = isOpen
+
+  if (!isTransitionToOpen) return
+
+  // Input kasir aman! Baris ini HANYA dieksekusi 1 kali saat modal dibuka
+  setActualCash('')
+  setNote('')
+  setErrorMsg(null)
+}, [isOpen])
+```
+
+### 8.3 Pemisahan Data Relasi Asinkron
+Jika modal membutuhkan data relasi (seperti daftar akun kas `accounts`, tender kustom `tenderOptions`, atau varian produk `variants`) yang mungkin baru selesai dimuat beberapa milidetik setelah modal dibuka:
+- **DILARANG** mereset input pengguna saat data relasi tiba.
+- **WAJIB** memperbarui metadata di `useEffect` sekunder dengan guard kondisi kosong:
+```tsx
+// Melengkapi pilihan tanpa mereset input teks pengguna
+useEffect(() => {
+  if (isOpen && tenderOptions.length > 0 && !activeLineId) {
+    const defaultTender = tenderOptions.find((t) => t.category === 'cash') || tenderOptions[0]
+    // Update target tender tanpa menghapus nominal cashReceived
+  }
+}, [isOpen, tenderOptions, activeLineId])
 ```

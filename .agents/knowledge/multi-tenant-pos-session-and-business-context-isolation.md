@@ -80,6 +80,43 @@ for (let i = 0; i < sessionStorage.length; i++) {
 invalidateProfileCache(userId)
 ```
 
+### 2.4 Eliminasi Circular Dependency pada `useCallback` Parent Container (`POSHub.tsx`)
+Ketika fungsi `loadData` di-memoize dengan `useCallback`, dilarang keras menyertakan state yang dimutasi oleh fungsi tersebut ke dalam array dependensinya:
+```typescript
+// ❌ ANTI-PATTERN: Memasukkan activeShift ke dependensi fungsi yang meng-update activeShift
+const loadData = useCallback(async (isRefresh = false) => {
+  // ... fetch data
+  setActiveShift(data.activeShift)
+}, [activeBusiness?.id, activeShift, pastShifts.length]) // Infinite Re-render Loop!
+
+// ✅ POLA AMAN: Dependensi hanya pada ID bisnis aktif + flag inisialisasi hasLoadedDataRef
+const hasLoadedDataRef = useRef(false)
+const loadData = useCallback(async (isRefresh = false) => {
+  // ... fetch data
+  setActiveShift(data.activeShift)
+}, [activeBusiness?.id])
+```
+
+### 2.5 Modal Form Input State Stability via `prevIsOpenRef` Guard
+Pada modal form kasir (`ShiftModal.tsx`, `CashPaymentModal.tsx`, `PrintingDimensionModal.tsx`, `VariantSelectorModal.tsx`):
+- Dependensi pereset input form **DILARANG** mendengarkan objek relasi yang sering berganti referensi (`[isOpen, activeShift]`, `[isOpen, tenderOptions]`, `[isOpen, variants]`).
+- **One-Time Transition Guard:** Reset form hanya dieksekusi saat transisi `isOpen` dari `false` ke `true`:
+```typescript
+const prevIsOpenRef = useRef(false)
+
+useEffect(() => {
+  const isTransitionToOpen = isOpen && !prevIsOpenRef.current
+  prevIsOpenRef.current = isOpen
+
+  if (!isTransitionToOpen) return
+
+  // Input kasir aman dari wiping saat background fetch parent berjalan
+  setActualCash('')
+  setNote('')
+  setErrorMsg(null)
+}, [isOpen])
+```
+
 ---
 
 ## 3. Matriks Integritas Multi-Bisnis POS

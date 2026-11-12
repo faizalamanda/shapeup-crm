@@ -136,7 +136,21 @@ export function resolveBusinessTenders(options: {
   // Ensure cash drawer is prioritized
   let cashAcc = assetAccounts.find((a) => a.id === activeRegisterAccountId)
   if (!cashAcc) {
-    cashAcc = assetAccounts.find((a) => a.code === '101000' || a.name.toLowerCase().includes('kas'))
+    cashAcc = assetAccounts.find(
+      (a) =>
+        a.code === '101000' ||
+        a.name.toLowerCase().includes('kas laci') ||
+        a.name.toLowerCase().includes('kasir')
+    )
+  }
+  if (!cashAcc) {
+    cashAcc = assetAccounts.find(
+      (a) =>
+        a.name.toLowerCase().includes('kas') &&
+        !a.name.toLowerCase().includes('kecil') &&
+        !a.name.toLowerCase().includes('petty') &&
+        !a.name.toLowerCase().includes('bank')
+    )
   }
   if (!cashAcc && assetAccounts.length > 0) {
     cashAcc = assetAccounts[0]
@@ -159,6 +173,13 @@ export function resolveBusinessTenders(options: {
   let order = 2
   assetAccounts.forEach((acc) => {
     if (cashAcc && acc.id === cashAcc.id) return
+
+    // Petty Cash / Kas Kecil adalah dana operasional internal, bukan tender pembayaran kasir POS
+    const isPettyCash =
+      (acc.code || '').trim() === '101300' ||
+      (acc.name || '').toLowerCase().includes('kas kecil') ||
+      (acc.name || '').toLowerCase().includes('petty')
+    if (isPettyCash) return
 
     const cat = classifyAccountCategory(acc, activeRegisterAccountId)
     let cleanName = acc.name
