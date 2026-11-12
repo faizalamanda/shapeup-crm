@@ -19,6 +19,7 @@ type Customer = {
   phone: string
   email: string | null
   address_data?: any
+  metadata?: any
 }
 
 type ProductVariant = {

@@ -14,6 +14,7 @@ type Customer = {
   phone: string
   email: string | null
   address_data?: any
+  metadata?: any
 }
 
 type InvoiceItem = {
@@ -88,6 +89,7 @@ type Invoice = {
       reference_no?: string
       utm_source?: string
       utm_campaign?: string
+      marketplace_profiles?: Record<string, any>
     }
   } | null
   customers: Customer | null
@@ -1136,7 +1138,7 @@ export default function InvoiceDetailPage() {
                       <p className="text-xs text-[#70706E]">✉️ {invoice.customers.email}</p>
                     )}
                     {(() => {
-                      const mk = (invoice.customers as any)?.metadata?.marketplace_profiles || invoice.raw_source_data?.source_order?.marketplace_profiles
+                      const mk = invoice.customers?.metadata?.marketplace_profiles || invoice.raw_source_data?.source_order?.marketplace_profiles
                       if (!mk || typeof mk !== 'object') return null
                       const list = Object.entries(mk).filter(([k, v]) => Boolean(v) && k !== 'other_platform')
                       if (list.length === 0) return null
