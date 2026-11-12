@@ -27,6 +27,7 @@ const TARGET_FIELDS = [
   { key: 'type', name: 'Tipe Produk (Fisik / Jasa)', required: false, desc: 'Tipe item: "Barang Fisik" (physical) atau "Jasa / Layanan" (service)' },
   { key: 'stock_type', name: 'Manajemen Stok (Track Stock Yes/No)', required: false, desc: 'Status stok: "Yes/Di Track" (tracked), "No/Tersedia" (available), atau "Tidak Tersedia" (unavailable)' },
   { key: 'external_id', name: 'ID Eksternal / Internal ID POS', required: false, desc: 'ID referensi dari sistem POS lama (Moka: Internal ID Variant)' },
+  { key: 'modifier_groups', name: 'Grup Modifier / Topping (Opsional)', required: false, desc: 'Daftar nama grup modifier dipisah koma (contoh: "Topping Minuman, Level Pedas") atau format kolom Moka ("Modifier Set - ...")' },
   { key: 'description', name: 'Deskripsi / Detail', required: false, desc: 'Catatan detail spesifikasi produk' }
 ]
 
@@ -106,6 +107,18 @@ const detectProductFieldByHeader = (header: string): string => {
   }
   if (h.includes('satuan') || h.includes('unit') || h.includes('uom')) {
     return 'unit'
+  }
+  if (
+    h === 'modifier' ||
+    h === 'modifiers' ||
+    h === 'grupmodifier' ||
+    h === 'groupmodifier' ||
+    h === 'modifiergroup' ||
+    h === 'modifiergroups' ||
+    h === 'modifierset' ||
+    h === 'topping'
+  ) {
+    return 'modifier_groups'
   }
   if (h.includes('deskripsi') || h.includes('keterangan') || h.includes('desc') || h.includes('detail') || h.includes('catatan') || h.includes('notes')) {
     return 'description'
@@ -301,55 +314,121 @@ export default function ProductImportPage() {
     const templateData = [
       {
         'Nama Produk': 'Kemeja Flannel Pria',
-        'SKU': 'KFL-001',
-        'Tipe Produk': 'Barang Fisik',
-        'Manajemen Stok': 'Di Track',
+        'Nama Varian': 'Merah - M - Katun',
+        'SKU': 'KFL-MRH-M',
+        'Kategori': 'Pakaian Pria',
         'Harga Jual': 175000,
         'HPP Modal': 95000,
-        'Kategori': 'Pakaian Pria',
         'Stok Awal': 25,
         'Satuan': 'pcs',
-        'Deskripsi': 'Bahan katun flannel premium tebal dan adem'
+        'Tipe Produk': 'Barang Fisik',
+        'Manajemen Stok': 'Di Track',
+        'Grup Modifier': '',
+        'Deskripsi': 'Contoh produk varian 3 dimensi (Warna - Ukuran - Bahan)'
+      },
+      {
+        'Nama Produk': 'Kemeja Flannel Pria',
+        'Nama Varian': 'Merah - L - Katun',
+        'SKU': 'KFL-MRH-L',
+        'Kategori': 'Pakaian Pria',
+        'Harga Jual': 175000,
+        'HPP Modal': 95000,
+        'Stok Awal': 30,
+        'Satuan': 'pcs',
+        'Tipe Produk': 'Barang Fisik',
+        'Manajemen Stok': 'Di Track',
+        'Grup Modifier': '',
+        'Deskripsi': 'Varian ukuran L katun merah'
+      },
+      {
+        'Nama Produk': 'Kemeja Flannel Pria',
+        'Nama Varian': 'Hitam - XL - Katun',
+        'SKU': 'KFL-BLK-XL',
+        'Kategori': 'Pakaian Pria',
+        'Harga Jual': 185000,
+        'HPP Modal': 100000,
+        'Stok Awal': 15,
+        'Satuan': 'pcs',
+        'Tipe Produk': 'Barang Fisik',
+        'Manajemen Stok': 'Di Track',
+        'Grup Modifier': '',
+        'Deskripsi': 'Varian ukuran XL katun hitam'
+      },
+      {
+        'Nama Produk': 'Kopi Susu Gula Aren',
+        'Nama Varian': 'Dingin',
+        'SKU': 'KOP-ICE-01',
+        'Kategori': 'Minuman',
+        'Harga Jual': 20000,
+        'HPP Modal': 8000,
+        'Stok Awal': 50,
+        'Satuan': 'cup',
+        'Tipe Produk': 'Barang Fisik',
+        'Manajemen Stok': 'Di Track',
+        'Grup Modifier': 'Topping Minuman',
+        'Deskripsi': 'Menu F&B dengan varian suhu dan modifier topping'
+      },
+      {
+        'Nama Produk': 'Kopi Susu Gula Aren',
+        'Nama Varian': 'Panas',
+        'SKU': 'KOP-HOT-01',
+        'Kategori': 'Minuman',
+        'Harga Jual': 18000,
+        'HPP Modal': 7500,
+        'Stok Awal': 50,
+        'Satuan': 'cup',
+        'Tipe Produk': 'Barang Fisik',
+        'Manajemen Stok': 'Di Track',
+        'Grup Modifier': 'Topping Minuman',
+        'Deskripsi': 'Menu F&B kopi panas dengan modifier'
       },
       {
         'Nama Produk': 'Celana Chino Slim Fit',
+        'Nama Varian': '',
         'SKU': 'CCN-002',
-        'Tipe Produk': 'Barang Fisik',
-        'Manajemen Stok': 'Tersedia',
+        'Kategori': 'Pakaian Pria',
         'Harga Jual': 195000,
         'HPP Modal': 110000,
-        'Kategori': 'Pakaian Pria',
-        'Stok Awal': 0,
+        'Stok Awal': 40,
         'Satuan': 'pcs',
-        'Deskripsi': 'Celana chino stretch katun twill'
+        'Tipe Produk': 'Barang Fisik',
+        'Manajemen Stok': 'Di Track',
+        'Grup Modifier': '',
+        'Deskripsi': 'Contoh produk tunggal tanpa varian'
       },
       {
         'Nama Produk': 'Jasa Jahit & Vermak',
+        'Nama Varian': '',
         'SKU': 'SRV-001',
-        'Tipe Produk': 'Jasa',
-        'Manajemen Stok': 'Tersedia',
+        'Kategori': 'Jasa',
         'Harga Jual': 35000,
         'HPP Modal': 10000,
-        'Kategori': 'Jasa',
         'Stok Awal': 0,
-        'Satuan': 'pcs',
-        'Deskripsi': 'Jasa potong dan vermak pakaian'
-      },
-      {
-        'Nama Produk': 'Sample Produk Nonaktif',
-        'SKU': 'SMP-004',
-        'Tipe Produk': 'Barang Fisik',
-        'Manajemen Stok': 'Tidak Tersedia',
-        'Harga Jual': 50000,
-        'HPP Modal': 30000,
-        'Kategori': 'Umum',
-        'Stok Awal': 0,
-        'Satuan': 'pcs',
-        'Deskripsi': 'Contoh produk yang status stoknya tidak tersedia'
+        'Satuan': 'layanan',
+        'Tipe Produk': 'Jasa',
+        'Manajemen Stok': 'Tersedia',
+        'Grup Modifier': '',
+        'Deskripsi': 'Contoh produk non-stok fisik (Jasa/Layanan)'
       }
     ]
 
     const ws = XLSX.utils.json_to_sheet(templateData)
+    // Format column widths for neat Excel display
+    ws['!cols'] = [
+      { wch: 26 }, // Nama Produk
+      { wch: 22 }, // Nama Varian
+      { wch: 16 }, // SKU
+      { wch: 18 }, // Kategori
+      { wch: 14 }, // Harga Jual
+      { wch: 14 }, // HPP Modal
+      { wch: 12 }, // Stok Awal
+      { wch: 10 }, // Satuan
+      { wch: 14 }, // Tipe Produk
+      { wch: 16 }, // Manajemen Stok
+      { wch: 20 }, // Grup Modifier
+      { wch: 35 }  // Deskripsi
+    ]
+
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Template Produk')
     XLSX.writeFile(wb, 'template_import_produk_shapeup.xlsx')
@@ -394,6 +473,7 @@ export default function ProductImportPage() {
       let rawType: any = null
       let rawStockType: any = null
       let rawExternalId: any = null
+      let rawModGroups: any = null
       let rawDesc: any = null
 
       headers.forEach(h => {
@@ -412,6 +492,7 @@ export default function ProductImportPage() {
         if (target === 'type') rawType = row[h]
         if (target === 'stock_type') rawStockType = row[h]
         if (target === 'external_id') rawExternalId = row[h]
+        if (target === 'modifier_groups') rawModGroups = row[h]
         if (target === 'description') rawDesc = row[h]
       })
 
@@ -423,6 +504,19 @@ export default function ProductImportPage() {
           activeModifiers.push(groupName)
         }
       })
+
+      // Extract from explicitly mapped modifier_groups column (comma / semicolon separated, e.g. "Topping Minuman, Level Pedas")
+      if (rawModGroups !== undefined && rawModGroups !== null) {
+        const splitMod = String(rawModGroups)
+          .split(/[,;|]/)
+          .map(s => s.trim())
+          .filter(Boolean)
+        splitMod.forEach(g => {
+          if (!activeModifiers.some(ex => ex.toLowerCase() === g.toLowerCase())) {
+            activeModifiers.push(g)
+          }
+        })
+      }
 
       // Validation: Name is the only strictly required field
       const cleanName = rawName !== undefined && rawName !== null ? String(rawName).trim() : ''
@@ -943,9 +1037,15 @@ export default function ProductImportPage() {
               {/* Information Notice */}
               <div className="max-w-xl mx-auto bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 flex items-start gap-2.5 text-[11px] text-amber-900">
                 <span className="text-amber-600 font-bold mt-0.5">💡</span>
-                <p>
-                  <strong>Tips Praktis:</strong> Kolom yang <strong>mutlak wajib</strong> hanya <strong>Nama Produk</strong>. Kolom lain seperti Harga, SKU, Kategori, dan Stok Awal bersifat opsional dan dapat diisi kemudian.
-                </p>
+                <div className="space-y-1">
+                  <p>
+                    <strong>Tips Format Flat-Row:</strong> Cukup gunakan 1 baris per SKU. Kolom yang mutlak wajib hanya <strong>Nama Produk</strong>.
+                  </p>
+                  <p className="text-amber-800 text-[10.5px] leading-relaxed">
+                    • <strong>Produk Bervarian (Multi-dimensi):</strong> Tulis baris terpisah dengan <em>Nama Produk</em> yang sama dan isi kolom <em>Nama Varian</em> (misal: <code>Merah - XL - Katun</code>).<br />
+                    • <strong>Menu F&B / Modifier:</strong> Isi nama paket pada kolom <em>Grup Modifier</em> (misal: <code>Topping Minuman</code>) atau gunakan format Moka POS (<code>Modifier Set - Topping</code> = <code>Yes</code>).
+                  </p>
+                </div>
               </div>
             </div>
           )}
