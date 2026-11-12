@@ -53,8 +53,11 @@ interface ProfileCacheEntry {
 }
 
 const profileCache = new Map<string, ProfileCacheEntry>()
-
 const PROFILE_CACHE_TTL = 30_000 // 30 seconds
+
+// In-memory permission cache for requested business IDs (0ms fast-path, TTL 60 seconds)
+const userBizAccessCache = new Map<string, { authorized: boolean; expiresAt: number }>()
+const ACCESS_CACHE_TTL = 60_000 // 60 seconds
 
 // ─── Singleton Admin Client ───────────────────────────────────────────────
 
@@ -118,15 +121,50 @@ export async function getApiContext(options?: {
     } catch {}
   }
 
+  const now = Date.now()
+  const cached = profileCache.get(user.id)
+
+  // 0ms Fast-Path: If requested business matches currently cached active business, return instantly (0ms)
+  if (cached && cached.expiresAt > now) {
+    if (!reqBizId || cached.activeBusinessId === reqBizId) {
+      return {
+        user,
+        businessId: cached.activeBusinessId,
+        supabase,
+        supabaseAdmin: getAdmin()
+      }
+    }
+  }
+
+  // 0ms Fast-Path for explicit reqBizId from userBizAccessCache
   const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   if (reqBizId && UUID_REGEX.test(reqBizId)) {
+    const accessKey = `${user.id}:${reqBizId}`
+    const accessEntry = userBizAccessCache.get(accessKey)
+    if (accessEntry && accessEntry.expiresAt > now) {
+      if (!accessEntry.authorized) {
+        return {
+          error: NextResponse.json({ error: 'Akses ke unit bisnis ini ditolak' }, { status: 403 })
+        }
+      }
+      return {
+        user,
+        businessId: reqBizId,
+        supabase,
+        supabaseAdmin: getAdmin()
+      }
+    }
+
     const admin = getAdmin()
     const [{ data: owned }, { data: staff }] = await Promise.all([
       admin.from('businesses').select('id').eq('id', reqBizId).eq('owner_id', user.id).maybeSingle(),
       admin.from('business_staff').select('business_id').eq('business_id', reqBizId).eq('profile_id', user.id).maybeSingle()
     ])
 
-    if (owned?.id || staff?.business_id) {
+    const isAuthorized = Boolean(owned?.id || staff?.business_id)
+    userBizAccessCache.set(accessKey, { authorized: isAuthorized, expiresAt: now + ACCESS_CACHE_TTL })
+
+    if (isAuthorized) {
       return {
         user,
         businessId: reqBizId,
@@ -140,8 +178,7 @@ export async function getApiContext(options?: {
     }
   }
 
-  const now = Date.now()
-  const cached = profileCache.get(user.id)
+  // If no explicit business requested and profileCache hit
   if (cached && cached.expiresAt > now) {
     return {
       user,
@@ -220,8 +257,13 @@ export async function getApiContext(options?: {
 }
 
 /**
- * Invalidate profile cache for a specific user (e.g., when switching business).
+ * Invalidate profile and business access cache for a specific user (e.g., when switching business).
  */
 export function invalidateProfileCache(userId: string) {
   profileCache.delete(userId)
+  for (const k of userBizAccessCache.keys()) {
+    if (k.startsWith(`${userId}:`)) {
+      userBizAccessCache.delete(k)
+    }
+  }
 }
