@@ -404,7 +404,7 @@ export default function CashPaymentModal({
     return tenderLines.find((l) => l.id === activeLineId) || tenderLines[0]
   }, [tenderLines, activeLineId])
 
-  // TOGGLE METODE PEMBAYARAN: NYALAKAN / MATIKAN / GANTI DARI PANEL KIRI
+  // TOGGLE METODE PEMBAYARAN: NYALAKAN / MATIKAN DARI PANEL KIRI (MULTI-TENDER SPLIT)
   const handleToggleTender = (tender: POSTender) => {
     setErrorMsg(null)
 
@@ -416,52 +416,39 @@ export default function CashPaymentModal({
     )
 
     if (existingIndex >= 0) {
-      // Jika metode ini sudah ada di baris pembayaran:
-      if (tenderLines.length > 1) {
-        if (activeLineId === tenderLines[existingIndex].id) {
-          // Jika baris ini sedang terfokus dan diklik lagi -> hapus
-          handleDeleteLine(tenderLines[existingIndex].id)
-        } else {
-          // Jika baris ini belum terfokus -> jadikan terfokus agar kasir bisa mengetik
-          setActiveLineId(tenderLines[existingIndex].id)
-          setIsFirstTouch(true)
-        }
-      }
+      // METODE SEDANG NYALA: Klik tombol ini akan MEMATIKAN / MENGHAPUS baris pembayaran!
+      handleDeleteLine(tenderLines[existingIndex].id)
       return
     }
 
-    // 2. METODE SEDANG MATI: Kasir mengklik tombol ini
+    // 2. METODE SEDANG MATI: Klik tombol ini akan MENYALAKAN (menambahkan ke baris pembayaran - MULTI-TENDER SPLIT)
     const acc = cashBankAccounts.find((a) => a.id === tender.account_id)
     const currentTotalAllocated = tenderLines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0)
     const unallocated = Math.max(0, activeBillTarget - currentTotalAllocated)
 
-    // A. KASUS SWITCH METODE TUNGGAL:
-    // Jika hanya ada 1 baris yang aktif dan tagihan sudah terisi penuh (100%):
-    // Kasir ingin GANTI METODE PEMBAYARAN (bukan split 50:50)!
-    if (tenderLines.length === 1 && tenderLines[0].amount >= activeBillTarget) {
-      const newLineId = tenderLines[0].id
-      const isNewCash = tender.category === 'cash'
-      const switchedLine: KeypadTenderLine = {
-        id: newLineId,
-        tenderId: tender.id,
-        accountId: tender.account_id,
-        accountCode: acc?.code || tender.account_code,
-        accountName: acc?.name || tender.account_name,
-        tenderName: tender.name,
-        category: tender.category,
-        amount: activeBillTarget,
-        cashReceived: isNewCash ? Math.max(activeBillTarget, tenderLines[0].cashReceived) : activeBillTarget,
-        referenceNumber: ''
+    let newLineAmount = 0
+    let updatedLines = [...tenderLines]
+
+    if (unallocated > 0) {
+      // Ada sisa yang belum teralokasi: berikan sisa tersebut ke metode baru
+      newLineAmount = unallocated
+    } else {
+      // Tagihan sudah teralokasi 100%:
+      if (tenderLines.length === 1) {
+        // Jika baru 1 metode (misal Tunai full), bagi 2 agar metode baru langsung aktif teralokasi (Multi-Tender Split)!
+        const half = Math.floor(activeBillTarget / 2)
+        updatedLines[0] = {
+          ...updatedLines[0],
+          amount: half,
+          cashReceived: updatedLines[0].category === 'cash' ? Math.max(updatedLines[0].cashReceived, half) : half
+        }
+        newLineAmount = activeBillTarget - half
+      } else {
+        // Jika sudah multi-baris, baris baru masuk dengan amount 0 dan menjadi fokus kasir untuk mengetik
+        newLineAmount = 0
       }
-      setTenderLines([switchedLine])
-      setActiveLineId(newLineId)
-      setIsFirstTouch(true)
-      return
     }
 
-    // B. KASUS SPLIT / MULTI-TENDER:
-    // Tambahkan metode baru dengan sisa alokasi yang belum terbayar
-    const newLineAmount = unallocated > 0 ? unallocated : 0
     const newLineId = 'line-' + Date.now()
     const newLine: KeypadTenderLine = {
       id: newLineId,
@@ -476,7 +463,7 @@ export default function CashPaymentModal({
       referenceNumber: ''
     }
 
-    setTenderLines([...tenderLines, newLine])
+    setTenderLines([...updatedLines, newLine])
     setActiveLineId(newLineId)
     setIsFirstTouch(true)
   }
