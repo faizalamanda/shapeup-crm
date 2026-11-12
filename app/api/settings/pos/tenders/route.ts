@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
-import { resolveBusinessTenders, POSTender, COAAssetAccount } from '@/lib/pos/tenderResolver'
+import { resolveBusinessTenders, classifyAccountCategory, POSTender, COAAssetAccount } from '@/lib/pos/tenderResolver'
 
 // Helper to verify caller permissions for the business
 async function checkBusinessAccess(businessId: string, userId: string, adminClient: any) {
@@ -79,6 +79,39 @@ export async function GET(req: Request) {
         }
       } catch (err) {
         console.warn('[API /api/settings/pos/tenders] Notice loading custom tenders:', err)
+      }
+    }
+
+    // Jika custom tenders sudah ada, pastikan semua akun aset tetap tampil di list
+    // Akun aset baru yang belum dikonfigurasi otomatis ditambahkan dengan status tidak aktif (is_active: false)
+    if (Array.isArray(customTenders) && customTenders.length > 0) {
+      const configuredAccIds = new Set(customTenders.map((t) => t.account_id))
+      const missingAccounts = availableAccounts.filter((a) => !configuredAccIds.has(a.id))
+
+      if (missingAccounts.length > 0) {
+        let nextOrder = Math.max(...customTenders.map((t) => t.sort_order ?? 0), 0) + 1
+        missingAccounts.forEach((acc) => {
+          const cat = classifyAccountCategory(acc)
+          let cleanName = acc.name
+          if (cat === 'qris' && !cleanName.toLowerCase().startsWith('qris')) {
+            cleanName = `QRIS ${cleanName}`
+          } else if (cat === 'bank' && !cleanName.toLowerCase().startsWith('bank') && !cleanName.toLowerCase().startsWith('transfer')) {
+            cleanName = `Transfer ${cleanName}`
+          } else if (cat === 'edc' && !cleanName.toLowerCase().startsWith('edc')) {
+            cleanName = `EDC ${cleanName}`
+          }
+
+          customTenders!.push({
+            id: `tender-${acc.id}`,
+            name: cleanName,
+            category: cat,
+            account_id: acc.id,
+            account_code: acc.code,
+            account_name: acc.name,
+            is_active: false,
+            sort_order: nextOrder++
+          })
+        })
       }
     }
 

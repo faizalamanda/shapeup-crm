@@ -333,6 +333,38 @@ export default function CashPaymentModal({
     setIsFirstTouch(true)
   }, [isOpen, grandTotal, defaultMode, tenderOptions, cartItems, cashBankAccounts])
 
+  // Sinkronisasi baris default saat tenderOptions selesai dimuat dari server (menjamin tombol kiri langsung hijau)
+  useEffect(() => {
+    if (!isOpen || tenderLines.length !== 1) return
+    const curLine = tenderLines[0]
+    const matched = tenderOptions.find(
+      (t) =>
+        t.id === curLine.tenderId ||
+        (t.account_id && curLine.accountId && t.account_id === curLine.accountId) ||
+        (t.category === curLine.category && (
+          (t.account_code && curLine.accountCode && t.account_code === curLine.accountCode) ||
+          t.name.toLowerCase() === curLine.tenderName.toLowerCase()
+        ))
+    ) || (curLine.category === 'cash' ? tenderOptions.find((t) => t.category === 'cash') : null)
+
+    if (matched && (curLine.tenderId !== matched.id || curLine.accountId !== matched.account_id)) {
+      setTenderLines((prev) => {
+        if (prev.length !== 1) return prev
+        return [
+          {
+            ...prev[0],
+            tenderId: matched.id,
+            accountId: matched.account_id,
+            accountCode: matched.account_code || prev[0].accountCode,
+            accountName: matched.account_name || prev[0].accountName,
+            tenderName: matched.name || prev[0].tenderName,
+            category: matched.category
+          }
+        ]
+      })
+    }
+  }, [isOpen, tenderOptions, tenderLines])
+
   // Sinkronisasi jika target bill berubah (karena split bill diubah)
   useEffect(() => {
     setTenderLines((prev) => {
@@ -372,56 +404,71 @@ export default function CashPaymentModal({
     return tenderLines.find((l) => l.id === activeLineId) || tenderLines[0]
   }, [tenderLines, activeLineId])
 
-  // TOGGLE METODE PEMBAYARAN: NYALAKAN / MATIKAN DARI PANEL KIRI
+  // TOGGLE METODE PEMBAYARAN: NYALAKAN / MATIKAN / GANTI DARI PANEL KIRI
   const handleToggleTender = (tender: POSTender) => {
     setErrorMsg(null)
 
     // 1. Cek apakah metode ini sudah nyala (ada di daftar baris pembayaran)
-    const existingIndex = tenderLines.findIndex(
-      (l) => l.tenderId === tender.id || l.accountId === tender.account_id
+    const existingIndex = tenderLines.findIndex((l) =>
+      l.tenderId === tender.id ||
+      (l.accountId && tender.account_id && l.accountId === tender.account_id) ||
+      (l.category === tender.category && l.tenderName.toLowerCase() === tender.name.toLowerCase())
     )
 
     if (existingIndex >= 0) {
-      // METODE SEDANG NYALA: Klik tombol ini akan MEMATIKAN / MENGHAPUS baris pembayaran!
-      handleDeleteLine(tenderLines[existingIndex].id)
+      // Jika metode ini sudah ada di baris pembayaran:
+      if (tenderLines.length > 1) {
+        if (activeLineId === tenderLines[existingIndex].id) {
+          // Jika baris ini sedang terfokus dan diklik lagi -> hapus
+          handleDeleteLine(tenderLines[existingIndex].id)
+        } else {
+          // Jika baris ini belum terfokus -> jadikan terfokus agar kasir bisa mengetik
+          setActiveLineId(tenderLines[existingIndex].id)
+          setIsFirstTouch(true)
+        }
+      }
       return
     }
 
-    // 2. METODE SEDANG MATI: Klik tombol ini akan MENYALAKAN (menambahkan ke baris pembayaran)
+    // 2. METODE SEDANG MATI: Kasir mengklik tombol ini
     const acc = cashBankAccounts.find((a) => a.id === tender.account_id)
     const currentTotalAllocated = tenderLines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0)
     const unallocated = Math.max(0, activeBillTarget - currentTotalAllocated)
 
-    let newLineAmount = 0
-    let updatedLines = [...tenderLines]
-
-    if (unallocated > 0) {
-      // Ada sisa yang belum teralokasi: berikan sisa tersebut ke metode baru
-      newLineAmount = unallocated
-    } else {
-      // Tagihan sudah teralokasi 100%:
-      if (tenderLines.length === 1) {
-        // Jika baru 1 metode (misal Tunai full), bagi 2 agar metode baru langsung aktif teralokasi!
-        const half = Math.floor(activeBillTarget / 2)
-        updatedLines[0] = {
-          ...updatedLines[0],
-          amount: half,
-          cashReceived: updatedLines[0].category === 'cash' ? Math.max(updatedLines[0].cashReceived, half) : half
-        }
-        newLineAmount = activeBillTarget - half
-      } else {
-        // Jika sudah multi-baris, baris baru masuk dengan amount 0 dan menjadi fokus kasir untuk mengetik
-        newLineAmount = 0
+    // A. KASUS SWITCH METODE TUNGGAL:
+    // Jika hanya ada 1 baris yang aktif dan tagihan sudah terisi penuh (100%):
+    // Kasir ingin GANTI METODE PEMBAYARAN (bukan split 50:50)!
+    if (tenderLines.length === 1 && tenderLines[0].amount >= activeBillTarget) {
+      const newLineId = tenderLines[0].id
+      const isNewCash = tender.category === 'cash'
+      const switchedLine: KeypadTenderLine = {
+        id: newLineId,
+        tenderId: tender.id,
+        accountId: tender.account_id,
+        accountCode: acc?.code || tender.account_code,
+        accountName: acc?.name || tender.account_name,
+        tenderName: tender.name,
+        category: tender.category,
+        amount: activeBillTarget,
+        cashReceived: isNewCash ? Math.max(activeBillTarget, tenderLines[0].cashReceived) : activeBillTarget,
+        referenceNumber: ''
       }
+      setTenderLines([switchedLine])
+      setActiveLineId(newLineId)
+      setIsFirstTouch(true)
+      return
     }
 
+    // B. KASUS SPLIT / MULTI-TENDER:
+    // Tambahkan metode baru dengan sisa alokasi yang belum terbayar
+    const newLineAmount = unallocated > 0 ? unallocated : 0
     const newLineId = 'line-' + Date.now()
     const newLine: KeypadTenderLine = {
       id: newLineId,
       tenderId: tender.id,
       accountId: tender.account_id,
-      accountCode: acc?.code,
-      accountName: acc?.name,
+      accountCode: acc?.code || tender.account_code,
+      accountName: acc?.name || tender.account_name,
       tenderName: tender.name,
       category: tender.category,
       amount: newLineAmount,
@@ -429,7 +476,7 @@ export default function CashPaymentModal({
       referenceNumber: ''
     }
 
-    setTenderLines([...updatedLines, newLine])
+    setTenderLines([...tenderLines, newLine])
     setActiveLineId(newLineId)
     setIsFirstTouch(true)
   }
@@ -639,12 +686,17 @@ export default function CashPaymentModal({
     setIsFirstTouch(false)
 
     setTenderLines((prev) => {
-      // Temukan baris tunai jika ada, atau gunakan baris aktif
-      let cashIndex = prev.findIndex((l) => l.category === 'cash')
+      // 1. Prioritaskan baris aktif (activeLineId) jika baris tersebut tunai
+      let cashIndex = prev.findIndex((l) => l.id === activeLineId && l.category === 'cash')
 
-      // Jika belum ada baris tunai sama sekali, buat atau alihkan baris aktif menjadi tunai
+      // 2. Jika baris aktif bukan tunai, cari baris tunai mana saja yang ada
       if (cashIndex < 0) {
-        const cashTender = tenderOptions.find((t) => t.category === 'cash')
+        cashIndex = prev.findIndex((l) => l.category === 'cash')
+      }
+
+      // 3. Jika belum ada baris tunai sama sekali, buat atau alihkan baris aktif menjadi tunai
+      if (cashIndex < 0) {
+        const cashTender = tenderOptions.find((t) => t.category === 'cash') || tenderOptions[0]
         const acc = cashTender ? cashBankAccounts.find((a) => a.id === cashTender.account_id) : cashBankAccounts[0]
         const newLineId = 'line-' + Date.now()
         const newLine: KeypadTenderLine = {
@@ -688,7 +740,7 @@ export default function CashPaymentModal({
       setActiveLineId(targetLine.id)
       return updated
     })
-  }, [tenderOptions, cashBankAccounts, activeBillTarget])
+  }, [activeLineId, tenderOptions, cashBankAccounts, activeBillTarget])
 
   // Update Nomor Referensi untuk Baris Non-Tunai
   const handleUpdateReference = (refNo: string) => {
@@ -960,7 +1012,15 @@ export default function CashPaymentModal({
 
                 <div className="grid grid-cols-2 gap-2">
                   {tenderOptions.map((t) => {
-                    const lineEntry = tenderLines.find((l) => l.tenderId === t.id || l.accountId === t.account_id)
+                    const lineEntry = tenderLines.find(
+                      (l) =>
+                        l.tenderId === t.id ||
+                        (l.accountId && t.account_id && l.accountId === t.account_id) ||
+                        (l.category === t.category && (
+                          (l.accountCode && t.account_code && l.accountCode === t.account_code) ||
+                          l.tenderName.toLowerCase() === t.name.toLowerCase()
+                        ))
+                    )
                     const isTurnedOn = Boolean(lineEntry)
                     const glyph = CATEGORY_GLYPHS[t.category] || '💳'
 

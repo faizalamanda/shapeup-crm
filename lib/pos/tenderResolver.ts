@@ -174,13 +174,6 @@ export function resolveBusinessTenders(options: {
   assetAccounts.forEach((acc) => {
     if (cashAcc && acc.id === cashAcc.id) return
 
-    // Petty Cash / Kas Kecil adalah dana operasional internal, bukan tender pembayaran kasir POS
-    const isPettyCash =
-      (acc.code || '').trim() === '101300' ||
-      (acc.name || '').toLowerCase().includes('kas kecil') ||
-      (acc.name || '').toLowerCase().includes('petty')
-    if (isPettyCash) return
-
     const cat = classifyAccountCategory(acc, activeRegisterAccountId)
     let cleanName = acc.name
 
@@ -193,6 +186,15 @@ export function resolveBusinessTenders(options: {
       cleanName = `EDC ${cleanName}`
     }
 
+    // Semua akun aset muncul. Namun akun sekunder (seperti Kas Kecil / Petty Cash 101300)
+    // dibuat otomatis tidak aktif (is_active: false) secara default pada saat dibuat
+    const isSecondaryOrPetty =
+      (acc.code || '').trim() === '101300' ||
+      (acc.name || '').toLowerCase().includes('kas kecil') ||
+      (acc.name || '').toLowerCase().includes('petty')
+
+    const isDefaultActive = !isSecondaryOrPetty
+
     generated.push({
       id: `tender-${acc.id}`,
       name: cleanName,
@@ -200,7 +202,7 @@ export function resolveBusinessTenders(options: {
       account_id: acc.id,
       account_code: acc.code,
       account_name: acc.name,
-      is_active: true,
+      is_active: isDefaultActive,
       sort_order: order++
     })
   })
