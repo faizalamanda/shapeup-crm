@@ -112,7 +112,7 @@ async function calculateShiftMetrics(supabase: any, shiftIds: string[]) {
 // GET /api/pos/shifts - Get active open shift or monitoring list
 export async function GET(req: Request) {
   try {
-    const ctx = await getApiContext()
+    const ctx = await getApiContext({ req })
     if (ctx.error) return ctx.error
     const { user, businessId, supabase, supabaseAdmin } = ctx
 
@@ -735,7 +735,13 @@ export async function GET(req: Request) {
 // POST /api/pos/shifts - Open a new shift or Close current shift
 export async function POST(req: Request) {
   try {
-    const ctx = await getApiContext()
+    const body = await req.json().catch(() => null)
+    if (!body) {
+      return NextResponse.json({ error: 'Body permintaan tidak valid' }, { status: 400 })
+    }
+
+    const reqBizId = typeof body?.business_id === 'string' && isUuid(body.business_id) ? body.business_id : undefined
+    const ctx = await getApiContext({ req, requestedBusinessId: reqBizId })
     if (ctx.error) return ctx.error
     const { user, businessId, supabase, supabaseAdmin } = ctx
 
@@ -748,11 +754,6 @@ export async function POST(req: Request) {
       .maybeSingle()
 
     const cashierName = profile?.full_name || user.user_metadata?.full_name || 'Kasir'
-
-    const body = await req.json().catch(() => null)
-    if (!body) {
-      return NextResponse.json({ error: 'Body permintaan tidak valid' }, { status: 400 })
-    }
 
     const { 
       action, 
@@ -878,6 +879,7 @@ export async function POST(req: Request) {
         .from('pos_shifts')
         .select('*')
         .eq('id', shift_id)
+        .eq('business_id', businessId)
         .single()
 
       if (!currentShift) {

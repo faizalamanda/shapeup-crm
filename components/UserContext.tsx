@@ -384,11 +384,24 @@ export function AppUserProvider({ children }: { children: React.ReactNode }) {
       const keysToRemove: string[] = []
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i)
-        if (key && (key.startsWith('su_dash_orders_') || key.startsWith('su_dash_metrics_') || key.startsWith('su_dash_ts_'))) {
+        if (key && (key.startsWith('su_dash_orders_') || key.startsWith('su_dash_metrics_') || key.startsWith('su_dash_ts_') || key.startsWith('su_pos_'))) {
           keysToRemove.push(key)
         }
       }
       keysToRemove.forEach(k => localStorage.removeItem(k))
+
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        try {
+          const sessKeysToRemove: string[] = []
+          for (let i = 0; i < sessionStorage.length; i++) {
+            const key = sessionStorage.key(i)
+            if (key && (key.startsWith('su_pos_') || key.startsWith('su_dash_'))) {
+              sessKeysToRemove.push(key)
+            }
+          }
+          sessKeysToRemove.forEach(k => sessionStorage.removeItem(k))
+        } catch {}
+      }
       
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('shapeup:business_updated'))

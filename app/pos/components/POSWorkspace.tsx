@@ -420,7 +420,10 @@ export default function POSWorkspace({
 
   const checkActiveShift = useCallback(async () => {
     try {
-      const res = await fetch('/api/pos/shifts')
+      const bizParam = businessId ? `?business_id=${businessId}` : ''
+      const res = await fetch(`/api/pos/shifts${bizParam}`, {
+        headers: businessId ? { 'x-business-id': businessId } : undefined
+      })
       if (res.ok) {
         const data = await res.json()
         setActiveShift(data.activeShift)
@@ -428,7 +431,7 @@ export default function POSWorkspace({
     } catch (e) {
       console.warn('Could not fetch active shift:', e)
     }
-  }, [])
+  }, [businessId])
 
   const refreshAllPOSData = useCallback(async () => {
     if (!businessId) return

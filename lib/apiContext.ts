@@ -75,10 +75,14 @@ function getAdmin(): SupabaseClient {
  * 
  * @param options.requireBusiness - If false, skips business ID lookup (default: true)
  * @param options.existingSupabase - Reuse an existing Supabase client
+ * @param options.req - Incoming Request object to inspect requested business_id / x-business-id
+ * @param options.requestedBusinessId - Explicit requested business ID override
  */
 export async function getApiContext(options?: {
   requireBusiness?: boolean
   existingSupabase?: SupabaseClient
+  req?: Request
+  requestedBusinessId?: string
 }): Promise<ApiContextResult> {
   const requireBusiness = options?.requireBusiness !== false
   const supabase = options?.existingSupabase ?? await createClient()
@@ -98,6 +102,41 @@ export async function getApiContext(options?: {
       businessId: '',
       supabase,
       supabaseAdmin: getAdmin()
+    }
+  }
+
+  // 2a. Check explicit requested business ID from param, query string, or header
+  let reqBizId: string | null = null
+  if (options?.requestedBusinessId && typeof options.requestedBusinessId === 'string') {
+    reqBizId = options.requestedBusinessId.trim()
+  } else if (options?.req) {
+    try {
+      const url = new URL(options.req.url)
+      const qBiz = url.searchParams.get('business_id')
+      const hBiz = options.req.headers.get('x-business-id')
+      reqBizId = qBiz || hBiz || null
+    } catch {}
+  }
+
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (reqBizId && UUID_REGEX.test(reqBizId)) {
+    const admin = getAdmin()
+    const [{ data: owned }, { data: staff }] = await Promise.all([
+      admin.from('businesses').select('id').eq('id', reqBizId).eq('owner_id', user.id).maybeSingle(),
+      admin.from('business_staff').select('business_id').eq('business_id', reqBizId).eq('profile_id', user.id).maybeSingle()
+    ])
+
+    if (owned?.id || staff?.business_id) {
+      return {
+        user,
+        businessId: reqBizId,
+        supabase,
+        supabaseAdmin: admin
+      }
+    } else {
+      return {
+        error: NextResponse.json({ error: 'Akses ke unit bisnis ini ditolak' }, { status: 403 })
+      }
     }
   }
 

@@ -48,12 +48,12 @@ interface POSHubCacheEntry {
 
 const HUB_CACHE_TTL = 5 * 60_000 // 5 minutes
 
-function getHubCacheKey(businessId?: string): string {
-  return `su_pos_hub_v2_${businessId || 'default'}`
+function getHubCacheKey(businessId: string): string {
+  return `su_pos_hub_v2_${businessId}`
 }
 
 function readHubCache(businessId?: string): POSHubCacheEntry | null {
-  if (typeof window === 'undefined') return null
+  if (typeof window === 'undefined' || !businessId) return null
   try {
     const raw = sessionStorage.getItem(getHubCacheKey(businessId))
     if (!raw) return null
@@ -66,7 +66,7 @@ function readHubCache(businessId?: string): POSHubCacheEntry | null {
 }
 
 function writeHubCache(businessId: string | undefined, data: Omit<POSHubCacheEntry, 'ts'>) {
-  if (typeof window === 'undefined') return
+  if (typeof window === 'undefined' || !businessId) return
   try {
     sessionStorage.setItem(
       getHubCacheKey(businessId),
@@ -135,6 +135,7 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
 
   // Load Shift, Registers, Accounts & Historical Shift Ledger in ONE consolidated bundle (/api/pos/shifts?mode=hub)
   const loadData = useCallback(async (options?: { silent?: boolean }) => {
+    if (!activeBusiness?.id) return
     const isSilent = Boolean(options?.silent)
     if (!isSilent && pastShifts.length === 0 && !activeShift) {
       setLoading(true)
@@ -143,8 +144,11 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
     try {
       const statusParam = shiftStatusFilter !== 'all' ? `&status=${shiftStatusFilter}` : ''
       const cashierParam = isAdmin && selectedCashierId !== 'all' ? `&cashier_id=${selectedCashierId}` : ''
+      const bizParam = `&business_id=${activeBusiness.id}`
 
-      const res = await fetch(`/api/pos/shifts?mode=hub&limit=15&offset=0${statusParam}${cashierParam}`)
+      const res = await fetch(`/api/pos/shifts?mode=hub&limit=15&offset=0${statusParam}${cashierParam}${bizParam}`, {
+        headers: { 'x-business-id': activeBusiness.id }
+      })
       if (res.ok) {
         const data = await res.json()
         const newActiveShift = data.activeShift || null
@@ -170,7 +174,7 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
         setTotalDrawerCash(newTotalDrawer)
 
         // Persist to L2 cache for instant 0ms access on future visits
-        writeHubCache(activeBusiness?.id, {
+        writeHubCache(activeBusiness.id, {
           activeShift: newActiveShift,
           cashierName: newCashierName,
           accounts: newAccounts,
@@ -186,14 +190,10 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
         // Fallback: If mode=hub returns error (e.g., transient network or legacy endpoint), execute resilient multi-fetch fallback
         console.warn('[POSHub] mode=hub returned non-ok status, falling back to legacy multi-fetch...')
         const [shiftRes, historyRes, accRes, regRes] = await Promise.all([
-          fetch('/api/pos/shifts'),
-          fetch(`/api/pos/shifts?mode=history&limit=15&offset=0${statusParam}${cashierParam}`),
-          activeBusiness?.id
-            ? supabase.from('accounts').select('id, name, code, type').eq('business_id', activeBusiness.id).eq('type', 'ASSET').order('code', { ascending: true })
-            : Promise.resolve({ data: [] }),
-          activeBusiness?.id
-            ? supabase.from('pos_registers').select('*').eq('business_id', activeBusiness.id).order('name', { ascending: true })
-            : Promise.resolve({ data: [] })
+          fetch(`/api/pos/shifts?business_id=${activeBusiness.id}`, { headers: { 'x-business-id': activeBusiness.id } }),
+          fetch(`/api/pos/shifts?mode=history&limit=15&offset=0${statusParam}${cashierParam}${bizParam}`, { headers: { 'x-business-id': activeBusiness.id } }),
+          supabase.from('accounts').select('id, name, code, type').eq('business_id', activeBusiness.id).eq('type', 'ASSET').order('code', { ascending: true }),
+          supabase.from('pos_registers').select('*').eq('business_id', activeBusiness.id).order('name', { ascending: true })
         ])
 
         if (shiftRes.ok) {
@@ -257,13 +257,16 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
 
   // Load More Shifts Handler (Pagination / Load More)
   const handleLoadMoreShifts = async () => {
-    if (loadingMore || !hasMoreShifts) return
+    if (loadingMore || !hasMoreShifts || !activeBusiness?.id) return
     const nextOffset = pastShifts.length
     setLoadingMore(true)
     try {
       const statusParam = shiftStatusFilter !== 'all' ? `&status=${shiftStatusFilter}` : ''
       const cashierParam = isAdmin && selectedCashierId !== 'all' ? `&cashier_id=${selectedCashierId}` : ''
-      const res = await fetch(`/api/pos/shifts?mode=history&limit=15&offset=${nextOffset}${statusParam}${cashierParam}`)
+      const bizParam = `&business_id=${activeBusiness.id}`
+      const res = await fetch(`/api/pos/shifts?mode=history&limit=15&offset=${nextOffset}${statusParam}${cashierParam}${bizParam}`, {
+        headers: { 'x-business-id': activeBusiness.id }
+      })
       if (res.ok) {
         const data = await res.json()
         if (data.shifts) {
@@ -281,11 +284,16 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
 
   // Shift Actions
   const handleOpenShift = async (initialCash: number, note: string, sourceAccountCode: string, registerId?: string | null) => {
+    if (!activeBusiness?.id) return
     const res = await fetch('/api/pos/shifts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-business-id': activeBusiness.id
+      },
       body: JSON.stringify({
         action: 'open',
+        business_id: activeBusiness.id,
         initial_cash: initialCash,
         note,
         source_account_code: sourceAccountCode,
@@ -299,11 +307,16 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
   }
 
   const handleCloseShift = async (shiftId: string, actualCash: number, note: string, targetAccountCode: string) => {
+    if (!activeBusiness?.id) return
     const res = await fetch('/api/pos/shifts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-business-id': activeBusiness.id
+      },
       body: JSON.stringify({
         action: 'close',
+        business_id: activeBusiness.id,
         shift_id: shiftId,
         actual_cash: actualCash,
         note,
