@@ -221,10 +221,20 @@ export function CustomerSelectCombobox({
                   >
                     <div className="flex flex-col min-w-0 pr-2">
                       <span className="font-bold text-slate-900 text-xs truncate">👤 {c.name}</span>
-                      <span className="text-[11px] text-slate-500 font-mono truncate">
-                        📱 {c.phone || '-'}{' '}
-                        {c.email ? `• ✉️ ${c.email}` : ''}
-                      </span>
+                      {(() => {
+                        const mk = c.metadata?.marketplace_profiles
+                        const mkList = mk
+                          ? Object.entries(mk)
+                              .filter(([k, v]) => Boolean(v) && k !== 'other_platform')
+                              .map(([k, v]) => `${k.charAt(0).toUpperCase() + k.slice(1)}: ${String(v).replace(/^@/, '')}`)
+                          : []
+                        return (
+                          <span className="text-[11px] text-slate-500 font-mono truncate">
+                            {c.phone ? `📱 ${c.phone}` : (mkList.length > 0 ? `🛍️ ${mkList.slice(0, 2).join(' • ')}` : '📱 (Tanpa No HP)')}
+                            {c.email ? ` • ✉️ ${c.email}` : ''}
+                          </span>
+                        )
+                      })()}
                     </div>
                     {isSelected && (
                       <span className="text-blue-600 font-bold text-xs shrink-0">✓ Selected</span>

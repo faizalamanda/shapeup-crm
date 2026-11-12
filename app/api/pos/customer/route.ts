@@ -15,20 +15,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Payload JSON tidak valid' }, { status: 400 })
     }
 
-    const { name, phone, email, address_data, metadata } = body || {}
+    const { name, phone, email, address_data, metadata, marketplace_profiles } = body || {}
 
-    if (!name || !phone) {
-      return NextResponse.json({ error: 'Nama dan Nomor HP wajib diisi' }, { status: 400 })
+    if (!name || !String(name).trim()) {
+      return NextResponse.json({ error: 'Nama pelanggan wajib diisi' }, { status: 400 })
     }
 
     const { customer, isExisting } = await resolveOrCreateCustomer(
       {
         businessId,
         name,
-        phone,
+        phone: phone || null,
         email,
         address_data,
         metadata,
+        marketplace_profiles: marketplace_profiles || metadata?.marketplace_profiles || null,
         reuseExistingOnPhoneMatch: true
       },
       supabaseAdmin

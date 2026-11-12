@@ -64,6 +64,16 @@ Format `source_order` ini dirancang 100% kompatibel dengan:
 - Analitik sumber penjualan per-platform.
 - Webhook WooCommerce yang menyertakan data UTM dari plugin pixel/tracking.
 
+### 2.3 Resolusi Pelanggan Marketplace Tanpa Nomor HP (Buyer PII Masking & Marketplace Profiles)
+Marketplace (Shopee, TikTok Shop, Tokopedia, Lazada, Amazon, dll.) menerapkan sensor nomor HP (*PII Masking*). Standar modul invoice dalam menangani ini:
+1. **Nomor HP Opsional:** Validasi pelanggan baru di Invoice **HANYA** mewajibkan Nama Pelanggan (`name`). Dilarang memblokir faktur hanya karena nomor HP tidak tersedia.
+2. **Dynamic JSONB Profiles:** Identitas pembeli disimpan dalam `metadata.marketplace_profiles` (misal: `{ "shopee": "budi_olshop", "tiktok": "anita_store" }`). Wajib berupa **plain username tanpa simbol `@`** agar sesuai dengan Seller Center dan resi pengiriman.
+3. **Smart 3-Tier Customer Matching:**
+   - **Tier 1:** Jika ada nomor HP $\rightarrow$ Cocokkan simetris E.164 (`08` $\leftrightarrow$ `628`).
+   - **Tier 2:** Jika nomor HP kosong $\rightarrow$ Cocokkan username marketplace pembeli di tabel `customers` pada unit bisnis terkait. Jika cocok, sambungkan ke pelanggan existing (*repeat buyer attribution*).
+   - **Tier 3:** Jika tidak ditemukan $\rightarrow$ Terbitkan pelanggan baru dengan metadata marketplace.
+4. **Visual Badge Gudang:** Tampilan rincian invoice dan struk cetak wajib merender badge platform (`Shopee: budi_olshop`, `TikTok: anita_store`) untuk memudahkan operasional packing dan cross-check resi kurir.
+
 ---
 
 ## 3. Integrasi Arsitektur Modul Reusable

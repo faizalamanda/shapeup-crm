@@ -122,7 +122,7 @@ export function buildPhoneSearchVariants(rawQuery: string): string[] {
  * pencocokan nomor telepon simetris (08 <-> 628).
  */
 export function matchesCustomerQuery(
-  customer: { name?: string | null; phone?: string | null; email?: string | null },
+  customer: { name?: string | null; phone?: string | null; email?: string | null; metadata?: any },
   rawQuery: string
 ): boolean {
   const q = String(rawQuery || '').trim().toLowerCase()
@@ -135,7 +135,15 @@ export function matchesCustomerQuery(
   if (email && email.includes(q)) return true
 
   const rawPhone = String(customer.phone || '').toLowerCase()
-  if (rawPhone.includes(q)) return true
+  if (rawPhone && rawPhone.includes(q)) return true
+
+  // Marketplace profiles matching (e.g. shopee: 'budi99', tiktok: '@budi')
+  const mkProfiles = customer.metadata?.marketplace_profiles
+  if (mkProfiles && typeof mkProfiles === 'object') {
+    for (const val of Object.values(mkProfiles)) {
+      if (typeof val === 'string' && val.toLowerCase().includes(q)) return true
+    }
+  }
 
   // Symmetric phone digit matching
   const phoneDigits = rawPhone.replace(/\D/g, '')
@@ -380,6 +388,7 @@ export interface ResolveOrCreateCustomerInput {
   category?: string | null
   address_data?: any
   metadata?: any
+  marketplace_profiles?: Record<string, string | null | undefined> | null
   /**
    * Jika true (default di Invoice/POS/Order Manual), ketika nomor telepon sudah
    * terdaftar di bisnis ini, kembalikan customer yang sudah ada tanpa melempar error.
@@ -407,8 +416,30 @@ export async function resolveOrCreateCustomer(
     category = 'General',
     address_data = null,
     metadata = null,
+    marketplace_profiles = null,
     reuseExistingOnPhoneMatch = true
   } = input
+
+  // Merge marketplace_profiles into metadata cleanly
+  const existingMeta = (metadata && typeof metadata === 'object') ? { ...metadata } : {}
+  const rawProfiles = marketplace_profiles || existingMeta.marketplace_profiles || {}
+  const cleanMarketplaceProfiles: Record<string, string> = {}
+
+  if (rawProfiles && typeof rawProfiles === 'object') {
+    for (const [key, val] of Object.entries(rawProfiles)) {
+      if (val !== null && val !== undefined) {
+        const s = String(val).trim()
+        if (s) cleanMarketplaceProfiles[key.toLowerCase()] = s
+      }
+    }
+  }
+
+  const finalMetadata = {
+    ...existingMeta,
+    ...(Object.keys(cleanMarketplaceProfiles).length > 0
+      ? { marketplace_profiles: cleanMarketplaceProfiles }
+      : {})
+  }
 
   // 1. If a valid UUID customerId is provided, verify and return it
   if (isUuid(customerId)) {
@@ -432,64 +463,121 @@ export async function resolveOrCreateCustomer(
     }
   }
 
-  // 2. Validate name & phone for creation / phone lookup
+  // 2. Validate customer name
   const cleanName = String(name || '').trim()
   const cleanPhone = normalizePhoneCanonical(phone)
 
-  if (!cleanName || !cleanPhone) {
-    throw new Error('Nama dan Nomor HP wajib diisi')
+  if (!cleanName) {
+    throw new Error('Nama pelanggan wajib diisi')
   }
 
-  // 3. Check if phone number already exists in this business (check variants 628... and 08...)
-  const phoneVariants = buildPhoneSearchVariants(cleanPhone)
-  const { data: existingList, error: phoneErr } = await supabaseAdmin
-    .from('customers')
-    .select('id, business_id, name, phone, email, category, address_data, metadata')
-    .eq('business_id', businessId)
-    .in('phone', phoneVariants.length > 0 ? phoneVariants : [cleanPhone])
-    .limit(1)
+  // 3A. Phone Matching: Check if phone number already exists in this business
+  if (cleanPhone) {
+    const phoneVariants = buildPhoneSearchVariants(cleanPhone)
+    const { data: existingList, error: phoneErr } = await supabaseAdmin
+      .from('customers')
+      .select('id, business_id, name, phone, email, category, address_data, metadata')
+      .eq('business_id', businessId)
+      .in('phone', phoneVariants.length > 0 ? phoneVariants : [cleanPhone])
+      .limit(1)
 
-  if (phoneErr) throw phoneErr
+    if (phoneErr) throw phoneErr
 
-  const existing = existingList && existingList.length > 0 ? existingList[0] : null
+    const existing = existingList && existingList.length > 0 ? existingList[0] : null
 
-  if (existing) {
-    if (!reuseExistingOnPhoneMatch) {
-      const conflictErr: any = new Error(
-        `Nomor HP sudah terdaftar atas nama pelanggan: ${existing.name}`
-      )
-      conflictErr.statusCode = 400
-      conflictErr.existingCustomer = sanitizeCustomerRow(existing)
-      throw conflictErr
+    if (existing) {
+      if (!reuseExistingOnPhoneMatch) {
+        const conflictErr: any = new Error(
+          `Nomor HP sudah terdaftar atas nama pelanggan: ${existing.name}`
+        )
+        conflictErr.statusCode = 400
+        conflictErr.existingCustomer = sanitizeCustomerRow(existing)
+        throw conflictErr
+      }
+
+      // Optionally enrich address_data, email, or marketplace_profiles
+      const existingMk = existing.metadata?.marketplace_profiles || {}
+      const mergedMk = { ...existingMk, ...cleanMarketplaceProfiles }
+      const hasNewMk = Object.keys(cleanMarketplaceProfiles).some(k => !existingMk[k])
+
+      const needsEnrich =
+        (!existing.email && email) ||
+        (!existing.address_data && address_data) ||
+        hasNewMk
+
+      if (needsEnrich) {
+        const updatedMeta = {
+          ...(existing.metadata || {}),
+          ...(Object.keys(mergedMk).length > 0 ? { marketplace_profiles: mergedMk } : {})
+        }
+
+        const { data: enriched } = await supabaseAdmin
+          .from('customers')
+          .update({
+            email: existing.email || (email ? String(email).trim() : null),
+            address_data: existing.address_data || address_data || null,
+            metadata: updatedMeta
+          })
+          .eq('id', existing.id)
+          .eq('business_id', businessId)
+          .select('id, business_id, name, phone, email, category, address_data, metadata')
+          .single()
+
+        if (enriched) {
+          const sanitized = sanitizeCustomerRow(enriched)
+          upsertCustomerInServerCache(businessId, sanitized)
+          return { customer: sanitized, isExisting: true }
+        }
+      }
+
+      const sanitized = sanitizeCustomerRow(existing)
+      upsertCustomerInServerCache(businessId, sanitized)
+      return { customer: sanitized, isExisting: true }
     }
+  }
 
-    // Optionally enrich address_data or email if existing customer lacked them
-    const needsEnrich =
-      (!existing.email && email) ||
-      (!existing.address_data && address_data)
+  // 3B. Marketplace Profile Matching: If phone is absent, try matching by marketplace handle
+  if (!cleanPhone && Object.keys(cleanMarketplaceProfiles).length > 0) {
+    for (const [rawKey, handleVal] of Object.entries(cleanMarketplaceProfiles)) {
+      const safeKey = rawKey.replace(/[^a-zA-Z0-9_]/g, '')
+      if (safeKey && handleVal && typeof handleVal === 'string' && handleVal.trim()) {
+        const cleanHandle = handleVal.trim()
+        const { data: matchedRows, error: mkErr } = await supabaseAdmin
+          .from('customers')
+          .select('id, business_id, name, phone, email, category, address_data, metadata')
+          .eq('business_id', businessId)
+          .filter(`metadata->marketplace_profiles->>${safeKey}`, 'eq', cleanHandle)
+          .limit(1)
 
-    if (needsEnrich) {
-      const { data: enriched } = await supabaseAdmin
-        .from('customers')
-        .update({
-          email: existing.email || (email ? String(email).trim() : null),
-          address_data: existing.address_data || address_data || null,
-        })
-        .eq('id', existing.id)
-        .eq('business_id', businessId)
-        .select('id, business_id, name, phone, email, category, address_data, metadata')
-        .single()
+        if (!mkErr && matchedRows && matchedRows.length > 0) {
+          const existing = matchedRows[0]
+          // Enrich address_data or email if missing
+          const needsEnrich = (!existing.email && email) || (!existing.address_data && address_data)
+          if (needsEnrich) {
+            const { data: enriched } = await supabaseAdmin
+              .from('customers')
+              .update({
+                email: existing.email || (email ? String(email).trim() : null),
+                address_data: existing.address_data || address_data || null,
+              })
+              .eq('id', existing.id)
+              .eq('business_id', businessId)
+              .select('id, business_id, name, phone, email, category, address_data, metadata')
+              .single()
 
-      if (enriched) {
-        const sanitized = sanitizeCustomerRow(enriched)
-        upsertCustomerInServerCache(businessId, sanitized)
-        return { customer: sanitized, isExisting: true }
+            if (enriched) {
+              const sanitized = sanitizeCustomerRow(enriched)
+              upsertCustomerInServerCache(businessId, sanitized)
+              return { customer: sanitized, isExisting: true }
+            }
+          }
+
+          const sanitized = sanitizeCustomerRow(existing)
+          upsertCustomerInServerCache(businessId, sanitized)
+          return { customer: sanitized, isExisting: true }
+        }
       }
     }
-
-    const sanitized = sanitizeCustomerRow(existing)
-    upsertCustomerInServerCache(businessId, sanitized)
-    return { customer: sanitized, isExisting: true }
   }
 
   // 4. Insert new customer
@@ -498,11 +586,11 @@ export async function resolveOrCreateCustomer(
     .insert({
       business_id: businessId,
       name: cleanName,
-      phone: cleanPhone,
+      phone: cleanPhone || '',
       email: email ? String(email).trim() : null,
       category: category || 'General',
       address_data: address_data || null,
-      metadata: metadata || null,
+      metadata: Object.keys(finalMetadata).length > 0 ? finalMetadata : null,
     })
     .select('id, business_id, name, phone, email, category, address_data, metadata')
     .single()

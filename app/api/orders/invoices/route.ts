@@ -135,6 +135,7 @@ export async function POST(req: Request) {
       customer_phone,
       customer_email,
       customer_address,     // AddressData JSONB — null if existing customer selected
+      marketplace_profiles, // Marketplace profiles JSONB: { shopee: '...', tiktok: '...', ... }
       order_number, // invoice number from user
       order_date,
       due_date,
@@ -181,14 +182,15 @@ export async function POST(req: Request) {
     // 2. Resolve Customer ID (via Unified Customer Helper + Server Cache Upsert)
     let resolvedCustomerId = isUuid(customer_id) ? customer_id : null
 
-    if (!resolvedCustomerId && customer_name && customer_phone) {
+    if (!resolvedCustomerId && customer_name && String(customer_name).trim()) {
       const { customer: resolvedCust } = await resolveOrCreateCustomer(
         {
           businessId,
           name: customer_name,
-          phone: customer_phone,
-          email: customer_email,
+          phone: customer_phone || null,
+          email: customer_email || null,
           address_data: customer_address ?? null,
+          marketplace_profiles: marketplace_profiles || null,
           reuseExistingOnPhoneMatch: true
         },
         supabaseAdmin
@@ -197,7 +199,7 @@ export async function POST(req: Request) {
     }
 
     if (!resolvedCustomerId) {
-      return NextResponse.json({ error: 'Customer ID atau data Customer baru wajib disertakan' }, { status: 400 })
+      return NextResponse.json({ error: 'Customer ID atau Nama Customer baru wajib disertakan' }, { status: 400 })
     }
 
     // 3. Auto-generate Invoice Number if not provided
@@ -295,7 +297,8 @@ export async function POST(req: Request) {
         channel: source_platform || 'Invoice',
         reference_no: source_order_ref || '',
         utm_source: utm_source || '',
-        utm_campaign: utm_campaign || ''
+        utm_campaign: utm_campaign || '',
+        ...(marketplace_profiles ? { marketplace_profiles } : {})
       },
       meta_data: [
         { key: 'shapeup_kurir_awb', value: courier || '' },

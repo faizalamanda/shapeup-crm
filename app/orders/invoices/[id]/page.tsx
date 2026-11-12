@@ -1129,10 +1129,32 @@ export default function InvoiceDetailPage() {
                 {invoice.customers ? (
                   <div className="space-y-1 text-sm">
                     <p className="font-black text-[#1C1C1A]">{invoice.customers.name}</p>
-                    <p className="text-xs text-[#70706E] font-mono">{invoice.customers.phone}</p>
+                    {invoice.customers.phone ? (
+                      <p className="text-xs text-[#70706E] font-mono">📱 {invoice.customers.phone}</p>
+                    ) : null}
                     {invoice.customers.email && (
-                      <p className="text-xs text-[#70706E]">{invoice.customers.email}</p>
+                      <p className="text-xs text-[#70706E]">✉️ {invoice.customers.email}</p>
                     )}
+                    {(() => {
+                      const mk = (invoice.customers as any)?.metadata?.marketplace_profiles || invoice.raw_source_data?.source_order?.marketplace_profiles
+                      if (!mk || typeof mk !== 'object') return null
+                      const list = Object.entries(mk).filter(([k, v]) => Boolean(v) && k !== 'other_platform')
+                      if (list.length === 0) return null
+                      return (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {list.map(([platform, handle]) => (
+                            <span
+                              key={platform}
+                              className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200/80"
+                            >
+                              <span>{platform === 'shopee' ? '🛍️' : platform === 'tiktok' ? '🎵' : platform === 'tokopedia' ? '🟢' : '🏬'}</span>
+                              <span className="capitalize">{platform}:</span>
+                              <span className="font-mono text-slate-900 font-bold">{String(handle).replace(/^@/, '')}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )
+                    })()}
                     {showAddress && getInvoiceAddress() && (
                       <p className="text-xs text-[#70706E] pt-1 border-t border-dashed border-gray-100">
                         📍 {getInvoiceAddress()}

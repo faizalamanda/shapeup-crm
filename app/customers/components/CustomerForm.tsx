@@ -45,6 +45,13 @@ export function CustomerForm({ mode, customerId, initialCustomer }: CustomerForm
   const [tags, setTags]               = useState<string[]>([])
   const [newTagInput, setNewTagInput] = useState('')
 
+  // Marketplace Profiles State
+  const [shopee, setShopee]           = useState('')
+  const [tiktok, setTiktok]           = useState('')
+  const [tokopedia, setTokopedia]     = useState('')
+  const [otherPlatform, setOtherPlatform] = useState('')
+  const [otherHandle, setOtherHandle] = useState('')
+
   // UI / Action State
   const [loading, setLoading]         = useState(mode === 'edit' && !initialCustomer)
   const [saving, setSaving]           = useState(false)
@@ -96,6 +103,13 @@ export function CustomerForm({ mode, customerId, initialCustomer }: CustomerForm
     setAltPhone(meta.alt_phone || '')
     setLeadSource(meta.lead_source || '')
     setTags(meta.tags || [])
+
+    const mk = meta.marketplace_profiles || {}
+    setShopee(mk.shopee || '')
+    setTiktok(mk.tiktok || '')
+    setTokopedia(mk.tokopedia || '')
+    setOtherPlatform(mk.other_platform || '')
+    setOtherHandle(mk.other_handle || '')
   }
 
   // Tag helper actions
@@ -122,17 +136,22 @@ export function CustomerForm({ mode, customerId, initialCustomer }: CustomerForm
       setErrorMessage('Nama Lengkap wajib diisi!')
       return
     }
-    if (!phone.trim()) {
-      setErrorMessage('Nomor HP / WhatsApp wajib diisi!')
-      return
-    }
 
     setSaving(true)
     setErrorMessage('')
 
+    const mkProfiles: Record<string, string> = {}
+    if (shopee.trim()) mkProfiles.shopee = shopee.trim().replace(/^@/, '')
+    if (tiktok.trim()) mkProfiles.tiktok = tiktok.trim().replace(/^@/, '')
+    if (tokopedia.trim()) mkProfiles.tokopedia = tokopedia.trim().replace(/^@/, '')
+    if (otherHandle.trim()) {
+      mkProfiles.other_platform = otherPlatform.trim() || 'Lainnya'
+      mkProfiles.other_handle = otherHandle.trim().replace(/^@/, '')
+    }
+
     const payload = {
       name: name.trim(),
-      phone: phone.trim(),
+      phone: phone.trim() || null,
       email: email.trim() || null,
       category,
       address_data: address,
@@ -144,6 +163,7 @@ export function CustomerForm({ mode, customerId, initialCustomer }: CustomerForm
         alt_phone: altPhone.trim(),
         lead_source: leadSource,
         tags,
+        ...(Object.keys(mkProfiles).length > 0 ? { marketplace_profiles: mkProfiles } : {})
       }
     }
 
@@ -277,15 +297,15 @@ export function CustomerForm({ mode, customerId, initialCustomer }: CustomerForm
 
               <div>
                 <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
-                  Nomor HP / WhatsApp *
+                  Nomor HP / WhatsApp
+                  <span className="text-[10px] lowercase font-normal text-slate-400 ml-1">(opsional)</span>
                 </label>
                 <input
                   type="text"
                   value={phone}
                   onChange={e => setPhone(e.target.value)}
                   className="w-full p-3 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:border-blue-500 focus:outline-none bg-white font-medium text-slate-900"
-                  placeholder="Contoh: 08123456789"
-                  required
+                  placeholder="Contoh: 08123456789 (kosongkan jika dari marketplace)"
                 />
               </div>
 
@@ -317,6 +337,86 @@ export function CustomerForm({ mode, customerId, initialCustomer }: CustomerForm
                   <option value="Dropshipper">Dropshipper</option>
                   <option value="Wholesale">Wholesale</option>
                 </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Card: Akun Marketplace Pembeli (Shopee, TikTok, dll) */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
+                <span>🛍️</span> Akun Marketplace & Platform Global
+              </h2>
+              <span className="text-[10px] text-slate-400 font-semibold">Identitas Buyer Masked</span>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              Simpan username akun pembeli marketplace (berguna saat marketplace menyensor nomor HP).
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1.5 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-orange-500 inline-block"></span>
+                  Username Shopee
+                </label>
+                <input
+                  type="text"
+                  value={shopee.replace(/^@/, '')}
+                  onChange={e => setShopee(e.target.value.replace(/^@/, ''))}
+                  className="w-full p-3 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:border-blue-500 focus:outline-none bg-white text-slate-900 font-medium"
+                  placeholder="Contoh: budi_olshop"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1.5 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-black inline-block"></span>
+                  Username TikTok Shop
+                </label>
+                <input
+                  type="text"
+                  value={tiktok.replace(/^@/, '')}
+                  onChange={e => setTiktok(e.target.value.replace(/^@/, ''))}
+                  className="w-full p-3 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:border-blue-500 focus:outline-none bg-white text-slate-900 font-medium"
+                  placeholder="Contoh: anita_store"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1.5 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                  Username Tokopedia
+                </label>
+                <input
+                  type="text"
+                  value={tokopedia.replace(/^@/, '')}
+                  onChange={e => setTokopedia(e.target.value.replace(/^@/, ''))}
+                  className="w-full p-3 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:border-blue-500 focus:outline-none bg-white text-slate-900 font-medium"
+                  placeholder="Contoh: tokopedia_store"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1.5">
+                  Platform Lain (Amazon / Lazada / Etsy)
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={otherPlatform}
+                    onChange={e => setOtherPlatform(e.target.value)}
+                    className="w-full p-3 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:border-blue-500 focus:outline-none bg-white text-slate-900"
+                    placeholder="Platform"
+                  />
+                  <input
+                    type="text"
+                    value={otherHandle.replace(/^@/, '')}
+                    onChange={e => setOtherHandle(e.target.value.replace(/^@/, ''))}
+                    className="w-full p-3 text-sm rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-100 focus:border-blue-500 focus:outline-none bg-white text-slate-900 font-medium"
+                    placeholder="Username"
+                  />
+                </div>
               </div>
             </div>
           </div>

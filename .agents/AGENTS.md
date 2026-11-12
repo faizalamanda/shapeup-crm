@@ -485,6 +485,17 @@
       - Polaritas kenaikan metrik wajib disesuaikan: Pendapatan & Laba (Hijau jika naik), Beban & HPP (Merah jika naik / `reversePolarity = true`).
       - Pada Dashboard Utama, jika `compMode === 'none'`, badge persentase perubahan tidak boleh menampilkan label statis `+0.0%`, melainkan disembunyikan secara bersih.
 
+31. **Marketplace Buyer PII Masking & Global Dynamic JSONB Identity Standards:**
+    - **Nomor HP Opsional & Nama Wajib:** Karena kebijakan sensor identitas (*PII Masking*) pada marketplace lokal maupun global (Shopee, TikTok Shop, Tokopedia, Lazada, Amazon, eBay, Etsy, dll.), modul Invoice (`/orders/invoices`), POS (`/orders/pos`), dan Customer CRM (`/customers`) **DILARANG KERAS** memblokir pembuatan transaksi hanya karena nomor HP pembeli kosong. Kolom `customers.phone` diizinkan `NULL` dan nomor HP bersifat opsional di seluruh formulir; yang wajib diisi hanyalah Nama Pelanggan (`name`).
+    - **Global Dynamic JSONB Architecture (Dilarang Kolom Flat Statis):** Identitas akun pembeli platform disimpan dalam `customers.metadata->'marketplace_profiles'` (dan pada `orders.raw_source_data.source_order.marketplace_profiles`). Dilarang menambahkan kolom flat statis (`ALTER TABLE customers ADD COLUMN shopee_username`) agar ekspansi ke puluhan platform e-commerce global tidak memerlukan migrasi DDL database berulang.
+    - **Plain Username Sanitization (Tanpa Simbol `@`):** Seluruh input dan penyimpanan username marketplace wajib berupa teks biasa (*plain text username*, contoh: `budi_olshop`, `anita_store`) tanpa awalan `@`. Sistem wajib otomatis membersihkan karakter `@` (`.replace(/^@/, '')`) saat pengguna menyalin teks dari Seller Center.
+    - **Smart 3-Tier Customer Deduplication Hierarchy (`lib/customerHelper.ts`):**
+      - **Tier 1 (Phone Match):** Jika ada nomor HP valid $\rightarrow$ Cocokkan simetris E.164 (`08` $\leftrightarrow$ `628`).
+      - **Tier 2 (Marketplace Profile Match):** Jika nomor HP kosong $\rightarrow$ Cocokkan username akun platform pembeli (`metadata->marketplace_profiles->>platform`) pada unit bisnis aktif (`business_id = p_business_id`). Jika cocok, sambungkan transaksi ke pelanggan existing untuk mengakumulasi histori belanja (*LTV* & *Total Orders* repeat order marketplace).
+      - **Tier 3 (New Customer):** Jika tidak ada yang cocok $\rightarrow$ Buat pelanggan baru dengan profil marketplace lengkap.
+    - **PostgREST Security Sanitization:** Kueri dinamis path JSONB ke Supabase wajib menyaring kunci platform (`platformKey.replace(/[^a-zA-Z0-9_]/g, '')`) untuk mencegah karakter delimiter sintaks PostgREST menyusup ke kueri.
+    - **Visual Fulfillment Badging:** Tampilan rincian invoice (`/orders/invoices/[id]`), dropdown combobox, dan cetak struk/faktur wajib menampilkan badge platform pembeli (`Shopee: budi_olshop`, `TikTok: anita_store`) agar staf gudang dan packing dapat langsung memverifikasi paket dengan label resi pengiriman tanpa bergantung pada nomor HP yang disensor.
+
 
 
 

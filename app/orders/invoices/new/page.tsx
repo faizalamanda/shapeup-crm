@@ -362,8 +362,8 @@ export default function NewInvoicePage() {
     customDocStatus?: 'pending' | 'processing' | 'shipped' | 'completed',
     customPayStatus?: 'unpaid' | 'partial' | 'paid'
   ) => {
-    if (isNewCustomer && (!newCustForm.name || !newCustForm.phone)) {
-      setErrorMessage('Nama dan Nomor HP Customer baru wajib diisi.')
+    if (isNewCustomer && (!newCustForm.name || !newCustForm.name.trim())) {
+      setErrorMessage('Nama Customer baru wajib diisi.')
       return
     }
 
@@ -401,9 +401,10 @@ export default function NewInvoicePage() {
       const payload = {
         customer_id: isNewCustomer ? null : selectedCustomerId,
         customer_name: isNewCustomer ? newCustForm.name : null,
-        customer_phone: isNewCustomer ? newCustForm.phone : null,
+        customer_phone: isNewCustomer ? (newCustForm.phone || null) : null,
         customer_email: isNewCustomer ? newCustForm.email : null,
         customer_address: isNewCustomer ? newCustForm.address : null,
+        marketplace_profiles: isNewCustomer ? (newCustForm.marketplace_profiles || null) : null,
         order_number: invoiceNumber || null,
         order_date: invoiceDate,
         due_date: dueDate,
@@ -459,9 +460,10 @@ export default function NewInvoicePage() {
             id: result.order.customer_id,
             business_id: businessId || activeBusiness?.id,
             name: newCustForm.name,
-            phone: newCustForm.phone,
+            phone: newCustForm.phone || '',
             email: newCustForm.email || null,
-            address_data: newCustForm.address || null
+            address_data: newCustForm.address || null,
+            metadata: newCustForm.marketplace_profiles ? { marketplace_profiles: newCustForm.marketplace_profiles } : null
           },
           'upsert',
           businessId || activeBusiness?.id

@@ -49,18 +49,21 @@ export default function AddCustomerModal({ isOpen, onClose, onSave, businessId }
     e.preventDefault()
 
     if (!name.trim()) return alert('Nama pelanggan wajib diisi!')
-    if (!phone.trim()) return alert('Nomor HP/WhatsApp wajib diisi!')
 
-    // Clean and format phone number (e.g. 0812... -> 62812...)
-    let cleanPhone = phone.replace(/\D/g, '')
-    if (cleanPhone.startsWith('0')) {
-      cleanPhone = '62' + cleanPhone.substring(1)
-    } else if (cleanPhone.startsWith('8')) {
-      cleanPhone = '62' + cleanPhone
-    }
+    // Clean and format phone number if provided (e.g. 0812... -> 62812...)
+    let cleanPhone: string | null = null
+    if (phone.trim()) {
+      let raw = phone.replace(/\D/g, '')
+      if (raw.startsWith('0')) {
+        raw = '62' + raw.substring(1)
+      } else if (raw.startsWith('8')) {
+        raw = '62' + raw
+      }
 
-    if (cleanPhone.length < 8) {
-      return alert('Nomor HP tidak valid!')
+      if (raw.length < 8) {
+        return alert('Nomor HP tidak valid!')
+      }
+      cleanPhone = raw
     }
 
     setSaving(true)
@@ -144,10 +147,11 @@ export default function AddCustomerModal({ isOpen, onClose, onSave, businessId }
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold text-[#6B6B63] uppercase tracking-widest mb-1.5">Nomor HP / WhatsApp *</label>
+            <label className="block text-[10px] font-bold text-[#6B6B63] uppercase tracking-widest mb-1.5">
+              Nomor HP / WhatsApp <span className="font-normal text-gray-400 lowercase">(opsional)</span>
+            </label>
             <input
               type="text"
-              required
               className="w-full p-3 border border-[#E2E2DC] bg-white rounded-xl focus:ring-2 focus:ring-[#2563EB]/10 focus:border-[#2563EB] outline-none text-sm font-semibold text-[#1C1C1A] transition-all placeholder:text-gray-300"
               placeholder="Contoh: 08123456789"
               value={phone}

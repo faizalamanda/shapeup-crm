@@ -88,9 +88,12 @@ function writeL2Cache(businessId: string, customers: CustomerDirectoryItem[], ts
   if (typeof window === 'undefined' || !businessId) return
   try {
     // For high-cardinality datasets (> 500 rows), strip heavy CRM metadata in L2 sessionStorage
-    // while keeping full objects in L1 RAM to guarantee 5MB sessionStorage quota safety
+    // while keeping marketplace_profiles and keeping full objects in L1 RAM to guarantee 5MB quota safety
     const slimCustomers = customers.length > 500
-      ? customers.map(({ metadata, ...rest }) => rest)
+      ? customers.map(({ metadata, ...rest }) => ({
+          ...rest,
+          ...(metadata?.marketplace_profiles ? { metadata: { marketplace_profiles: metadata.marketplace_profiles } } : {})
+        }))
       : customers
 
     sessionStorage.setItem(

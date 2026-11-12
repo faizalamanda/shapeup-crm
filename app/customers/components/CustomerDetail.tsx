@@ -430,6 +430,60 @@ export function CustomerDetail({ customer, onClose, onUpdate }: CustomerDetailPr
               {activeTab === 'contact' && (
                 <div className="space-y-5">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Akun Marketplace Pembeli */}
+                    <div className="p-4 bg-orange-50/40 rounded-xl border border-orange-100/80 md:col-span-2">
+                      <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                        <span>🛍️</span> Akun Marketplace Pembeli (Shopee, TikTok, dll)
+                      </p>
+                      {(() => {
+                        const mk = fullCustomer?.metadata?.marketplace_profiles
+                        const hasMk = mk && Object.values(mk).some(v => Boolean(v))
+                        if (!hasMk) {
+                          return <p className="text-xs text-slate-500 italic">Belum ada akun marketplace yang terhubung.</p>
+                        }
+                        return (
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                            {mk?.shopee && (
+                              <div className="bg-white p-2.5 rounded-lg border border-orange-200/60 flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                                <div>
+                                  <p className="text-[9px] font-bold text-slate-400 uppercase">Shopee</p>
+                                  <p className="text-xs font-bold text-slate-800 font-mono">{String(mk.shopee).replace(/^@/, '')}</p>
+                                </div>
+                              </div>
+                            )}
+                            {mk?.tiktok && (
+                              <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-black"></span>
+                                <div>
+                                  <p className="text-[9px] font-bold text-slate-400 uppercase">TikTok Shop</p>
+                                  <p className="text-xs font-bold text-slate-800 font-mono">{String(mk.tiktok).replace(/^@/, '')}</p>
+                                </div>
+                              </div>
+                            )}
+                            {mk?.tokopedia && (
+                              <div className="bg-white p-2.5 rounded-lg border border-emerald-200/60 flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                <div>
+                                  <p className="text-[9px] font-bold text-slate-400 uppercase">Tokopedia</p>
+                                  <p className="text-xs font-bold text-slate-800 font-mono">{String(mk.tokopedia).replace(/^@/, '')}</p>
+                                </div>
+                              </div>
+                            )}
+                            {mk?.other_handle && (
+                              <div className="bg-white p-2.5 rounded-lg border border-blue-200/60 flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                                <div>
+                                  <p className="text-[9px] font-bold text-slate-400 uppercase">{mk.other_platform || 'Lainnya'}</p>
+                                  <p className="text-xs font-bold text-slate-800 font-mono">{String(mk.other_handle).replace(/^@/, '')}</p>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
+                    </div>
+
                     <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nama Perusahaan</p>
                       <p className="text-xs font-bold text-slate-800">{fullCustomer?.metadata?.company || '—'}</p>

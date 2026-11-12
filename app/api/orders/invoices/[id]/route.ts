@@ -150,6 +150,7 @@ export async function PUT(
       customer_phone,
       customer_email,
       customer_address, // AddressData JSONB - from QuickAddCustomerForm
+      marketplace_profiles,
       order_date,
       due_date,
       payment_terms,
@@ -266,14 +267,15 @@ export async function PUT(
 
     let resolvedCustomerId = existing.customer_id
     if (!isItemsLocked) {
-      if (customer_name && customer_phone) {
+      if (customer_name && String(customer_name).trim()) {
         const { customer: resolvedCust } = await resolveOrCreateCustomer(
           {
             businessId,
             name: customer_name,
-            phone: customer_phone,
-            email: customer_email,
+            phone: customer_phone || null,
+            email: customer_email || null,
             address_data: customer_address ?? null,
+            marketplace_profiles: marketplace_profiles || null,
             reuseExistingOnPhoneMatch: true
           },
           supabaseAdmin
