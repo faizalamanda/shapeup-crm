@@ -31,23 +31,78 @@ type Props = {
   }
 }
 
+// ─── L2 SessionStorage Cache for 0ms Instant Hub Hydration ───────────────────
+interface POSHubCacheEntry {
+  activeShift: any | null
+  cashierName: string
+  accounts: any[]
+  posRegisters: any[]
+  pastShifts: any[]
+  totalShiftsCount: number
+  hasMoreShifts: boolean
+  availableCashiers: Array<{ id: string; name: string }>
+  monitoredShifts: any[]
+  totalDrawerCash: number
+  ts: number
+}
+
+const HUB_CACHE_TTL = 5 * 60_000 // 5 minutes
+
+function getHubCacheKey(businessId?: string): string {
+  return `su_pos_hub_v2_${businessId || 'default'}`
+}
+
+function readHubCache(businessId?: string): POSHubCacheEntry | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = sessionStorage.getItem(getHubCacheKey(businessId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as POSHubCacheEntry
+    if (!parsed || Date.now() - (parsed.ts || 0) > HUB_CACHE_TTL) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writeHubCache(businessId: string | undefined, data: Omit<POSHubCacheEntry, 'ts'>) {
+  if (typeof window === 'undefined') return
+  try {
+    sessionStorage.setItem(
+      getHubCacheKey(businessId),
+      JSON.stringify({ ...data, ts: Date.now() })
+    )
+  } catch {}
+}
+
 export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
   const { activeBusiness, userProfile, bizLoading, currentUserRole, isOwner, currentUserPermissions } = useUserContext()
   const timezone = activeBusiness?.timezone
   const isAdmin = Boolean(isOwner || currentUserRole === 'admin' || currentUserPermissions?.includes('full_access'))
 
-  // Core Data State (Hydrate immediately from preloadedSession if available)
-  const [loading, setLoading] = useState(!preloadedSession?.activeShift)
-  const [activeShift, setActiveShift] = useState<any | null>(preloadedSession?.activeShift ?? null)
-  const [cashierName, setCashierName] = useState<string>(preloadedSession?.cashierName ?? 'Kasir')
-  const [accounts, setAccounts] = useState<any[]>(preloadedSession?.accounts ?? [])
-  const [posRegisters, setPosRegisters] = useState<any[]>(preloadedSession?.posRegisters ?? [])
-  const [pastShifts, setPastShifts] = useState<any[]>([])
-  const [totalShiftsCount, setTotalShiftsCount] = useState<number>(0)
-  const [hasMoreShifts, setHasMoreShifts] = useState<boolean>(false)
+  // Check L2 sessionStorage cache immediately for 0ms Instant Hydration
+  const initialCache = useMemo(() => {
+    if (preloadedSession?.activeShift) return null
+    return readHubCache(activeBusiness?.id)
+  }, [preloadedSession, activeBusiness?.id])
+
+  // Core Data State (Hydrate immediately from preloadedSession or L2 cache if available)
+  const [loading, setLoading] = useState(() => {
+    if (preloadedSession?.activeShift) return false
+    const cached = readHubCache(activeBusiness?.id)
+    return !cached
+  })
+  const [activeShift, setActiveShift] = useState<any | null>(() => preloadedSession?.activeShift ?? initialCache?.activeShift ?? null)
+  const [cashierName, setCashierName] = useState<string>(() => preloadedSession?.cashierName ?? initialCache?.cashierName ?? 'Kasir')
+  const [accounts, setAccounts] = useState<any[]>(() => preloadedSession?.accounts ?? initialCache?.accounts ?? [])
+  const [posRegisters, setPosRegisters] = useState<any[]>(() => preloadedSession?.posRegisters ?? initialCache?.posRegisters ?? [])
+  const [pastShifts, setPastShifts] = useState<any[]>(() => initialCache?.pastShifts ?? [])
+  const [totalShiftsCount, setTotalShiftsCount] = useState<number>(() => initialCache?.totalShiftsCount ?? 0)
+  const [hasMoreShifts, setHasMoreShifts] = useState<boolean>(() => initialCache?.hasMoreShifts ?? false)
   const [loadingMore, setLoadingMore] = useState<boolean>(false)
-  const [monitoredShifts, setMonitoredShifts] = useState<any[]>([])
-  const [totalDrawerCash, setTotalDrawerCash] = useState<number>(0)
+  const [monitoredShifts, setMonitoredShifts] = useState<any[]>(() => initialCache?.monitoredShifts ?? [])
+  const [totalDrawerCash, setTotalDrawerCash] = useState<number>(() => initialCache?.totalDrawerCash ?? 0)
+  const [availableCashiers, setAvailableCashiers] = useState<Array<{ id: string; name: string }>>(() => initialCache?.availableCashiers ?? [])
 
   // Modals State
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false)
@@ -65,7 +120,6 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
   // Shift History Filters
   const [shiftStatusFilter, setShiftStatusFilter] = useState<'all' | 'closed' | 'open'>('all')
   const [selectedCashierId, setSelectedCashierId] = useState<string>('all')
-  const [availableCashiers, setAvailableCashiers] = useState<Array<{ id: string; name: string }>>([])
 
   // Collapsible Manager Section State
   const [isManagerMonitoringOpen, setIsManagerMonitoringOpen] = useState(false)
@@ -79,82 +133,116 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
     }).format(val || 0)
   }
 
-  // Load Shift, Registers, Accounts & Historical Shift Ledger in parallel (Performance Rule #2)
-  const loadData = useCallback(async () => {
-    if (!activeBusiness?.id) return
-    const currentBizId = activeBusiness.id
+  // Load Shift, Registers, Accounts & Historical Shift Ledger in ONE consolidated bundle (/api/pos/shifts?mode=hub)
+  const loadData = useCallback(async (options?: { silent?: boolean }) => {
+    const isSilent = Boolean(options?.silent)
+    if (!isSilent && pastShifts.length === 0 && !activeShift) {
+      setLoading(true)
+    }
 
-    setLoading(true)
     try {
       const statusParam = shiftStatusFilter !== 'all' ? `&status=${shiftStatusFilter}` : ''
       const cashierParam = isAdmin && selectedCashierId !== 'all' ? `&cashier_id=${selectedCashierId}` : ''
-      const [shiftRes, historyRes, monitorRes, accRes, regRes] = await Promise.all([
-        fetch('/api/pos/shifts'),
-        fetch(`/api/pos/shifts?mode=history&limit=15&offset=0${statusParam}${cashierParam}`),
-        isAdmin ? fetch('/api/pos/shifts?mode=monitoring') : Promise.resolve(null),
-        supabase
-          .from('accounts')
-          .select('id, name, code, type')
-          .eq('business_id', currentBizId)
-          .eq('type', 'ASSET')
-          .order('code', { ascending: true }),
-        supabase
-          .from('pos_registers')
-          .select('*')
-          .eq('business_id', currentBizId)
-          .order('name', { ascending: true })
-      ])
 
-      // 1. Active Shift
-      if (shiftRes.ok) {
-        const shiftData = await shiftRes.json()
-        setActiveShift(shiftData.activeShift || null)
-        if (shiftData.cashierName) {
-          setCashierName(shiftData.cashierName)
+      const res = await fetch(`/api/pos/shifts?mode=hub&limit=15&offset=0${statusParam}${cashierParam}`)
+      if (res.ok) {
+        const data = await res.json()
+        const newActiveShift = data.activeShift || null
+        const newCashierName = data.cashierName || 'Kasir'
+        const newAccounts = Array.isArray(data.accounts) ? data.accounts : []
+        const newRegisters = Array.isArray(data.posRegisters) ? data.posRegisters : []
+        const newPastShifts = Array.isArray(data.history?.shifts) ? data.history.shifts : []
+        const newTotalCount = Number(data.history?.totalCount || 0)
+        const newHasMore = Boolean(data.history?.hasMore)
+        const newCashiers = Array.isArray(data.history?.cashiers) ? data.history.cashiers : []
+        const newMonitoredShifts = Array.isArray(data.monitoring?.activeShifts) ? data.monitoring.activeShifts : []
+        const newTotalDrawer = Number(data.monitoring?.totalDrawerCash || 0)
+
+        setActiveShift(newActiveShift)
+        setCashierName(newCashierName)
+        setAccounts(newAccounts)
+        setPosRegisters(newRegisters)
+        setPastShifts(newPastShifts)
+        setTotalShiftsCount(newTotalCount)
+        setHasMoreShifts(newHasMore)
+        setAvailableCashiers(newCashiers)
+        setMonitoredShifts(newMonitoredShifts)
+        setTotalDrawerCash(newTotalDrawer)
+
+        // Persist to L2 cache for instant 0ms access on future visits
+        writeHubCache(activeBusiness?.id, {
+          activeShift: newActiveShift,
+          cashierName: newCashierName,
+          accounts: newAccounts,
+          posRegisters: newRegisters,
+          pastShifts: newPastShifts,
+          totalShiftsCount: newTotalCount,
+          hasMoreShifts: newHasMore,
+          availableCashiers: newCashiers,
+          monitoredShifts: newMonitoredShifts,
+          totalDrawerCash: newTotalDrawer
+        })
+      } else {
+        // Fallback: If mode=hub returns error (e.g., transient network or legacy endpoint), execute resilient multi-fetch fallback
+        console.warn('[POSHub] mode=hub returned non-ok status, falling back to legacy multi-fetch...')
+        const [shiftRes, historyRes, accRes, regRes] = await Promise.all([
+          fetch('/api/pos/shifts'),
+          fetch(`/api/pos/shifts?mode=history&limit=15&offset=0${statusParam}${cashierParam}`),
+          activeBusiness?.id
+            ? supabase.from('accounts').select('id, name, code, type').eq('business_id', activeBusiness.id).eq('type', 'ASSET').order('code', { ascending: true })
+            : Promise.resolve({ data: [] }),
+          activeBusiness?.id
+            ? supabase.from('pos_registers').select('*').eq('business_id', activeBusiness.id).order('name', { ascending: true })
+            : Promise.resolve({ data: [] })
+        ])
+
+        if (shiftRes.ok) {
+          const shiftData = await shiftRes.json()
+          setActiveShift(shiftData.activeShift || null)
+          if (shiftData.cashierName) setCashierName(shiftData.cashierName)
         }
-      }
-
-      // 2. Past Shifts Ledger
-      if (historyRes.ok) {
-        const historyData = await historyRes.json()
-        setPastShifts(historyData.shifts || [])
-        setTotalShiftsCount(historyData.totalCount || 0)
-        setHasMoreShifts(Boolean(historyData.hasMore))
-        if (historyData.cashiers && Array.isArray(historyData.cashiers)) {
-          setAvailableCashiers(historyData.cashiers)
+        if (historyRes.ok) {
+          const historyData = await historyRes.json()
+          setPastShifts(historyData.shifts || [])
+          setTotalShiftsCount(historyData.totalCount || 0)
+          setHasMoreShifts(Boolean(historyData.hasMore))
+          if (Array.isArray(historyData.cashiers)) setAvailableCashiers(historyData.cashiers)
         }
+        if (accRes && 'data' in accRes && accRes.data) setAccounts(accRes.data)
+        if (regRes && 'data' in regRes && regRes.data) setPosRegisters(regRes.data)
       }
-
-      // 3. Manager Monitoring (Admin Only)
-      if (monitorRes && monitorRes.ok) {
-        const monitorData = await monitorRes.json()
-        setMonitoredShifts(monitorData.activeShifts || [])
-        setTotalDrawerCash(monitorData.totalDrawerCash || 0)
-      } else if (!isAdmin) {
-        setMonitoredShifts([])
-        setTotalDrawerCash(0)
-      }
-
-      // 4. Accounts & Registers
-      if (accRes.data) setAccounts(accRes.data)
-      if (regRes.data) setPosRegisters(regRes.data)
     } catch (err) {
       console.error('Error loading POS Hub data:', err)
     } finally {
       setLoading(false)
     }
-  }, [activeBusiness?.id, shiftStatusFilter, selectedCashierId, isAdmin])
+  }, [activeBusiness?.id, shiftStatusFilter, selectedCashierId, isAdmin, pastShifts.length, activeShift])
 
+  // Immediate fetch on mount & revalidate when filters change (Performance Rule #6: don't wait for bizLoading)
   useEffect(() => {
-    if (!bizLoading && activeBusiness?.id) {
-      loadData()
-    }
-  }, [bizLoading, activeBusiness?.id, loadData])
+    loadData({ silent: true })
+  }, [loadData])
 
   // Speculative idle prefetch for POS Catalog & Categories during cashier think-time
+  // Scheduled via requestIdleCallback / setTimeout so it NEVER blocks initial Hub rendering
   useEffect(() => {
-    if (activeBusiness?.id) {
-      prefetchPosCatalog(supabase, activeBusiness.id)
+    if (!activeBusiness?.id) return
+    const currentBizId = activeBusiness.id
+
+    const runPrefetch = () => {
+      prefetchPosCatalog(supabase, currentBizId)
+    }
+
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      const handle = (window as any).requestIdleCallback(runPrefetch, { timeout: 3000 })
+      return () => {
+        if ('cancelIdleCallback' in window) {
+          (window as any).cancelIdleCallback(handle)
+        }
+      }
+    } else {
+      const timer = setTimeout(runPrefetch, 1500)
+      return () => clearTimeout(timer)
     }
   }, [activeBusiness?.id])
 
@@ -362,7 +450,7 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
 
             {/* Refresh Data Button */}
             <button
-              onClick={loadData}
+              onClick={() => loadData()}
               disabled={loading}
               className="p-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
               title="Perbarui Data Kasir & Sesi Shift"
@@ -1055,7 +1143,7 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
           initialType={pettyCashType}
           industryMode="fashion"
           accounts={accounts}
-          onSuccess={loadData}
+          onSuccess={() => loadData()}
         />
       )}
 
@@ -1102,8 +1190,8 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
           timezone={timezone}
           businessName={activeBusiness?.name || 'ShapeUp Store'}
           cashierName={cashierName}
-          onRefundSuccess={loadData}
-          onOrderUpdated={loadData}
+          onRefundSuccess={() => loadData()}
+          onOrderUpdated={() => loadData()}
         />
       )}
 
@@ -1129,7 +1217,7 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
             setSelectedOrder(ord)
             setIsOrderDetailOpen(true)
           }}
-          onRefundCompleted={loadData}
+          onRefundCompleted={() => loadData()}
         />
       )}
     </div>

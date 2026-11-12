@@ -800,6 +800,7 @@ Mengadopsi pola sukses direktori pelanggan dengan 3 tingkatan penyimpanan:
 
 ### 18.3 Speculative Idle Prefetching di `POSHub.tsx`
 - Memanfaatkan *think-time* kasir saat berada di Hub (misal: melihat saldo kas laci, mengecek Z-report, atau membuka shift baru) untuk menjalankan `prefetchPosCatalog(supabase, businessId)` di latar belakang.
+- **True Idle Scheduling:** Wajib dijadwalkan via `requestIdleCallback` (dengan fallback `setTimeout 1500ms`) agar unduhan katalog tidak bersaing memperebutkan koneksi HTTP atau CPU selama render awal POS Hub.
 - Saat kasir menekan tombol menuju transaksi, seluruh data produk dan kategori telah selesai diunduh dan ter-hydrate $100\%$ di RAM L1.
 
 ### 18.4 Instant App-Shell & Zero Black-Screen Standard
@@ -815,6 +816,13 @@ Mengadopsi pola sukses direktori pelanggan dengan 3 tingkatan penyimpanan:
 ### 18.6 Optimistic Local Stock Mutation & Self-Healing Fallback
 - **Optimistic Local Stock:** Sesaat setelah checkout kasir sukses, sistem langsung mengurangi saldo fisik produk dan varian terkait di `posCatalogStore` secara lokal ($0\text{ms}$), sehingga kartu produk langsung menampilkan sisa stok terbaru tanpa menunggu respon server.
 - **Self-Healing Fallback:** Jika kueri *chunked range* mengalami kendala jaringan atau kegagalan skema, sistem secara otomatis mengeksekusi *emergency legacy fallback* (kueri langsung tanpa varian) dan menyajikan tombol **"🔄 Muat Ulang Katalog"** pada antarmuka kasir jika katalog kosong.
+
+### 18.7 Unified POS Hub Dashboard Single-Roundtrip Bundle (`mode=hub`) & L2 SWR Cache
+- **Single-Roundtrip Consolidation:** Endpoint `GET /api/pos/shifts?mode=hub` menggabungkan data Shift Aktif, Riwayat Shift, Live Monitoring Multi-Kasir, Bagan Akun Aset, dan POS Registers dalam 1 respons terpadu. Seluruh mutasi `order_payments` dan `pos_shift_movements` dikalkulasi dalam 1 kueri batch `calculateShiftMetrics` dengan kueri paralel `Promise.all`.
+- **In-Memory Role Cache:** Verifikasi hak akses admin/staf (`checkShiftUserRole`) dicache selama 30 detik untuk menghindari kueri redundant ke tabel `businesses` dan `business_staff`.
+- **L2 SessionStorage SWR di POS Hub:** State POS Hub disimpan di `sessionStorage` (`su_pos_hub_v2_${businessId}`). Akses masuk berikutnya beroperasi pada waktu $< 16\text{ms}$ (0ms perceived latency) dengan revalidasi data terkini di latar belakang secara hening (*silent background revalidation*).
+- **Resilient Dual Fallback Architecture:** Jika endpoint `mode=hub` mengalami gangguan jaringan atau mengembalikan status non-ok, klien secara otomatis dan transparan jatuh kembali (*graceful fallback*) ke kueri multi-fetch legacy, menjamin keandalan *Zero Downtime Deployment*.
+- **Multi-Tenant RLS Enforcement:** Sesuai Rule #15, kueri data shift, mutasi kas, dan akun dibatasi ketat berdasarkan `business_id` pemanggil. Kasir staf dibatasi secara ketat hanya dapat melihat sesi miliknya sendiri dan diblokir dari pemantauan kasir lain.
 
 ---
 

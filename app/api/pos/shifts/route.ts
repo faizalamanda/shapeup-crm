@@ -4,8 +4,18 @@ import { NextResponse } from 'next/server'
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v)
 
+// Fast-path in-memory role cache (TTL 30s) to avoid redundant DB queries per request
+const roleCache = new Map<string, { data: any; expiresAt: number }>()
+const ROLE_CACHE_TTL = 30_000 // 30 seconds
+
 // Helper to verify caller is Owner or Admin of the active business
 async function checkShiftUserRole(businessId: string, userId: string, adminClient: any) {
+  const cacheKey = `${businessId}:${userId}`
+  const cached = roleCache.get(cacheKey)
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.data
+  }
+
   const [bizRes, staffRes] = await Promise.all([
     adminClient.from('businesses').select('id, owner_id').eq('id', businessId).maybeSingle(),
     adminClient.from('business_staff').select('role, permissions').eq('business_id', businessId).eq('profile_id', userId).maybeSingle()
@@ -15,7 +25,10 @@ async function checkShiftUserRole(businessId: string, userId: string, adminClien
   const staffRole = staffRes.data?.role
   const staffPerms: string[] = Array.isArray(staffRes.data?.permissions) ? staffRes.data.permissions : []
   const isAdmin = isOwner || staffRole === 'admin' || staffPerms.includes('full_access')
-  return { isOwner, isAdmin, staffRole, staffPerms, ownerId: bizRes.data?.owner_id }
+  const result = { isOwner, isAdmin, staffRole, staffPerms, ownerId: bizRes.data?.owner_id }
+
+  roleCache.set(cacheKey, { data: result, expiresAt: Date.now() + ROLE_CACHE_TTL })
+  return result
 }
 
 // Helper: Calculate running cash balance and metrics for given shift IDs
@@ -42,11 +55,17 @@ async function calculateShiftMetrics(supabase: any, shiftIds: string[]) {
     })
   })
 
-  // 1. Fetch payments
-  const { data: payments } = await supabase
-    .from('order_payments')
-    .select('shift_id, amount, payment_method, payment_kind')
-    .in('shift_id', shiftIds)
+  // 1 & 2. Concurrently fetch payments and movements in parallel
+  const [{ data: payments }, { data: movements }] = await Promise.all([
+    supabase
+      .from('order_payments')
+      .select('shift_id, amount, payment_method, payment_kind')
+      .in('shift_id', shiftIds),
+    supabase
+      .from('pos_shift_movements')
+      .select('shift_id, amount, type, status, note')
+      .in('shift_id', shiftIds)
+  ])
 
   if (payments) {
     for (const p of payments) {
@@ -73,12 +92,6 @@ async function calculateShiftMetrics(supabase: any, shiftIds: string[]) {
       }
     }
   }
-
-  // 2. Fetch cash movements (Excluding voided movements)
-  const { data: movements } = await supabase
-    .from('pos_shift_movements')
-    .select('shift_id, amount, type, status, note')
-    .in('shift_id', shiftIds)
 
   if (movements) {
     for (const m of movements) {
@@ -107,7 +120,224 @@ export async function GET(req: Request) {
     const { isAdmin } = await checkShiftUserRole(businessId, user.id, supabaseAdmin)
 
     const { searchParams } = new URL(req.url)
-    const mode = searchParams.get('mode') // 'monitoring' or default single cashier
+    const mode = searchParams.get('mode') // 'hub', 'monitoring', 'history', 'shift_details' or default
+
+    // ─── Mode: Consolidated POS Hub (Instant Single-Roundtrip Bundle) ───────────
+    if (mode === 'hub') {
+      const limitVal = Math.min(Math.max(parseInt(searchParams.get('limit') || '15', 10) || 15, 1), 60)
+      const offsetVal = Math.max(parseInt(searchParams.get('offset') || '0', 10) || 0, 0)
+      const filterStatus = searchParams.get('status') // 'all', 'closed', 'open'
+      const filterCashierId = searchParams.get('cashier_id') || searchParams.get('user_id')
+
+      let shiftQuery = supabase
+        .from('pos_shifts')
+        .select('*', { count: 'exact' })
+        .eq('business_id', businessId)
+        .order('opened_at', { ascending: false })
+        .range(offsetVal, offsetVal + limitVal - 1)
+
+      if (!isAdmin) {
+        shiftQuery = shiftQuery.eq('user_id', user.id)
+      } else if (filterCashierId && isUuid(filterCashierId) && filterCashierId !== 'all') {
+        shiftQuery = shiftQuery.eq('user_id', filterCashierId)
+      }
+
+      if (filterStatus && filterStatus !== 'all') {
+        shiftQuery = shiftQuery.eq('status', filterStatus)
+      }
+
+      // Parallel fetch of all primary and secondary POS Hub datasets in one roundtrip
+      const [
+        profileRes,
+        activeShiftRes,
+        historyRes,
+        monitoringRes,
+        accountsRes,
+        registersRes,
+        cashiersRawRes
+      ] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .maybeSingle(),
+        supabase
+          .from('pos_shifts')
+          .select('*')
+          .eq('business_id', businessId)
+          .eq('user_id', user.id)
+          .eq('status', 'open')
+          .order('opened_at', { ascending: false })
+          .maybeSingle(),
+        shiftQuery,
+        isAdmin
+          ? supabase
+              .from('pos_shifts')
+              .select('*')
+              .eq('business_id', businessId)
+              .eq('status', 'open')
+              .order('opened_at', { ascending: false })
+          : Promise.resolve({ data: [] }),
+        supabase
+          .from('accounts')
+          .select('id, name, code, type')
+          .eq('business_id', businessId)
+          .eq('type', 'ASSET')
+          .order('code', { ascending: true }),
+        supabase
+          .from('pos_registers')
+          .select('*')
+          .eq('business_id', businessId)
+          .order('name', { ascending: true }),
+        isAdmin
+          ? Promise.all([
+              supabaseAdmin
+                .from('business_staff')
+                .select('profile_id, profile:profiles(id, full_name, email)')
+                .eq('business_id', businessId),
+              supabaseAdmin
+                .from('businesses')
+                .select('owner_id, profiles:owner_id(id, full_name, email)')
+                .eq('id', businessId)
+                .maybeSingle()
+            ])
+          : Promise.resolve(null)
+      ])
+
+      const activeShift = activeShiftRes?.data || null
+      const historyList = historyRes?.data || []
+      const monitorList = (monitoringRes?.data as any[]) || []
+
+      // Collect all distinct shift IDs across active, history, and monitoring for a single batch query
+      const allShiftIds = new Set<string>()
+      if (activeShift?.id) allShiftIds.add(activeShift.id)
+      historyList.forEach((s: any) => allShiftIds.add(s.id))
+      monitorList.forEach((s: any) => allShiftIds.add(s.id))
+
+      // Single batched calculation of metrics
+      const metricsMap = await calculateShiftMetrics(supabase, Array.from(allShiftIds))
+
+      // Enrich active shift
+      let enrichedActiveShift = null
+      if (activeShift) {
+        const m = metricsMap.get(activeShift.id) || {
+          cash_sales: 0,
+          non_cash_sales: 0,
+          cash_refunds: 0,
+          cash_in: 0,
+          cash_out: 0,
+          total_transactions: 0
+        }
+        const initialCash = Number(activeShift.initial_cash || 0)
+        const currentDrawerCash = initialCash + m.cash_sales - m.cash_refunds + m.cash_in - m.cash_out
+
+        enrichedActiveShift = {
+          ...activeShift,
+          calculated_expected_cash: currentDrawerCash,
+          calculated_cash_sales: m.cash_sales,
+          calculated_non_cash_sales: m.non_cash_sales,
+          calculated_cash_refunds: m.cash_refunds,
+          calculated_cash_in: m.cash_in,
+          calculated_cash_out: m.cash_out,
+          total_transactions: m.total_transactions,
+          metrics: {
+            ...m,
+            initial_cash: initialCash,
+            current_drawer_cash: currentDrawerCash,
+            total_sales: m.cash_sales + m.non_cash_sales
+          }
+        }
+      }
+
+      // Enrich history list
+      const enrichedHistory = historyList.map((s: any) => {
+        const m = metricsMap.get(s.id) || {
+          cash_sales: 0,
+          non_cash_sales: 0,
+          cash_refunds: 0,
+          cash_in: 0,
+          cash_out: 0,
+          total_transactions: 0
+        }
+        const initialCash = Number(s.initial_cash || 0)
+        const currentDrawerCash = initialCash + m.cash_sales - m.cash_refunds + m.cash_in - m.cash_out
+        const totalSales = m.cash_sales + m.non_cash_sales
+
+        return {
+          ...s,
+          metrics: {
+            ...m,
+            initial_cash: initialCash,
+            current_drawer_cash: currentDrawerCash,
+            total_sales: totalSales
+          }
+        }
+      })
+
+      // Enrich monitoring list
+      const enrichedMonitoring = monitorList.map((s: any) => {
+        const m = metricsMap.get(s.id) || {
+          cash_sales: 0,
+          non_cash_sales: 0,
+          cash_refunds: 0,
+          cash_in: 0,
+          cash_out: 0,
+          total_transactions: 0
+        }
+        const initialCash = Number(s.initial_cash || 0)
+        const currentDrawerCash = initialCash + m.cash_sales - m.cash_refunds + m.cash_in - m.cash_out
+
+        return {
+          ...s,
+          metrics: {
+            ...m,
+            initial_cash: initialCash,
+            current_drawer_cash: currentDrawerCash,
+            total_sales: m.cash_sales + m.non_cash_sales
+          }
+        }
+      })
+
+      // Process cashiers list
+      let cashiersList: Array<{ id: string; name: string }> = []
+      if (cashiersRawRes && Array.isArray(cashiersRawRes)) {
+        const [staffListRes, ownerRes] = cashiersRawRes
+        const cashierMap = new Map<string, string>()
+        if (ownerRes?.data?.profiles) {
+          const o = ownerRes.data.profiles as any
+          cashierMap.set(o.id, `${o.full_name || o.email || 'Owner'} (Owner)`)
+        }
+        if (staffListRes?.data) {
+          staffListRes.data.forEach((st: any) => {
+            const p = st.profile
+            if (p?.id) cashierMap.set(p.id, p.full_name || p.email || 'Staf')
+          })
+        }
+        cashiersList = Array.from(cashierMap.entries()).map(([id, name]) => ({ id, name }))
+      }
+
+      const totalCount = historyRes?.count || 0
+
+      return NextResponse.json({
+        success: true,
+        activeShift: enrichedActiveShift,
+        cashierName: profileRes?.data?.full_name || user.user_metadata?.full_name || 'Kasir',
+        accounts: accountsRes?.data || [],
+        posRegisters: registersRes?.data || [],
+        history: {
+          shifts: enrichedHistory,
+          totalCount,
+          hasMore: (offsetVal + historyList.length) < totalCount,
+          cashiers: cashiersList
+        },
+        monitoring: {
+          activeShifts: enrichedMonitoring,
+          totalActiveCount: enrichedMonitoring.length,
+          totalDrawerCash: enrichedMonitoring.reduce((acc: number, s: any) => acc + (s.metrics?.current_drawer_cash || 0), 0)
+        },
+        isAdmin
+      })
+    }
 
     // ─── Mode: Manager Live Monitoring of All Active Shifts ─────────────────────
     if (mode === 'monitoring') {
