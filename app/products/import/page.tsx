@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { invalidatePosCatalogCache } from '@/lib/posCatalogStore'
+import RecipeImportTab from './components/RecipeImportTab'
 
 type Category = {
   id: string
@@ -26,6 +27,8 @@ const TARGET_FIELDS = [
   { key: 'unit', name: 'Satuan Unit', required: false, desc: 'Satuan barang (pcs, porsi, box, kg, botol, pack, dll)' },
   { key: 'type', name: 'Tipe Produk (Fisik / Jasa)', required: false, desc: 'Tipe item: "Barang Fisik" (physical) atau "Jasa / Layanan" (service)' },
   { key: 'stock_type', name: 'Manajemen Stok (Track Stock Yes/No)', required: false, desc: 'Status stok: "Yes/Di Track" (tracked), "No/Tersedia" (available), atau "Tidak Tersedia" (unavailable)' },
+  { key: 'is_sellable', name: 'Bisa Dijual di POS (Ya / Tidak)', required: false, desc: 'Pilih "Tidak" untuk bahan baku murni agar tidak tampil di layar kasir POS (default: Ya)' },
+  { key: 'hpp_type', name: 'Tipe HPP (Fixed / Variable)', required: false, desc: '"fixed" untuk modal tetap/beli, atau "variable" untuk produk berbasis resep' },
   { key: 'external_id', name: 'ID Eksternal / Internal ID POS', required: false, desc: 'ID referensi dari sistem POS lama (Moka: Internal ID Variant)' },
   { key: 'modifier_groups', name: 'Grup Modifier / Topping (Opsional)', required: false, desc: 'Daftar nama grup modifier dipisah koma (contoh: "Topping Minuman, Level Pedas") atau format kolom Moka ("Modifier Set - ...")' },
   { key: 'description', name: 'Deskripsi / Detail', required: false, desc: 'Catatan detail spesifikasi produk' }
@@ -79,6 +82,12 @@ const detectProductFieldByHeader = (header: string): string => {
     return 'price'
   }
   // Detect Tipe Produk before category to avoid "jenis produk" matching category
+  if (h.includes('bisadijual') || h.includes('sellable') || h.includes('tampildipos') || h.includes('jualdipos') || h === 'pos') {
+    return 'is_sellable'
+  }
+  if (h.includes('tipehpp') || h.includes('hpptype') || h.includes('jenishpp')) {
+    return 'hpp_type'
+  }
   if (h.includes('tipeproduk') || h.includes('jenisproduk') || h.includes('producttype') || h.includes('itemtype') || h === 'tipe' || h === 'type') {
     return 'type'
   }
@@ -152,7 +161,9 @@ export default function ProductImportPage() {
   const [activeBizId, setActiveBizId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Wizard Steps
+  // Wizard Steps & Tab Mode
+  const [activeTab, setActiveTab] = useState<'products' | 'recipes'>('products')
+  const [zeroCostConfirmed, setZeroCostConfirmed] = useState(false)
   const [step, setStep] = useState<'upload' | 'mapping' | 'preview' | 'importing' | 'result'>('upload')
   const [fileName, setFileName] = useState<string>('')
   const [headers, setHeaders] = useState<string[]>([])
@@ -472,6 +483,8 @@ export default function ProductImportPage() {
       let rawUnit: any = null
       let rawType: any = null
       let rawStockType: any = null
+      let rawIsSellable: any = null
+      let rawHppType: any = null
       let rawExternalId: any = null
       let rawModGroups: any = null
       let rawDesc: any = null
@@ -491,6 +504,8 @@ export default function ProductImportPage() {
         if (target === 'unit') rawUnit = row[h]
         if (target === 'type') rawType = row[h]
         if (target === 'stock_type') rawStockType = row[h]
+        if (target === 'is_sellable') rawIsSellable = row[h]
+        if (target === 'hpp_type') rawHppType = row[h]
         if (target === 'external_id') rawExternalId = row[h]
         if (target === 'modifier_groups') rawModGroups = row[h]
         if (target === 'description') rawDesc = row[h]
@@ -609,6 +624,21 @@ export default function ProductImportPage() {
         }
       }
 
+      // Parse is_sellable (default true unless explicitly false/tidak/no/bahan)
+      const sellStr = String(rawIsSellable ?? '').trim().toLowerCase()
+      result.is_sellable = !(
+        sellStr === 'tidak' ||
+        sellStr === 'no' ||
+        sellStr === 'false' ||
+        sellStr === '0' ||
+        sellStr.includes('bahan') ||
+        sellStr.includes('material')
+      )
+
+      // Parse hpp_type (default fixed unless explicitly variable/resep)
+      const hppStr = String(rawHppType ?? '').trim().toLowerCase()
+      result.hpp_type = (hppStr === 'variable' || hppStr.includes('resep') || hppStr.includes('bom')) ? 'variable' : 'fixed'
+
       result._valid = result._errors.length === 0
       return result
     })
@@ -685,7 +715,10 @@ export default function ProductImportPage() {
     const valid = parsedData.filter(d => d._valid).length
     const errors = total - valid
     const totalVariants = parsedData.reduce((acc, d) => acc + (Array.isArray(d.variants) ? d.variants.length : 0), 0)
-    return { total, valid, errors, totalVariants, rawRowCount: rawData.length }
+    const zeroCostStockCount = parsedData.filter(
+      d => d._valid && d.stock_type === 'tracked' && Number(d.stock_quantity) > 0 && Number(d.cost_price) === 0
+    ).length
+    return { total, valid, errors, totalVariants, zeroCostStockCount, rawRowCount: rawData.length }
   }, [parsedData, rawData.length])
 
   // Download Failed Rows as Excel (.xlsx)
@@ -799,7 +832,8 @@ export default function ProductImportPage() {
         type: d.type,
         stock_type: d.stock_type,
         description: d.description,
-        hpp_type: 'fixed',
+        hpp_type: d.hpp_type || 'fixed',
+        is_sellable: d.is_sellable !== false,
         price_tiers: d.price_tiers,
         min_stock_alert: d.min_stock_alert,
         external_id: d.external_id,
@@ -952,31 +986,65 @@ export default function ProductImportPage() {
           </p>
         </div>
 
-        {/* Wizard Steps indicator */}
-        <div className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 flex items-center gap-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider shadow-2xs">
-          <div className={`flex items-center gap-1.5 ${step === 'upload' ? 'text-indigo-600' : 'text-emerald-600'}`}>
-            <span>{step === 'upload' ? '⚪' : '🟢'}</span> Upload
+        {/* Wizard Steps indicator (Tab 1 only) */}
+        {activeTab === 'products' && (
+          <div className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 flex items-center gap-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider shadow-2xs">
+            <div className={`flex items-center gap-1.5 ${step === 'upload' ? 'text-indigo-600' : 'text-emerald-600'}`}>
+              <span>{step === 'upload' ? '⚪' : '🟢'}</span> Upload
+            </div>
+            <div className="text-gray-300">➔</div>
+            <div className={`flex items-center gap-1.5 ${step === 'mapping' ? 'text-indigo-600' : step !== 'upload' ? 'text-emerald-600' : ''}`}>
+              <span>{step === 'mapping' ? '⚪' : step !== 'upload' ? '🟢' : '⚫'}</span> Mapping
+            </div>
+            <div className="text-gray-300">➔</div>
+            <div className={`flex items-center gap-1.5 ${step === 'preview' ? 'text-indigo-600' : step === 'result' ? 'text-emerald-600' : ''}`}>
+              <span>{step === 'preview' ? '⚪' : step === 'result' ? '🟢' : '⚫'}</span> Preview
+            </div>
+            <div className="text-gray-300">➔</div>
+            <div className={`flex items-center gap-1.5 ${step === 'importing' || (step === 'result' && !errorMessage) ? 'text-indigo-600' : ''}`}>
+              <span>{step === 'importing' ? '⌛' : step === 'result' && !errorMessage ? '🟢' : '⚫'}</span> Selesai
+            </div>
           </div>
-          <div className="text-gray-300">➔</div>
-          <div className={`flex items-center gap-1.5 ${step === 'mapping' ? 'text-indigo-600' : step !== 'upload' ? 'text-emerald-600' : ''}`}>
-            <span>{step === 'mapping' ? '⚪' : step !== 'upload' ? '🟢' : '⚫'}</span> Mapping
-          </div>
-          <div className="text-gray-300">➔</div>
-          <div className={`flex items-center gap-1.5 ${step === 'preview' ? 'text-indigo-600' : step === 'result' ? 'text-emerald-600' : ''}`}>
-            <span>{step === 'preview' ? '⚪' : step === 'result' ? '🟢' : '⚫'}</span> Preview
-          </div>
-          <div className="text-gray-300">➔</div>
-          <div className={`flex items-center gap-1.5 ${step === 'importing' || (step === 'result' && !errorMessage) ? 'text-indigo-600' : ''}`}>
-            <span>{step === 'importing' ? '⌛' : step === 'result' && !errorMessage ? '🟢' : '⚫'}</span> Selesai
-          </div>
-        </div>
+        )}
+      </div>
+
+      {/* 2-Tab Mode Switcher */}
+      <div className="flex items-center gap-2 border-b border-gray-200 pb-0">
+        <button
+          type="button"
+          onClick={() => setActiveTab('products')}
+          className={`px-4 py-2.5 text-xs font-extrabold rounded-t-xl border border-b-0 transition-all ${
+            activeTab === 'products'
+              ? 'bg-white text-indigo-600 border-gray-200 -mb-px'
+              : 'bg-gray-100/70 text-gray-500 border-transparent hover:text-gray-800'
+          }`}
+        >
+          1. Import Produk &amp; Bahan Baku
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('recipes')}
+          className={`px-4 py-2.5 text-xs font-extrabold rounded-t-xl border border-b-0 transition-all ${
+            activeTab === 'recipes'
+              ? 'bg-white text-indigo-600 border-gray-200 -mb-px'
+              : 'bg-gray-100/70 text-gray-500 border-transparent hover:text-gray-800'
+          }`}
+        >
+          2. Import / Update Resep (BOM)
+        </button>
       </div>
 
       {/* Main Container Card */}
-      <div className="bg-white border border-gray-200 rounded-2xl shadow-xs overflow-hidden flex flex-col min-h-[420px]">
+      <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-none shadow-xs overflow-hidden flex flex-col min-h-[420px]">
         
         {/* Content Area */}
         <div className="flex-1 p-6 sm:p-8">
+
+          {activeTab === 'recipes' && (
+            <RecipeImportTab activeBizId={activeBizId} />
+          )}
+
+          {activeTab === 'products' && (<>
 
           {/* STEP 1: UPLOAD FILE */}
           {step === 'upload' && (
@@ -1369,6 +1437,28 @@ export default function ProductImportPage() {
                   Menampilkan 10 dari total {parsedData.length} baris produk. Semua {stats.valid} baris valid akan diproses saat impor.
                 </p>
               )}
+
+              {stats.zeroCostStockCount > 0 && (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 space-y-2.5">
+                  <p className="text-xs font-extrabold text-amber-900">
+                    ⚠️ Peringatan HPP: Ditemukan {stats.zeroCostStockCount} item dengan Stok Awal &gt; 0 namun HPP / Harga Modal = Rp 0
+                  </p>
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    Jika stok awal diimpor dengan HPP Rp 0, maka perhitungan HPP rata-rata (WAC) saat belanja berikutnya akan menjadi lebih rendah dari harga pasar sebenarnya.
+                  </p>
+                  <label className="inline-flex items-center gap-2 cursor-pointer pt-1">
+                    <input
+                      type="checkbox"
+                      checked={zeroCostConfirmed}
+                      onChange={e => setZeroCostConfirmed(e.target.checked)}
+                      className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className="text-xs font-bold text-amber-900">
+                      Saya mengerti dampaknya dan tetap lanjutkan dengan HPP Rp 0
+                    </span>
+                  </label>
+                </div>
+              )}
             </div>
           )}
 
@@ -1585,10 +1675,12 @@ export default function ProductImportPage() {
             </div>
           )}
 
+          </>)}
+
         </div>
 
         {/* Footer Navigation Bar for Wizard */}
-        {step !== 'upload' && step !== 'importing' && step !== 'result' && (
+        {activeTab === 'products' && step !== 'upload' && step !== 'importing' && step !== 'result' && (
           <div className="bg-gray-50 border-t border-gray-200 px-6 py-4 flex items-center justify-between">
             <button
               type="button"
@@ -1604,7 +1696,10 @@ export default function ProductImportPage() {
             {step === 'mapping' && (
               <button
                 type="button"
-                onClick={() => setStep('preview')}
+                onClick={() => {
+                  setZeroCostConfirmed(false)
+                  setStep('preview')
+                }}
                 className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-sm transition-all"
               >
                 Lanjut ke Pratinjau ➔
@@ -1615,9 +1710,9 @@ export default function ProductImportPage() {
               <button
                 type="button"
                 onClick={handleStartImport}
-                disabled={stats.valid === 0}
+                disabled={stats.valid === 0 || (stats.zeroCostStockCount > 0 && !zeroCostConfirmed)}
                 className={`px-6 py-2 font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-sm transition-all ${
-                  stats.valid > 0
+                  stats.valid > 0 && (stats.zeroCostStockCount === 0 || zeroCostConfirmed)
                     ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-98'
                     : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                 }`}

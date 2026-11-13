@@ -461,7 +461,7 @@ export default function POSWorkspace({
 
   // Smart Exact-Match vs Tokenized Matches Separation (Option B: Smart Focus with Expansion)
   const { exactMatches, otherMatches, hasExactMatch } = useMemo(() => {
-    const list = Array.isArray(products) ? products : []
+    const list = (Array.isArray(products) ? products : []).filter((p) => p && p.is_sellable !== false)
     const rawQ = (debouncedSearch || '').trim()
     const cleanQ = rawQ.toLowerCase().replace(/\s+/g, ' ')
 

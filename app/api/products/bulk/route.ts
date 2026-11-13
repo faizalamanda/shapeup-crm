@@ -28,6 +28,7 @@ interface ProductImportRow {
   stock_type?: 'tracked' | 'available' | 'unavailable'
   description?: string | null
   hpp_type?: 'fixed' | 'variable'
+  is_sellable?: boolean
   price_tiers?: { dine_in?: number | null; take_away?: number | null } | null
   min_stock_alert?: number | null
   external_id?: string | null
@@ -186,7 +187,7 @@ export async function POST(req: Request) {
     const productsToUpdate: { originalIndex: number; id: string; existingStock: number; payload: any; variants: ProductVariantImportRow[]; modifierGroups: string[] }[] = []
 
     const stripExtendedProductCols = (payload: any) => {
-      const { price_tiers, min_stock_alert, external_id, ...safePayload } = payload
+      const { price_tiers, min_stock_alert, external_id, is_sellable, ...safePayload } = payload
       return safePayload
     }
 
@@ -234,6 +235,7 @@ export async function POST(req: Request) {
       }
 
       const cleanHppType = item.hpp_type === 'variable' ? 'variable' : 'fixed'
+      const cleanIsSellable = item.is_sellable !== false
       const cleanDesc = item.description ? String(item.description).trim() : null
       const cleanMinStockAlert = Number(item.min_stock_alert) > 0 ? Math.round(Number(item.min_stock_alert)) : 0
       const cleanExternalId = item.external_id ? String(item.external_id).trim() : null
@@ -284,6 +286,7 @@ export async function POST(req: Request) {
         stock_quantity: cleanStockType === 'tracked' ? cleanStockQty : 0,
         unit: cleanUnit,
         hpp_type: cleanHppType,
+        is_sellable: cleanIsSellable,
         price_tiers: cleanPriceTiers,
         min_stock_alert: cleanMinStockAlert,
         external_id: cleanExternalId,
@@ -336,7 +339,7 @@ export async function POST(req: Request) {
         .insert(payloads)
         .select('id, name, sku, stock_quantity, cost_price, stock_type')
 
-      if (insErr && (insErr.message?.includes('price_tiers') || insErr.message?.includes('min_stock_alert') || insErr.message?.includes('external_id') || insErr.code === '42703' || insErr.code === 'PGRST204')) {
+      if (insErr && (insErr.message?.includes('price_tiers') || insErr.message?.includes('min_stock_alert') || insErr.message?.includes('external_id') || insErr.message?.includes('is_sellable') || insErr.code === '42703' || insErr.code === 'PGRST204')) {
         const fallbackPayloads = productsToInsert.map(p => stripExtendedProductCols(p.payload))
         const retryRes = await supabaseAdmin
           .from('products')
@@ -356,7 +359,7 @@ export async function POST(req: Request) {
             .select('id, name, sku, stock_quantity, cost_price, stock_type')
             .maybeSingle()
 
-          if (singleErr && (singleErr.message?.includes('price_tiers') || singleErr.message?.includes('min_stock_alert') || singleErr.message?.includes('external_id') || singleErr.code === '42703' || singleErr.code === 'PGRST204')) {
+          if (singleErr && (singleErr.message?.includes('price_tiers') || singleErr.message?.includes('min_stock_alert') || singleErr.message?.includes('external_id') || singleErr.message?.includes('is_sellable') || singleErr.code === '42703' || singleErr.code === 'PGRST204')) {
             const retrySingle = await supabaseAdmin
               .from('products')
               .insert(stripExtendedProductCols(item.payload))
@@ -404,7 +407,7 @@ export async function POST(req: Request) {
               .update(item.payload)
               .eq('id', item.id)
 
-            if (updErr && (updErr.message?.includes('price_tiers') || updErr.message?.includes('min_stock_alert') || updErr.message?.includes('external_id') || updErr.code === '42703' || updErr.code === 'PGRST204')) {
+            if (updErr && (updErr.message?.includes('price_tiers') || updErr.message?.includes('min_stock_alert') || updErr.message?.includes('external_id') || updErr.message?.includes('is_sellable') || updErr.code === '42703' || updErr.code === 'PGRST204')) {
               const retryUpd = await supabaseAdmin
                 .from('products')
                 .update(stripExtendedProductCols(item.payload))
