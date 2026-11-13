@@ -29,28 +29,24 @@ export type ProductHppResult = {
 // Recipe data rarely changes (biasanya 1x/hari), aman di-cache untuk
 // menghilangkan query ke product_recipes pada transaksi POS berturut-turut.
 
-interface HppBatchCacheEntry {
-  map: Map<string, ProductHppResult>
+interface HppProductCacheEntry {
+  data: ProductHppResult
   expiresAt: number
 }
 
-const hppBatchCache = new Map<string, HppBatchCacheEntry>()
+const hppProductCache = new Map<string, HppProductCacheEntry>()
 const HPP_CACHE_TTL = 60_000 // 60 seconds
-
-function makeHppCacheKey(ids: string[]): string {
-  return ids.slice().sort().join(',')
-}
 
 /**
  * Invalidate HPP cache. Call this when recipes or ingredient cost_price change.
  */
 export function invalidateHppCache() {
-  hppBatchCache.clear()
+  hppProductCache.clear()
 }
 
 /**
  * Calculates dynamic HPP for multiple products in a SINGLE batch query.
- * Results are cached in-memory (60s TTL) keyed by sorted product IDs.
+ * Results are cached per product ID (60s TTL) so any cart combination gets instant cache hits.
  * Returns Map<productId, ProductHppResult>
  */
 export async function calculateProductsHppBatch(
@@ -61,18 +57,26 @@ export async function calculateProductsHppBatch(
   const validIds = Array.from(new Set(productIds.filter(Boolean)))
   if (validIds.length === 0) return result
 
-  // Check cache
-  const cacheKey = makeHppCacheKey(validIds)
+  // 1. Resolve per-product cache hits and collect only missing IDs
   const now = Date.now()
-  const cached = hppBatchCache.get(cacheKey)
-  if (cached && cached.expiresAt > now) {
-    return cached.map
+  const missingIds: string[] = []
+  for (const pId of validIds) {
+    const cached = hppProductCache.get(pId)
+    if (cached && cached.expiresAt > now) {
+      result.set(pId, cached.data)
+    } else {
+      missingIds.push(pId)
+    }
+  }
+
+  if (missingIds.length === 0) {
+    return result
   }
 
   // Periodic cache cleanup
-  if (hppBatchCache.size > 50) {
-    for (const [k, v] of hppBatchCache.entries()) {
-      if (v.expiresAt <= now) hppBatchCache.delete(k)
+  if (hppProductCache.size > 500) {
+    for (const [k, v] of hppProductCache.entries()) {
+      if (v.expiresAt <= now) hppProductCache.delete(k)
     }
   }
 
@@ -80,7 +84,7 @@ export async function calculateProductsHppBatch(
     const { data: recipes, error } = await supabase
       .from('product_recipes')
       .select('id, business_id, product_id, ingredient_product_id, quantity, unit, notes, ingredient:products!ingredient_product_id(id, name, cost_price, stock_type, stock_quantity, unit)')
-      .in('product_id', validIds)
+      .in('product_id', missingIds)
 
     if (error || !recipes) {
       console.error('Error in calculateProductsHppBatch:', error)
@@ -94,10 +98,13 @@ export async function calculateProductsHppBatch(
       grouped.get(pId)!.push(r)
     }
 
-    for (const pId of validIds) {
+    const expiresAt = Date.now() + HPP_CACHE_TTL
+    for (const pId of missingIds) {
       const pRecipes = grouped.get(pId)
       if (!pRecipes || pRecipes.length === 0) {
-        result.set(pId, { isVariable: false, unitHpp: 0, ingredients: [] })
+        const emptyRes: ProductHppResult = { isVariable: false, unitHpp: 0, ingredients: [] }
+        result.set(pId, emptyRes)
+        hppProductCache.set(pId, { data: emptyRes, expiresAt })
         continue
       }
 
@@ -129,11 +136,10 @@ export async function calculateProductsHppBatch(
         })
       }
 
-      result.set(pId, { isVariable: true, unitHpp, ingredients: formattedRecipes })
+      const prodRes: ProductHppResult = { isVariable: true, unitHpp, ingredients: formattedRecipes }
+      result.set(pId, prodRes)
+      hppProductCache.set(pId, { data: prodRes, expiresAt })
     }
-
-    // Store in cache
-    hppBatchCache.set(cacheKey, { map: result, expiresAt: Date.now() + HPP_CACHE_TTL })
 
     return result
   } catch (err) {
@@ -195,78 +201,6 @@ export async function calculateProductHpp(
   } catch (err) {
     console.error(`Error calculating recipe HPP for product ${productId}:`, err)
     return { isVariable: false, unitHpp: 0, ingredients: [] }
-  }
-}
-
-/**
- * Deducts inventory for an ordered item.
- * If the product is Variable HPP, deducts raw materials according to recipe.
- * If the product is Fixed HPP and tracked, deducts product stock.
- */
-export async function processOrderInventoryDeduction(
-  productId: string,
-  itemQuantity: number,
-  supabase: SupabaseClient
-): Promise<{ success: boolean; itemCogs: number }> {
-  if (!productId || itemQuantity <= 0) return { success: true, itemCogs: 0 }
-
-  try {
-    // 1. Fetch main product details
-    const { data: mainProd, error: prodErr } = await supabase
-      .from('products')
-      .select('id, name, type, cost_price, hpp_type, stock_type, stock_quantity')
-      .eq('id', productId)
-      .single()
-
-    if (prodErr || !mainProd) return { success: false, itemCogs: 0 }
-
-    // 2. Check if product has recipes (Variable HPP)
-    const { isVariable, unitHpp, ingredients } = await calculateProductHpp(productId, supabase)
-
-    if (isVariable && ingredients.length > 0) {
-      // Deduct stock for each raw material / ingredient
-      for (const recipe of ingredients) {
-        const ingProd = recipe.ingredient
-        if (ingProd && ingProd.stock_type === 'tracked') {
-          const neededQty = Number(recipe.quantity) * Number(itemQuantity)
-          const newStock = Math.max(0, Number(ingProd.stock_quantity || 0) - neededQty)
-
-          await supabase
-            .from('products')
-            .update({ stock_quantity: newStock })
-            .eq('id', ingProd.id)
-        }
-      }
-
-      // Sync computed HPP onto main product cost_price
-      if (unitHpp > 0) {
-        const updatePayload: Record<string, any> = { cost_price: unitHpp }
-        if (mainProd.stock_type === 'tracked') {
-          updatePayload.stock_quantity = Math.max(0, Number(mainProd.stock_quantity || 0) - Number(itemQuantity))
-        }
-        await supabase
-          .from('products')
-          .update(updatePayload)
-          .eq('id', mainProd.id)
-      }
-
-      return { success: true, itemCogs: unitHpp * itemQuantity }
-    }
-
-    // Standard / Fixed HPP handling
-    if (mainProd.stock_type === 'tracked') {
-      const newProdStock = Math.max(0, Number(mainProd.stock_quantity || 0) - Number(itemQuantity))
-      await supabase
-        .from('products')
-        .update({ stock_quantity: newProdStock })
-        .eq('id', mainProd.id)
-    }
-
-    const itemCogs = (Number(mainProd.cost_price) || 0) * itemQuantity
-    return { success: true, itemCogs }
-  } catch (err) {
-    console.error(`Error in processOrderInventoryDeduction for product ${productId}:`, err)
-    return { success: false, itemCogs: 0 }
   }
 }
 

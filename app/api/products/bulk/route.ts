@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
 import { isUuid } from '@/lib/utils'
+import { getOrCreateDefaultAccounts } from '@/lib/accountHelper'
+import { ensureExpenseAccounts } from '@/lib/expenseLedger'
+import { postJournalTransaction } from '@/lib/journalHelper'
 
 interface ProductVariantImportRow {
   name: string
@@ -205,8 +208,8 @@ export async function POST(req: Request) {
       const cleanPrice = Number(item.price) >= 0 ? Number(item.price) : 0
       const cleanCostPrice = Number(item.cost_price) >= 0 ? Number(item.cost_price) : 0
       const rawStockNumber = Number(item.stock_quantity) >= 0 ? Number(item.stock_quantity) : 0
-      // PostgreSQL integer round
-      const cleanStockQty = Math.round(rawStockNumber)
+      // Preserve up to 4 decimal places (matches numeric(15,4) for kg/liter/gram raw materials)
+      const cleanStockQty = Math.round(rawStockNumber * 10000) / 10000
       const cleanUnit = item.unit ? String(item.unit).trim() : 'pcs'
       const cleanType = item.type === 'service' ? 'service' : (item.type === 'physical' ? 'physical' : (defaultType === 'service' ? 'service' : 'physical'))
 
@@ -688,60 +691,12 @@ export async function POST(req: Request) {
 
     // 8b. Adjustment stock moves for updated tracked products where stock changed
     if (duplicateAction === 'update' && productsToUpdate.length > 0) {
-      // Query actual physical on-hand stock from stock_moves for updated products
-      const actualStockMap = new Map<string, number>()
-      const trackedUpdateProducts = productsToUpdate.filter(p => p.payload.stock_type === 'tracked')
-      const trackedUpdateIds = trackedUpdateProducts.map(p => p.id)
-
-      if (trackedUpdateIds.length > 0) {
-        const CHUNK_SIZE = 150
-        for (let i = 0; i < trackedUpdateIds.length; i += CHUNK_SIZE) {
-          const idChunk = trackedUpdateIds.slice(i, i + CHUNK_SIZE)
-          const { data: movesData, error: movesErr } = await supabaseAdmin
-            .from('stock_moves')
-            .select('product_id, type, qty, origin_location_id, destination_location_id')
-            .eq('business_id', businessId)
-            .eq('bucket', 'main')
-            .eq('status', 'done')
-            .in('product_id', idChunk)
-
-          if (!movesErr && movesData) {
-            for (const m of movesData) {
-              const current = actualStockMap.get(m.product_id) || 0
-              let delta = 0
-              if (m.type === 'receipt' || m.type === 'refund') {
-                delta = Number(m.qty)
-              } else if (m.type === 'delivery') {
-                delta = -Number(m.qty)
-              } else if (m.type === 'adjustment') {
-                if (m.origin_location_id === null || (m.destination_location_id !== null && m.origin_location_id === null)) {
-                  delta = Number(m.qty)
-                } else {
-                  delta = -Number(m.qty)
-                }
-              } else if (m.type === 'transfer') {
-                if (m.destination_location_id !== null) {
-                  delta = Number(m.qty)
-                } else {
-                  delta = -Number(m.qty)
-                }
-              }
-              actualStockMap.set(m.product_id, current + delta)
-            }
-          }
-        }
-      }
-
       for (const item of productsToUpdate) {
         if (item.payload.stock_type === 'tracked') {
-          // If product already has historical stock_moves, use actual ledger balance.
-          // Otherwise fallback to existing product stock_quantity column.
-          const currentStock = actualStockMap.has(item.id)
-            ? Number(actualStockMap.get(item.id) || 0)
-            : Number(item.existingStock || 0)
-
+          // products.stock_quantity is atomically synced by trg_sync_product_stock_from_moves
+          const currentStock = Number(item.existingStock || 0)
           const targetStock = Number(item.payload.stock_quantity || 0)
-          const diff = targetStock - currentStock
+          const diff = Math.round((targetStock - currentStock) * 10000) / 10000
 
           if (diff !== 0) {
             stockMovesToInsert.push({
@@ -773,6 +728,79 @@ export async function POST(req: Request) {
 
       if (stockMoveErr) {
         console.warn('[ProductsBulk] Warning: Failed to insert stock moves:', stockMoveErr.message)
+      } else {
+        // Post opening stock & stock adjustment journals so GL Persediaan (102000) stays in sync with stock_moves
+        try {
+          let initialStockValue = 0
+          let adjustUpValue = 0
+          let adjustDownValue = 0
+
+          for (const m of stockMovesToInsert) {
+            const val = Math.round(Number(m.qty || 0) * Number(m.unit_cost || 0))
+            if (val <= 0) continue
+            if (m.reference === 'STOK-AWAL-IMPORT') {
+              initialStockValue += val
+            } else if (m.reference === 'PENYESUAIAN-STOK-IMPORT') {
+              if (m.origin_location_id) {
+                adjustDownValue += val
+              } else {
+                adjustUpValue += val
+              }
+            }
+          }
+
+          const todayStr = new Date().toISOString().split('T')[0]
+
+          if (initialStockValue > 0) {
+            const defaultAccMap = await getOrCreateDefaultAccounts(businessId, supabaseAdmin)
+            const accPersediaan = defaultAccMap['102000']
+            const accModal = defaultAccMap['301000']
+            if (accPersediaan && accModal) {
+              await postJournalTransaction(
+                businessId,
+                null,
+                todayStr,
+                `Saldo Awal Persediaan (Import Produk)`,
+                [
+                  { account_id: accPersediaan, debit: initialStockValue, credit: 0 },
+                  { account_id: accModal, debit: 0, credit: initialStockValue }
+                ],
+                supabaseAdmin,
+                true
+              )
+            }
+          }
+
+          if (adjustUpValue > 0 || adjustDownValue > 0) {
+            const expAccMap = await ensureExpenseAccounts(businessId, supabaseAdmin)
+            const accPersediaan = expAccMap['102000']
+            const accPenyesuaian = expAccMap['502000']
+            if (accPersediaan && accPenyesuaian) {
+              const adjLines: any[] = []
+              if (adjustUpValue > 0) {
+                adjLines.push({ account_id: accPersediaan, debit: adjustUpValue, credit: 0 })
+                adjLines.push({ account_id: accPenyesuaian, debit: 0, credit: adjustUpValue })
+              }
+              if (adjustDownValue > 0) {
+                adjLines.push({ account_id: accPenyesuaian, debit: adjustDownValue, credit: 0 })
+                adjLines.push({ account_id: accPersediaan, debit: 0, credit: adjustDownValue })
+              }
+              if (adjLines.length > 0) {
+                await postJournalTransaction(
+                  businessId,
+                  null,
+                  todayStr,
+                  `Penyesuaian Persediaan (Import Produk)`,
+                  adjLines,
+                  supabaseAdmin,
+                  true
+                )
+              }
+            }
+          }
+        } catch (journalErr: any) {
+          console.warn('[ProductsBulk] Warning: Failed to post opening stock journal:', journalErr?.message)
+        }
       }
     }
 

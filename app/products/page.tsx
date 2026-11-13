@@ -173,49 +173,94 @@ export default function ProductsPage() {
       const fetchedCats = catData || []
       setCategories(fetchedCats)
 
-      // 2. Fetch all products in chunks of 1000 to bypass PostgREST max-rows limit (World-Class Chunking)
+      // 2. Fetch all products in chunks of 1000 to bypass PostgREST max-rows limit (parallelized after chunk 0)
       const CHUNK_SIZE = 1000
       let allProducts: Product[] = []
-      let from = 0
       let selectClause = '*, categories(id, name), product_variants(*), product_modifiers(*)'
 
-      while (true) {
-        let { data: chunk, error: prodErr } = await supabase
+      // Chunk 0: discover working selectClause + total count
+      let { data: firstChunk, count: totalProdCount, error: prodErr } = await supabase
+        .from('products')
+        .select(selectClause, { count: 'exact' })
+        .eq('business_id', businessId)
+        .order('created_at', { ascending: false })
+        .range(0, CHUNK_SIZE - 1)
+
+      if (prodErr && selectClause === '*, categories(id, name), product_variants(*), product_modifiers(*)') {
+        selectClause = '*, categories(id, name), product_variants(*)'
+        const retryWithVars = await supabase
           .from('products')
-          .select(selectClause)
+          .select(selectClause, { count: 'exact' })
           .eq('business_id', businessId)
           .order('created_at', { ascending: false })
-          .range(from, from + CHUNK_SIZE - 1)
+          .range(0, CHUNK_SIZE - 1)
+        firstChunk = retryWithVars.data
+        totalProdCount = retryWithVars.count
+        prodErr = retryWithVars.error
+      }
 
-        if (prodErr && selectClause === '*, categories(id, name), product_variants(*), product_modifiers(*)') {
-          selectClause = '*, categories(id, name), product_variants(*)'
-          const retryWithVars = await supabase
-            .from('products')
-            .select(selectClause)
-            .eq('business_id', businessId)
-            .order('created_at', { ascending: false })
-            .range(from, from + CHUNK_SIZE - 1)
-          chunk = retryWithVars.data
-          prodErr = retryWithVars.error
+      if (prodErr && selectClause !== '*, categories(id, name)') {
+        selectClause = '*, categories(id, name)'
+        const fallbackRes = await supabase
+          .from('products')
+          .select(selectClause, { count: 'exact' })
+          .eq('business_id', businessId)
+          .order('created_at', { ascending: false })
+          .range(0, CHUNK_SIZE - 1)
+        firstChunk = fallbackRes.data
+        totalProdCount = fallbackRes.count
+        prodErr = fallbackRes.error
+      }
+
+      if (prodErr) throw prodErr
+      if (firstChunk && firstChunk.length > 0) {
+        allProducts = allProducts.concat(firstChunk as unknown as Product[])
+
+        if (firstChunk.length === CHUNK_SIZE) {
+          const total = totalProdCount || 0
+          if (total > CHUNK_SIZE) {
+            const offsets: number[] = []
+            for (let offset = CHUNK_SIZE; offset < total; offset += CHUNK_SIZE) {
+              offsets.push(offset)
+            }
+            const CONCURRENCY = 3
+            for (let i = 0; i < offsets.length; i += CONCURRENCY) {
+              const wave = offsets.slice(i, i + CONCURRENCY)
+              const waveResults = await Promise.all(
+                wave.map(offset =>
+                  supabase
+                    .from('products')
+                    .select(selectClause)
+                    .eq('business_id', businessId)
+                    .order('created_at', { ascending: false })
+                    .range(offset, offset + CHUNK_SIZE - 1)
+                )
+              )
+              for (const res of waveResults) {
+                if (res.error) throw res.error
+                if (res.data && res.data.length > 0) {
+                  allProducts = allProducts.concat(res.data as unknown as Product[])
+                }
+              }
+            }
+          } else if (!totalProdCount) {
+            // Fallback sequential loop if count was not returned
+            let from = CHUNK_SIZE
+            while (true) {
+              const { data: chunk, error: nextErr } = await supabase
+                .from('products')
+                .select(selectClause)
+                .eq('business_id', businessId)
+                .order('created_at', { ascending: false })
+                .range(from, from + CHUNK_SIZE - 1)
+              if (nextErr) throw nextErr
+              if (!chunk || chunk.length === 0) break
+              allProducts = allProducts.concat(chunk as unknown as Product[])
+              if (chunk.length < CHUNK_SIZE) break
+              from += CHUNK_SIZE
+            }
+          }
         }
-
-        if (prodErr && selectClause !== '*, categories(id, name)') {
-          selectClause = '*, categories(id, name)'
-          const fallbackRes = await supabase
-            .from('products')
-            .select(selectClause)
-            .eq('business_id', businessId)
-            .order('created_at', { ascending: false })
-            .range(from, from + CHUNK_SIZE - 1)
-          chunk = fallbackRes.data
-          prodErr = fallbackRes.error
-        }
-
-        if (prodErr) throw prodErr
-        if (!chunk || chunk.length === 0) break
-        allProducts = allProducts.concat(chunk as unknown as Product[])
-        if (chunk.length < CHUNK_SIZE) break
-        from += CHUNK_SIZE
       }
 
       // Self-healing direct table hydration if embedded join fell back

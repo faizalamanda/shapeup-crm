@@ -3,6 +3,7 @@ import { recordStockMovements, StockMoveInput } from '@/lib/stockLedger'
 import { NextResponse } from 'next/server'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
 import { postJournalTransaction } from '@/lib/journalHelper'
+import { invalidateHppCache } from '@/lib/recipeHelper'
 
 export async function GET(req: Request) {
   const ctx = await getApiContext()
@@ -146,7 +147,7 @@ export async function POST(req: Request) {
     let serviceSubtotal = 0
     items.forEach((item: any) => {
       const itemPrice = parseFloat(item.price) || 0
-      const itemQty = parseInt(item.quantity) || 1
+      const itemQty = parseFloat(item.quantity) || 0
       if (item.is_physical) {
         physicalSubtotal += itemPrice * itemQty
       } else {
@@ -234,6 +235,8 @@ export async function POST(req: Request) {
       console.error(`[Purchases API] RPC Error: ${rpcErr.message}`)
       return NextResponse.json({ error: `Failed to process purchase: ${rpcErr.message}` }, { status: 500 })
     }
+
+    invalidateHppCache()
 
     // Fetch the newly created purchase for the response
     const { data: purchase } = await supabase
@@ -325,7 +328,7 @@ export async function PUT(req: Request) {
     let serviceSubtotal = 0
     items.forEach((item: any) => {
       const itemPrice = parseFloat(item.price) || 0
-      const itemQty = parseInt(item.quantity) || 1
+      const itemQty = parseFloat(item.quantity) || 0
       if (item.is_physical) {
         physicalSubtotal += itemPrice * itemQty
       } else {
@@ -413,6 +416,8 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: `Failed to edit purchase: ${rpcErr.message}` }, { status: 500 })
     }
 
+    invalidateHppCache()
+
     const { data: updatedPurchase } = await supabase
       .from('purchases')
       .select('*, suppliers(id, name)')
@@ -448,6 +453,8 @@ export async function DELETE(req: Request) {
       console.error(`[Purchases API Delete] RPC Error: ${rpcErr.message}`)
       return NextResponse.json({ error: `Failed to delete purchase: ${rpcErr.message}` }, { status: 500 })
     }
+
+    invalidateHppCache()
 
     return NextResponse.json({ success: true })
   } catch (err: any) {

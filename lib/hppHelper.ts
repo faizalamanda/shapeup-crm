@@ -19,6 +19,7 @@ export interface ItemizedHppInput {
     sku?: string | null
     type?: string
     stock_type?: string
+    hpp_type?: string
     cost_price: number
     stock_quantity?: number
     unit?: string
@@ -33,6 +34,7 @@ export interface ItemizedHppBreakdown {
   unitCost: number
   totalCost: number
   isVariableHpp: boolean
+  hppMissing?: boolean
 }
 
 export interface ItemizedHppLineResult {
@@ -108,20 +110,34 @@ export async function generateItemizedHppJournalLines(
     // Skip non-physical items (e.g. services / digital)
     if (prodType !== 'physical') continue
 
-    let effectiveCost = Number((item as any).cost_price || (item as any).costPrice || dbProduct?.cost_price || 0)
-    let isVariableHpp = false
+    const isExplicitVariable = dbProduct?.hpp_type === 'variable'
+    let effectiveCost = isExplicitVariable
+      ? 0
+      : Number((item as any).cost_price || (item as any).costPrice || dbProduct?.cost_price || 0)
+    let isVariableHpp = isExplicitVariable
+    let hppMissing = false
 
     // Check if dynamic recipe / Variable HPP calculation applies
     if (dbProduct?.id && supabase) {
       const hppInfo = hppMap.get(dbProduct.id)
-      if (hppInfo?.isVariable && hppInfo.unitHpp > 0) {
-        effectiveCost = hppInfo.unitHpp
+      if (hppInfo?.isVariable) {
         isVariableHpp = true
+        if (hppInfo.unitHpp > 0) {
+          effectiveCost = hppInfo.unitHpp
+        } else {
+          // Do NOT silently fall back to fixed cost_price or defaultHppPct when recipe HPP is 0
+          effectiveCost = 0
+          hppMissing = true
+          console.warn(`[hppHelper] Variable HPP is 0 for product ${dbProduct.id} (${prodName}). Missing raw material cost.`)
+        }
+      } else if (isExplicitVariable) {
+        hppMissing = true
+        console.warn(`[hppHelper] Product ${dbProduct.id} (${prodName}) has hpp_type='variable' but no active recipe.`)
       }
     }
 
-    // Fallback: If cost_price is missing or 0, try extraction from item metadata or 50% default
-    if (effectiveCost <= 0) {
+    // Fallback: Only for non-variable (fixed HPP) products when cost_price is missing or 0
+    if (effectiveCost <= 0 && !isVariableHpp) {
       if (item.cost_of_goods_sold && typeof item.cost_of_goods_sold === 'object') {
         const val = parseFloat(item.cost_of_goods_sold.value)
         if (!isNaN(val) && val > 0) effectiveCost = val
@@ -147,7 +163,21 @@ export async function generateItemizedHppJournalLines(
     }
 
     const itemTotalCogs = effectiveCost * qty
-    if (itemTotalCogs <= 0) continue
+    if (itemTotalCogs <= 0) {
+      if (hppMissing) {
+        itemizedBreakdown.push({
+          productId: dbProduct?.id || null,
+          productName: prodName,
+          sku: sku || null,
+          qty: qty,
+          unitCost: 0,
+          totalCost: 0,
+          isVariableHpp: true,
+          hppMissing: true
+        })
+      }
+      continue
+    }
 
     totalCogs += itemTotalCogs
 
