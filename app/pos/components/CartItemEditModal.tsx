@@ -2,10 +2,30 @@
 
 import { useState, useEffect } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
+import { PosSalesType, resolvePosItemPrice } from '@/lib/posCatalogStore'
+import { WholesaleTier, isDimensionUnit, resolveWholesaleUnitPrice } from '@/lib/pricing/wholesalePricing'
 
 interface CartItemData {
-  product: { id?: string; name: string; price?: number; cost_price?: number; prevent_below_hpp?: boolean }
-  selectedVariant?: { id?: string; name: string; price?: number; cost_price?: number; costPrice?: number }
+  product: {
+    id?: string
+    name: string
+    price?: number
+    price_tiers?: any
+    wholesale_tiers?: WholesaleTier[] | null
+    unit?: string | null
+    pricing_type?: string | null
+    cost_price?: number
+    prevent_below_hpp?: boolean
+  }
+  selectedVariant?: {
+    id?: string
+    name: string
+    price?: number
+    price_tiers?: any
+    wholesale_tiers?: WholesaleTier[] | null
+    cost_price?: number
+    costPrice?: number
+  }
   selectedModifiers?: { group?: string; name: string; priceExtra?: number; costPrice?: number }[]
   dimension_spec?: any
   finalPrice: number
@@ -13,12 +33,15 @@ interface CartItemData {
   quantity: number
   note?: string
   authorization?: any
+  isManualPriceOverride?: boolean
+  appliedWholesaleTier?: WholesaleTier | null
 }
 
 interface Props {
   isOpen: boolean
   onClose: () => void
   item: CartItemData | null
+  salesType?: PosSalesType
   isGuarded?: boolean
   costPrice?: number
   allowOverride?: boolean
@@ -33,6 +56,8 @@ interface Props {
     discount: number
     quantity: number
     note: string
+    isManualPriceOverride?: boolean
+    appliedWholesaleTier?: WholesaleTier | null
   }) => void
   onRemove: () => void
   onEditDimensions?: () => void
@@ -42,6 +67,7 @@ export default function CartItemEditModal({
   isOpen,
   onClose,
   item,
+  salesType = 'basic',
   isGuarded = false,
   costPrice = 0,
   allowOverride = false,
@@ -55,11 +81,50 @@ export default function CartItemEditModal({
   const [finalPrice, setFinalPrice] = useState<number>(0)
   const [discount, setDiscount] = useState<number>(0)
   const [note, setNote] = useState<string>('')
+  const [isManualPrice, setIsManualPrice] = useState<boolean>(false)
+
+  const modExtra = Array.isArray(item?.selectedModifiers)
+    ? item.selectedModifiers.reduce((sum, m) => sum + Number(m?.priceExtra || 0), 0)
+    : 0
+
+  const parentResolvedPrice = item?.product
+    ? resolvePosItemPrice(item.product, salesType, Number(item.product.price || 0))
+    : 0
+  const catalogUnitBase = item?.selectedVariant
+    ? resolvePosItemPrice(item.selectedVariant, salesType, parentResolvedPrice)
+    : parentResolvedPrice
+
+  const isAutoWholesaleEligible = Boolean(
+    item &&
+    !item.dimension_spec &&
+    !item.authorization &&
+    !String(item.product?.id || '').startsWith('custom-')
+  )
+
+  const resolvePriceForQty = (targetQty: number) => {
+    if (!item || !isAutoWholesaleEligible) {
+      return {
+        price: Number(item?.finalPrice ?? 0),
+        appliedTier: null as WholesaleTier | null
+      }
+    }
+    const isDim = isDimensionUnit(item.product?.unit) || item.product?.pricing_type === 'area'
+    const res = resolveWholesaleUnitPrice({
+      basePrice: catalogUnitBase,
+      wholesaleTiers: item.selectedVariant ? item.selectedVariant.wholesale_tiers : item.product?.wholesale_tiers,
+      qty: targetQty,
+      isDimensionProduct: isDim
+    })
+    return {
+      price: res.unitPrice + modExtra,
+      appliedTier: res.appliedTier
+    }
+  }
 
   // Determine standard base price for reset option
-  const originalBasePrice = Number(
-    item?.selectedVariant?.price ?? item?.product?.price ?? item?.finalPrice ?? 0
-  )
+  const originalBasePrice = isAutoWholesaleEligible
+    ? catalogUnitBase + modExtra
+    : Number(item?.selectedVariant?.price ?? item?.product?.price ?? item?.finalPrice ?? 0)
 
   useEffect(() => {
     if (isOpen && item) {
@@ -67,13 +132,26 @@ export default function CartItemEditModal({
       setFinalPrice(Number(item.finalPrice) || 0)
       setDiscount(Number(item.discount) || 0)
       setNote(item.note || '')
+      setIsManualPrice(Boolean(item.isManualPriceOverride))
     }
   }, [isOpen, item])
 
   if (!isOpen || !item) return null
 
+  const currentAutoResolved = resolvePriceForQty(quantity)
+  const activeWholesaleTier = !isManualPrice ? currentAutoResolved.appliedTier : null
+
+  const applyQtyUpdate = (nextQty: number) => {
+    const safeQty = Math.max(1, nextQty)
+    setQuantity(safeQty)
+    if (!isManualPrice && isAutoWholesaleEligible) {
+      const resolved = resolvePriceForQty(safeQty)
+      setFinalPrice(resolved.price)
+    }
+  }
+
   const handleQtyChange = (delta: number) => {
-    setQuantity((prev) => Math.max(1, prev + delta))
+    applyQtyUpdate(quantity + delta)
   }
 
   const netUnitPrice = Math.max(0, finalPrice - discount)
@@ -122,6 +200,8 @@ export default function CartItemEditModal({
       discount: Math.max(0, Number(discount) || 0),
       quantity: Math.max(1, Number(quantity) || 1),
       note: note.trim(),
+      isManualPriceOverride: isManualPrice,
+      appliedWholesaleTier: activeWholesaleTier,
     })
     onClose()
   }
@@ -257,7 +337,7 @@ export default function CartItemEditModal({
               type="number"
               min="1"
               value={quantity}
-              onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+              onChange={(e) => applyQtyUpdate(parseInt(e.target.value, 10) || 1)}
               onWheel={(e) => e.currentTarget.blur()}
               className="w-20 text-center font-extrabold text-base bg-transparent text-slate-900 outline-none"
             />
@@ -273,17 +353,27 @@ export default function CartItemEditModal({
 
         {/* Unit Price */}
         <div className="space-y-1">
-          <div className="flex items-center justify-between">
-            <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-              Harga Satuan (Rp)
-            </label>
-            {finalPrice !== originalBasePrice && (
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                Harga Satuan (Rp)
+              </label>
+              {activeWholesaleTier && (
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                  🏷️ Grosir ≥{activeWholesaleTier.min_qty}
+                </span>
+              )}
+            </div>
+            {(isManualPrice || finalPrice !== currentAutoResolved.price) && (
               <button
                 type="button"
-                onClick={() => setFinalPrice(originalBasePrice)}
-                className="text-[10px] text-indigo-600 font-bold hover:underline"
+                onClick={() => {
+                  setIsManualPrice(false)
+                  setFinalPrice(currentAutoResolved.price)
+                }}
+                className="text-[10px] text-indigo-600 font-bold hover:underline cursor-pointer"
               >
-                ↺ Reset ke Rp {originalBasePrice.toLocaleString('id-ID')}
+                ↺ Reset ke Rp {currentAutoResolved.price.toLocaleString('id-ID')}
               </button>
             )}
           </div>
@@ -293,7 +383,10 @@ export default function CartItemEditModal({
               type="number"
               min="0"
               value={finalPrice === 0 ? '' : finalPrice}
-              onChange={(e) => setFinalPrice(Number(e.target.value))}
+              onChange={(e) => {
+                setIsManualPrice(true)
+                setFinalPrice(Number(e.target.value))
+              }}
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0"
               className={`w-full pl-9 pr-3 py-2 text-sm font-bold text-slate-900 rounded-xl border focus:outline-none focus:ring-2 bg-white ${

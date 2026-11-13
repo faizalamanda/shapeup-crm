@@ -2516,6 +2516,7 @@ export default function POSWorkspace({
         isOpen={editingCartItemIndex !== null}
         onClose={() => setEditingCartItemIndex(null)}
         item={editingCartItemIndex !== null ? cart[editingCartItemIndex] : null}
+        salesType={salesType}
         onEditDimensions={() => {
           if (editingCartItemIndex !== null) {
             const currentItem = cart[editingCartItemIndex]
