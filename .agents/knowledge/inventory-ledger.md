@@ -55,3 +55,39 @@ Sebelum menghapus atau membangun ulang move historis, bandingkan dulu `purchases
 ## Migrasi
 
 Migrasi schema untuk kolom/constraint ledger harus diterapkan sebelum code writer baru dideploy. Constraint foreign key legacy dapat ditambahkan `NOT VALID` bila data lama belum diaudit; tetap verifikasi dan validasi data legacy dalam pekerjaan terpisah.
+
+---
+
+## 8. Bahan Baku, Resep (BOM), Import Massal & Costing (Fase 0 & Fase 1)
+
+### 1. Single-Table Products + Visibilitas POS (`is_sellable`)
+- Produk jadi dan bahan baku/material tetap disimpan dalam satu tabel `public.products` (menghindari *Polymorphic FK Anti-Pattern* dan menjaga keutuhan `stock_moves`, `purchases`, dan `stock_opname`).
+- Kolom `is_sellable boolean NOT NULL DEFAULT true` membedakan item yang tampil di layar kasir POS (`POSWorkspace.tsx` memfilter `p.is_sellable !== false`).
+- **Bahan Baku Murni:** Set `is_sellable = false` dan `stock_type = 'tracked'`. Otomatis tersembunyi dari POS, namun tetap muncul di Pembelian, Stock Opname, Laporan Persediaan, dan Pemilih Bahan Resep.
+- **Produk Jadi Berbasis Resep:** Set `is_sellable = true`, `hpp_type = 'variable'`, dan `stock_type = 'available'` (karena pemotongan stok fisik terjadi pada bahan bakunya via `inventoryHelper.ts`).
+
+### 2. Import Terpisah 2 Tab (`/products/import`)
+- **Tab 1 (`Import Produk & Bahan Baku` -> `/api/products/bulk`):**
+  - Mendukung kolom `is_sellable` dan `hpp_type`, serta mempertahankan 4 angka desimal pada `products.stock_quantity` (`numeric(15,4)`).
+  - **Soft Block HPP 0:** Jika ada item dengan `stock_type = 'tracked'`, `stock_quantity > 0`, dan `cost_price = 0`, UI menampilkan peringatan dampak dilusi WAC dan mewajibkan centang konfirmasi sadar.
+  - **Opening Stock & Adjustment Journal:** `STOK-AWAL-IMPORT` otomatis memposting `Dr 102000 Persediaan / Cr 301000 Modal Pemilik`; `PENYESUAIAN-STOK-IMPORT` memposting `102000` vs `502000 Penyesuaian Persediaan` (non-fatal `try/catch`).
+  - **Update Stok:** Menggunakan `existingStock` dari `products.stock_quantity` (yang sinkron atomik via trigger) tanpa menarik seluruh riwayat `stock_moves` ke Node.js.
+- **Tab 2 (`Import / Update Resep (BOM)` -> `/api/products/bulk/recipes` & RPC `upsert_product_recipes_bulk_v1`):**
+  - Mendukung mode `replace` (timpa komposisi resep produk yang ada di file) dan `merge` (upsert bahan).
+  - **Resolusi Item:** `SKU-First -> Fallback Nama` (case-insensitive) dengan **Ambiguity Guard** (menolak jika nama cocok $> 1$ item tanpa SKU).
+  - **Graph & Integrity Guards:** Validasi *no self-loop* (`product_id !== ingredient_product_id`), deteksi siklus DAG (`createsCycle`), *Strict Referential Integrity* (baris dengan bahan tidak ditemukan ditolak dan masuk file gagal `.xlsx`), serta otomatis menyamakan `unit` resep dengan `products.unit` bahan baku dan mengeset `hpp_type = 'variable'`.
+
+### 3. Pembelian, WAC Reversal & Transparansi HPP (`purchases`, `recipeHelper`, `hppHelper`)
+- **Desimal Kuantitas Pembelian:** `app/api/purchases/route.ts` wajib menggunakan `parseFloat(item.quantity) || 0` (bukan `parseInt`) agar subtotal jurnal & hutang pembelian bahan baku desimal (kg/liter) sinkron dengan WAC.
+- **Edit/Hapus PO & WAC Reversal:** `update_purchase_transaction_v1` dan `delete_purchase_transaction_v1` wajib memanggil `_revert_purchase_wac_v1` sebelum menghapus `stock_moves` lama agar kontribusi biaya PO lama tidak terhitung ganda (*double counting*), serta dilindungi guard tenant `auth.uid()` (Rule 14).
+- **Per-Product HPP Cache:** `lib/recipeHelper.ts` meng-cache hasil `calculateProductsHppBatch` **per `productId`** (`hppProductCache`, TTL 60 detik). Panggil `invalidateHppCache()` setiap ada mutasi pembelian atau resep.
+- **No Silent Fallback untuk HPP Resep 0:** Di `lib/hppHelper.ts`, produk dengan `hpp_type === 'variable'` yang HPP resepnya bernilai `0` ditandai `hppMissing: true` dan **dilarang** melakukan fallback diam-diam ke `cost_price` produk jadi atau `defaultHppPct`.
+
+### 4. Roadmap Tertunda (Pengingat Wajib Saat Membahas Inventory / Stok)
+> [!IMPORTANT]
+> **PENGINGAT UNTUK SESI MENDATANG:** Setiap kali user membahas arsitektur **inventory, stok, costing, FIFO, atau backdate transaksi**, ingatkan user mengenai **Fase 2 & Fase 3** yang sengaja ditunda pada 13 Nov 2026:
+> - **Fase 2 (Deferred — Costing & Audit Ledger):**
+>   - **Tahap 2A:** Tabel *append-only* `stock_valuation_layers` (untuk audit rekonsiliasi `102000 Persediaan` vs Nilai Gudang per transaksi) + **Lock Date / Kunci Periode** (mencegah *backdate* pada periode tutup buku).
+>   - **Tahap 2B:** Konsumsi layer **FIFO** & **Negative Stock Vacuum** (koreksi otomatis HPP Rp 0 ketika barang dijual sebelum PO bahan diinput).
+> - **Fase 3 (Deferred — Granularitas & Konversi):**
+>   - Konversi UoM Pembelian $\leftrightarrow$ Resep (`1 kg = 1000 gr`, `1 L = 1000 ml`), Multi-level Sub-recipes (bahan setengah jadi), dan dukungan `variant_id` pada `product_recipes`.

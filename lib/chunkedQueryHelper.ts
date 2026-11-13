@@ -73,7 +73,7 @@ export async function fetchAllBusinessProducts<T = any>(
 
   const selectWithVariants =
     options?.selectWithVariants ||
-    'id, name, price, sku, cost_price, stock_quantity, stock_type, product_variants(id, name, sku, price, cost_price, stock_quantity)'
+    'id, name, price, sku, unit, pricing_type, wholesale_tiers, cost_price, stock_quantity, stock_type, product_variants(id, name, sku, price, wholesale_tiers, cost_price, stock_quantity)'
   const selectVariantsOnly =
     options?.selectVariantsOnly ||
     'id, name, price, sku, cost_price, stock_quantity, stock_type, product_variants(id, name, sku, price, cost_price, stock_quantity)'

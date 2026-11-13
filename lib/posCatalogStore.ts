@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { fetchAllSupabaseRows, fetchAllBusinessProducts } from '@/lib/chunkedQueryHelper'
+import { WholesaleTier } from '@/lib/pricing/wholesalePricing'
 
 // ─── Types & Constants ───────────────────────────────────────────────────────
 
@@ -42,6 +43,7 @@ export interface PosCatalogItem {
   min_stock_alert?: number
   external_id?: string | null
   price_tiers?: PosPriceTiers | null
+  wholesale_tiers?: WholesaleTier[] | null
   has_variants?: boolean
   prevent_below_hpp?: boolean
   product_variants?: any[]

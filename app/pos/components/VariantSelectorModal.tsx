@@ -3,12 +3,14 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 import { supabase } from '@/lib/supabase'
 import { PosSalesType, PosPriceTiers, resolvePosItemPrice } from '@/lib/posCatalogStore'
+import { WholesaleTier, isDimensionUnit, resolveWholesaleUnitPrice } from '@/lib/pricing/wholesalePricing'
 
 export type VariantOption = {
   id: string
   name: string
   price: number
   price_tiers?: PosPriceTiers | null
+  wholesale_tiers?: WholesaleTier[] | null
   costPrice?: number
   cost_price?: number
   stockQuantity?: number
@@ -37,6 +39,9 @@ type Props = {
     cost_price?: number
     costPrice?: number
     price_tiers?: PosPriceTiers | null
+    wholesale_tiers?: WholesaleTier[] | null
+    unit?: string | null
+    pricing_type?: string | null
     stock_quantity: number
     variants?: VariantOption[]
     product_variants?: any[]
@@ -108,6 +113,7 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
               name: v.name || '',
               price: resolvePosItemPrice(v, salesType, parentFallbackPrice),
               price_tiers: v.price_tiers || null,
+              wholesale_tiers: v.wholesale_tiers || null,
               costPrice: Number(v.cost_price ?? v.costPrice ?? 0),
               cost_price: Number(v.cost_price ?? v.costPrice ?? 0),
               stockQuantity: Number(v.stock_quantity ?? 0)
@@ -140,6 +146,7 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
         name: v?.name || '',
         price: resolvePosItemPrice(v, salesType, parentEffectivePrice),
         price_tiers: v?.price_tiers || null,
+        wholesale_tiers: v?.wholesale_tiers || null,
         costPrice: Number(v?.cost_price ?? v?.costPrice ?? 0),
         cost_price: Number(v?.cost_price ?? v?.costPrice ?? 0),
         stockQuantity: Number(v?.stock_quantity ?? 0)
@@ -302,12 +309,19 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
     }
   }, [isOpen, variants, selectedVariant])
 
-  // Calculate final unit price
+  // Calculate final unit price (with wholesale tier resolution)
   const extraTotal = Object.values(selectedModifiers).reduce((acc, m) => acc + (m?.priceExtra || 0), 0)
   const basePrice = selectedVariant
     ? Number(selectedVariant.price || 0)
     : resolvePosItemPrice(product, salesType, Number(product?.price || 0))
-  const finalPrice = basePrice + extraTotal
+  const isDimProduct = isDimensionUnit(product?.unit) || product?.pricing_type === 'area'
+  const wholesaleRes = resolveWholesaleUnitPrice({
+    basePrice,
+    wholesaleTiers: selectedVariant ? selectedVariant.wholesale_tiers : product?.wholesale_tiers,
+    qty: quantity,
+    isDimensionProduct: isDimProduct
+  })
+  const finalPrice = wholesaleRes.unitPrice + extraTotal
 
   const handleToggleModifier = (group: ModifierGroup, opt: { id: string; name: string; priceExtra: number; costPrice?: number }) => {
     setSelectedModifiers((prev) => {
@@ -562,8 +576,13 @@ export default function VariantSelectorModal({ isOpen, onClose, salesType = 'bas
         {/* Footer */}
         <div className="p-4 border-t border-gray-100 bg-gray-50/80 flex items-center justify-between gap-3">
           <div>
-            <div className="text-[10px] text-gray-500 uppercase tracking-wide">
-              Total Harga {quantity > 1 ? `(${quantity}x)` : 'Item'}
+            <div className="text-[10px] text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+              <span>Total Harga {quantity > 1 ? `(${quantity}x)` : 'Item'}</span>
+              {wholesaleRes.isWholesale && wholesaleRes.appliedTier && (
+                <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-black normal-case">
+                  🏷️ Grosir ≥{wholesaleRes.appliedTier.min_qty}
+                </span>
+              )}
             </div>
             <div className="text-lg font-bold text-gray-900">
               Rp {(finalPrice * quantity).toLocaleString('id-ID')}

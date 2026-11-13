@@ -302,7 +302,8 @@ const hppMap = await calculateProductsHppBatch(productIds, supabase)
 // hppMap.get(productId) → { isVariable, unitHpp, ingredients }
 ```
 
-**Cached:** 60 detik TTL. Panggil `invalidateHppCache()` saat recipe/ingredient berubah.
+**Cached:** 60 detik TTL **per `productId`** (`hppProductCache`). Panggil `invalidateHppCache()` saat purchase atau recipe/ingredient berubah (termasuk di `/api/purchases` dan `/api/products/bulk/recipes`).
+**Transparansi HPP (`lib/hppHelper.ts`):** Produk dengan `hpp_type === 'variable'` yang HPP resepnya `0` ditandai `hppMissing: true` dan tidak boleh fallback diam-diam ke `cost_price` produk jadi atau `defaultHppPct`.
 
 ---
 

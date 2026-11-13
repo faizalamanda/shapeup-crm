@@ -41,6 +41,7 @@ import { LoyaltySettings, LoyaltyTier, DEFAULT_LOYALTY_SETTINGS, resolveTier, ca
 import { useCustomerDirectory, matchesCustomerQuery, notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
 import { usePosCatalog, PosSalesType, resolvePosItemPrice } from '@/lib/posCatalogStore'
 import { useModalBackHandler } from '@/hooks/useModalBackHandler'
+import { isDimensionUnit, resolveWholesaleUnitPrice } from '@/lib/pricing/wholesalePricing'
 
 // Pastel badge colors for product cards
 const getPastelBadge = (name: string) => {
@@ -137,28 +138,53 @@ export default function POSWorkspace({
   // Sales Type Switcher in POS Cashier is strictly shown ONLY for F&B POS mode
   const showSalesTypeSwitcher = posMode.mode === 'fnb'
 
+  // Recalculate single cart item price with Sales Type + Wholesale Tiers (respecting manual/dimension/custom guards)
+  const recalculateCartItemPrice = useCallback((item: any, nextQty: number, activeSalesType: PosSalesType) => {
+    if (
+      item.dimension_spec ||
+      item.authorization ||
+      item.isManualPriceOverride ||
+      String(item.product?.id || '').startsWith('custom-')
+    ) {
+      return {
+        finalPrice: item.finalPrice,
+        appliedWholesaleTier: item.appliedWholesaleTier || null
+      }
+    }
+    const modExtra = Array.isArray(item.selectedModifiers)
+      ? item.selectedModifiers.reduce((sum: number, m: any) => sum + Number(m?.priceExtra || 0), 0)
+      : 0
+    const parentResolved = resolvePosItemPrice(item.product, activeSalesType, Number(item.product?.price || 0))
+    const unitBase = item.selectedVariant
+      ? resolvePosItemPrice(item.selectedVariant, activeSalesType, parentResolved)
+      : parentResolved
+    const isDim = isDimensionUnit(item.product?.unit) || item.product?.pricing_type === 'area'
+    const wholesaleRes = resolveWholesaleUnitPrice({
+      basePrice: unitBase,
+      wholesaleTiers: item.selectedVariant ? item.selectedVariant.wholesale_tiers : item.product?.wholesale_tiers,
+      qty: nextQty,
+      isDimensionProduct: isDim
+    })
+    return {
+      finalPrice: wholesaleRes.unitPrice + modExtra,
+      appliedWholesaleTier: wholesaleRes.appliedTier
+    }
+  }, [])
+
   // Switch Sales Type and dynamically recalculate non-overridden item prices in cart
   const handleSalesTypeChange = useCallback((nextType: PosSalesType) => {
     setSalesType(nextType)
     setCart((prev) =>
       prev.map((item) => {
-        if (item.dimension_spec || item.authorization || String(item.product?.id || '').startsWith('custom-')) {
-          return item
-        }
-        const modExtra = Array.isArray(item.selectedModifiers)
-          ? item.selectedModifiers.reduce((sum: number, m: any) => sum + Number(m?.priceExtra || 0), 0)
-          : 0
-        const parentResolved = resolvePosItemPrice(item.product, nextType, Number(item.product?.price || 0))
-        const unitBase = item.selectedVariant
-          ? resolvePosItemPrice(item.selectedVariant, nextType, parentResolved)
-          : parentResolved
+        const resolved = recalculateCartItemPrice(item, item.quantity, nextType)
         return {
           ...item,
-          finalPrice: unitBase + modExtra
+          finalPrice: resolved.finalPrice,
+          appliedWholesaleTier: resolved.appliedWholesaleTier
         }
       })
     )
-  }, [])
+  }, [recalculateCartItemPrice])
   
   // Discount states
   const [globalDiscountType, setGlobalDiscountType] = useState<'nominal' | 'percent'>('nominal')
@@ -667,13 +693,28 @@ export default function POSWorkspace({
         const existingIdx = prev.findIndex((item) => item.product.id === p.id && !item.selectedVariant)
         if (existingIdx > -1) {
           const updated = [...prev]
-          updated[existingIdx].quantity += 1
+          const nextQty = updated[existingIdx].quantity + 1
+          const resolved = recalculateCartItemPrice(updated[existingIdx], nextQty, salesType)
+          updated[existingIdx] = {
+            ...updated[existingIdx],
+            quantity: nextQty,
+            finalPrice: resolved.finalPrice,
+            appliedWholesaleTier: resolved.appliedWholesaleTier
+          }
           return updated
         }
+        const isDim = isDimensionUnit(p?.unit) || p?.pricing_type === 'area'
+        const wholesaleRes = resolveWholesaleUnitPrice({
+          basePrice: effectivePrice,
+          wholesaleTiers: p?.wholesale_tiers,
+          qty: 1,
+          isDimensionProduct: isDim
+        })
         return [...prev, {
           product: p,
           quantity: 1,
-          finalPrice: effectivePrice,
+          finalPrice: wholesaleRes.unitPrice,
+          appliedWholesaleTier: wholesaleRes.appliedTier,
           discount: 0
         }]
       })
@@ -699,24 +740,37 @@ export default function POSWorkspace({
 
       if (existingIdx > -1) {
         const copy = [...prev]
-        copy[existingIdx].quantity += addQty
+        const nextQty = copy[existingIdx].quantity + addQty
+        const resolved = recalculateCartItemPrice(copy[existingIdx], nextQty, salesType)
+        copy[existingIdx] = {
+          ...copy[existingIdx],
+          quantity: nextQty,
+          finalPrice: resolved.finalPrice,
+          appliedWholesaleTier: resolved.appliedWholesaleTier
+        }
         return copy
       }
 
+      const newItem = {
+        product: {
+          ...itemData.product,
+          name: displayName,
+          baseName: rawName
+        },
+        selectedVariant: itemData.selectedVariant,
+        selectedModifiers: itemData.selectedModifiers,
+        note: itemData.note,
+        quantity: addQty,
+        finalPrice: itemData.finalPrice,
+        discount: 0
+      }
+      const resolvedNew = recalculateCartItemPrice(newItem, addQty, salesType)
       return [
         ...prev,
         {
-          product: {
-            ...itemData.product,
-            name: displayName,
-            baseName: rawName
-          },
-          selectedVariant: itemData.selectedVariant,
-          selectedModifiers: itemData.selectedModifiers,
-          note: itemData.note,
-          quantity: addQty,
-          finalPrice: itemData.finalPrice,
-          discount: 0
+          ...newItem,
+          finalPrice: resolvedNew.finalPrice,
+          appliedWholesaleTier: resolvedNew.appliedWholesaleTier
         }
       ]
     })
@@ -785,7 +839,13 @@ export default function POSWorkspace({
       if (newQty <= 0) {
         copy.splice(index, 1)
       } else {
-        copy[index].quantity = newQty
+        const resolved = recalculateCartItemPrice(copy[index], newQty, salesType)
+        copy[index] = {
+          ...copy[index],
+          quantity: newQty,
+          finalPrice: resolved.finalPrice,
+          appliedWholesaleTier: resolved.appliedWholesaleTier
+        }
       }
       return copy
     })
@@ -1464,6 +1524,11 @@ export default function POSWorkspace({
                       {item.selectedVariant && (
                         <span className="text-[10px] text-blue-700 bg-blue-50 font-bold px-1.5 py-0.2 rounded shrink-0">
                           {item.selectedVariant.name}
+                        </span>
+                      )}
+                      {item.appliedWholesaleTier && (
+                        <span className="text-[10px] text-amber-800 bg-amber-100 border border-amber-200 font-bold px-1.5 py-0.2 rounded shrink-0">
+                          🏷️ Grosir ≥{item.appliedWholesaleTier.min_qty}
                         </span>
                       )}
                       {Array.isArray(item.selectedModifiers) && item.selectedModifiers.map((mod: any, mIdx: number) => (
@@ -2507,11 +2572,24 @@ export default function POSWorkspace({
           if (editingCartItemIndex !== null) {
             setCart((prev) => {
               const copy = [...prev]
-              if (copy[editingCartItemIndex]) {
-                copy[editingCartItemIndex] = {
-                  ...copy[editingCartItemIndex],
-                  ...updates
+              const current = copy[editingCartItemIndex]
+              if (current) {
+                const priceManuallyChanged =
+                  updates.finalPrice !== undefined &&
+                  Number(updates.finalPrice) !== Number(current.finalPrice)
+                const merged = {
+                  ...current,
+                  ...updates,
+                  ...(priceManuallyChanged
+                    ? { isManualPriceOverride: true, appliedWholesaleTier: null }
+                    : {})
                 }
+                if (!priceManuallyChanged && updates.quantity !== undefined && updates.quantity !== current.quantity) {
+                  const resolved = recalculateCartItemPrice(merged, Number(updates.quantity), salesType)
+                  merged.finalPrice = resolved.finalPrice
+                  merged.appliedWholesaleTier = resolved.appliedWholesaleTier
+                }
+                copy[editingCartItemIndex] = merged
               }
               return copy
             })

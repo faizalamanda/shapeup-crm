@@ -4,6 +4,12 @@ import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import { useModalBackHandler } from '@/hooks/useModalBackHandler'
 import { invalidatePosCatalogCache, PosPriceTiers } from '@/lib/posCatalogStore'
+import {
+  WholesaleTier,
+  isDimensionUnit,
+  normalizeWholesaleTiers,
+  validateWholesaleTiers
+} from '@/lib/pricing/wholesalePricing'
 
 type Category = {
   id: string
@@ -18,6 +24,7 @@ type Product = {
   description: string | null
   price: number
   price_tiers?: PosPriceTiers | null
+  wholesale_tiers?: WholesaleTier[] | null
   cost_price: number
   type: 'physical' | 'service'
   category_id: string | null
@@ -46,11 +53,13 @@ type RecipeRow = {
 
 type VariantRow = {
   id?: string
+  client_key: string
   name: string
   sku: string
   price: number
   dine_in_price?: number | null
   take_away_price?: number | null
+  wholesale_tiers?: WholesaleTier[]
   cost_price: number
   stock_quantity: number
   min_stock_alert?: number
@@ -75,7 +84,7 @@ type MatrixAttribute = {
   values: string
 }
 
-type ModalTab = 'general' | 'variants' | 'modifiers' | 'recipe'
+type ModalTab = 'general' | 'variants' | 'wholesale' | 'modifiers' | 'recipe'
 
 type ProductModalProps = {
   isOpen: boolean
@@ -272,6 +281,10 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
   const [variantRows, setVariantRows] = useState<VariantRow[]>([])
   const [loadingVariants, setLoadingVariants] = useState(false)
 
+  // Wholesale Tiers State (for single product without variants + active dropdown selection)
+  const [wholesaleTiers, setWholesaleTiers] = useState<WholesaleTier[]>([])
+  const [selectedWholesaleVariantKey, setSelectedWholesaleVariantKey] = useState<string>('')
+
   // Modifier Groups State
   const [modifierGroups, setModifierGroups] = useState<ModifierGroupForm[]>([])
   const [businessModifierTemplates, setBusinessModifierTemplates] = useState<ModifierGroupForm[]>([])
@@ -383,6 +396,8 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         setMinArea(Number(product.min_area) || 0)
         setMinPrice(Number(product.min_price) || 0)
         setPreventBelowHpp(Boolean((product as any)?.prevent_below_hpp))
+        setWholesaleTiers(normalizeWholesaleTiers((product as any)?.wholesale_tiers))
+        setSelectedWholesaleVariantKey('')
         setShowNewCategoryInput(false)
         setNewCategoryName('')
         setCategoryError('')
@@ -423,6 +438,8 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         setMinArea(0)
         setMinPrice(0)
         setPreventBelowHpp(false)
+        setWholesaleTiers([])
+        setSelectedWholesaleVariantKey('')
         setRecipeRows([])
         setVariantRows([])
         setModifierGroups([])
@@ -528,11 +545,13 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
           if (dPrice > 0 || tPrice > 0) hasVariantTiers = true
           return {
             id: v.id,
+            client_key: v.id || `var-${Math.random().toString(36).slice(2, 10)}`,
             name: v.name,
             sku: v.sku || '',
             price: Number(v.price || 0),
             dine_in_price: dPrice > 0 ? dPrice : null,
             take_away_price: tPrice > 0 ? tPrice : null,
+            wholesale_tiers: normalizeWholesaleTiers(v.wholesale_tiers),
             cost_price: Number(v.cost_price || 0),
             stock_quantity: Number(v.stock_quantity || 0),
             min_stock_alert: Number(v.min_stock_alert || 0),
@@ -729,11 +748,13 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         .join('-')
 
       return {
+        client_key: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `var-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         name: comboName,
         sku: `${baseSkuVal}-${skuSuffix}`,
         price: finalPriceVal,
         dine_in_price: dineInPrice > 0 ? dineInPrice : null,
         take_away_price: takeAwayPrice > 0 ? takeAwayPrice : null,
+        wholesale_tiers: [],
         cost_price: finalCostVal,
         stock_quantity: finalStockVal
       }
@@ -825,6 +846,28 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
       return alert('Jumlah stok tidak boleh kurang dari 0!')
     }
 
+    const effectiveUnitCheck = unit === 'custom' ? (customUnit.trim() || 'pcs') : unit
+    const isDimProduct = isDimensionUnit(effectiveUnitCheck) || pricingType === 'area'
+    if (!isDimProduct) {
+      if (variantRows.length > 0) {
+        for (const v of variantRows) {
+          if (!v.name.trim()) continue
+          const vCheck = validateWholesaleTiers(v.wholesale_tiers || [], Number(v.price || price || 0), Number(v.cost_price || 0))
+          if (!vCheck.valid) {
+            setActiveTab('wholesale')
+            setSelectedWholesaleVariantKey(v.client_key)
+            return alert(`Harga Grosir Varian "${v.name}":\n${vCheck.errors.join('\n')}`)
+          }
+        }
+      } else {
+        const pCheck = validateWholesaleTiers(wholesaleTiers, Number(price || 0), Number(costPrice || 0))
+        if (!pCheck.valid) {
+          setActiveTab('wholesale')
+          return alert(`Harga Grosir Produk:\n${pCheck.errors.join('\n')}`)
+        }
+      }
+    }
+
     setSaving(true)
     try {
       let finalCategoryId: string | null = categoryId ? categoryId : null
@@ -887,6 +930,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
         description: description.trim() || null,
         price: effectiveBasePrice,
         price_tiers: productPriceTiers,
+        wholesale_tiers: variantRows.length === 0 ? normalizeWholesaleTiers(wholesaleTiers) : [],
         cost_price: finalHpp,
         type,
         category_id: finalCategoryId,
@@ -927,10 +971,11 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
 
       let res = await executeSave(productPayload)
 
-      // Stage 1 Fallback: if price_tiers or min_stock_alert column not migrated yet
-      if (res.error && res.error.message && (res.error.message.includes('price_tiers') || res.error.message.includes('min_stock_alert') || res.error.message.includes('schema cache') || res.error.message.includes('column'))) {
+      // Stage 1 Fallback: if price_tiers, wholesale_tiers, or min_stock_alert column not migrated yet
+      if (res.error && res.error.message && (res.error.message.includes('price_tiers') || res.error.message.includes('wholesale_tiers') || res.error.message.includes('min_stock_alert') || res.error.message.includes('schema cache') || res.error.message.includes('column'))) {
         const fallbackStage1 = { ...productPayload }
         delete fallbackStage1.price_tiers
+        delete fallbackStage1.wholesale_tiers
         delete fallbackStage1.min_stock_alert
         res = await executeSave(fallbackStage1)
       }
@@ -939,6 +984,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
       if (res.error && res.error.message && (res.error.message.includes('schema cache') || res.error.message.includes('prevent_below_hpp') || res.error.message.includes('pricing_type') || res.error.message.includes('min_area') || res.error.message.includes('column'))) {
         const fallbackPayload = { ...productPayload }
         delete fallbackPayload.price_tiers
+        delete fallbackPayload.wholesale_tiers
         delete fallbackPayload.min_stock_alert
         delete fallbackPayload.hpp_type
         delete fallbackPayload.unit
@@ -1048,6 +1094,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                 sku: v.sku ? v.sku.trim() : null,
                 price: vEffectivePrice,
                 price_tiers: vTiers,
+                wholesale_tiers: normalizeWholesaleTiers(v.wholesale_tiers || []),
                 cost_price: vEffectiveCostPrice,
                 stock_quantity: Number(v.stock_quantity) || 0
               }
@@ -1057,6 +1104,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                 if (updVErr) {
                   const fallbackV = { ...vPayload }
                   delete fallbackV.price_tiers
+                  delete fallbackV.wholesale_tiers
                   await supabase.from('product_variants').update(fallbackV).eq('id', v.id)
                 }
               } else {
@@ -1069,6 +1117,7 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                 if (insVErr) {
                   const fallbackV = { ...vPayload }
                   delete fallbackV.price_tiers
+                  delete fallbackV.wholesale_tiers
                   const retryV = await supabase.from('product_variants').insert(fallbackV).select('id').single()
                   newV = retryV.data
                 }
@@ -1226,6 +1275,28 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                 }`}>
                 {variantRows.length}
               </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('wholesale')}
+              className={`px-4 py-2.5 rounded-t-xl text-xs font-extrabold transition border-b-2 flex items-center gap-2 whitespace-nowrap cursor-pointer ${activeTab === 'wholesale'
+                ? 'bg-slate-50 text-amber-700 border-amber-600'
+                : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50/60'
+                }`}
+            >
+              <span>💰</span>
+              <span>Harga Grosir</span>
+              {(() => {
+                const count = variantRows.length > 0
+                  ? variantRows.reduce((sum, v) => sum + (v.wholesale_tiers?.length || 0), 0)
+                  : wholesaleTiers.length
+                return (
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${count > 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-200/80 text-slate-500'}`}>
+                    {count}
+                  </span>
+                )
+              })()}
             </button>
 
             <button
@@ -1867,11 +1938,13 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                           setVariantRows(prev => [
                             ...prev,
                             {
+                              client_key: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `var-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                               name: '',
                               sku: sku ? `${sku}-${prev.length + 1}` : '',
                               price: price || 0,
                               dine_in_price: dineInPrice > 0 ? dineInPrice : null,
                               take_away_price: takeAwayPrice > 0 ? takeAwayPrice : null,
+                              wholesale_tiers: [],
                               cost_price: hppType === 'variable' ? calculatedDynamicHpp : (costPrice || 0),
                               stock_quantity: 0
                             }
@@ -2285,6 +2358,297 @@ export default function ProductModal({ isOpen, onClose, onSave, product, busines
                 </div>
               </div>
             )}
+
+            {/* ================================================================= */}
+            {/* TAB: HARGA GROSIR (TIERED VOLUME PRICING PER VARIAN / PRODUK)     */}
+            {/* ================================================================= */}
+            {activeTab === 'wholesale' && (() => {
+              const effectiveUnitNow = unit === 'custom' ? (customUnit.trim() || 'pcs') : unit
+              const isDimProductNow = isDimensionUnit(effectiveUnitNow) || pricingType === 'area'
+              const hasVariantsNow = variantRows.length > 0
+              const activeVariant = hasVariantsNow
+                ? (variantRows.find(v => v.client_key === selectedWholesaleVariantKey) || variantRows[0])
+                : null
+
+              const currentTiers: WholesaleTier[] = activeVariant
+                ? (activeVariant.wholesale_tiers || [])
+                : wholesaleTiers
+
+              const refBasePrice = activeVariant
+                ? Number(activeVariant.price || price || 0)
+                : Number(price || 0)
+              const refCostPrice = activeVariant
+                ? Number(activeVariant.cost_price || 0)
+                : (hppType === 'variable' ? calculatedDynamicHpp : Number(costPrice || 0))
+
+              const updateCurrentTiers = (nextTiers: WholesaleTier[]) => {
+                if (activeVariant) {
+                  setVariantRows(prev =>
+                    prev.map(v =>
+                      v.client_key === activeVariant.client_key
+                        ? { ...v, wholesale_tiers: nextTiers }
+                        : v
+                    )
+                  )
+                } else {
+                  setWholesaleTiers(nextTiers)
+                }
+              }
+
+              const handleAddTier = () => {
+                const maxQty = currentTiers.reduce((m, t) => Math.max(m, Number(t.min_qty) || 0), 0)
+                const suggestedQty = maxQty >= 2 ? maxQty + 10 : 10
+                const suggestedPrice = refBasePrice > 0 ? Math.max(1000, Math.round(refBasePrice * 0.9)) : 0
+                updateCurrentTiers([...currentTiers, { min_qty: suggestedQty, price: suggestedPrice }])
+              }
+
+              const handleCopyToAllVariants = () => {
+                if (!activeVariant) return
+                const sourceTiers = (activeVariant.wholesale_tiers || []).map(t => ({ ...t }))
+                setVariantRows(prev =>
+                  prev.map(v => ({
+                    ...v,
+                    wholesale_tiers: sourceTiers.map(t => ({ ...t }))
+                  }))
+                )
+              }
+
+              const validation = validateWholesaleTiers(currentTiers, refBasePrice, refCostPrice)
+              const sortedPreview = normalizeWholesaleTiers(currentTiers)
+
+              return (
+                <div className="space-y-5 animate-in fade-in duration-150">
+                  <div className="bg-white border border-amber-200/80 rounded-2xl p-5 shadow-2xs space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-100 pb-3">
+                      <div>
+                        <h4 className="text-sm font-black text-amber-950 flex items-center gap-2">
+                          <span>💰</span> Pengaturan Harga Grosir (Diskon Kuantitas ≥ X)
+                        </h4>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Otomatis mengubah harga satuan di POS & Invoice menggunakan sistem <strong>All-Units</strong> (seluruh qty mendapat harga grosir saat mencapai batas minimum).
+                        </p>
+                      </div>
+                    </div>
+
+                    {isDimProductNow ? (
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
+                        <div className="flex items-start gap-2.5">
+                          <span className="text-lg leading-none">📐</span>
+                          <div className="space-y-1">
+                            <p className="text-xs font-black text-amber-900">
+                              Produk Cetak Meteran / Dimensi ({effectiveUnitNow.toUpperCase()}) Belum Mendukung Harga Grosir Otomatis
+                            </p>
+                            <p className="text-[11px] text-amber-800 leading-relaxed">
+                              Untuk menjaga akurasi perhitungan luas (<code className="font-mono bg-amber-100 px-1 rounded">Panjang × Lebar</code>) di POS Percetakan, fitur harga grosir otomatis saat ini baru berlaku untuk produk satuan non-dimensi (seperti <strong>pcs, lembar, box, kg</strong>).
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Variant Selector Dropdown (only shown when product has variants) */}
+                        {hasVariantsNow && activeVariant && (
+                          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">
+                                Pilih Variasi Produk
+                              </label>
+                              <select
+                                value={activeVariant.client_key}
+                                onChange={(e) => setSelectedWholesaleVariantKey(e.target.value)}
+                                className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-amber-500 cursor-pointer"
+                              >
+                                {variantRows.map((v, idx) => {
+                                  const tierCount = v.wholesale_tiers?.length || 0
+                                  const vLabel = v.name.trim() || `Varian Baru #${idx + 1} (Belum Dinamai)`
+                                  return (
+                                    <option key={v.client_key} value={v.client_key}>
+                                      {vLabel} — Normal: Rp {Number(v.price || 0).toLocaleString('id-ID')} {tierCount > 0 ? `[${tierCount} segmen]` : ''}
+                                    </option>
+                                  )
+                                })}
+                              </select>
+                            </div>
+
+                            <div className="flex items-end gap-2 shrink-0">
+                              <button
+                                type="button"
+                                onClick={handleCopyToAllVariants}
+                                disabled={variantRows.length < 2}
+                                title="Salin tabel segmen grosir varian ini ke semua varian lainnya"
+                                className="px-3.5 py-2.5 bg-white hover:bg-amber-50 border border-amber-300 text-amber-800 rounded-xl text-xs font-bold transition disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                              >
+                                📋 Salin ke Semua Varian
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Reference Price & HPP Summary Bar */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-slate-50 rounded-xl border border-slate-200/80 text-xs">
+                          <div className="flex flex-wrap items-center gap-4">
+                            <span className="text-slate-600">
+                              Target: <strong className="text-slate-900">{activeVariant ? (activeVariant.name.trim() || 'Varian Baru') : (name.trim() || 'Produk Utama')}</strong>
+                            </span>
+                            <span className="text-slate-600">
+                              Harga Normal (Eceran): <strong className="text-blue-700">Rp {refBasePrice.toLocaleString('id-ID')}</strong>
+                            </span>
+                            <span className="text-slate-600">
+                              HPP Modal: <strong className="text-slate-800">Rp {refCostPrice.toLocaleString('id-ID')}</strong>
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleAddTier}
+                            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition shadow-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>➕</span>
+                            <span>Tambah Segmen Qty</span>
+                          </button>
+                        </div>
+
+                        {/* Wholesale Tiers Table */}
+                        {currentTiers.length === 0 ? (
+                          <div className="text-center py-8 px-4 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+                            <p className="text-xs font-bold text-slate-600">Belum ada segmen harga grosir.</p>
+                            <p className="text-[11px] text-slate-400 mt-1">
+                              Klik <strong>&quot;+ Tambah Segmen Qty&quot;</strong> untuk menambahkan aturan minimal pembelian (contoh: ≥ 10 pcs, ≥ 50 pcs).
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                            <table className="w-full text-left border-collapse">
+                              <thead>
+                                <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-black uppercase text-slate-500">
+                                  <th className="py-2.5 px-3">Min. Qty (≥)</th>
+                                  <th className="py-2.5 px-3">Harga Grosir Satuan (Rp)</th>
+                                  <th className="py-2.5 px-3 text-right">Hemat vs Normal</th>
+                                  <th className="py-2.5 px-3 text-right">Est. Margin vs HPP</th>
+                                  <th className="py-2.5 px-3 text-center w-14">Hapus</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 text-xs">
+                                {currentTiers.map((tier, idx) => {
+                                  const discountPct = refBasePrice > 0 && tier.price > 0
+                                    ? Math.round(((refBasePrice - tier.price) / refBasePrice) * 100)
+                                    : 0
+                                  const marginRp = tier.price - refCostPrice
+                                  const marginPct = tier.price > 0 && refCostPrice > 0
+                                    ? Math.round((marginRp / tier.price) * 100)
+                                    : null
+
+                                  return (
+                                    <tr key={idx} className="hover:bg-amber-50/30">
+                                      <td className="py-2 px-3">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-xs font-black text-amber-700">≥</span>
+                                          <input
+                                            type="number"
+                                            min={2}
+                                            step={1}
+                                            value={tier.min_qty || ''}
+                                            onChange={(e) => {
+                                              const val = Math.max(0, parseInt(e.target.value, 10) || 0)
+                                              const next = currentTiers.map((t, i) => i === idx ? { ...t, min_qty: val } : t)
+                                              updateCurrentTiers(next)
+                                            }}
+                                            className="w-24 p-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-amber-500 bg-white"
+                                          />
+                                          <span className="text-[11px] text-slate-500">{effectiveUnitNow}</span>
+                                        </div>
+                                      </td>
+                                      <td className="py-2 px-3">
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          step={100}
+                                          value={tier.price || ''}
+                                          onChange={(e) => {
+                                            const val = Math.max(0, Number(e.target.value) || 0)
+                                            const next = currentTiers.map((t, i) => i === idx ? { ...t, price: val } : t)
+                                            updateCurrentTiers(next)
+                                          }}
+                                          className="w-36 p-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 outline-none focus:border-amber-500 bg-white"
+                                        />
+                                      </td>
+                                      <td className="py-2 px-3 text-right">
+                                        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-black ${discountPct > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'}`}>
+                                          {discountPct > 0 ? `-${discountPct}%` : `${discountPct}%`}
+                                        </span>
+                                      </td>
+                                      <td className="py-2 px-3 text-right">
+                                        {refCostPrice > 0 ? (
+                                          <span className={`text-[11px] font-bold ${marginRp < 0 ? 'text-red-600' : 'text-slate-700'}`}>
+                                            Rp {marginRp.toLocaleString('id-ID')} {marginPct !== null ? `(${marginPct}%)` : ''}
+                                          </span>
+                                        ) : (
+                                          <span className="text-[10px] text-slate-400">HPP belum diisi</span>
+                                        )}
+                                      </td>
+                                      <td className="py-2 px-3 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => updateCurrentTiers(currentTiers.filter((_, i) => i !== idx))}
+                                          className="w-7 h-7 inline-flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer font-bold"
+                                          title="Hapus segmen"
+                                        >
+                                          ✕
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+
+                        {/* Validation Errors & Warnings */}
+                        {validation.errors.length > 0 && (
+                          <div className="bg-red-50 border border-red-200 rounded-xl p-3 space-y-1">
+                            {validation.errors.map((err, i) => (
+                              <p key={i} className="text-[11px] font-bold text-red-700">⚠️ {err}</p>
+                            ))}
+                          </div>
+                        )}
+                        {validation.warnings.length > 0 && (
+                          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-1">
+                            {validation.warnings.map((warn, i) => (
+                              <p key={i} className="text-[11px] font-semibold text-amber-800">💡 {warn}</p>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Effective Price Range Preview */}
+                        {sortedPreview.length > 0 && (
+                          <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3">
+                            <p className="text-[10px] font-black uppercase text-emerald-800 mb-1.5">
+                              Simulasi Rentang Harga Aktif di POS & Invoice:
+                            </p>
+                            <div className="flex flex-wrap gap-2 text-[11px] font-bold text-emerald-950">
+                              <span className="px-2.5 py-1 bg-white border border-emerald-200 rounded-lg">
+                                1 – {sortedPreview[0].min_qty - 1} {effectiveUnitNow}: Rp {refBasePrice.toLocaleString('id-ID')}
+                              </span>
+                              {sortedPreview.map((t, idx) => {
+                                const nextTier = sortedPreview[idx + 1]
+                                const rangeLabel = nextTier
+                                  ? `${t.min_qty} – ${nextTier.min_qty - 1} ${effectiveUnitNow}`
+                                  : `≥ ${t.min_qty} ${effectiveUnitNow}`
+                                return (
+                                  <span key={t.min_qty} className="px-2.5 py-1 bg-white border border-emerald-300 rounded-lg text-emerald-800">
+                                    {rangeLabel}: Rp {t.price.toLocaleString('id-ID')}
+                                  </span>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* ================================================================= */}
             {/* TAB 3: OPSI TAMBAHAN / MODIFIER & TAMBAHAN HARGA (+RP)            */}

@@ -12,6 +12,7 @@ import { CustomerSelectCombobox } from '@/components/CustomerSelectCombobox'
 import { ProductSelectCombobox, ProductComboboxItem } from '@/components/ProductSelectCombobox'
 import { useCustomerDirectory, notifyCustomerDirectoryUpdate } from '@/lib/customerDirectoryStore'
 import { fetchAllBusinessProducts } from '@/lib/chunkedQueryHelper'
+import { WholesaleTier, isDimensionUnit, resolveWholesaleUnitPrice } from '@/lib/pricing/wholesalePricing'
 
 type Customer = {
   id: string
@@ -27,6 +28,7 @@ type ProductVariant = {
   name: string
   sku: string | null
   price: number
+  wholesale_tiers?: WholesaleTier[] | null
   cost_price?: number | null
   stock_quantity?: number | null
 }
@@ -36,6 +38,9 @@ type Product = {
   name: string
   price: number
   sku: string | null
+  unit?: string | null
+  pricing_type?: string | null
+  wholesale_tiers?: WholesaleTier[] | null
   cost_price: number | null
   stock_quantity?: number | null
   stock_type?: string | null
@@ -60,6 +65,8 @@ type InvoiceItemInput = {
   price: number
   quantity: number
   discount?: number
+  is_manual_price?: boolean
+  applied_wholesale_min_qty?: number | null
 }
 
 const formatIDR = (value: number) => {
@@ -303,13 +310,51 @@ export default function NewInvoicePage() {
     setItems(nextItems)
   }
 
+  const resolveInvoiceItemPrice = (productId: string | null | undefined, variantId: string | null | undefined, qty: number) => {
+    if (!productId) return null
+    const prod = products.find(p => p.id === productId)
+    if (!prod) return null
+    const variant = variantId ? prod.product_variants?.find(v => v.id === variantId) : undefined
+    const basePrice = variant ? Number(variant.price || prod.price || 0) : Number(prod.price || 0)
+    const isDim = isDimensionUnit(prod.unit) || prod.pricing_type === 'area'
+    return resolveWholesaleUnitPrice({
+      basePrice,
+      wholesaleTiers: variant ? variant.wholesale_tiers : prod.wholesale_tiers,
+      qty,
+      isDimensionProduct: isDim
+    })
+  }
+
   const handleItemFieldChange = (index: number, field: keyof InvoiceItemInput, val: any) => {
     setItems(prev => {
       const nextItems = [...prev]
-      if (field === 'price' || field === 'quantity' || field === 'discount') {
-        nextItems[index] = { ...nextItems[index], [field]: Number(val) }
+      const current = nextItems[index]
+      if (field === 'quantity') {
+        const nextQty = Number(val)
+        if (!current.is_manual_price && current.product_id) {
+          const res = resolveInvoiceItemPrice(current.product_id, current.variant_id, nextQty)
+          if (res) {
+            nextItems[index] = {
+              ...current,
+              quantity: nextQty,
+              price: res.unitPrice,
+              applied_wholesale_min_qty: res.appliedTier?.min_qty ?? null
+            }
+            return nextItems
+          }
+        }
+        nextItems[index] = { ...current, quantity: nextQty }
+      } else if (field === 'price') {
+        nextItems[index] = {
+          ...current,
+          price: Number(val),
+          is_manual_price: true,
+          applied_wholesale_min_qty: null
+        }
+      } else if (field === 'discount') {
+        nextItems[index] = { ...current, [field]: Number(val) }
       } else {
-        nextItems[index] = { ...nextItems[index], [field]: val }
+        nextItems[index] = { ...current, [field]: val }
       }
       return nextItems
     })
@@ -894,14 +939,18 @@ export default function NewInvoicePage() {
                       selectedVariantId={item.variant_id}
                       selectedProductName={item.name}
                       onSelectProduct={p => {
+                        const curQty = Number(item.quantity || 1)
+                        const res = resolveInvoiceItemPrice(p.id, p.variant_id || null, curQty)
                         handleItemFieldsChange(idx, {
                           product_id: p.id,
                           variant_id: p.variant_id || null,
                           cost_price: p.cost_price ?? null,
                           name: p.name,
-                          price: p.price,
+                          price: res ? res.unitPrice : p.price,
                           sku: p.sku || '',
-                          discount: 0
+                          discount: 0,
+                          is_manual_price: false,
+                          applied_wholesale_min_qty: res?.appliedTier?.min_qty ?? null
                         })
                       }}
                       onClearProduct={() => {
@@ -912,7 +961,9 @@ export default function NewInvoicePage() {
                           name: '',
                           price: 0,
                           sku: '',
-                          discount: 0
+                          discount: 0,
+                          is_manual_price: false,
+                          applied_wholesale_min_qty: null
                         })
                       }}
                       onAddNewProduct={query => {
