@@ -6,6 +6,7 @@ import { useUserContext } from '@/components/UserContext'
 import Link from 'next/link'
 import { Pagination } from '@/app/components/Pagination'
 import { invalidatePosCatalogCache, PosPriceTiers } from '@/lib/posCatalogStore'
+import { fetchAllSupabaseRows } from '@/lib/chunkedQueryHelper'
 
 type Category = {
   id: string
@@ -67,6 +68,13 @@ export default function ProductsPage() {
   const [activeBizId, setActiveBizId] = useState<string | null>(null)
   const [activeBizName, setActiveBizName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const latestBizIdRef = useRef<string | null>(null)
+  const lastFetchTsRef = useRef<number>(0)
+  const lastFallbackAttemptRef = useRef<string | null>(null)
+  const isMutatingRef = useRef<boolean>(false)
+  const lastLocalMutationTsRef = useRef<number>(0)
+  const productsRef = useRef<Product[]>([])
+  productsRef.current = products
 
   // Filters State
   const [searchQuery, setSearchQuery] = useState('')
@@ -178,12 +186,13 @@ export default function ProductsPage() {
       let allProducts: Product[] = []
       let selectClause = '*, categories(id, name), product_variants(*), product_modifiers(*)'
 
-      // Chunk 0: discover working selectClause + total count
+      // Chunk 0: discover working selectClause + total count (with deterministic id tie-breaker)
       let { data: firstChunk, count: totalProdCount, error: prodErr } = await supabase
         .from('products')
         .select(selectClause, { count: 'exact' })
         .eq('business_id', businessId)
         .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
         .range(0, CHUNK_SIZE - 1)
 
       if (prodErr && selectClause === '*, categories(id, name), product_variants(*), product_modifiers(*)') {
@@ -193,6 +202,7 @@ export default function ProductsPage() {
           .select(selectClause, { count: 'exact' })
           .eq('business_id', businessId)
           .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
           .range(0, CHUNK_SIZE - 1)
         firstChunk = retryWithVars.data
         totalProdCount = retryWithVars.count
@@ -206,6 +216,7 @@ export default function ProductsPage() {
           .select(selectClause, { count: 'exact' })
           .eq('business_id', businessId)
           .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
           .range(0, CHUNK_SIZE - 1)
         firstChunk = fallbackRes.data
         totalProdCount = fallbackRes.count
@@ -213,8 +224,31 @@ export default function ProductsPage() {
       }
 
       if (prodErr) throw prodErr
+      if (latestBizIdRef.current && latestBizIdRef.current !== businessId) return
+
       if (firstChunk && firstChunk.length > 0) {
         allProducts = allProducts.concat(firstChunk as unknown as Product[])
+
+        // Progressive rendering: show newest 1,000 products immediately while remaining chunks load
+        if (!background && (totalProdCount || 0) > CHUNK_SIZE) {
+          setProducts(firstChunk as unknown as Product[])
+          setLoading(false)
+        }
+
+        const fetchChunkWithRetry = async (offset: number) => {
+          let lastRes: any = null
+          for (let attempt = 0; attempt < 2; attempt++) {
+            lastRes = await supabase
+              .from('products')
+              .select(selectClause)
+              .eq('business_id', businessId)
+              .order('created_at', { ascending: false })
+              .order('id', { ascending: true })
+              .range(offset, offset + CHUNK_SIZE - 1)
+            if (!lastRes.error) return lastRes
+          }
+          return lastRes
+        }
 
         if (firstChunk.length === CHUNK_SIZE) {
           const total = totalProdCount || 0
@@ -225,19 +259,16 @@ export default function ProductsPage() {
             }
             const CONCURRENCY = 3
             for (let i = 0; i < offsets.length; i += CONCURRENCY) {
+              if (latestBizIdRef.current && latestBizIdRef.current !== businessId) return
               const wave = offsets.slice(i, i + CONCURRENCY)
               const waveResults = await Promise.all(
-                wave.map(offset =>
-                  supabase
-                    .from('products')
-                    .select(selectClause)
-                    .eq('business_id', businessId)
-                    .order('created_at', { ascending: false })
-                    .range(offset, offset + CHUNK_SIZE - 1)
-                )
+                wave.map(offset => fetchChunkWithRetry(offset))
               )
               for (const res of waveResults) {
-                if (res.error) throw res.error
+                if (res.error) {
+                  console.warn('[ProductsPage] Chunk fetch warning:', res.error)
+                  continue
+                }
                 if (res.data && res.data.length > 0) {
                   allProducts = allProducts.concat(res.data as unknown as Product[])
                 }
@@ -247,13 +278,12 @@ export default function ProductsPage() {
             // Fallback sequential loop if count was not returned
             let from = CHUNK_SIZE
             while (true) {
-              const { data: chunk, error: nextErr } = await supabase
-                .from('products')
-                .select(selectClause)
-                .eq('business_id', businessId)
-                .order('created_at', { ascending: false })
-                .range(from, from + CHUNK_SIZE - 1)
-              if (nextErr) throw nextErr
+              if (latestBizIdRef.current && latestBizIdRef.current !== businessId) return
+              const { data: chunk, error: nextErr } = await fetchChunkWithRetry(from)
+              if (nextErr) {
+                console.warn('[ProductsPage] Sequential chunk fetch warning:', nextErr)
+                break
+              }
               if (!chunk || chunk.length === 0) break
               allProducts = allProducts.concat(chunk as unknown as Product[])
               if (chunk.length < CHUNK_SIZE) break
@@ -263,13 +293,19 @@ export default function ProductsPage() {
         }
       }
 
-      // Self-healing direct table hydration if embedded join fell back
+      if (latestBizIdRef.current && latestBizIdRef.current !== businessId) return
+
+      // Self-healing chunked direct table hydration if embedded join fell back
       if (allProducts.length > 0 && allProducts[0].product_variants === undefined) {
         try {
-          const { data: directVars } = await supabase
-            .from('product_variants')
-            .select('*')
-            .eq('business_id', businessId)
+          const directVars = await fetchAllSupabaseRows<any>((from, to) =>
+            supabase
+              .from('product_variants')
+              .select('*')
+              .eq('business_id', businessId)
+              .order('id', { ascending: true })
+              .range(from, to)
+          )
           if (directVars) {
             const vMap = new Map<string, any[]>()
             for (const v of directVars) {
@@ -284,14 +320,37 @@ export default function ProductsPage() {
         } catch {}
       }
 
-      setProducts(allProducts)
+      if (latestBizIdRef.current && latestBizIdRef.current !== businessId) return
+
+      // Deterministic deduplication by id across chunks
+      const dedupedMap = new Map<string, Product>()
+      for (const p of allProducts) {
+        if (p?.id && !dedupedMap.has(p.id)) {
+          dedupedMap.set(p.id, p)
+        }
+      }
+      const finalProducts = Array.from(dedupedMap.values())
+
+      lastFetchTsRef.current = Date.now()
+      setProducts(prev => {
+        if (prev.length === 0 || isMutatingRef.current) return finalProducts
+        const finalIdSet = new Set(finalProducts.map(p => p.id))
+        const preservedFromSearch = prev.filter(
+          p => p?.id && p.business_id === businessId && !finalIdSet.has(p.id)
+        )
+        return preservedFromSearch.length > 0
+          ? [...preservedFromSearch, ...finalProducts]
+          : finalProducts
+      })
 
       // Save to cache (safely guarded against quota exhaustion)
-      writeCache(businessId, allProducts, fetchedCats)
+      writeCache(businessId, finalProducts, fetchedCats)
     } catch (err) {
       console.error('Error fetching data:', err)
     } finally {
-      setLoading(false)
+      if (!latestBizIdRef.current || latestBizIdRef.current === businessId) {
+        setLoading(false)
+      }
     }
   }, [supabase])
 
@@ -313,12 +372,15 @@ export default function ProductsPage() {
     if (bizLoading) return
     if (activeBusiness?.id) {
       const businessId = activeBusiness.id
+      const prevBizId = latestBizIdRef.current
+      latestBizIdRef.current = businessId
       setActiveBizId(businessId)
       setActiveBizName(activeBusiness.name || 'Bisnis Saya')
 
       // Cache-first strategy
       const cached = readCache(businessId)
       if (cached) {
+        lastFetchTsRef.current = cached.ts
         setProducts(cached.products)
         setCategories(cached.categories)
         setLoading(false)
@@ -330,11 +392,65 @@ export default function ProductsPage() {
           fetchProductsAndCategories(businessId, true)
         }
       } else {
+        // Clear previous business products immediately so stale items never bleed across stores
+        if (prevBizId && prevBizId !== businessId) {
+          setProducts([])
+        }
         // No cache - full fetch
         fetchProductsAndCategories(businessId, false)
       }
     }
   }, [activeBusiness, bizLoading, fetchProductsAndCategories])
+
+  // Cross-tab catalog sync (BroadcastChannel + CustomEvent) & throttled window focus revalidation
+  useEffect(() => {
+    if (!activeBizId || typeof window === 'undefined') return
+
+    const triggerBackgroundSync = (targetBizId?: string) => {
+      if (targetBizId && targetBizId !== activeBizId) return
+      if (isMutatingRef.current || Date.now() - lastLocalMutationTsRef.current < 3000) return
+      fetchProductsAndCategories(activeBizId, true)
+    }
+
+    const handleCustomEvent = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail
+      triggerBackgroundSync(detail?.businessId)
+    }
+
+    window.addEventListener('shapeup:pos_catalog_updated', handleCustomEvent)
+
+    let bc: BroadcastChannel | null = null
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        bc = new BroadcastChannel('shapeup_pos_catalog_sync_v2')
+        bc.onmessage = (event) => {
+          const msg = event?.data
+          if (msg?.type === 'POS_CATALOG_MUTATION') {
+            triggerBackgroundSync(msg.businessId)
+          }
+        }
+      } catch {}
+    }
+
+    const handleFocusOrVisible = () => {
+      if (isMutatingRef.current || Date.now() - lastLocalMutationTsRef.current < 3000) return
+      if (document.visibilityState === 'visible' && Date.now() - lastFetchTsRef.current > 30_000) {
+        fetchProductsAndCategories(activeBizId, true)
+      }
+    }
+
+    window.addEventListener('focus', handleFocusOrVisible)
+    document.addEventListener('visibilitychange', handleFocusOrVisible)
+
+    return () => {
+      window.removeEventListener('shapeup:pos_catalog_updated', handleCustomEvent)
+      window.removeEventListener('focus', handleFocusOrVisible)
+      document.removeEventListener('visibilitychange', handleFocusOrVisible)
+      if (bc) {
+        try { bc.close() } catch {}
+      }
+    }
+  }, [activeBizId, fetchProductsAndCategories])
 
   // Formatting price helper
   const formatPrice = useCallback((val: number) => {
@@ -354,6 +470,7 @@ export default function ProductsPage() {
   // Trigger refresh (e.g. after add/edit)
   const refreshData = () => {
     if (activeBizId) {
+      lastLocalMutationTsRef.current = Date.now()
       fetchProductsAndCategories(activeBizId, false)
     }
   }
@@ -403,14 +520,122 @@ export default function ProductsPage() {
     )
   }
 
+  // Hybrid Server-Side Search Fallback (0-Result Guard for 5,000+ SKU / Cross-Session Imports)
+  useEffect(() => {
+    const cleanQ = debouncedSearch.trim().replace(/[,()]/g, '')
+    if (!activeBizId || loading || isMutatingRef.current || cleanQ.length < 2) return
+
+    const qLower = cleanQ.toLowerCase()
+    const attemptKey = `${activeBizId}:${qLower}:${lastFetchTsRef.current}`
+    if (lastFallbackAttemptRef.current === attemptKey) return
+
+    const currentProds = productsRef.current
+    const hasLocalMatch = currentProds.some(
+      p =>
+        (p.name || '').toLowerCase().includes(qLower) ||
+        (p.sku || '').toLowerCase().includes(qLower) ||
+        (p.description || '').toLowerCase().includes(qLower) ||
+        (Array.isArray(p.product_variants) &&
+          p.product_variants.some(
+            (v: any) =>
+              (v?.name || '').toLowerCase().includes(qLower) ||
+              (v?.sku || '').toLowerCase().includes(qLower)
+          ))
+    )
+
+    if (hasLocalMatch) return
+
+    let cancelled = false
+    const targetBizId = activeBizId
+
+    ;(async () => {
+      try {
+        const selectClauses = [
+          '*, categories(id, name), product_variants(*), product_modifiers(*)',
+          '*, categories(id, name), product_variants(*)',
+          '*, categories(id, name)'
+        ]
+        let found: any[] | null = null
+        let activeClause = selectClauses[0]
+
+        for (const clause of selectClauses) {
+          const { data, error } = await supabase
+            .from('products')
+            .select(clause)
+            .eq('business_id', targetBizId)
+            .or(`name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`)
+            .order('created_at', { ascending: false })
+            .order('id', { ascending: true })
+            .limit(50)
+
+          if (!error) {
+            found = data || []
+            activeClause = clause
+            break
+          }
+        }
+
+        // Also search product_variants by name or sku if parent product didn't match directly
+        try {
+          const { data: matchedVars } = await supabase
+            .from('product_variants')
+            .select('product_id')
+            .eq('business_id', targetBizId)
+            .or(`name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`)
+            .limit(50)
+
+          const existingFoundIds = new Set((found || []).map((p: any) => p.id))
+          const parentIds = Array.from(
+            new Set(
+              (matchedVars || [])
+                .map((v: any) => v.product_id)
+                .filter((id: string) => id && !existingFoundIds.has(id))
+            )
+          )
+
+          if (parentIds.length > 0) {
+            const { data: extraProds } = await supabase
+              .from('products')
+              .select(activeClause)
+              .eq('business_id', targetBizId)
+              .in('id', parentIds)
+            if (extraProds && extraProds.length > 0) {
+              found = [...(found || []), ...extraProds]
+            }
+          }
+        } catch {}
+
+        if (cancelled || isMutatingRef.current || latestBizIdRef.current !== targetBizId) return
+        lastFallbackAttemptRef.current = attemptKey
+
+        if (!found || found.length === 0) return
+
+        setProducts(prev => {
+          const existingIds = new Set(prev.map(p => p.id))
+          const newItems = (found as unknown as Product[]).filter(p => p?.id && !existingIds.has(p.id))
+          if (newItems.length === 0) return prev
+          return [...newItems, ...prev]
+        })
+      } catch {}
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [debouncedSearch, activeBizId, loading, supabase])
+
   // Filtered & Sorted Products list
   const filteredProducts = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase()
     const filtered = products.filter(p => {
+      const matchesVariant = Array.isArray(p.product_variants) && p.product_variants.some(
+        (v: any) => (v?.name || '').toLowerCase().includes(q) || (v?.sku || '').toLowerCase().includes(q)
+      )
       const matchesSearch = !q ||
-        p.name.toLowerCase().includes(q) ||
+        (p.name || '').toLowerCase().includes(q) ||
         (p.sku || '').toLowerCase().includes(q) ||
-        (p.description || '').toLowerCase().includes(q)
+        (p.description || '').toLowerCase().includes(q) ||
+        matchesVariant
 
       const matchesCategory = selectedCategory ? p.category_id === selectedCategory : true
       const matchesType = selectedType ? p.type === selectedType : true
@@ -437,7 +662,7 @@ export default function ProductsPage() {
           break
         }
         case 'name': {
-          comparison = a.name.localeCompare(b.name, 'id', { sensitivity: 'base' })
+          comparison = (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' })
           break
         }
         case 'category': {
@@ -621,6 +846,8 @@ export default function ProductsPage() {
     const targetIdSet = new Set(targetIds)
 
     // 3. Optimistic local state update (instant UI reaction)
+    isMutatingRef.current = true
+    lastLocalMutationTsRef.current = Date.now()
     const nextProducts = mode === 'all' ? [] : products.filter(p => !targetIdSet.has(p.id))
     setProducts(nextProducts)
     clearSelection()
@@ -686,6 +913,12 @@ export default function ProductsPage() {
       setProducts(previousProducts)
       if (activeBizId) writeCache(activeBizId, previousProducts, categories)
       showToast(`Terjadi kesalahan jaringan: ${err.message}. Data dikembalikan.`, 'error', 5000)
+    } finally {
+      lastLocalMutationTsRef.current = Date.now()
+      isMutatingRef.current = false
+      if (activeBizId) {
+        invalidatePosCatalogCache(activeBizId, true)
+      }
     }
   }
 
