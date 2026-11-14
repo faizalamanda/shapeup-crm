@@ -71,25 +71,31 @@ const [temporalFilter, setTemporalFilter] = useState<TemporalFilterValue>(() => 
 
 ---
 
-## 4. Standar Laporan Keuangan Komparatif (Comparative P&L)
+## 4. Standar Laporan Keuangan Komparatif & Optimasi RPC Buku Besar (Comparative P&L, Arus Kas & Neraca)
 
-Ketika mengimplementasikan perbandingan pada modul akuntansi (seperti `app/accounting/profit-loss/page.tsx`):
+Ketika mengimplementasikan perbandingan atau pelaporan pada modul akuntansi (`app/accounting/profit-loss/page.tsx`, `app/accounting/cash-flow/page.tsx`, `app/accounting/balance-sheet/page.tsx`, `app/accounting/coa/page.tsx`):
 
-1. **Parallel Round-Trip Query:**
-   Jika `comparisonMode !== 'none'`, muat data saldo berjalan dan saldo pembanding secara paralel menggunakan `Promise.all`:
+1. **Parallel Round-Trip Query & Single-Flight Caching (`app/accounting/utils.ts` & `/api/accounting/reports`):**
+   * Gunakan selalu `fetchLedgerBalances()` dan `fetchCashFlowSummary()` dari `app/accounting/utils.ts` yang memanggil endpoint server `/api/accounting/reports` (`supabaseAdmin` + `getApiContext({ req })`).
+   * Jalur ini melewati evaluasi RLS berulang per-baris pada jutaan baris `journal_lines`, melakukan *Single-Flight Promise Deduplication*, dan menyimpan cache L0 Server / L1 Client (`accounts` TTL 30s, hasil laporan TTL 15s).
+   * Jika `comparisonMode !== 'none'`, muat data saldo berjalan dan saldo pembanding secara paralel menggunakan `Promise.all` yang dilindungi oleh `requestIdRef` untuk mencegah *race condition* saat filter berubah cepat:
    ```typescript
    const [currData, prevData] = await Promise.all([
      fetchLedgerBalances(supabase, businessId, endD, startD, timezone, basis),
      fetchLedgerBalances(supabase, businessId, compEnd, compStart, timezone, basis),
    ])
    ```
-2. **Multi-Column Presentation:**
+2. **Standar Database RPC (`get_cash_flow_summary` & `get_ledger_balances`):**
+   * Wajib berstatus `STABLE SECURITY DEFINER` dengan **Multi-Tenant Security Guard** (`businesses.owner_id = auth.uid() UNION business_staff.profile_id = auth.uid()`, dengan bypass untuk `service_role`).
+   * `get_cash_flow_summary` menggunakan **Single-Pass CTE Materialization** (`period_cash_txs` & `counter_lines`) serta **Single-Pass `FILTER (WHERE t.date < p_start_date)`** untuk menghitung saldo kas awal dan akhir dalam 1 kali scan tabel, sekaligus mengecualikan pembayaran gaji yang di-void (`sp.status = 'active'` & `sp.reversal_transaction_id`).
+   * `get_ledger_balances` (`p_basis = 'cash'`) wajib mendorong filter tanggal (`p_start_date` & `p_end_date`) langsung ke dalam setiap cabang `UNION ALL` (*Date Predicate Pushdown*) agar memanfaatkan indeks `idx_transactions_biz_date`.
+3. **Multi-Column Presentation:**
    * Jika perbandingan aktif, tampilkan 4 kolom: `Kategori Akun`, `Periode Berjalan`, `Pembanding`, dan `Δ% (Varians)`.
    * Jika perbandingan dinonaktifkan (`compMode === 'none'`), kembalikan tabel ke format 2 kolom sederhana (`Kategori Akun` dan `Jumlah`).
-3. **Polaritas Cerdas Indikator Pertumbuhan:**
+4. **Polaritas Cerdas Indikator Pertumbuhan:**
    * **Pendapatan & Laba Bersih:** Kenaikan bernilai positif $\rightarrow$ **Hijau (🟢)**.
    * **Beban Operasional & HPP:** Kenaikan bernilai penambahan biaya $\rightarrow$ **Merah (🔴)** (`reversePolarity = true`).
-4. **Print Safety (`no-print`):**
+5. **Print Safety (`no-print`):**
    * Seluruh bilah filter wajib dibungkus kelas CSS `no-print`.
    * Sediakan header cetak khusus (`print:block`) yang mencantumkan rentang tanggal berjalan dan tanggal pembanding secara formal.
 

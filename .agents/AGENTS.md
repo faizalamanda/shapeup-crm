@@ -525,6 +525,14 @@
     - **PostgREST Security Sanitization:** Kueri dinamis path JSONB ke Supabase wajib menyaring kunci platform (`platformKey.replace(/[^a-zA-Z0-9_]/g, '')`) untuk mencegah karakter delimiter sintaks PostgREST menyusup ke kueri.
     - **Visual Fulfillment Badging:** Tampilan rincian invoice (`/orders/invoices/[id]`), dropdown combobox, dan cetak struk/faktur wajib menampilkan badge platform pembeli (`Shopee: budi_olshop`, `TikTok: anita_store`) agar staf gudang dan packing dapat langsung memverifikasi paket dengan label resi pengiriman tanpa bergantung pada nomor HP yang disensor.
 
+32. **High-Speed Accounting Reports Architecture (`get_cash_flow_summary`, `get_ledger_balances`, & `/api/accounting/reports`):**
+    - **Server-Side Admin Fast-Path (`/api/accounting/reports`):** Pengambilan Laporan Arus Kas (`fetchCashFlowSummary`) dan Saldo Buku Besar / Laba Rugi / Neraca / COA (`fetchLedgerBalances` di `app/accounting/utils.ts`) **WAJIB** menggunakan jalur utama `/api/accounting/reports` berbasis `getApiContext({ req })` + `supabaseAdmin` dengan *Single-Flight Deduplication* dan cache memori L0/L1 (`accounts` TTL 30s, `reports` TTL 15s) serta fallback ke RPC langsung. Hal ini mengeliminasi *per-row RLS subquery explosion* pada tabel `journal_lines` dan mencegah pengambilan `accounts` ganda pada mode perbandingan periode (`Promise.all`).
+    - **Hardened `STABLE SECURITY DEFINER` & Single-Pass CTE (`20261114170000`):**
+      - Fungsi database `get_cash_flow_summary` dan `get_ledger_balances` wajib berstatus `STABLE SECURITY DEFINER` dengan Multi-Tenant Guard (`businesses.owner_id = auth.uid() UNION business_staff.profile_id = auth.uid()`, bypass untuk `service_role`).
+      - `get_cash_flow_summary` wajib menghitung `v_starting_cash` dan `v_ending_cash` dalam 1 kali scan (`FILTER (WHERE t.date < p_start_date)`), menggunakan *Single-Pass Materialized CTE* (`period_cash_txs` & `counter_lines`), dan mengecualikan pembayaran gaji yang di-void (`COALESCE(sp.status, 'active') = 'active'` & `sp.reversal_transaction_id`).
+      - `get_ledger_balances` (`p_basis = 'cash'`) wajib menerapkan *Date Predicate Pushdown* (`t.date >= p_start_date AND t.date <= p_end_date`) di setiap cabang `UNION ALL` dan indeks B-Tree pada `purchase_payments(transaction_id)`, `salary_payments(transaction_id)`, serta `transactions(business_id, order_id)`.
+    - **Zero Retry-Storm pada RPC (`lib/supabase.ts` & `lib/supabaseServer.ts`):** Request ke `/rest/v1/rpc/` wajib diberikan batas waktu **25.000 ms** dengan `maxRetries = 0` agar tidak memutus laporan akuntansi di detik ke-6 (`AbortError: signal is aborted without reason`) dan tidak memicu badai retry paralel di PostgreSQL.
+
 
 
 

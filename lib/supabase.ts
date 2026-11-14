@@ -22,16 +22,24 @@ async function authFetchWithRetry(url: RequestInfo | URL, options?: RequestInit)
     urlStr.includes('/invite') ||
     urlStr.includes('/resend') ||
     urlStr.includes('/magiclink')
-  const timeoutMs = isEmailMutation ? 15000 : 6000
-  const maxRetries = isEmailMutation ? 0 : 2
+  const isRpcCall = urlStr.includes('/rest/v1/rpc/')
+  const timeoutMs = isEmailMutation ? 15000 : isRpcCall ? 25000 : 8000
+  const maxRetries = isEmailMutation || isRpcCall ? 0 : 2
   let delay = 200
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    let timedOut = false
     try {
+      if (options?.signal?.aborted) {
+        throw new DOMException('The operation was aborted.', 'AbortError')
+      }
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+      const timeoutId = setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, timeoutMs)
       if (options?.signal) {
-        options.signal.addEventListener('abort', () => controller.abort())
+        options.signal.addEventListener('abort', () => controller.abort(), { once: true })
       }
 
       const res = await fetch(url, { ...options, signal: controller.signal })
@@ -46,6 +54,12 @@ async function authFetchWithRetry(url: RequestInfo | URL, options?: RequestInit)
 
       return res
     } catch (err: any) {
+      if (options?.signal?.aborted) {
+        throw err
+      }
+      if (timedOut && attempt >= maxRetries) {
+        throw new Error('Koneksi ke server membutuhkan waktu terlalu lama (Timeout). Silakan coba lagi.')
+      }
       if (attempt < maxRetries) {
         await new Promise(r => setTimeout(r, delay))
         delay *= 1.5

@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { 
   formatCurrencyIDR, 
@@ -161,6 +161,8 @@ export default function ProfitLossPage() {
     }
   }, [activeBusiness, bizLoading])
 
+  const requestIdRef = useRef(0)
+
   // Fetch data from Ledger using server-side RPC
   const loadData = useCallback(async (
     businessId: string, 
@@ -172,6 +174,7 @@ export default function ProfitLossPage() {
     cStart: string,
     cEnd: string
   ) => {
+    const reqId = ++requestIdRef.current
     setLoading(true)
     try {
       if (cMode !== 'none' && cStart && cEnd) {
@@ -179,21 +182,26 @@ export default function ProfitLossPage() {
           fetchLedgerBalances(supabase, businessId, endD, startD, timezone, reportBasis),
           fetchLedgerBalances(supabase, businessId, cEnd, cStart, timezone, reportBasis)
         ])
+        if (reqId !== requestIdRef.current) return
         setAccounts(currData.accounts)
         setBalances(currData.balances)
         setPrevBalances(prevData.balances)
       } else {
         const data = await fetchLedgerBalances(supabase, businessId, endD, startD, timezone, reportBasis)
+        if (reqId !== requestIdRef.current) return
         setAccounts(data.accounts)
         setBalances(data.balances)
         setPrevBalances({})
       }
       setErrorMsg(null)
     } catch (err: any) {
+      if (reqId !== requestIdRef.current) return
       console.error('Error loading ledger data:', err)
       setErrorMsg(err.message || 'Gagal memuat data pembukuan')
     } finally {
-      setLoading(false)
+      if (reqId === requestIdRef.current) {
+        setLoading(false)
+      }
     }
   }, [])
 

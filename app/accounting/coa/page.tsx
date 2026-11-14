@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
-import { formatCurrencyIDR } from '../utils'
+import { formatCurrencyIDR, fetchLedgerBalances, invalidateAccountingReportCache } from '../utils'
 import { useUserContext } from '@/components/UserContext'
 
 // Dynamic classification rules based on account type and code prefixes (WaveApps classification style)
@@ -186,61 +186,22 @@ export default function ChartOfAccountsPage() {
   const fetchBalances = useCallback(async (businessId: string, tz: string) => {
     setBalancesLoading(true)
     try {
-      // Calculate today's date string (YYYY-MM-DD)
-      const now = new Date()
-      const year = now.getFullYear()
-      const month = String(now.getMonth() + 1).padStart(2, '0')
-      const day = String(now.getDate()).padStart(2, '0')
-      const todayStr = `${year}-${month}-${day}`
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz || 'Asia/Jakarta',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      })
+      const todayStr = formatter.format(new Date())
 
-      // Resolve end-of-day ISO timestamp based on local timezone
-      const getUtcTimestamp = (dateStr: string, timeStr: string, timeZone: string) => {
-        const formatter = new Intl.DateTimeFormat('en-US', {
-          timeZone,
-          year: 'numeric', month: '2-digit', day: '2-digit',
-          hour: '2-digit', minute: '2-digit', second: '2-digit',
-          hour12: false
-        })
-        const [y, m, d] = dateStr.split('-').map(Number)
-        const [hours, minutes, seconds] = timeStr.split('.')[0].split(':').map(Number)
-        const utcDate = new Date(Date.UTC(y, m - 1, d, hours, minutes, seconds))
-        const parts = formatter.formatToParts(utcDate)
-        const partValues: Record<string, number> = {}
-        parts.forEach(p => {
-          if (p.type !== 'literal') partValues[p.type] = Number(p.value)
-        })
-        const fMonth = partValues.month
-        const fDay = partValues.day
-        const fYear = partValues.year
-        const fHour = partValues.hour === 24 ? 0 : partValues.hour
-        const fMin = partValues.minute
-        const fSec = partValues.second
-        const formattedUtc = new Date(Date.UTC(fYear, fMonth - 1, fDay, fHour, fMin, fSec))
-        const diffMs = utcDate.getTime() - formattedUtc.getTime()
-        return new Date(utcDate.getTime() + diffMs).toISOString()
-      }
-
-      const endOfDayISO = getUtcTimestamp(todayStr, '23:59:59.999', tz)
-
-      const { data, error } = await supabase
-        .rpc('get_ledger_balances', {
-          p_business_id: businessId,
-          p_start_date: null, // lifetime cumulative balance
-          p_end_date: endOfDayISO,
-          p_basis: 'accrual'
-        })
-
-      if (error) throw error
-
-      const balancesMap: Record<string, Balance> = {}
-      if (data) {
-        data.forEach((row: any) => {
-          balancesMap[row.account_id] = {
-            debit: parseFloat(row.debit_sum || 0),
-            credit: parseFloat(row.credit_sum || 0)
-          }
-        })
-      }
+      const { balances: balancesMap } = await fetchLedgerBalances(
+        supabase,
+        businessId,
+        todayStr,
+        undefined,
+        tz || 'Asia/Jakarta',
+        'accrual'
+      )
       setBalances(balancesMap)
     } catch (err: any) {
       console.error('Error fetching ledger balances:', err)
@@ -458,6 +419,7 @@ export default function ChartOfAccountsPage() {
       }
 
       setIsModalOpen(false)
+      invalidateAccountingReportCache(activeBizId)
       await fetchAccounts(activeBizId)
       // Fetch balances in background just in case
       fetchBalances(activeBizId, activeBizTimezone)
@@ -493,6 +455,7 @@ export default function ChartOfAccountsPage() {
       }
 
       showToast(`Akun "${acc.name}" berhasil dihapus!`, 'success')
+      invalidateAccountingReportCache(activeBizId)
       await fetchAccounts(activeBizId)
       fetchBalances(activeBizId, activeBizTimezone)
     } catch (err: any) {

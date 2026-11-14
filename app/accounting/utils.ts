@@ -166,7 +166,133 @@ export async function fetchLedgerData(
   }
 }
 
-// Fetch ledger balances aggregated server-side by calling the get_ledger_balances RPC
+// Client-side L1 memory cache & single-flight deduplication for accounting reports
+const CLIENT_ACCOUNTS_TTL_MS = 30_000
+const CLIENT_REPORT_TTL_MS = 15_000
+
+const clientAccountsCache = new Map<string, { data: Account[]; expiresAt: number }>()
+const clientReportCache = new Map<string, { data: any; expiresAt: number }>()
+const clientInFlightMap = new Map<string, Promise<any>>()
+
+export function invalidateAccountingReportCache(businessId?: string) {
+  if (!businessId) {
+    clientAccountsCache.clear()
+    clientReportCache.clear()
+    return
+  }
+  clientAccountsCache.delete(businessId)
+  for (const key of clientReportCache.keys()) {
+    if (key.includes(businessId)) {
+      clientReportCache.delete(key)
+    }
+  }
+}
+
+async function fetchAccountsCachedClient(supabase: SupabaseClient, businessId: string): Promise<Account[]> {
+  const now = Date.now()
+  const cached = clientAccountsCache.get(businessId)
+  if (cached && cached.expiresAt > now) {
+    return cached.data
+  }
+
+  const inflightKey = `acc:${businessId}`
+  if (clientInFlightMap.has(inflightKey)) {
+    return await clientInFlightMap.get(inflightKey)!
+  }
+
+  const p = (async () => {
+    try {
+      const { data: accounts, error: accountsErr } = await supabase
+        .from('accounts')
+        .select('*')
+        .eq('business_id', businessId)
+        .order('code', { ascending: true })
+
+      if (accountsErr) {
+        throw new Error(`Failed to fetch accounts: ${accountsErr.message}`)
+      }
+      const typed = (accounts || []) as Account[]
+      clientAccountsCache.set(businessId, { data: typed, expiresAt: Date.now() + CLIENT_ACCOUNTS_TTL_MS })
+      return typed
+    } finally {
+      clientInFlightMap.delete(inflightKey)
+    }
+  })()
+
+  clientInFlightMap.set(inflightKey, p)
+  return await p
+}
+
+// Fetch cash flow summary via server-side admin fast-path (bypasses RLS overhead) with client fallback
+export async function fetchCashFlowSummary(
+  supabase: SupabaseClient,
+  businessId: string,
+  startDate: string,
+  endDate: string,
+  timezone: string
+): Promise<any> {
+  const cacheKey = `cf:${businessId}:${startDate}:${endDate}:${timezone}`
+  const now = Date.now()
+  const cached = clientReportCache.get(cacheKey)
+  if (cached && cached.expiresAt > now) {
+    return cached.data
+  }
+
+  if (clientInFlightMap.has(cacheKey)) {
+    return await clientInFlightMap.get(cacheKey)!
+  }
+
+  const promise = (async () => {
+    try {
+      // 1. Primary Fast-Path: Server API Route using supabaseAdmin (0 RLS subquery overhead)
+      if (typeof window !== 'undefined') {
+        try {
+          const params = new URLSearchParams({
+            mode: 'cash-flow',
+            business_id: businessId,
+            start_date: startDate,
+            end_date: endDate,
+            timezone
+          })
+          const res = await fetch(`/api/accounting/reports?${params.toString()}`, {
+            headers: { 'x-business-id': businessId }
+          })
+          const json = await res.json().catch(() => null)
+          if (res.ok && json?.data) {
+            clientReportCache.set(cacheKey, { data: json.data, expiresAt: Date.now() + CLIENT_REPORT_TTL_MS })
+            return json.data
+          }
+        } catch {
+          // Fallback to direct RPC below
+        }
+      }
+
+      // 2. Resilient Fallback: Direct Supabase RPC
+      const startOfDayISO = getUtcTimestamp(startDate, '00:00:00.000', timezone)
+      const endOfDayISO = getUtcTimestamp(endDate, '23:59:59.999', timezone)
+
+      const { data, error } = await supabase.rpc('get_cash_flow_summary', {
+        p_business_id: businessId,
+        p_start_date: startOfDayISO,
+        p_end_date: endOfDayISO
+      })
+
+      if (error) {
+        throw new Error(`Gagal memuat laporan arus kas: ${error.message}`)
+      }
+
+      clientReportCache.set(cacheKey, { data, expiresAt: Date.now() + CLIENT_REPORT_TTL_MS })
+      return data
+    } finally {
+      clientInFlightMap.delete(cacheKey)
+    }
+  })()
+
+  clientInFlightMap.set(cacheKey, promise)
+  return await promise
+}
+
+// Fetch ledger balances aggregated server-side by calling /api/accounting/reports (or get_ledger_balances RPC fallback)
 export async function fetchLedgerBalances(
   supabase: SupabaseClient,
   businessId: string,
@@ -175,65 +301,106 @@ export async function fetchLedgerBalances(
   timezone?: string,
   basis?: 'accrual' | 'cash'
 ): Promise<{ accounts: Account[]; balances: Record<string, { debit: number; credit: number }> }> {
-  // 1. Fetch all accounts
-  const { data: accounts, error: accountsErr } = await supabase
-    .from('accounts')
-    .select('*')
-    .eq('business_id', businessId)
-    .order('code', { ascending: true })
+  const effectiveBasis = basis || 'accrual'
+  const effectiveTz = timezone || 'Asia/Jakarta'
+  const cacheKey = `lb:${businessId}:${startDate || 'all'}:${endDate}:${effectiveTz}:${effectiveBasis}`
+  const now = Date.now()
 
-  if (accountsErr) {
-    throw new Error(`Failed to fetch accounts: ${accountsErr.message}`)
+  const cached = clientReportCache.get(cacheKey)
+  if (cached && cached.expiresAt > now) {
+    return cached.data
   }
 
-  // Resolve business timezone
-  let tz: string = timezone || '';
-  if (!tz) {
-    const { data: biz } = await supabase
-      .from('businesses')
-      .select('timezone')
-      .eq('id', businessId)
-      .single();
-    tz = biz?.timezone || 'Asia/Jakarta';
+  if (clientInFlightMap.has(cacheKey)) {
+    return await clientInFlightMap.get(cacheKey)!
   }
 
-  // 2. Fetch aggregated balances from RPC
-  const startOfDayISO = startDate ? getUtcTimestamp(startDate, '00:00:00.000', tz) : null
-  const endOfDayISO = getUtcTimestamp(endDate, '23:59:59.999', tz)
+  const promise = (async () => {
+    try {
+      // 1. Primary Fast-Path: Server API Route using supabaseAdmin (parallel accounts + RPC, 0 RLS overhead)
+      if (typeof window !== 'undefined') {
+        try {
+          const params = new URLSearchParams({
+            mode: 'ledger-balances',
+            business_id: businessId,
+            end_date: endDate,
+            timezone: effectiveTz,
+            basis: effectiveBasis
+          })
+          if (startDate) params.set('start_date', startDate)
 
-  const { data: balancesData, error: balancesErr } = await supabase
-    .rpc('get_ledger_balances', {
-      p_business_id: businessId,
-      p_start_date: startOfDayISO,
-      p_end_date: endOfDayISO,
-      p_basis: basis || 'accrual'
-    })
-
-  if (balancesErr) {
-    throw new Error(`Failed to fetch ledger balances: ${balancesErr.message}`)
-  }
-
-  const balancesMap: Record<string, { debit: number; credit: number }> = {}
-  
-  // Initialize all accounts with zero balances
-  const typedAccounts = (accounts || []) as Account[]
-  typedAccounts.forEach(acc => {
-    balancesMap[acc.id] = { debit: 0, credit: 0 }
-  })
-
-  // Populate balances from RPC result
-  if (balancesData) {
-    balancesData.forEach((row: any) => {
-      balancesMap[row.account_id] = {
-        debit: parseFloat(row.debit_sum || 0),
-        credit: parseFloat(row.credit_sum || 0)
+          const res = await fetch(`/api/accounting/reports?${params.toString()}`, {
+            headers: { 'x-business-id': businessId }
+          })
+          const json = await res.json().catch(() => null)
+          if (res.ok && Array.isArray(json?.accounts) && json?.balances) {
+            const result = {
+              accounts: json.accounts as Account[],
+              balances: json.balances as Record<string, { debit: number; credit: number }>
+            }
+            clientAccountsCache.set(businessId, { data: result.accounts, expiresAt: Date.now() + CLIENT_ACCOUNTS_TTL_MS })
+            clientReportCache.set(cacheKey, { data: result, expiresAt: Date.now() + CLIENT_REPORT_TTL_MS })
+            return result
+          }
+        } catch {
+          // Fallback to direct RPC below
+        }
       }
-    })
-  }
 
-  return {
-    accounts: typedAccounts,
-    balances: balancesMap
-  }
+      // 2. Resilient Fallback: Parallel accounts fetch + RPC
+      let tz: string = timezone || ''
+      if (!tz) {
+        const { data: biz } = await supabase
+          .from('businesses')
+          .select('timezone')
+          .eq('id', businessId)
+          .single()
+        tz = biz?.timezone || 'Asia/Jakarta'
+      }
+
+      const startOfDayISO = startDate ? getUtcTimestamp(startDate, '00:00:00.000', tz) : null
+      const endOfDayISO = getUtcTimestamp(endDate, '23:59:59.999', tz)
+
+      const [typedAccounts, balancesRes] = await Promise.all([
+        fetchAccountsCachedClient(supabase, businessId),
+        supabase.rpc('get_ledger_balances', {
+          p_business_id: businessId,
+          p_start_date: startOfDayISO,
+          p_end_date: endOfDayISO,
+          p_basis: effectiveBasis
+        })
+      ])
+
+      if (balancesRes.error) {
+        throw new Error(`Failed to fetch ledger balances: ${balancesRes.error.message}`)
+      }
+
+      const balancesMap: Record<string, { debit: number; credit: number }> = {}
+      typedAccounts.forEach(acc => {
+        balancesMap[acc.id] = { debit: 0, credit: 0 }
+      })
+
+      if (balancesRes.data) {
+        balancesRes.data.forEach((row: any) => {
+          balancesMap[row.account_id] = {
+            debit: parseFloat(row.debit_sum || 0),
+            credit: parseFloat(row.credit_sum || 0)
+          }
+        })
+      }
+
+      const result = {
+        accounts: typedAccounts,
+        balances: balancesMap
+      }
+      clientReportCache.set(cacheKey, { data: result, expiresAt: Date.now() + CLIENT_REPORT_TTL_MS })
+      return result
+    } finally {
+      clientInFlightMap.delete(cacheKey)
+    }
+  })()
+
+  clientInFlightMap.set(cacheKey, promise)
+  return await promise
 }
 

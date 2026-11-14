@@ -1,9 +1,9 @@
 "use client"
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { 
   formatCurrencyIDR, 
-  getUtcTimestamp,
+  fetchCashFlowSummary,
 } from '../utils'
 import { useUserContext } from '@/components/UserContext'
 import { TemporalDateFilter, TemporalFilterValue } from '@/components/ui/TemporalDateFilter'
@@ -83,20 +83,15 @@ export default function CashFlowPage() {
     }
   }, [activeBusiness, bizLoading])
 
+  const requestIdRef = useRef(0)
+
   // Fetch server-side cash flow summary based on local business timezone
   const loadData = useCallback(async (businessId: string, startD: string, endD: string, timezone: string) => {
+    const reqId = ++requestIdRef.current
     setLoading(true)
     try {
-      const startOfDayISO = getUtcTimestamp(startD, '00:00:00.000', timezone)
-      const endOfDayISO = getUtcTimestamp(endD, '23:59:59.999', timezone)
-      
-      const { data, error } = await supabase.rpc('get_cash_flow_summary', {
-        p_business_id: businessId,
-        p_start_date: startOfDayISO,
-        p_end_date: endOfDayISO
-      })
-
-      if (error) throw error
+      const data = await fetchCashFlowSummary(supabase, businessId, startD, endD, timezone)
+      if (reqId !== requestIdRef.current) return
 
       const opsInflows: CashFlowItem[] = (data.ops_inflows || []).map((item: any) => ({
         ...item,
@@ -150,12 +145,15 @@ export default function CashFlowPage() {
       })
       setErrorMsg(null)
     } catch (err: any) {
+      if (reqId !== requestIdRef.current) return
       console.error('Error loading cash flow data:', err)
       setErrorMsg(err.message || 'Gagal memuat data Laporan Arus Kas')
     } finally {
-      setLoading(false)
+      if (reqId === requestIdRef.current) {
+        setLoading(false)
+      }
     }
-  }, [supabase])
+  }, [])
 
   // Trigger load when dates or business changes
   useEffect(() => {
