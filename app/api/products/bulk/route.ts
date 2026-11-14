@@ -4,6 +4,7 @@ import { isUuid } from '@/lib/utils'
 import { getOrCreateDefaultAccounts } from '@/lib/accountHelper'
 import { ensureExpenseAccounts } from '@/lib/expenseLedger'
 import { postJournalTransaction } from '@/lib/journalHelper'
+import { normalizeWholesaleTiers, type WholesaleTier } from '@/lib/pricing/wholesalePricing'
 
 interface ProductVariantImportRow {
   name: string
@@ -12,6 +13,7 @@ interface ProductVariantImportRow {
   cost_price?: number
   stock_quantity?: number
   price_tiers?: { dine_in?: number | null; take_away?: number | null } | null
+  wholesale_tiers?: WholesaleTier[]
   min_stock_alert?: number | null
   external_id?: string | null
 }
@@ -30,6 +32,7 @@ interface ProductImportRow {
   hpp_type?: 'fixed' | 'variable'
   is_sellable?: boolean
   price_tiers?: { dine_in?: number | null; take_away?: number | null } | null
+  wholesale_tiers?: WholesaleTier[]
   min_stock_alert?: number | null
   external_id?: string | null
   variants?: ProductVariantImportRow[]
@@ -187,7 +190,7 @@ export async function POST(req: Request) {
     const productsToUpdate: { originalIndex: number; id: string; existingStock: number; payload: any; variants: ProductVariantImportRow[]; modifierGroups: string[] }[] = []
 
     const stripExtendedProductCols = (payload: any) => {
-      const { price_tiers, min_stock_alert, external_id, is_sellable, ...safePayload } = payload
+      const { price_tiers, wholesale_tiers, min_stock_alert, external_id, is_sellable, ...safePayload } = payload
       return safePayload
     }
 
@@ -293,6 +296,11 @@ export async function POST(req: Request) {
         updated_at: new Date().toISOString()
       }
 
+      // Only set wholesale_tiers when explicitly provided so partial updates do not wipe existing tiers
+      if (item.wholesale_tiers !== undefined) {
+        productPayload.wholesale_tiers = cleanVariants.length > 0 ? [] : normalizeWholesaleTiers(item.wholesale_tiers)
+      }
+
       if (existingMatch) {
         if (duplicateAction === 'update') {
           productsToUpdate.push({
@@ -307,9 +315,14 @@ export async function POST(req: Request) {
           skippedCount++
         }
       } else {
+        // Ensure uniform keys for bulk PostgREST insert
+        const insertPayload = {
+          ...productPayload,
+          wholesale_tiers: productPayload.wholesale_tiers ?? []
+        }
         productsToInsert.push({
           originalIndex: i,
-          payload: productPayload,
+          payload: insertPayload,
           variants: cleanVariants,
           modifierGroups: cleanModifierGroups
         })
@@ -339,7 +352,7 @@ export async function POST(req: Request) {
         .insert(payloads)
         .select('id, name, sku, stock_quantity, cost_price, stock_type')
 
-      if (insErr && (insErr.message?.includes('price_tiers') || insErr.message?.includes('min_stock_alert') || insErr.message?.includes('external_id') || insErr.message?.includes('is_sellable') || insErr.code === '42703' || insErr.code === 'PGRST204')) {
+      if (insErr && (insErr.message?.includes('price_tiers') || insErr.message?.includes('wholesale_tiers') || insErr.message?.includes('min_stock_alert') || insErr.message?.includes('external_id') || insErr.message?.includes('is_sellable') || insErr.code === '42703' || insErr.code === 'PGRST204')) {
         const fallbackPayloads = productsToInsert.map(p => stripExtendedProductCols(p.payload))
         const retryRes = await supabaseAdmin
           .from('products')
@@ -359,7 +372,7 @@ export async function POST(req: Request) {
             .select('id, name, sku, stock_quantity, cost_price, stock_type')
             .maybeSingle()
 
-          if (singleErr && (singleErr.message?.includes('price_tiers') || singleErr.message?.includes('min_stock_alert') || singleErr.message?.includes('external_id') || singleErr.message?.includes('is_sellable') || singleErr.code === '42703' || singleErr.code === 'PGRST204')) {
+          if (singleErr && (singleErr.message?.includes('price_tiers') || singleErr.message?.includes('wholesale_tiers') || singleErr.message?.includes('min_stock_alert') || singleErr.message?.includes('external_id') || singleErr.message?.includes('is_sellable') || singleErr.code === '42703' || singleErr.code === 'PGRST204')) {
             const retrySingle = await supabaseAdmin
               .from('products')
               .insert(stripExtendedProductCols(item.payload))
@@ -407,7 +420,7 @@ export async function POST(req: Request) {
               .update(item.payload)
               .eq('id', item.id)
 
-            if (updErr && (updErr.message?.includes('price_tiers') || updErr.message?.includes('min_stock_alert') || updErr.message?.includes('external_id') || updErr.message?.includes('is_sellable') || updErr.code === '42703' || updErr.code === 'PGRST204')) {
+            if (updErr && (updErr.message?.includes('price_tiers') || updErr.message?.includes('wholesale_tiers') || updErr.message?.includes('min_stock_alert') || updErr.message?.includes('external_id') || updErr.message?.includes('is_sellable') || updErr.code === '42703' || updErr.code === 'PGRST204')) {
               const retryUpd = await supabaseAdmin
                 .from('products')
                 .update(stripExtendedProductCols(item.payload))
@@ -489,35 +502,44 @@ export async function POST(req: Request) {
           const existingVar = (vSku ? existingVarByKey.get(`${prod.id}:sku:${vSku.toLowerCase()}`) : null) ||
                               existingVarByKey.get(`${prod.id}:name:${vName.toLowerCase()}`)
 
+          const hasVariantWholesale = v.wholesale_tiers !== undefined
+          const vWholesaleTiers = hasVariantWholesale ? normalizeWholesaleTiers(v.wholesale_tiers) : undefined
+
           if (existingVar) {
+            const varUpdatePayload: any = {
+              name: vName,
+              sku: vSku,
+              price: vPrice,
+              cost_price: vCost,
+              price_tiers: vTiers,
+              min_stock_alert: vMinAlert,
+              external_id: vExtId,
+              updated_at: new Date().toISOString()
+            }
+            if (hasVariantWholesale) {
+              varUpdatePayload.wholesale_tiers = vWholesaleTiers
+            }
             variantsToUpdate.push({
               id: existingVar.id,
-              payload: {
-                name: vName,
-                sku: vSku,
-                price: vPrice,
-                cost_price: vCost,
-                price_tiers: vTiers,
-                min_stock_alert: vMinAlert,
-                external_id: vExtId,
-                updated_at: new Date().toISOString()
-              }
+              payload: varUpdatePayload
             })
           } else {
+            const varInsertPayload: any = {
+              business_id: businessId,
+              product_id: prod.id,
+              name: vName,
+              sku: vSku,
+              price: vPrice,
+              cost_price: vCost,
+              stock_quantity: vStock,
+              price_tiers: vTiers,
+              wholesale_tiers: hasVariantWholesale ? vWholesaleTiers : [],
+              min_stock_alert: vMinAlert,
+              external_id: vExtId
+            }
             variantsToInsert.push({
               parentStockType: prod.stock_type,
-              payload: {
-                business_id: businessId,
-                product_id: prod.id,
-                name: vName,
-                sku: vSku,
-                price: vPrice,
-                cost_price: vCost,
-                stock_quantity: vStock,
-                price_tiers: vTiers,
-                min_stock_alert: vMinAlert,
-                external_id: vExtId
-              }
+              payload: varInsertPayload
             })
           }
         }
@@ -530,7 +552,7 @@ export async function POST(req: Request) {
           .insert(varPayloads)
           .select('id, product_id, stock_quantity, cost_price')
 
-        if (insVarErr && (insVarErr.message?.includes('price_tiers') || insVarErr.message?.includes('min_stock_alert') || insVarErr.message?.includes('external_id') || insVarErr.code === '42703' || insVarErr.code === 'PGRST204')) {
+        if (insVarErr && (insVarErr.message?.includes('price_tiers') || insVarErr.message?.includes('wholesale_tiers') || insVarErr.message?.includes('min_stock_alert') || insVarErr.message?.includes('external_id') || insVarErr.code === '42703' || insVarErr.code === 'PGRST204')) {
           const safeVarPayloads = varPayloads.map(p => stripExtendedProductCols(p))
           const retryVar = await supabaseAdmin
             .from('product_variants')
@@ -575,7 +597,7 @@ export async function POST(req: Request) {
                 .from('product_variants')
                 .update(vItem.payload)
                 .eq('id', vItem.id)
-              if (vUpdErr && (vUpdErr.message?.includes('price_tiers') || vUpdErr.message?.includes('min_stock_alert') || vUpdErr.message?.includes('external_id') || vUpdErr.code === '42703' || vUpdErr.code === 'PGRST204')) {
+              if (vUpdErr && (vUpdErr.message?.includes('price_tiers') || vUpdErr.message?.includes('wholesale_tiers') || vUpdErr.message?.includes('min_stock_alert') || vUpdErr.message?.includes('external_id') || vUpdErr.code === '42703' || vUpdErr.code === 'PGRST204')) {
                 await supabaseAdmin
                   .from('product_variants')
                   .update(stripExtendedProductCols(vItem.payload))

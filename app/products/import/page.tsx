@@ -6,6 +6,11 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { invalidatePosCatalogCache } from '@/lib/posCatalogStore'
+import {
+  normalizeWholesaleTiers,
+  validateWholesaleTiers,
+  isDimensionUnit
+} from '@/lib/pricing/wholesalePricing'
 import RecipeImportTab from './components/RecipeImportTab'
 
 type Category = {
@@ -20,6 +25,17 @@ const TARGET_FIELDS = [
   { key: 'price', name: 'Harga Jual Utama (Basic Price)', required: false, desc: 'Harga jual satuan utama (otomatis fallback dari Dine In / Take Away jika kosong)' },
   { key: 'dine_in_price', name: 'Harga Dine In (Makan di Tempat)', required: false, desc: 'Harga khusus layanan Dine In (opsional / Moka POS)' },
   { key: 'take_away_price', name: 'Harga Take Away (Bungkus / Ojol)', required: false, desc: 'Harga khusus layanan Take Away (opsional / Moka POS)' },
+  { key: 'wholesale_tiers', name: 'Harga Grosir Ringkas (qty:harga)', required: false, desc: 'Format ringkas multi-tier dalam 1 kolom, misal: "10:45000; 50:40000" atau JSON' },
+  { key: 'wholesale_min_qty_1', name: 'Grosir Min. Qty 1', required: false, desc: 'Minimum pembelian (min. 2) untuk tier grosir ke-1' },
+  { key: 'wholesale_price_1', name: 'Grosir Harga 1', required: false, desc: 'Harga satuan untuk tier grosir ke-1' },
+  { key: 'wholesale_min_qty_2', name: 'Grosir Min. Qty 2', required: false, desc: 'Minimum pembelian untuk tier grosir ke-2' },
+  { key: 'wholesale_price_2', name: 'Grosir Harga 2', required: false, desc: 'Harga satuan untuk tier grosir ke-2' },
+  { key: 'wholesale_min_qty_3', name: 'Grosir Min. Qty 3', required: false, desc: 'Minimum pembelian untuk tier grosir ke-3' },
+  { key: 'wholesale_price_3', name: 'Grosir Harga 3', required: false, desc: 'Harga satuan untuk tier grosir ke-3' },
+  { key: 'wholesale_min_qty_4', name: 'Grosir Min. Qty 4', required: false, desc: 'Minimum pembelian untuk tier grosir ke-4' },
+  { key: 'wholesale_price_4', name: 'Grosir Harga 4', required: false, desc: 'Harga satuan untuk tier grosir ke-4' },
+  { key: 'wholesale_min_qty_5', name: 'Grosir Min. Qty 5', required: false, desc: 'Minimum pembelian untuk tier grosir ke-5' },
+  { key: 'wholesale_price_5', name: 'Grosir Harga 5', required: false, desc: 'Harga satuan untuk tier grosir ke-5' },
   { key: 'cost_price', name: 'HPP / Harga Modal Beli', required: false, desc: 'Harga modal perolehan barang (Moka: Cost Amount)' },
   { key: 'category', name: 'Kategori Produk', required: false, desc: 'Kategori barang (otomatis dibuat jika belum ada)' },
   { key: 'stock_quantity', name: 'Stok Awal Fisik', required: false, desc: 'Jumlah fisik stok awal (Moka: In Stock)' },
@@ -65,6 +81,19 @@ const detectProductFieldByHeader = (header: string): string => {
   }
   if ((h.includes('takeaway') || h.includes('bungkus')) && (h.includes('price') || h.includes('harga'))) {
     return 'take_away_price'
+  }
+  // Wholesale tiered pricing detection (numbered pairs 1..5 first, then compact single-column)
+  const qtyPairMatch = h.match(/(?:grosir|wholesale|tier)(?:minqty|minjumlah|quantitybreak|min|qty|jumlah)([1-5])$/)
+    || h.match(/^(?:minqty|minjumlah)([1-5])$/)
+  if (qtyPairMatch) {
+    return `wholesale_min_qty_${qtyPairMatch[1]}`
+  }
+  const pricePairMatch = h.match(/(?:grosir|wholesale|tier)(?:harga|price)([1-5])$/)
+  if (pricePairMatch) {
+    return `wholesale_price_${pricePairMatch[1]}`
+  }
+  if (h === 'wholesaletiers' || h === 'hargagrosir' || h === 'grosir' || h === 'tieredprices' || h === 'wholesale') {
+    return 'wholesale_tiers'
   }
   if (h.includes('stockalert') || h.includes('minstock') || h.includes('stokminimum') || h.includes('batasstok') || h.includes('minimumstok')) {
     return 'min_stock_alert'
@@ -150,6 +179,46 @@ const parseNumeric = (val: any): number => {
   const cleanStr = str.replace(/[^0-9.-]/g, '')
   const num = parseFloat(cleanStr)
   return isNaN(num) ? 0 : num
+}
+
+const parseCompactWholesaleTiers = (raw: unknown): { tiers: Array<{ min_qty: number | string; price: number | string }>; error?: string } => {
+  if (raw === undefined || raw === null) return { tiers: [] }
+  const str = String(raw).trim()
+  if (!str) return { tiers: [] }
+
+  if (str.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(str)
+      if (!Array.isArray(parsed)) {
+        return { tiers: [], error: 'Format JSON harga grosir harus berupa array.' }
+      }
+      return {
+        tiers: parsed
+          .filter((item: any) => item && typeof item === 'object')
+          .map((item: any) => ({ min_qty: item.min_qty, price: item.price }))
+      }
+    } catch {
+      return { tiers: [], error: 'Format JSON harga grosir tidak valid.' }
+    }
+  }
+
+  // Split segments by semicolon, pipe, newline, or comma followed by "qty:" / "qty="
+  const segments = str
+    .split(/[;|\n]+|,(?=\s*\d+\s*[:=])/)
+    .map(s => s.trim())
+    .filter(Boolean)
+
+  const tiers: Array<{ min_qty: number | string; price: number | string }> = []
+  for (const seg of segments) {
+    const parts = seg.split(/[:=]/)
+    if (parts.length !== 2) {
+      return { tiers: [], error: `Format grosir "${seg}" tidak valid. Gunakan format "qty:harga" (contoh: 10:45000; 50:40000).` }
+    }
+    const minQty = parseNumeric(parts[0])
+    const price = parseNumeric(parts[1])
+    tiers.push({ min_qty: minQty, price })
+  }
+  return { tiers }
 }
 
 export default function ProductImportPage() {
@@ -334,6 +403,12 @@ export default function ProductImportPage() {
         'Satuan': 'pcs',
         'Tipe Produk': 'Barang Fisik',
         'Manajemen Stok': 'Di Track',
+        'Grosir Min Qty 1': 6,
+        'Grosir Harga 1': 160000,
+        'Grosir Min Qty 2': 12,
+        'Grosir Harga 2': 150000,
+        'Grosir Min Qty 3': '',
+        'Grosir Harga 3': '',
         'Grup Modifier': '',
         'Deskripsi': 'Contoh produk varian 3 dimensi (Warna - Ukuran - Bahan)'
       },
@@ -348,6 +423,12 @@ export default function ProductImportPage() {
         'Satuan': 'pcs',
         'Tipe Produk': 'Barang Fisik',
         'Manajemen Stok': 'Di Track',
+        'Grosir Min Qty 1': 6,
+        'Grosir Harga 1': 160000,
+        'Grosir Min Qty 2': 12,
+        'Grosir Harga 2': 150000,
+        'Grosir Min Qty 3': '',
+        'Grosir Harga 3': '',
         'Grup Modifier': '',
         'Deskripsi': 'Varian ukuran L katun merah'
       },
@@ -362,6 +443,12 @@ export default function ProductImportPage() {
         'Satuan': 'pcs',
         'Tipe Produk': 'Barang Fisik',
         'Manajemen Stok': 'Di Track',
+        'Grosir Min Qty 1': '',
+        'Grosir Harga 1': '',
+        'Grosir Min Qty 2': '',
+        'Grosir Harga 2': '',
+        'Grosir Min Qty 3': '',
+        'Grosir Harga 3': '',
         'Grup Modifier': '',
         'Deskripsi': 'Varian ukuran XL katun hitam'
       },
@@ -376,6 +463,12 @@ export default function ProductImportPage() {
         'Satuan': 'cup',
         'Tipe Produk': 'Barang Fisik',
         'Manajemen Stok': 'Di Track',
+        'Grosir Min Qty 1': '',
+        'Grosir Harga 1': '',
+        'Grosir Min Qty 2': '',
+        'Grosir Harga 2': '',
+        'Grosir Min Qty 3': '',
+        'Grosir Harga 3': '',
         'Grup Modifier': 'Topping Minuman',
         'Deskripsi': 'Menu F&B dengan varian suhu dan modifier topping'
       },
@@ -390,6 +483,12 @@ export default function ProductImportPage() {
         'Satuan': 'cup',
         'Tipe Produk': 'Barang Fisik',
         'Manajemen Stok': 'Di Track',
+        'Grosir Min Qty 1': '',
+        'Grosir Harga 1': '',
+        'Grosir Min Qty 2': '',
+        'Grosir Harga 2': '',
+        'Grosir Min Qty 3': '',
+        'Grosir Harga 3': '',
         'Grup Modifier': 'Topping Minuman',
         'Deskripsi': 'Menu F&B kopi panas dengan modifier'
       },
@@ -404,8 +503,14 @@ export default function ProductImportPage() {
         'Satuan': 'pcs',
         'Tipe Produk': 'Barang Fisik',
         'Manajemen Stok': 'Di Track',
+        'Grosir Min Qty 1': 5,
+        'Grosir Harga 1': 180000,
+        'Grosir Min Qty 2': 12,
+        'Grosir Harga 2': 165000,
+        'Grosir Min Qty 3': 24,
+        'Grosir Harga 3': 150000,
         'Grup Modifier': '',
-        'Deskripsi': 'Contoh produk tunggal tanpa varian'
+        'Deskripsi': 'Contoh produk tunggal dengan harga grosir bertingkat'
       },
       {
         'Nama Produk': 'Jasa Jahit & Vermak',
@@ -418,6 +523,12 @@ export default function ProductImportPage() {
         'Satuan': 'layanan',
         'Tipe Produk': 'Jasa',
         'Manajemen Stok': 'Tersedia',
+        'Grosir Min Qty 1': '',
+        'Grosir Harga 1': '',
+        'Grosir Min Qty 2': '',
+        'Grosir Harga 2': '',
+        'Grosir Min Qty 3': '',
+        'Grosir Harga 3': '',
         'Grup Modifier': '',
         'Deskripsi': 'Contoh produk non-stok fisik (Jasa/Layanan)'
       }
@@ -436,6 +547,12 @@ export default function ProductImportPage() {
       { wch: 10 }, // Satuan
       { wch: 14 }, // Tipe Produk
       { wch: 16 }, // Manajemen Stok
+      { wch: 16 }, // Grosir Min Qty 1
+      { wch: 16 }, // Grosir Harga 1
+      { wch: 16 }, // Grosir Min Qty 2
+      { wch: 16 }, // Grosir Harga 2
+      { wch: 16 }, // Grosir Min Qty 3
+      { wch: 16 }, // Grosir Harga 3
       { wch: 20 }, // Grup Modifier
       { wch: 35 }  // Deskripsi
     ]
@@ -459,6 +576,12 @@ export default function ProductImportPage() {
       detectedModifierHeaders.length > 0
     )
   }, [headers, detectedModifierHeaders])
+
+  const hasWholesaleMapping = useMemo(() => {
+    return Object.values(mapping).some(
+      t => t === 'wholesale_tiers' || t.startsWith('wholesale_min_qty_') || t.startsWith('wholesale_price_')
+    )
+  }, [mapping])
 
   // Parsed and Validated Data (with automatic SPU -> SKU Variant Grouping when Variant Name is mapped)
   const parsedData = useMemo(() => {
@@ -488,6 +611,9 @@ export default function ProductImportPage() {
       let rawExternalId: any = null
       let rawModGroups: any = null
       let rawDesc: any = null
+      let rawWholesaleCompact: any = null
+      const rawWholesaleQty: Record<number, any> = {}
+      const rawWholesalePrice: Record<number, any> = {}
 
       headers.forEach(h => {
         const target = mapping[h]
@@ -509,6 +635,15 @@ export default function ProductImportPage() {
         if (target === 'external_id') rawExternalId = row[h]
         if (target === 'modifier_groups') rawModGroups = row[h]
         if (target === 'description') rawDesc = row[h]
+        if (target === 'wholesale_tiers') rawWholesaleCompact = row[h]
+        if (target?.startsWith('wholesale_min_qty_')) {
+          const n = Number(target.replace('wholesale_min_qty_', ''))
+          if (n >= 1 && n <= 5) rawWholesaleQty[n] = row[h]
+        }
+        if (target?.startsWith('wholesale_price_')) {
+          const n = Number(target.replace('wholesale_price_', ''))
+          if (n >= 1 && n <= 5) rawWholesalePrice[n] = row[h]
+        }
       })
 
       // Extract active Modifier Groups from "Modifier Set - [Name]" columns where cell value is Yes / True / 1
@@ -639,6 +774,52 @@ export default function ProductImportPage() {
       const hppStr = String(rawHppType ?? '').trim().toLowerCase()
       result.hpp_type = (hppStr === 'variable' || hppStr.includes('resep') || hppStr.includes('bom')) ? 'variable' : 'fixed'
 
+      // Parse & validate wholesale_tiers (only when wholesale columns are mapped)
+      if (hasWholesaleMapping) {
+        const rawTierRows: Array<{ min_qty: number | string; price: number | string }> = []
+        const compactParsed = parseCompactWholesaleTiers(rawWholesaleCompact)
+        if (compactParsed.error) {
+          result._errors.push(compactParsed.error)
+        } else {
+          rawTierRows.push(...compactParsed.tiers)
+        }
+
+        for (let tIdx = 1; tIdx <= 5; tIdx++) {
+          const qRaw = rawWholesaleQty[tIdx]
+          const pRaw = rawWholesalePrice[tIdx]
+          const hasQ = qRaw !== undefined && qRaw !== null && String(qRaw).trim() !== ''
+          const hasP = pRaw !== undefined && pRaw !== null && String(pRaw).trim() !== ''
+          if (hasQ || hasP) {
+            if (!hasQ || !hasP) {
+              result._errors.push(`Grosir Tier ${tIdx}: Min. Qty dan Harga wajib diisi berpasangan.`)
+            } else {
+              rawTierRows.push({
+                min_qty: parseNumeric(qRaw),
+                price: parseNumeric(pRaw)
+              })
+            }
+          }
+        }
+
+        if (rawTierRows.length > 0) {
+          const tierCheck = validateWholesaleTiers(rawTierRows, result.price, result.cost_price)
+          if (!tierCheck.valid) {
+            result._errors.push(...tierCheck.errors)
+          }
+          if (tierCheck.warnings.length > 0) {
+            result._warnings.push(...tierCheck.warnings)
+          }
+          if (isDimensionUnit(result.unit)) {
+            result._warnings.push('Satuan dimensi (m2/cm2) tidak memicu harga grosir otomatis di POS/Invoice.')
+          }
+          result.wholesale_tiers = normalizeWholesaleTiers(rawTierRows)
+        } else {
+          result.wholesale_tiers = []
+        }
+      } else {
+        result.wholesale_tiers = undefined
+      }
+
       result._valid = result._errors.length === 0
       return result
     })
@@ -683,6 +864,7 @@ export default function ProductImportPage() {
           cost_price: r.cost_price,
           stock_quantity: r.stock_quantity,
           price_tiers: r.price_tiers,
+          ...(r.wholesale_tiers !== undefined ? { wholesale_tiers: r.wholesale_tiers } : {}),
           min_stock_alert: r.min_stock_alert,
           external_id: r.external_id
         }))
@@ -691,6 +873,9 @@ export default function ProductImportPage() {
         const anyTracked = rowsForProduct.some(r => r.stock_type === 'tracked')
         const mergedModGroups = Array.from(
           new Set(rowsForProduct.flatMap(r => r.modifier_groups || []))
+        )
+        const mergedWarnings = Array.from(
+          new Set(rowsForProduct.flatMap(r => r._warnings || []))
         )
         const minPositivePrice = variants.reduce((min, v) => (v.price > 0 && (min === 0 || v.price < min) ? v.price : min), first.price || 0)
 
@@ -702,13 +887,15 @@ export default function ProductImportPage() {
           stock_type: anyTracked ? 'tracked' : first.stock_type,
           stock_quantity: anyTracked ? totalVariantStock : 0,
           modifier_groups: mergedModGroups,
+          wholesale_tiers: hasWholesaleMapping ? [] : undefined,
+          _warnings: mergedWarnings,
           variants
         })
       }
     })
 
     return groupedProducts
-  }, [rawData, headers, mapping, defaultCategory, defaultUnit, defaultType, defaultStockType, categories, detectedModifierHeaders])
+  }, [rawData, headers, mapping, hasWholesaleMapping, defaultCategory, defaultUnit, defaultType, defaultStockType, categories, detectedModifierHeaders])
 
   const stats = useMemo(() => {
     const total = parsedData.length
@@ -718,7 +905,14 @@ export default function ProductImportPage() {
     const zeroCostStockCount = parsedData.filter(
       d => d._valid && d.stock_type === 'tracked' && Number(d.stock_quantity) > 0 && Number(d.cost_price) === 0
     ).length
-    return { total, valid, errors, totalVariants, zeroCostStockCount, rawRowCount: rawData.length }
+    const wholesaleCount = parsedData.reduce((acc, d) => {
+      if (Array.isArray(d.variants) && d.variants.length > 0) {
+        return acc + d.variants.filter((v: any) => Array.isArray(v.wholesale_tiers) && v.wholesale_tiers.length > 0).length
+      }
+      return acc + (Array.isArray(d.wholesale_tiers) && d.wholesale_tiers.length > 0 ? 1 : 0)
+    }, 0)
+    const wholesaleWarningCount = parsedData.filter(d => Array.isArray(d._warnings) && d._warnings.length > 0).length
+    return { total, valid, errors, totalVariants, zeroCostStockCount, wholesaleCount, wholesaleWarningCount, rawRowCount: rawData.length }
   }, [parsedData, rawData.length])
 
   // Download Failed Rows as Excel (.xlsx)
@@ -835,6 +1029,7 @@ export default function ProductImportPage() {
         hpp_type: d.hpp_type || 'fixed',
         is_sellable: d.is_sellable !== false,
         price_tiers: d.price_tiers,
+        ...(d.wholesale_tiers !== undefined ? { wholesale_tiers: d.wholesale_tiers } : {}),
         min_stock_alert: d.min_stock_alert,
         external_id: d.external_id,
         variants: d.variants,
@@ -1324,6 +1519,11 @@ export default function ProductImportPage() {
                       🏷️ Varian SKU: {stats.totalVariants}
                     </span>
                   )}
+                  {stats.wholesaleCount > 0 && (
+                    <span className="bg-teal-50 text-teal-700 font-bold px-3 py-1 rounded-lg border border-teal-200">
+                      📦 Harga Grosir: {stats.wholesaleCount} item
+                    </span>
+                  )}
                   <span className="bg-emerald-50 text-emerald-700 font-bold px-3 py-1 rounded-lg border border-emerald-200">
                     ✓ Valid: {stats.valid}
                   </span>
@@ -1370,11 +1570,21 @@ export default function ProductImportPage() {
                         </td>
                         <td className="py-2.5 px-3 font-bold text-gray-900">
                           <div>{row.name}</div>
-                          {(Array.isArray(row.variants) && row.variants.length > 0 || (Array.isArray(row.modifier_groups) && row.modifier_groups.length > 0)) && (
+                          {(Array.isArray(row.variants) && row.variants.length > 0 || (Array.isArray(row.modifier_groups) && row.modifier_groups.length > 0) || (Array.isArray(row.wholesale_tiers) && row.wholesale_tiers.length > 0)) && (
                             <div className="flex flex-wrap items-center gap-1 mt-1">
                               {Array.isArray(row.variants) && row.variants.length > 0 && (
                                 <span className="text-[9px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded">
                                   🏷️ {row.variants.length} Varian ({row.variants.slice(0, 2).map((v: any) => v.name).join(', ')}{row.variants.length > 2 ? '...' : ''})
+                                </span>
+                              )}
+                              {Array.isArray(row.wholesale_tiers) && row.wholesale_tiers.length > 0 && (
+                                <span className="text-[9px] font-extrabold text-teal-700 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded">
+                                  📦 Grosir ({row.wholesale_tiers.length} tier)
+                                </span>
+                              )}
+                              {Array.isArray(row.variants) && row.variants.some((v: any) => Array.isArray(v.wholesale_tiers) && v.wholesale_tiers.length > 0) && (
+                                <span className="text-[9px] font-extrabold text-teal-700 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded">
+                                  📦 Grosir Varian
                                 </span>
                               )}
                               {Array.isArray(row.modifier_groups) && row.modifier_groups.map((mg: string) => (
@@ -1383,6 +1593,11 @@ export default function ProductImportPage() {
                                 </span>
                               ))}
                             </div>
+                          )}
+                          {Array.isArray(row._warnings) && row._warnings.length > 0 && (
+                            <span className="block text-[10px] text-amber-700 font-medium mt-0.5">
+                              ⚠️ {row._warnings.join(' · ')}
+                            </span>
                           )}
                           {row._errors.length > 0 && (
                             <span className="block text-[10px] text-rose-600 font-medium">
