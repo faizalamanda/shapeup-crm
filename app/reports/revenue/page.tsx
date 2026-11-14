@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
@@ -136,6 +136,9 @@ const COUNTRY_NAMES: Record<string, { name: string; flag: string }> = {
 }
 
 function getBucketKeyAndLabel(localYmd: string, granularity: Granularity): { key: string; label: string; sortKey: string } {
+  if (!localYmd || !/^\d{4}-\d{2}-\d{2}$/.test(localYmd)) {
+    return { key: 'unknown', label: '-', sortKey: '0000-00-00' }
+  }
   const [yStr, mStr, dStr] = localYmd.split('-')
   const year = Number(yStr)
   const month = Number(mStr)
@@ -155,6 +158,9 @@ function getBucketKeyAndLabel(localYmd: string, granularity: Granularity): { key
 
   if (granularity === 'week') {
     const dt = new Date(Date.UTC(year, month - 1, day))
+    if (isNaN(dt.getTime())) {
+      return { key: localYmd, label: localYmd, sortKey: localYmd }
+    }
     const dayOfWeek = dt.getUTCDay() // 0 = Sun, 1 = Mon
     const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
     dt.setUTCDate(dt.getUTCDate() + diffToMonday)
@@ -308,28 +314,44 @@ export default function RevenueReportPage() {
   const [rawOrders, setRawOrders] = useState<RawOrderRow[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [isSyncing, setIsSyncing] = useState<boolean>(false)
+  const hasLoadedOnceRef = useRef<boolean>(false)
 
   // Determine overall query window covering both Current and Comparison ranges
   const queryBounds = useMemo(() => {
-    const currStart = temporalFilter.startDate
-    const currEnd = temporalFilter.endDate
-    const compStart = temporalFilter.comparisonMode !== 'none' && temporalFilter.comparisonStartDate
-      ? temporalFilter.comparisonStartDate
-      : currStart
-    const compEnd = temporalFilter.comparisonMode !== 'none' && temporalFilter.comparisonEndDate
-      ? temporalFilter.comparisonEndDate
-      : currEnd
+    const currStart = temporalFilter.startDate || ''
+    const currEnd = temporalFilter.endDate || ''
 
-    const minStart = compStart < currStart ? compStart : currStart
-    const maxEnd = compEnd > currEnd ? compEnd : currEnd
+    if (!currStart || !currEnd || temporalFilter.preset === 'all') {
+      return {
+        minStart: '',
+        maxEnd: '',
+        utcStart: '',
+        utcEnd: '',
+      }
+    }
+
+    const compStart =
+      temporalFilter.comparisonMode !== 'none' && temporalFilter.comparisonStartDate
+        ? temporalFilter.comparisonStartDate
+        : currStart
+    const compEnd =
+      temporalFilter.comparisonMode !== 'none' && temporalFilter.comparisonEndDate
+        ? temporalFilter.comparisonEndDate
+        : currEnd
+
+    const minStart = compStart && compStart < currStart ? compStart : currStart
+    const maxEnd = compEnd && compEnd > currEnd ? compEnd : currEnd
+
+    const utcBounds = localDateToUtcBounds(minStart, maxEnd, businessTz)
 
     return {
       minStart,
       maxEnd,
-      utcStart: localDateToUtcBounds(minStart, businessTz).startOfDayISO || `${minStart}T00:00:00.000Z`,
-      utcEnd: localDateToUtcBounds(maxEnd, businessTz).endOfDayISO || `${maxEnd}T23:59:59.999Z`,
+      utcStart: utcBounds.startOfDayISO || `${minStart}T00:00:00.000Z`,
+      utcEnd: utcBounds.endOfDayISO || `${maxEnd}T23:59:59.999Z`,
     }
   }, [
+    temporalFilter.preset,
     temporalFilter.startDate,
     temporalFilter.endDate,
     temporalFilter.comparisonMode,
@@ -339,35 +361,47 @@ export default function RevenueReportPage() {
   ])
 
   const fetchRevenueOrders = useCallback(async (bid: string, startIso: string, endIso: string) => {
-    const cacheKey = `${bid}_${startIso}_${endIso}`
+    const cacheKey = `${bid}_${startIso || 'ALL'}_${endIso || 'ALL'}`
     const cached = revenueOrdersCache.get(cacheKey)
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
       setRawOrders(cached.rows)
+      hasLoadedOnceRef.current = true
       setLoading(false)
       return
     }
 
-    setLoading(prev => (rawOrders.length === 0 ? true : prev))
+    if (!hasLoadedOnceRef.current) {
+      setLoading(true)
+    }
     setIsSyncing(true)
 
     try {
       const rows = await fetchAllSupabaseRows<RawOrderRow>(
-        (from, to) =>
-          supabase
+        (from, to) => {
+          let q = supabase
             .from('orders')
             .select(
               'id, order_number, order_date, order_date_utc, created_at, status, payment_status, payment_method, source_platform, subtotal, shipping_cost, discount_amount, other_fees, grand_total, raw_source_data'
             )
             .eq('business_id', bid)
-            .gte('order_date', startIso)
-            .lte('order_date', endIso)
+
+          if (startIso) {
+            q = q.gte('order_date', startIso)
+          }
+          if (endIso) {
+            q = q.lte('order_date', endIso)
+          }
+
+          return q
             .order('order_date', { ascending: true })
             .order('id', { ascending: true })
-            .range(from, to),
+            .range(from, to)
+        },
         1000
       )
 
       revenueOrdersCache.set(cacheKey, { rows, timestamp: Date.now() })
+      hasLoadedOnceRef.current = true
       setRawOrders(rows)
     } catch (err) {
       console.error('[RevenueReport] Failed to load orders:', err)
@@ -375,7 +409,7 @@ export default function RevenueReportPage() {
       setLoading(false)
       setIsSyncing(false)
     }
-  }, [rawOrders.length])
+  }, [])
 
   useEffect(() => {
     if (!activeBusiness?.id) return
@@ -387,6 +421,7 @@ export default function RevenueReportPage() {
     return rawOrders
       .filter(r => isCountedStatus(r.status))
       .map(r => enrichOrderRow(r, businessTz))
+      .filter(o => Boolean(o.localDate && /^\d{4}-\d{2}-\d{2}$/.test(o.localDate)))
   }, [rawOrders, businessTz])
 
   // Available segment options
@@ -420,14 +455,15 @@ export default function RevenueReportPage() {
     const curr: EnrichedOrder[] = []
     const comp: EnrichedOrder[] = []
 
+    const isAllTime = temporalFilter.preset === 'all' || (!temporalFilter.startDate && !temporalFilter.endDate)
     const cStart = temporalFilter.startDate
     const cEnd = temporalFilter.endDate
     const pStart = temporalFilter.comparisonStartDate
     const pEnd = temporalFilter.comparisonEndDate
-    const hasComp = temporalFilter.comparisonMode !== 'none' && Boolean(pStart && pEnd)
+    const hasComp = !isAllTime && temporalFilter.comparisonMode !== 'none' && Boolean(pStart && pEnd)
 
     for (const o of segmentedOrders) {
-      if (o.localDate >= cStart && o.localDate <= cEnd) {
+      if (isAllTime || (o.localDate >= cStart && o.localDate <= cEnd)) {
         curr.push(o)
       }
       if (hasComp && o.localDate >= pStart && o.localDate <= pEnd) {
@@ -438,6 +474,7 @@ export default function RevenueReportPage() {
     return { currentOrders: curr, comparisonOrders: comp }
   }, [
     segmentedOrders,
+    temporalFilter.preset,
     temporalFilter.startDate,
     temporalFilter.endDate,
     temporalFilter.comparisonMode,

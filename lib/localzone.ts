@@ -401,12 +401,21 @@ export function getUtcTimestampInTimezone(
   timezone: string = DEFAULT_TIMEZONE
 ): string {
   const tz = getBusinessTimezone(timezone)
-  const [year, month, day] = dateStr.split('-').map(Number)
-  const timeParts = timeStr.split('.')[0].split(':').map(Number)
+  const cleanDate = (dateStr || '').trim().split('T')[0]
+  const [year, month, day] = cleanDate.split('-').map(Number)
+  if (!year || !month || !day || isNaN(year) || isNaN(month) || isNaN(day)) {
+    return new Date().toISOString()
+  }
+  const timeParts = (timeStr || '00:00:00.000').split('.')[0].split(':').map(Number)
   const hours = timeParts[0] || 0
   const minutes = timeParts[1] || 0
   const seconds = timeParts[2] || 0
-  const ms = Number(timeStr.split('.')[1] || 0)
+  const ms = Number((timeStr || '').split('.')[1] || 0)
+
+  const utcDate = new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds, ms))
+  if (isNaN(utcDate.getTime())) {
+    return new Date().toISOString()
+  }
 
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
@@ -419,7 +428,6 @@ export function getUtcTimestampInTimezone(
     hour12: false,
   })
 
-  const utcDate = new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds, ms))
   const parts = formatter.formatToParts(utcDate)
   const partValues: Record<string, number> = {}
   parts.forEach(p => {
