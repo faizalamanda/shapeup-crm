@@ -138,11 +138,26 @@ const Icons = {
       <rect x="19" y="3" width="5" height="8" rx="1"/>
     </svg>
   ),
+  reports: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 3v18h18"/>
+      <path d="m19 9-5 5-4-4-3 3"/>
+    </svg>
+  ),
 }
 
 const menuItems: MenuItem[] = [
   { name: 'Onboarding',   href: '/onboarding',        icon: Icons.onboarding },
   { name: 'Overview',     href: '/dashboard',         icon: Icons.overview },
+  {
+    name: 'Reports',      href: '/reports/revenue',   icon: Icons.reports,
+    children: [
+      { name: 'Revenue',           href: '/reports/revenue' },
+      { name: 'Laporan Laba Rugi', href: '/accounting/profit-loss' },
+      { name: 'Neraca Keuangan',   href: '/accounting/balance-sheet' },
+      { name: 'Laporan Arus Kas',  href: '/accounting/cash-flow' },
+    ],
+  },
   { name: 'Pipeline',     href: '/pipeline',          icon: Icons.pipeline },
   {
     name: 'Inbox / Chat', href: '/inbox', icon: Icons.inbox,
@@ -189,9 +204,6 @@ const menuItems: MenuItem[] = [
     children: [
       { name: 'Pembayaran & Kas', href: '/accounting/payments' },
       { name: 'Transaksi & Jurnal', href: '/accounting/transactions' },
-      { name: 'Laporan Arus Kas', href: '/accounting/cash-flow' },
-      { name: 'Laporan Laba Rugi', href: '/accounting/profit-loss' },
-      { name: 'Neraca Keuangan', href: '/accounting/balance-sheet' },
       { name: 'Bagan Akun (COA)', href: '/accounting/coa' },
     ],
   },
@@ -354,7 +366,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
         </p>
         <div className="pt-4">
           <Link 
-            href={currentUserPermissions.includes('manage_employees_salary') ? "/employees" : "/dashboard"} 
+            href={currentUserPermissions.includes('manage_employees_salary') ? "/employees" : "/onboarding"} 
             className="inline-block bg-black text-white font-black uppercase text-xs tracking-widest px-8 py-4 border-4 border-black hover:bg-yellow-200 hover:text-black transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-[4px] hover:translate-y-[4px]"
           >
             Kembali ke Halaman Utama
@@ -462,7 +474,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
           {/* Logo */}
           <div style={{ padding: '20px 16px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Link href="/dashboard" onClick={() => setIsMobileMenuOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none' }}>
+              <Link href={canAccessPath('/dashboard', { role: currentUserRole, permissions: currentUserPermissions, isWabaActive }) ? "/dashboard" : "/onboarding"} onClick={() => setIsMobileMenuOpen(false)} style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none' }}>
                 {/* Logo mark */}
                 <div style={{
                   width: '32px', height: '32px',

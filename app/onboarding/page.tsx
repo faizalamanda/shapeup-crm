@@ -32,6 +32,7 @@ const AVAILABLE_SHORTCUTS: ShortcutItem[] = [
   { id: 'pos', name: 'POS Kasir', href: '/pos', category: 'Penjualan', description: 'Transaksi kasir instan & cetak struk', icon: '💻', badge: 'Kasir' },
   { id: 'orders', name: 'Orders', href: '/orders', category: 'Penjualan', description: 'Daftar & status riwayat pesanan', icon: '🛒' },
   { id: 'invoices', name: 'Invoices', href: '/orders/invoices', category: 'Penjualan', description: 'Faktur & penagihan pembayaran', icon: '🧾' },
+  { id: 'reports_revenue', name: 'Laporan Revenue', href: '/reports/revenue', category: 'Penjualan', description: 'Analitik Gross Sales, Ongkir, Biaya, & Net Revenue', icon: '📊' },
   { id: 'products', name: 'Produk', href: '/products', category: 'Katalog', description: 'Kelola harga, stok, & variasi', icon: '📦' },
   { id: 'stock_opname', name: 'Stok Opname', href: '/stock-opname', category: 'Katalog', description: 'Penyesuaian jumlah stok fisik', icon: '📋' },
   { id: 'customers', name: 'Pelanggan', href: '/customers', category: 'Pelanggan', description: 'Database & riwayat kontak pembeli', icon: '👥' },
@@ -249,6 +250,10 @@ export default function OnboardingPage() {
   // Consume instant UserContext state (0ms delay via cache)
   const { currentUserRole, currentUserPermissions, isWabaActive, bizLoading: isRoleLoading, userProfile, activeBusiness } = useUserContext()
 
+  const canViewOverview = useMemo(() => {
+    return canAccessPath('/dashboard', { role: currentUserRole, permissions: currentUserPermissions, isWabaActive })
+  }, [currentUserRole, currentUserPermissions, isWabaActive])
+
   // Real-time Metrics State
   const [metrics, setMetrics] = useState({
     sales: 0, salesGrowth: 0, trx: 0, trxGrowth: 0, avg: 0, avgGrowth: 0, cust: 0, custGrowth: 0, newCust: 0, newCustGrowth: 0, clv: 0, clvGrowth: 0
@@ -258,7 +263,10 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     async function fetchMetrics() {
-      if (!activeBusiness?.id) return
+      if (!activeBusiness?.id || !canViewOverview) {
+        setIsLoadingMetrics(false)
+        return
+      }
       const businessTimezone = activeBusiness?.timezone || 'Asia/Jakarta'
       const cacheKey = `${activeBusiness.id}_${dateFilter}_${businessTimezone}`
 
@@ -404,7 +412,7 @@ export default function OnboardingPage() {
       }
     }
     fetchMetrics()
-  }, [dateFilter, supabase, activeBusiness?.id, activeBusiness?.timezone])
+  }, [dateFilter, supabase, activeBusiness?.id, activeBusiness?.timezone, canViewOverview])
 
 
   // Manual checked state stored in localStorage
@@ -712,6 +720,7 @@ export default function OnboardingPage() {
             <p className="text-xs sm:text-sm text-slate-500 mt-0.5">Semoga hari ini penjualan makin lancar.</p>
           </div>
           
+          {canViewOverview && (
           <div className="flex items-center gap-1.5 bg-white/60 backdrop-blur-md border border-slate-200/60 px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg shadow-sm w-fit relative group">
             <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -731,9 +740,11 @@ export default function OnboardingPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </div>
+          )}
         </div>
 
         {/* Dashboard Card */}
+        {canViewOverview && (
         <div className={`bg-gradient-to-br from-emerald-50 to-emerald-100/50 border border-emerald-100 rounded-2xl p-4 sm:p-5 shadow-sm transition-opacity duration-300 ${isLoadingMetrics ? 'opacity-60' : 'opacity-100'}`}>
           <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
             
@@ -831,6 +842,7 @@ export default function OnboardingPage() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Aksi Cepat */}
         <div>

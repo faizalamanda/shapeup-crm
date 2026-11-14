@@ -65,14 +65,31 @@ export function canAccessPath(href: string, context: AccessContext): boolean {
     return permissions.includes('manage_employees_salary')
   }
 
-  // 7. Akuntansi / Accounting Financials (Requires view_financials_no_salary)
+  // 7. Financial Reports inside Reports Menu (Laba Rugi, Neraca, Arus Kas)
+  if (
+    href.startsWith('/accounting/profit-loss') ||
+    href.startsWith('/accounting/balance-sheet') ||
+    href.startsWith('/accounting/cash-flow')
+  ) {
+    return (
+      permissions.includes('view_reports') ||
+      permissions.includes('view_financials_no_salary')
+    )
+  }
+
+  // 7b. Akuntansi Operasional (Pembayaran & Kas, Transaksi & Jurnal, COA)
   if (href.startsWith('/accounting')) {
     return permissions.includes('view_financials_no_salary')
   }
 
-  // 8. Overview / Dashboard
+  // 8. Overview / Dashboard (Tetap dibuka untuk semua role)
   if (href === '/dashboard') {
     return true
+  }
+
+  // 8b. Reports Analytics Module (Owner/Admin or staff with view_reports)
+  if (href.startsWith('/reports')) {
+    return permissions.includes('view_reports')
   }
 
   // 9. Pemasukan (Orders, Invoices, POS) & Customers

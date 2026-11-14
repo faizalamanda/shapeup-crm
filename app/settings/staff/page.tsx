@@ -22,6 +22,7 @@ export default function StaffSettings() {
   
   const PERMISSIONS_LIST = useMemo(() => [
     { key: 'full_access', label: 'Akses Penuh', desc: 'Akses penuh ke seluruh modul (P&L, Neraca, detail Gaji karyawan)' },
+    { key: 'view_reports', label: 'Akses Menu Reports', desc: 'Bisa melihat menu Reports (Revenue, Laporan Laba Rugi, Neraca Keuangan, & Laporan Arus Kas)' },
     { key: 'view_financials_no_salary', label: 'Keuangan Tanpa Gaji', desc: 'Bisa melihat P&L dan Neraca, tapi TIDAK BISA melihat rincian gaji per individu' },
     { key: 'input_journal_expenses', label: 'Input Jurnal & Pengeluaran', desc: 'Hanya bisa input Jurnal harian dan pengeluaran operasional. Tidak punya akses ke dashboard P&L' },
     { key: 'manage_invoices', label: 'Kelola Invoice (Piutang)', desc: 'Bisa mengelola Invoices (Piutang), Orders, POS, Customer, dan Produk' },

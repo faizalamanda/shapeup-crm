@@ -9,6 +9,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/onboarding') ||
     pathname.startsWith('/inbox') ||
     pathname.startsWith('/dashboard') ||
+    pathname.startsWith('/reports') ||
     pathname.startsWith('/marketing') ||
     pathname.startsWith('/settings') ||
     pathname.startsWith('/orders') ||
