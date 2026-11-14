@@ -403,12 +403,14 @@ export default function ProductImportPage() {
         'Satuan': 'pcs',
         'Tipe Produk': 'Barang Fisik',
         'Manajemen Stok': 'Di Track',
+        'Bisa Dijual di POS': 'Ya',
         'Grosir Min Qty 1': 6,
         'Grosir Harga 1': 160000,
         'Grosir Min Qty 2': 12,
         'Grosir Harga 2': 150000,
         'Grosir Min Qty 3': '',
         'Grosir Harga 3': '',
+        'Harga Grosir': '',
         'Grup Modifier': '',
         'Deskripsi': 'Contoh produk varian 3 dimensi (Warna - Ukuran - Bahan)'
       },
@@ -423,12 +425,14 @@ export default function ProductImportPage() {
         'Satuan': 'pcs',
         'Tipe Produk': 'Barang Fisik',
         'Manajemen Stok': 'Di Track',
+        'Bisa Dijual di POS': 'Ya',
         'Grosir Min Qty 1': 6,
         'Grosir Harga 1': 160000,
         'Grosir Min Qty 2': 12,
         'Grosir Harga 2': 150000,
         'Grosir Min Qty 3': '',
         'Grosir Harga 3': '',
+        'Harga Grosir': '',
         'Grup Modifier': '',
         'Deskripsi': 'Varian ukuran L katun merah'
       },
@@ -443,12 +447,14 @@ export default function ProductImportPage() {
         'Satuan': 'pcs',
         'Tipe Produk': 'Barang Fisik',
         'Manajemen Stok': 'Di Track',
+        'Bisa Dijual di POS': 'Ya',
         'Grosir Min Qty 1': '',
         'Grosir Harga 1': '',
         'Grosir Min Qty 2': '',
         'Grosir Harga 2': '',
         'Grosir Min Qty 3': '',
         'Grosir Harga 3': '',
+        'Harga Grosir': '',
         'Grup Modifier': '',
         'Deskripsi': 'Varian ukuran XL katun hitam'
       },
@@ -463,12 +469,14 @@ export default function ProductImportPage() {
         'Satuan': 'cup',
         'Tipe Produk': 'Barang Fisik',
         'Manajemen Stok': 'Di Track',
+        'Bisa Dijual di POS': 'Ya',
         'Grosir Min Qty 1': '',
         'Grosir Harga 1': '',
         'Grosir Min Qty 2': '',
         'Grosir Harga 2': '',
         'Grosir Min Qty 3': '',
         'Grosir Harga 3': '',
+        'Harga Grosir': '',
         'Grup Modifier': 'Topping Minuman',
         'Deskripsi': 'Menu F&B dengan varian suhu dan modifier topping'
       },
@@ -483,12 +491,14 @@ export default function ProductImportPage() {
         'Satuan': 'cup',
         'Tipe Produk': 'Barang Fisik',
         'Manajemen Stok': 'Di Track',
+        'Bisa Dijual di POS': 'Ya',
         'Grosir Min Qty 1': '',
         'Grosir Harga 1': '',
         'Grosir Min Qty 2': '',
         'Grosir Harga 2': '',
         'Grosir Min Qty 3': '',
         'Grosir Harga 3': '',
+        'Harga Grosir': '',
         'Grup Modifier': 'Topping Minuman',
         'Deskripsi': 'Menu F&B kopi panas dengan modifier'
       },
@@ -503,14 +513,60 @@ export default function ProductImportPage() {
         'Satuan': 'pcs',
         'Tipe Produk': 'Barang Fisik',
         'Manajemen Stok': 'Di Track',
+        'Bisa Dijual di POS': 'Ya',
         'Grosir Min Qty 1': 5,
         'Grosir Harga 1': 180000,
         'Grosir Min Qty 2': 12,
         'Grosir Harga 2': 165000,
         'Grosir Min Qty 3': 24,
         'Grosir Harga 3': 150000,
+        'Harga Grosir': '',
         'Grup Modifier': '',
-        'Deskripsi': 'Contoh produk tunggal dengan harga grosir bertingkat'
+        'Deskripsi': 'Contoh produk tunggal dengan harga grosir kolom berpasangan'
+      },
+      {
+        'Nama Produk': 'Kaos Polos Cotton Combed 30s',
+        'Nama Varian': '',
+        'SKU': 'KPC-003',
+        'Kategori': 'Pakaian Pria',
+        'Harga Jual': 55000,
+        'HPP Modal': 28000,
+        'Stok Awal': 200,
+        'Satuan': 'pcs',
+        'Tipe Produk': 'Barang Fisik',
+        'Manajemen Stok': 'Di Track',
+        'Bisa Dijual di POS': 'Ya',
+        'Grosir Min Qty 1': '',
+        'Grosir Harga 1': '',
+        'Grosir Min Qty 2': '',
+        'Grosir Harga 2': '',
+        'Grosir Min Qty 3': '',
+        'Grosir Harga 3': '',
+        'Harga Grosir': '6:45000; 12:42000; 24:39000; 50:36000; 100:33000; 200:30000',
+        'Grup Modifier': '',
+        'Deskripsi': 'Contoh grosir > 5 tier menggunakan 1 kolom ringkas (qty:harga)'
+      },
+      {
+        'Nama Produk': 'Biji Kopi Arabica',
+        'Nama Varian': '',
+        'SKU': 'BAHAN-KOPI-GR',
+        'Kategori': 'Bahan Baku',
+        'Harga Jual': 0,
+        'HPP Modal': 250,
+        'Stok Awal': 5000,
+        'Satuan': 'gram',
+        'Tipe Produk': 'Barang Fisik',
+        'Manajemen Stok': 'Di Track',
+        'Bisa Dijual di POS': 'Tidak',
+        'Grosir Min Qty 1': '',
+        'Grosir Harga 1': '',
+        'Grosir Min Qty 2': '',
+        'Grosir Harga 2': '',
+        'Grosir Min Qty 3': '',
+        'Grosir Harga 3': '',
+        'Harga Grosir': '',
+        'Grup Modifier': '',
+        'Deskripsi': 'Contoh Bahan Baku murni (tidak tampil di layar kasir POS)'
       },
       {
         'Nama Produk': 'Jasa Jahit & Vermak',
@@ -523,12 +579,14 @@ export default function ProductImportPage() {
         'Satuan': 'layanan',
         'Tipe Produk': 'Jasa',
         'Manajemen Stok': 'Tersedia',
+        'Bisa Dijual di POS': 'Ya',
         'Grosir Min Qty 1': '',
         'Grosir Harga 1': '',
         'Grosir Min Qty 2': '',
         'Grosir Harga 2': '',
         'Grosir Min Qty 3': '',
         'Grosir Harga 3': '',
+        'Harga Grosir': '',
         'Grup Modifier': '',
         'Deskripsi': 'Contoh produk non-stok fisik (Jasa/Layanan)'
       }
@@ -537,7 +595,7 @@ export default function ProductImportPage() {
     const ws = XLSX.utils.json_to_sheet(templateData)
     // Format column widths for neat Excel display
     ws['!cols'] = [
-      { wch: 26 }, // Nama Produk
+      { wch: 28 }, // Nama Produk
       { wch: 22 }, // Nama Varian
       { wch: 16 }, // SKU
       { wch: 18 }, // Kategori
@@ -547,14 +605,16 @@ export default function ProductImportPage() {
       { wch: 10 }, // Satuan
       { wch: 14 }, // Tipe Produk
       { wch: 16 }, // Manajemen Stok
+      { wch: 18 }, // Bisa Dijual di POS
       { wch: 16 }, // Grosir Min Qty 1
       { wch: 16 }, // Grosir Harga 1
       { wch: 16 }, // Grosir Min Qty 2
       { wch: 16 }, // Grosir Harga 2
       { wch: 16 }, // Grosir Min Qty 3
       { wch: 16 }, // Grosir Harga 3
+      { wch: 42 }, // Harga Grosir
       { wch: 20 }, // Grup Modifier
-      { wch: 35 }  // Deskripsi
+      { wch: 40 }  // Deskripsi
     ]
 
     const wb = XLSX.utils.book_new()
@@ -759,16 +819,27 @@ export default function ProductImportPage() {
         }
       }
 
-      // Parse is_sellable (default true unless explicitly false/tidak/no/bahan)
+      // Parse is_sellable (explicit value wins; otherwise auto-detect Bahan Baku from Category/Type)
       const sellStr = String(rawIsSellable ?? '').trim().toLowerCase()
-      result.is_sellable = !(
-        sellStr === 'tidak' ||
-        sellStr === 'no' ||
-        sellStr === 'false' ||
-        sellStr === '0' ||
-        sellStr.includes('bahan') ||
-        sellStr.includes('material')
-      )
+      const catLower = String(result.category || '').toLowerCase()
+      const isRawMaterialHint =
+        catLower.includes('bahan baku') ||
+        catLower.includes('raw material') ||
+        typeStr.includes('bahan baku') ||
+        typeStr.includes('raw material')
+
+      if (!sellStr) {
+        result.is_sellable = !isRawMaterialHint
+      } else {
+        result.is_sellable = !(
+          sellStr === 'tidak' ||
+          sellStr === 'no' ||
+          sellStr === 'false' ||
+          sellStr === '0' ||
+          sellStr.includes('bahan') ||
+          sellStr.includes('material')
+        )
+      }
 
       // Parse hpp_type (default fixed unless explicitly variable/resep)
       const hppStr = String(rawHppType ?? '').trim().toLowerCase()
@@ -1570,8 +1641,13 @@ export default function ProductImportPage() {
                         </td>
                         <td className="py-2.5 px-3 font-bold text-gray-900">
                           <div>{row.name}</div>
-                          {(Array.isArray(row.variants) && row.variants.length > 0 || (Array.isArray(row.modifier_groups) && row.modifier_groups.length > 0) || (Array.isArray(row.wholesale_tiers) && row.wholesale_tiers.length > 0)) && (
+                          {(Array.isArray(row.variants) && row.variants.length > 0 || (Array.isArray(row.modifier_groups) && row.modifier_groups.length > 0) || (Array.isArray(row.wholesale_tiers) && row.wholesale_tiers.length > 0) || row.is_sellable === false) && (
                             <div className="flex flex-wrap items-center gap-1 mt-1">
+                              {row.is_sellable === false && (
+                                <span className="text-[9px] font-extrabold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                                  🧪 Bahan Baku (Non-POS)
+                                </span>
+                              )}
                               {Array.isArray(row.variants) && row.variants.length > 0 && (
                                 <span className="text-[9px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded">
                                   🏷️ {row.variants.length} Varian ({row.variants.slice(0, 2).map((v: any) => v.name).join(', ')}{row.variants.length > 2 ? '...' : ''})
