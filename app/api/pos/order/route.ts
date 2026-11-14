@@ -13,10 +13,42 @@ const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.tes
 
 export async function POST(req: Request) {
   try {
-    // 1. Auth + Business ID — uses JWT fast-path + cached profile
-    const ctx = await getApiContext()
+    const body = await req.json().catch(() => null)
+    if (!body) {
+      return NextResponse.json({ error: 'Body permintaan tidak valid' }, { status: 400 })
+    }
+
+    const reqBizId = typeof body?.business_id === 'string' ? body.business_id : undefined
+
+    // 1. Auth + Business ID — uses JWT fast-path + explicit business scope
+    const ctx = await getApiContext({ req, requestedBusinessId: reqBizId })
     if (ctx.error) return ctx.error
     const { user, businessId, supabase, supabaseAdmin } = ctx
+
+    const clientAttemptId = typeof body?.client_attempt_id === 'string' ? body.client_attempt_id.trim() : ''
+
+    // 1a. Idempotency Guard: Prevent duplicate order insertion on network retry / offline flush
+    if (clientAttemptId) {
+      const { data: existingOrder } = await (supabaseAdmin || supabase)
+        .from('orders')
+        .select('id, order_number, payment_status, amount_paid, grand_total, raw_source_data')
+        .eq('business_id', businessId)
+        .contains('raw_source_data', { client_attempt_id: clientAttemptId })
+        .maybeSingle()
+
+      if (existingOrder) {
+        return NextResponse.json({
+          success: true,
+          deduplicated: true,
+          order_id: existingOrder.id,
+          order_number: existingOrder.order_number,
+          queue_number: existingOrder.raw_source_data?.queue_number || 1,
+          payment_status: existingOrder.payment_status,
+          amount_paid: existingOrder.amount_paid,
+          outstanding: Math.max(0, Number(existingOrder.grand_total || 0) - Number(existingOrder.amount_paid || 0))
+        }, { status: 200 })
+      }
+    }
 
     // 2. POS Session Gating: Enforce Active Shift
     const { data: activeShift, error: shiftErr } = await supabase
@@ -36,11 +68,6 @@ export async function POST(req: Request) {
       return NextResponse.json({
         error: 'Sesi kasir belum dibuka. Anda harus membuka shift kasir terlebih dahulu sebelum melayani transaksi.'
       }, { status: 403 })
-    }
-
-    const body = await req.json().catch(() => null)
-    if (!body) {
-      return NextResponse.json({ error: 'Body permintaan tidak valid' }, { status: 400 })
     }
 
     const { 
@@ -239,6 +266,7 @@ export async function POST(req: Request) {
         : (totalPaid > 0 ? 'partial' : 'unpaid')
 
     // 6. Generate Authoritative Atomic Sequential Order Number & Queue Number
+    //    (Or preserve device-partitioned offline fallback number so paper receipt == DB)
     const { data: bizData } = await (supabaseAdmin || supabase)
       .from('businesses')
       .select('timezone')
@@ -246,12 +274,34 @@ export async function POST(req: Request) {
       .maybeSingle()
     const businessTimezone = getBusinessTimezone(bizData?.timezone)
 
-    const gen = await generatePosOrderNumber(businessId, supabaseAdmin || supabase, {
-      timezone: businessTimezone,
-      prefix: 'POS'
-    })
-    const orderNumber = gen.orderNumber
-    const queueNumber = gen.queueNumber
+    let orderNumber = ''
+    let queueNumber = 1
+    const isOfflineFallback = Boolean(body?.is_offline_fallback)
+    const candidateOfflineNum = typeof clientOrderNumber === 'string' ? clientOrderNumber.trim().toUpperCase() : ''
+
+    if (isOfflineFallback && /^POS-\d{6,8}-OF[A-Z0-9]+-\d+$/.test(candidateOfflineNum)) {
+      const { data: dupCheck } = await (supabaseAdmin || supabase)
+        .from('orders')
+        .select('id')
+        .eq('business_id', businessId)
+        .eq('order_number', candidateOfflineNum)
+        .maybeSingle()
+
+      if (!dupCheck) {
+        orderNumber = candidateOfflineNum
+        const suffixMatch = candidateOfflineNum.match(/-(\d+)$/)
+        queueNumber = suffixMatch ? parseInt(suffixMatch[1], 10) || 1 : 1
+      }
+    }
+
+    if (!orderNumber) {
+      const gen = await generatePosOrderNumber(businessId, supabaseAdmin || supabase, {
+        timezone: businessTimezone,
+        prefix: 'POS'
+      })
+      orderNumber = gen.orderNumber
+      queueNumber = gen.queueNumber
+    }
     
     const lineItems = items.map((item: any, idx: number) => {
       const isCustom = String(item.id).startsWith('custom-')
@@ -304,7 +354,9 @@ export async function POST(req: Request) {
     const rawSourceData = {
       id: orderNumber,
       queue_number: queueNumber,
+      client_attempt_id: clientAttemptId || undefined,
       client_optimistic_number: clientOrderNumber || undefined,
+      is_offline_fallback: isOfflineFallback || undefined,
       status: 'completed',
       currency: 'IDR',
       total: String(numGrandTotal),

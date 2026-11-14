@@ -93,19 +93,21 @@ Jika RPC database belum diaplikasikan pada basis data staging/lokal:
 
 ---
 
-## 6. 0ms Instant Optimistic Action & In-Place Reconciliation Standard
+## 6. 0ms Optimistic UI + Hybrid Adaptive Order Numbering (`posCheckoutService.ts`)
 
-### 6.1 Masalah Jeda Pemrosesan (*Processing Delay*)
-Jika kasir harus menunggu `await fetch('/api/pos/order')` sebelum modal pembayaran tertutup, kasir mengalami jeda 300–800ms (*processing lag*). Pada ritel cepat dan antrean panjang, jeda ini memicu frustrasi dan merusak ergonomi kasir.
+### 6.1 Masalah Cetak Optimistik Lokal (*LocalStorage Desync & Double-Print*)
+Pendekatan lama (`getNextOptimisticOrderNumber()` berbasis `localStorage` sebelum konfirmasi server) memiliki 2 celah fatal pada operasional multi-kasir/multi-perangkat:
+1. **Desinkronisasi & Nomor Kembar di Kertas:** Dua perangkat dengan `localStorage` tertinggal sama-sama mencetak nomor lokal yang identik (misal `0003` dua kali), sementara server menyimpannya ke nomor berbeda.
+2. **Double Auto-Print saat Rekonsiliasi:** Ketika server mengembalikan nomor resmi berbeda lalu `setReceiptData` membuat referensi objek baru, `PaymentSuccessView` menganggapnya struk baru dan mencetak ulang transaksi yang sama untuk kedua kalinya.
 
-### 6.2 Pola 0ms Optimistik
-1. **Pembangkitan Monotonik di Memori (0ms):**
-   Fungsi `getNextOptimisticOrderNumber()` menghitung tanggal lokal `YYYYMMDD` dan menarik counter harian lokal dari `localStorage` (`shapeup_pos_counter_${bId}_${dStr}`).
-2. **Eksekusi Seketika (0ms):**
-   Modal bayar langsung ditutup, keranjang dikosongkan, dan struk belanja langsung dibuka seketika dalam **0 milidetik**.
-3. **Sinkronisasi Latar Belakang & Rekonsiliasi In-Place:**
-   `fetch('/api/pos/order')` berjalan di latar belakang (*fire-and-forget*). Ketika respons server tiba, `setReceiptData` merekonsiliasi nomor nota secara mulus *in-place* tanpa kedipan (*zero flicker*).
-4. **Pre-Warming Spekulatif:**
-   Saat `POSWorkspace` pertama kali dibuka, kueri non-blocking mengambil nomor nota tertinggi hari ini untuk mem-prewarm `localStorage` sebelum kasir melakukan checkout pertama.
+### 6.2 Arsitektur Solusi: Hybrid Adaptive (`lib/pos/posCheckoutService.ts`)
+1. **UI Kasir Tetap 0ms:**
+   Modal bayar langsung ditutup, keranjang dikosongkan, stok lokal L1/L2 dipotong, dan layar `PaymentSuccessView` (kembalian & ringkasan) langsung terbuka dalam **0 milidetik** dengan status `isSyncingOrderNumber = true`.
+2. **Online Path (~150–300ms):**
+   `submitPosCheckout()` mengirim `POST /api/pos/order` beserta `business_id`, header `x-business-id`, dan `client_attempt_id` (UUID idempotency). Server menjalankan RPC atomik `generate_pos_order_number` (`POS-YYYYMMDD-XXXX`), lalu printer mencetak **1 kali** dengan nomor yang 100% identik dengan database.
+3. **Offline / Timeout Fallback (> 5 detik):**
+   Jika perangkat offline atau server melebihi 5 detik, sistem otomatis menerbitkan nomor partisi perangkat anti-bentrok `POS-YYMMDD-OF<TAG>-<SEQ>` (19 karakter, pas 1 baris thermal 58mm) dan menyimpannya ke `localStorage` outbox queue (`shapeup_pos_offline_queue_v1_${businessId}`). Saat koneksi pulih (`online` event / mount), `flushOfflineOrderQueue()` mengirim ulang dengan `is_offline_fallback: true` dan server mempertahankan nomor `OF` tersebut apa adanya.
+4. **Anti-Double-Print Guard (`PaymentSuccessView.tsx`):**
+   `autoPrintedReceiptRef` melacak `checkoutAttemptId` (string unik per checkout) alih-alih referensi objek `receipt`, menjamin **zero double-print** dalam kondisi apa pun.
 
 

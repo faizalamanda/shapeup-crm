@@ -29,6 +29,8 @@ type Props = {
   onClose: () => void
   receipt: ReceiptData | null
   orderId?: string | null
+  checkoutAttemptId?: string | null
+  isSyncingOrderNumber?: boolean
   onVoidSuccess?: () => void
 }
 
@@ -44,6 +46,8 @@ export default function PaymentSuccessView({
   onClose,
   receipt,
   orderId,
+  checkoutAttemptId,
+  isSyncingOrderNumber = false,
   onVoidSuccess
 }: Props) {
   const { activeBusiness } = useUserContext()
@@ -73,10 +77,11 @@ export default function PaymentSuccessView({
   const [needsBtReconnect, setNeedsBtReconnect] = useState(false)
   const [isReconnectingBt, setIsReconnectingBt] = useState(false)
 
-  // Synchronous guards (state updates are async and must not re-trigger effects)
+  // Synchronous guards keyed by stable checkoutAttemptId (never object reference)
   const isPrintingRef = useRef(false)
-  const autoPrintedReceiptRef = useRef<ReceiptData | null>(null)
-  const autoPrintedKitchenRef = useRef<ReceiptData | null>(null)
+  const lastInitializedKeyRef = useRef<string | null>(null)
+  const autoPrintedReceiptRef = useRef<string | null>(null)
+  const autoPrintedKitchenRef = useRef<string | null>(null)
 
   // 1. Kiosk Armor: Handle Mobile/Browser Back Button without kicking user to /onboarding
   useModalBackHandler(isOpen, onClose)
@@ -232,12 +237,21 @@ export default function PaymentSuccessView({
   }, [handlePrintKitchen])
 
   // Initial Load: Printer Settings & Optional Auto-print.
-  // Depends ONLY on [isOpen, receipt] so changing connectionType/paperSize or finishing a print
-  // never resets state or triggers another auto-print (see skill pos-session-ledger §19.5).
+  // Keyed by stable checkoutKey so updating receipt.orderNumber in-place never resets state
+  // or triggers a duplicate second print.
+  const checkoutKey = checkoutAttemptId || (receipt ? `${receipt.orderNumber}_${receipt.grandTotal}` : null)
+
   useEffect(() => {
-    if (isOpen && receipt) {
-      const settings = getStoredReceiptSettings(receipt.businessName)
-      const resolvedConn: ConnectionType = isAndroidApp() ? 'bluetooth' : (settings.connectionType || 'system')
+    if (!isOpen || !receipt || !checkoutKey) {
+      if (!isOpen) lastInitializedKeyRef.current = null
+      return
+    }
+
+    const settings = getStoredReceiptSettings(receipt.businessName)
+    const resolvedConn: ConnectionType = isAndroidApp() ? 'bluetooth' : (settings.connectionType || 'system')
+
+    if (lastInitializedKeyRef.current !== checkoutKey) {
+      lastInitializedKeyRef.current = checkoutKey
       if (settings.paperSize) setPaperSize(settings.paperSize)
       setConnectionType(resolvedConn)
       setPrintMessage(null)
@@ -245,24 +259,27 @@ export default function PaymentSuccessView({
       setHasPrinted(false)
       setHasPrintedKitchen(false)
       setNeedsBtReconnect(false)
+    }
 
-      if (settings.autoPrintAfterPayment && autoPrintedReceiptRef.current !== receipt) {
-        autoPrintedReceiptRef.current = receipt
-        handlePrintRef.current(resolvedConn, settings.paperSize)
-      }
+    // Wait until authoritative server order_number (or 5s offline fallback) is ready before auto-printing
+    if (isSyncingOrderNumber) return
 
-      // Check auto-print for kitchen tickets (hanya jika mode F&B / aktif produksi)
-      if (posMode.enableProductionTickets) {
-        const kSettings = getStoredKitchenSettings(settings.paperSize)
-        if (kSettings.enabled && kSettings.autoPrintOnPayment && autoPrintedKitchenRef.current !== receipt) {
-          autoPrintedKitchenRef.current = receipt
-          setTimeout(() => {
-            handlePrintKitchenRef.current(true)
-          }, 750)
-        }
+    if (settings.autoPrintAfterPayment && autoPrintedReceiptRef.current !== checkoutKey) {
+      autoPrintedReceiptRef.current = checkoutKey
+      handlePrintRef.current(resolvedConn, settings.paperSize)
+    }
+
+    // Check auto-print for kitchen tickets (hanya jika mode F&B / aktif produksi)
+    if (posMode.enableProductionTickets) {
+      const kSettings = getStoredKitchenSettings(settings.paperSize)
+      if (kSettings.enabled && kSettings.autoPrintOnPayment && autoPrintedKitchenRef.current !== checkoutKey) {
+        autoPrintedKitchenRef.current = checkoutKey
+        setTimeout(() => {
+          handlePrintKitchenRef.current(true)
+        }, 750)
       }
     }
-  }, [isOpen, receipt, posMode.enableProductionTickets])
+  }, [isOpen, receipt, checkoutKey, isSyncingOrderNumber, posMode.enableProductionTickets])
 
   // Void Handler (Immediate reversal with confirmation)
   const handleVoid = async () => {
@@ -334,8 +351,8 @@ export default function PaymentSuccessView({
         if (hasPrinted) {
           // If already printed, Enter proceeds to new sale
           onClose()
-        } else {
-          // Otherwise Enter prints receipt
+        } else if (!isSyncingOrderNumber) {
+          // Otherwise Enter prints receipt once order number is confirmed
           handlePrint()
         }
       }
@@ -343,7 +360,7 @@ export default function PaymentSuccessView({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose, hasPrinted, handlePrint])
+  }, [isOpen, onClose, hasPrinted, isSyncingOrderNumber, handlePrint])
 
   if (!isOpen || !receipt || !mounted) return null
 
@@ -375,7 +392,11 @@ export default function PaymentSuccessView({
               </span>
             </div>
             <p className="text-xs text-slate-400 font-mono">
-              Nota: <strong className="text-slate-200">#{receipt.orderNumber}</strong>
+              {isSyncingOrderNumber ? (
+                <span className="text-amber-300">⏳ Mengonfirmasi no. nota...</span>
+              ) : (
+                <>Nota: <strong className="text-slate-200">#{receipt.orderNumber}</strong></>
+              )}
             </p>
           </div>
         </div>
@@ -581,11 +602,13 @@ export default function PaymentSuccessView({
               <button
                 type="button"
                 onClick={() => handlePrint()}
-                disabled={isPrinting}
+                disabled={isPrinting || isSyncingOrderNumber}
                 className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-extrabold text-xs sm:text-sm shadow-sm transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
                 title="Cetak struk ke printer kasir (Tekan Enter)"
               >
-                {isPrinting ? (
+                {isSyncingOrderNumber ? (
+                  <span>Menyiapkan Nota...</span>
+                ) : isPrinting ? (
                   <span>Mencetak...</span>
                 ) : (
                   <>
