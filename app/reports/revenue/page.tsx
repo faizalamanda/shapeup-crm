@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
-import { fetchAllSupabaseRows } from '@/lib/chunkedQueryHelper'
 import { TemporalDateFilter, TemporalFilterValue } from '@/components/ui/TemporalDateFilter'
 import {
   getLocalDateRangeLimits,
@@ -32,7 +31,13 @@ type RawOrderRow = {
   discount_amount?: number | string | null
   other_fees?: number | string | null
   grand_total?: number | string | null
-  raw_source_data?: Record<string, any> | null
+  raw_source_data?: Record<string, any> | string | null
+}
+
+type RefundPaymentRow = {
+  order_id: string | null
+  amount: number | string | null
+  payment_kind: string | null
 }
 
 type EnrichedOrder = {
@@ -60,6 +65,17 @@ type ChartType = 'bar' | 'line'
 type SortField = 'date' | 'orders' | 'grossSales' | 'taxes' | 'shipping' | 'fees' | 'refunds' | 'netRevenue'
 type GroupDimension = 'country' | 'city' | 'province' | 'platform' | 'payment_method' | 'courier'
 type SecondaryGroupDimension = 'tax_code' | 'platform' | 'payment_method' | 'courier' | 'city'
+type GroupSortField =
+  | 'label'
+  | 'orders'
+  | 'netRevenue'
+  | 'avgNet'
+  | 'grossSales'
+  | 'avgGross'
+  | 'taxes'
+  | 'refundedTax'
+  | 'totalTax'
+  | 'shippingTax'
 
 type BucketRow = {
   key: string
@@ -72,6 +88,7 @@ type BucketRow = {
   fees: number
   refunds: number
   netRevenue: number
+  compLabel: string
   compOrders: number
   compGrossSales: number
   compNetRevenue: number
@@ -87,17 +104,142 @@ type GroupedRow = {
   grossSales: number
   avgGross: number
   taxes: number
+  refundedTax: number
+  totalTax: number
+  shippingTax: number
   shipping: number
 }
 
-// L1 In-Memory Cache per businessId + date window
-const revenueOrdersCache = new Map<string, { rows: RawOrderRow[]; timestamp: number }>()
-const CACHE_TTL_MS = 60 * 1000 // 60s L1 cache
+// L1 In-Memory Cache ONLY (No localStorage / sessionStorage)
+const revenueOrdersMemoryCache = new Map<string, { rows: RawOrderRow[]; timestamp: number }>()
+const refundMapMemoryCache = new Map<string, { map: Map<string, number>; timestamp: number }>()
+const CACHE_TTL_MS = 60 * 1000 // 60s RAM cache
+
+const ORDER_SELECT_COLUMNS =
+  'id, order_number, order_date, order_date_utc, created_at, status, payment_status, payment_method, source_platform, subtotal, shipping_cost, discount_amount, other_fees, grand_total, raw_source_data'
+
+/**
+ * Parallel Range Chunking Helper (> 1,000 rows without sequential waterfall):
+ * 1. Fetches chunk 0..999 with exact count.
+ * 2. Fires all remaining chunks (1000..1999, 2000..2999, ...) simultaneously via Promise.all().
+ */
+async function fetchOrdersWindowParallel(
+  businessId: string,
+  startIso: string,
+  endIso: string
+): Promise<RawOrderRow[]> {
+  const cacheKey = `${businessId}_${startIso || 'ALL'}_${endIso || 'ALL'}`
+  const cached = revenueOrdersMemoryCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.rows
+  }
+
+  const chunkSize = 1000
+  const buildBaseQuery = () => {
+    let q = supabase
+      .from('orders')
+      .select(ORDER_SELECT_COLUMNS, { count: 'exact' })
+      .eq('business_id', businessId)
+
+    if (startIso) q = q.gte('order_date', startIso)
+    if (endIso) q = q.lte('order_date', endIso)
+
+    return q.order('order_date', { ascending: true }).order('id', { ascending: true })
+  }
+
+  const firstRes = await buildBaseQuery().range(0, chunkSize - 1)
+  if (firstRes.error) throw firstRes.error
+
+  const firstRows = (firstRes.data || []) as RawOrderRow[]
+  const totalCount = firstRes.count ?? firstRows.length
+
+  if (firstRows.length < chunkSize || totalCount <= chunkSize) {
+    revenueOrdersMemoryCache.set(cacheKey, { rows: firstRows, timestamp: Date.now() })
+    return firstRows
+  }
+
+  const cappedTotal = Math.min(totalCount, 50_000)
+  const chunkPromises: Promise<RawOrderRow[]>[] = []
+
+  for (let offset = chunkSize; offset < cappedTotal; offset += chunkSize) {
+    const from = offset
+    const to = offset + chunkSize - 1
+    chunkPromises.push(
+      (async () => {
+        let q = supabase
+          .from('orders')
+          .select(ORDER_SELECT_COLUMNS)
+          .eq('business_id', businessId)
+        if (startIso) q = q.gte('order_date', startIso)
+        if (endIso) q = q.lte('order_date', endIso)
+        const { data, error } = await q
+          .order('order_date', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to)
+        if (error) throw error
+        return (data || []) as RawOrderRow[]
+      })()
+    )
+  }
+
+  const remainingChunks = await Promise.all(chunkPromises)
+  const allRows = firstRows.concat(...remainingChunks)
+  revenueOrdersMemoryCache.set(cacheKey, { rows: allRows, timestamp: Date.now() })
+  return allRows
+}
+
+/**
+ * Fetches all refund entries from `order_payments` (`payment_kind = 'refund'`) in parallel
+ * so partial & full POS/Invoice/Order refunds are accurately reflected.
+ */
+async function fetchRefundMapParallel(businessId: string): Promise<Map<string, number>> {
+  const cached = refundMapMemoryCache.get(businessId)
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.map
+  }
+
+  const map = new Map<string, number>()
+  try {
+    const { data, error } = await supabase
+      .from('order_payments')
+      .select('order_id, amount, payment_kind')
+      .eq('business_id', businessId)
+      .eq('payment_kind', 'refund')
+      .limit(10000)
+
+    if (!error && Array.isArray(data)) {
+      for (const row of data as RefundPaymentRow[]) {
+        if (!row.order_id) continue
+        const amt = Math.abs(Number(row.amount) || 0)
+        if (amt > 0) {
+          map.set(row.order_id, (map.get(row.order_id) || 0) + amt)
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[RevenueReport] order_payments refund fetch warning:', e)
+  }
+
+  refundMapMemoryCache.set(businessId, { map, timestamp: Date.now() })
+  return map
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const COUNTED_STATUSES = new Set(['shipped', 'processing', 'complete', 'completed'])
+const COUNTED_STATUSES = new Set([
+  'shipped',
+  'processing',
+  'complete',
+  'completed',
+  'refunded',
+  'returned',
+  'returnrequest',
+])
+
+const REFUNDED_STATUSES = new Set(['refunded', 'returned', 'returnrequest'])
+
 const normalizeStatus = (status?: string | null) =>
   (status || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+
 const isCountedStatus = (status?: string | null) =>
   COUNTED_STATUSES.has(normalizeStatus(status))
 
@@ -170,7 +312,7 @@ function getBucketKeyAndLabel(localYmd: string, granularity: Granularity): { key
     const wmName = monthNames[dt.getUTCMonth()]
     return {
       key: `${wy}-${wm}-${wd}`,
-      label: `${wd} ${wmName} '${String(wy).slice(-2)}`,
+      label: `${ Number(wd) } ${wmName} '${String(wy).slice(-2)}`,
       sortKey: `${wy}-${wm}-${wd}`,
     }
   }
@@ -178,7 +320,7 @@ function getBucketKeyAndLabel(localYmd: string, granularity: Granularity): { key
   // Day
   return {
     key: localYmd,
-    label: `${dStr} ${mName} '${shortYear}`,
+    label: `${Number(dStr)} ${mName} '${shortYear}`,
     sortKey: localYmd,
   }
 }
@@ -189,6 +331,8 @@ function generateDateBuckets(startYmd: string, endYmd: string, granularity: Gran
 
   const [sy, sm, sd] = startYmd.split('-').map(Number)
   const [ey, em, ed] = endYmd.split('-').map(Number)
+  if (!sy || !sm || !sd || !ey || !em || !ed) return []
+
   const curr = new Date(Date.UTC(sy, sm - 1, sd))
   const end = new Date(Date.UTC(ey, em - 1, ed))
 
@@ -209,18 +353,34 @@ function generateDateBuckets(startYmd: string, endYmd: string, granularity: Gran
   return Array.from(map.values())
 }
 
-function enrichOrderRow(row: RawOrderRow, businessTz: string): EnrichedOrder {
+function parseRawSourceData(rawInput: RawOrderRow['raw_source_data']): Record<string, any> {
+  if (!rawInput) return {}
+  if (typeof rawInput === 'object' && !Array.isArray(rawInput)) return rawInput
+  if (typeof rawInput === 'string') {
+    try {
+      const parsed = JSON.parse(rawInput)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+  return {}
+}
+
+function enrichOrderRow(
+  row: RawOrderRow,
+  businessTz: string,
+  refundByOrderId: Map<string, number>
+): EnrichedOrder {
   const localDate = getOrderLocalDateKey(row, businessTz)
-  const raw = (row.raw_source_data && typeof row.raw_source_data === 'object') ? row.raw_source_data : {}
+  const raw = parseRawSourceData(row.raw_source_data)
+
+  const status = normalizeStatus(row.status)
+  const paymentStatus = String(row.payment_status || (status === 'completed' ? 'paid' : 'unpaid')).toLowerCase()
 
   const shipping = Math.max(0, toNum(row.shipping_cost) || toNum(raw.shipping_total))
   const fees = Math.max(0, Math.abs(toNum(row.other_fees)))
   const taxes = Math.max(0, toNum(raw.total_tax) || toNum(raw.tax_total))
-
-  let refunds = 0
-  if (Array.isArray(raw.refunds) && raw.refunds.length > 0) {
-    refunds = raw.refunds.reduce((sum: number, r: any) => sum + Math.abs(toNum(r?.total)), 0)
-  }
 
   const grandTotal = Math.max(0, toNum(row.grand_total))
   const subtotal = Math.max(0, toNum(row.subtotal))
@@ -228,6 +388,23 @@ function enrichOrderRow(row: RawOrderRow, businessTz: string): EnrichedOrder {
 
   // Gross Sales matches Metorik convention: total order value before deducting shipping, fees, taxes, refunds
   const grossSales = grandTotal > 0 ? grandTotal : Math.max(0, subtotal - discount + shipping + fees + taxes)
+
+  // Refunds from 3 sources (without double counting):
+  // 1) raw_source_data.refunds (WooCommerce partial/full refunds)
+  let rawRefunds = 0
+  if (Array.isArray(raw.refunds) && raw.refunds.length > 0) {
+    rawRefunds = raw.refunds.reduce(
+      (sum: number, r: any) => sum + Math.abs(toNum(r?.total ?? r?.amount ?? r?.refund_total)),
+      0
+    )
+  }
+  // 2) order_payments (payment_kind = 'refund')
+  const ledgerRefund = refundByOrderId.get(String(row.id)) || 0
+  // 3) Full order status is 'refunded' / 'returned' / 'return-request'
+  const isRefundStatus = REFUNDED_STATUSES.has(status) || paymentStatus === 'refunded'
+  const statusImpliedRefund = isRefundStatus ? Math.max(0, grossSales - shipping - fees - taxes) || grossSales : 0
+
+  const refunds = Math.min(grossSales, Math.max(rawRefunds, ledgerRefund, statusImpliedRefund))
   const netRevenue = Math.max(0, grossSales - taxes - shipping - fees - refunds)
 
   // Dimensional attributes
@@ -247,8 +424,6 @@ function enrichOrderRow(row: RawOrderRow, businessTz: string): EnrichedOrder {
 
   const platform = String(row.source_platform || raw.source_order?.channel || 'Manual').trim() || 'Manual'
   const paymentMethod = String(row.payment_method || raw.payment_method_title || 'Manual / Tunai').trim() || 'Manual / Tunai'
-  const status = normalizeStatus(row.status)
-  const paymentStatus = String(row.payment_status || (status === 'completed' ? 'paid' : 'unpaid')).toLowerCase()
 
   return {
     id: String(row.id),
@@ -306,49 +481,57 @@ export default function RevenueReportPage() {
   const [sortField, setSortField] = useState<SortField>('date')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
-  // Grouped By Dimensions
+  // Grouped By Dimensions & Sorting
   const [primaryGroupDim, setPrimaryGroupDim] = useState<GroupDimension>('country')
-  const [secondaryGroupDim, setSecondaryGroupDim] = useState<SecondaryGroupDimension>('tax_code')
+  const [primaryGroupSortField, setPrimaryGroupSortField] = useState<GroupSortField>('netRevenue')
+  const [primaryGroupSortOrder, setPrimaryGroupSortOrder] = useState<'asc' | 'desc'>('desc')
 
-  // Data state
-  const [rawOrders, setRawOrders] = useState<RawOrderRow[]>([])
+  const [secondaryGroupDim, setSecondaryGroupDim] = useState<SecondaryGroupDimension>('tax_code')
+  const [secondaryGroupSortField, setSecondaryGroupSortField] = useState<GroupSortField>('netRevenue')
+  const [secondaryGroupSortOrder, setSecondaryGroupSortOrder] = useState<'asc' | 'desc'>('desc')
+
+  // Data state (Current + Comparison + Refund Map loaded in parallel)
+  const [rawCurrentOrders, setRawCurrentOrders] = useState<RawOrderRow[]>([])
+  const [rawComparisonOrders, setRawComparisonOrders] = useState<RawOrderRow[]>([])
+  const [refundByOrderId, setRefundByOrderId] = useState<Map<string, number>>(() => new Map())
   const [loading, setLoading] = useState<boolean>(true)
   const [isSyncing, setIsSyncing] = useState<boolean>(false)
   const hasLoadedOnceRef = useRef<boolean>(false)
 
-  // Determine overall query window covering both Current and Comparison ranges
-  const queryBounds = useMemo(() => {
-    const currStart = temporalFilter.startDate || ''
-    const currEnd = temporalFilter.endDate || ''
-
-    if (!currStart || !currEnd || temporalFilter.preset === 'all') {
+  // Compute separate UTC bounds for Current Period and Comparison Period so they can be fetched in parallel
+  const periodBounds = useMemo(() => {
+    const isAllTime = temporalFilter.preset === 'all' || (!temporalFilter.startDate && !temporalFilter.endDate)
+    if (isAllTime) {
       return {
-        minStart: '',
-        maxEnd: '',
-        utcStart: '',
-        utcEnd: '',
+        isAllTime: true,
+        currUtcStart: '',
+        currUtcEnd: '',
+        hasComp: false,
+        compUtcStart: '',
+        compUtcEnd: '',
       }
     }
 
-    const compStart =
-      temporalFilter.comparisonMode !== 'none' && temporalFilter.comparisonStartDate
-        ? temporalFilter.comparisonStartDate
-        : currStart
-    const compEnd =
-      temporalFilter.comparisonMode !== 'none' && temporalFilter.comparisonEndDate
-        ? temporalFilter.comparisonEndDate
-        : currEnd
+    const currBounds = localDateToUtcBounds(temporalFilter.startDate, temporalFilter.endDate, businessTz)
+    const hasComp =
+      temporalFilter.comparisonMode !== 'none' &&
+      Boolean(temporalFilter.comparisonStartDate && temporalFilter.comparisonEndDate)
 
-    const minStart = compStart && compStart < currStart ? compStart : currStart
-    const maxEnd = compEnd && compEnd > currEnd ? compEnd : currEnd
-
-    const utcBounds = localDateToUtcBounds(minStart, maxEnd, businessTz)
+    const compBounds = hasComp
+      ? localDateToUtcBounds(temporalFilter.comparisonStartDate, temporalFilter.comparisonEndDate, businessTz)
+      : { startOfDayISO: null, endOfDayISO: null }
 
     return {
-      minStart,
-      maxEnd,
-      utcStart: utcBounds.startOfDayISO || `${minStart}T00:00:00.000Z`,
-      utcEnd: utcBounds.endOfDayISO || `${maxEnd}T23:59:59.999Z`,
+      isAllTime: false,
+      currUtcStart: currBounds.startOfDayISO || `${temporalFilter.startDate}T00:00:00.000Z`,
+      currUtcEnd: currBounds.endOfDayISO || `${temporalFilter.endDate}T23:59:59.999Z`,
+      hasComp,
+      compUtcStart: hasComp
+        ? compBounds.startOfDayISO || `${temporalFilter.comparisonStartDate}T00:00:00.000Z`
+        : '',
+      compUtcEnd: hasComp
+        ? compBounds.endOfDayISO || `${temporalFilter.comparisonEndDate}T23:59:59.999Z`
+        : '',
     }
   }, [
     temporalFilter.preset,
@@ -360,127 +543,132 @@ export default function RevenueReportPage() {
     businessTz,
   ])
 
-  const fetchRevenueOrders = useCallback(async (bid: string, startIso: string, endIso: string) => {
-    const cacheKey = `${bid}_${startIso || 'ALL'}_${endIso || 'ALL'}`
-    const cached = revenueOrdersCache.get(cacheKey)
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-      setRawOrders(cached.rows)
-      hasLoadedOnceRef.current = true
-      setLoading(false)
-      return
-    }
+  const loadParallelReportData = useCallback(
+    async (
+      bid: string,
+      currStartIso: string,
+      currEndIso: string,
+      hasComp: boolean,
+      compStartIso: string,
+      compEndIso: string
+    ) => {
+      if (!hasLoadedOnceRef.current) {
+        setLoading(true)
+      }
+      setIsSyncing(true)
 
-    if (!hasLoadedOnceRef.current) {
-      setLoading(true)
-    }
-    setIsSyncing(true)
+      try {
+        const [currRows, compRows, refundMap] = await Promise.all([
+          fetchOrdersWindowParallel(bid, currStartIso, currEndIso),
+          hasComp && compStartIso && compEndIso
+            ? fetchOrdersWindowParallel(bid, compStartIso, compEndIso)
+            : Promise.resolve([] as RawOrderRow[]),
+          fetchRefundMapParallel(bid),
+        ])
 
-    try {
-      const rows = await fetchAllSupabaseRows<RawOrderRow>(
-        (from, to) => {
-          let q = supabase
-            .from('orders')
-            .select(
-              'id, order_number, order_date, order_date_utc, created_at, status, payment_status, payment_method, source_platform, subtotal, shipping_cost, discount_amount, other_fees, grand_total, raw_source_data'
-            )
-            .eq('business_id', bid)
-
-          if (startIso) {
-            q = q.gte('order_date', startIso)
-          }
-          if (endIso) {
-            q = q.lte('order_date', endIso)
-          }
-
-          return q
-            .order('order_date', { ascending: true })
-            .order('id', { ascending: true })
-            .range(from, to)
-        },
-        1000
-      )
-
-      revenueOrdersCache.set(cacheKey, { rows, timestamp: Date.now() })
-      hasLoadedOnceRef.current = true
-      setRawOrders(rows)
-    } catch (err) {
-      console.error('[RevenueReport] Failed to load orders:', err)
-    } finally {
-      setLoading(false)
-      setIsSyncing(false)
-    }
-  }, [])
+        hasLoadedOnceRef.current = true
+        setRawCurrentOrders(currRows)
+        setRawComparisonOrders(compRows)
+        setRefundByOrderId(refundMap)
+      } catch (err) {
+        console.error('[RevenueReport] Failed to load parallel report data:', err)
+      } finally {
+        setLoading(false)
+        setIsSyncing(false)
+      }
+    },
+    []
+  )
 
   useEffect(() => {
     if (!activeBusiness?.id) return
-    fetchRevenueOrders(activeBusiness.id, queryBounds.utcStart, queryBounds.utcEnd)
-  }, [activeBusiness?.id, queryBounds.utcStart, queryBounds.utcEnd, fetchRevenueOrders])
+    loadParallelReportData(
+      activeBusiness.id,
+      periodBounds.currUtcStart,
+      periodBounds.currUtcEnd,
+      periodBounds.hasComp,
+      periodBounds.compUtcStart,
+      periodBounds.compUtcEnd
+    )
+  }, [
+    activeBusiness?.id,
+    periodBounds.currUtcStart,
+    periodBounds.currUtcEnd,
+    periodBounds.hasComp,
+    periodBounds.compUtcStart,
+    periodBounds.compUtcEnd,
+    loadParallelReportData,
+  ])
 
   // Enrich & filter counted orders
-  const allEnrichedOrders = useMemo(() => {
-    return rawOrders
+  const enrichedCurrentAll = useMemo(() => {
+    const isAllTime = periodBounds.isAllTime
+    const cStart = temporalFilter.startDate
+    const cEnd = temporalFilter.endDate
+    return rawCurrentOrders
       .filter(r => isCountedStatus(r.status))
-      .map(r => enrichOrderRow(r, businessTz))
-      .filter(o => Boolean(o.localDate && /^\d{4}-\d{2}-\d{2}$/.test(o.localDate)))
-  }, [rawOrders, businessTz])
+      .map(r => enrichOrderRow(r, businessTz, refundByOrderId))
+      .filter(
+        o =>
+          Boolean(o.localDate && /^\d{4}-\d{2}-\d{2}$/.test(o.localDate)) &&
+          (isAllTime || (o.localDate >= cStart && o.localDate <= cEnd))
+      )
+  }, [rawCurrentOrders, businessTz, refundByOrderId, periodBounds.isAllTime, temporalFilter.startDate, temporalFilter.endDate])
+
+  const enrichedComparisonAll = useMemo(() => {
+    if (!periodBounds.hasComp) return []
+    const pStart = temporalFilter.comparisonStartDate
+    const pEnd = temporalFilter.comparisonEndDate
+    return rawComparisonOrders
+      .filter(r => isCountedStatus(r.status))
+      .map(r => enrichOrderRow(r, businessTz, refundByOrderId))
+      .filter(
+        o =>
+          Boolean(o.localDate && /^\d{4}-\d{2}-\d{2}$/.test(o.localDate)) &&
+          o.localDate >= pStart &&
+          o.localDate <= pEnd
+      )
+  }, [rawComparisonOrders, businessTz, refundByOrderId, periodBounds.hasComp, temporalFilter.comparisonStartDate, temporalFilter.comparisonEndDate])
 
   // Available segment options
   const availablePlatforms = useMemo(() => {
     const set = new Set<string>()
-    allEnrichedOrders.forEach(o => {
+    enrichedCurrentAll.forEach(o => {
+      if (o.platform) set.add(o.platform)
+    })
+    enrichedComparisonAll.forEach(o => {
       if (o.platform) set.add(o.platform)
     })
     return Array.from(set).sort()
-  }, [allEnrichedOrders])
+  }, [enrichedCurrentAll, enrichedComparisonAll])
 
   const availablePaymentMethods = useMemo(() => {
     const set = new Set<string>()
-    allEnrichedOrders.forEach(o => {
+    enrichedCurrentAll.forEach(o => {
+      if (o.paymentMethod) set.add(o.paymentMethod)
+    })
+    enrichedComparisonAll.forEach(o => {
       if (o.paymentMethod) set.add(o.paymentMethod)
     })
     return Array.from(set).sort()
-  }, [allEnrichedOrders])
+  }, [enrichedCurrentAll, enrichedComparisonAll])
 
-  // Apply Segment Filters
-  const segmentedOrders = useMemo(() => {
-    return allEnrichedOrders.filter(o => {
+  // Apply Segment Filters to Current & Comparison Orders
+  const currentOrders = useMemo(() => {
+    return enrichedCurrentAll.filter(o => {
       if (selectedPlatform !== 'all' && o.platform !== selectedPlatform) return false
       if (selectedPaymentMethod !== 'all' && o.paymentMethod !== selectedPaymentMethod) return false
       return true
     })
-  }, [allEnrichedOrders, selectedPlatform, selectedPaymentMethod])
+  }, [enrichedCurrentAll, selectedPlatform, selectedPaymentMethod])
 
-  // Partition into Current Period vs Comparison Period
-  const { currentOrders, comparisonOrders } = useMemo(() => {
-    const curr: EnrichedOrder[] = []
-    const comp: EnrichedOrder[] = []
-
-    const isAllTime = temporalFilter.preset === 'all' || (!temporalFilter.startDate && !temporalFilter.endDate)
-    const cStart = temporalFilter.startDate
-    const cEnd = temporalFilter.endDate
-    const pStart = temporalFilter.comparisonStartDate
-    const pEnd = temporalFilter.comparisonEndDate
-    const hasComp = !isAllTime && temporalFilter.comparisonMode !== 'none' && Boolean(pStart && pEnd)
-
-    for (const o of segmentedOrders) {
-      if (isAllTime || (o.localDate >= cStart && o.localDate <= cEnd)) {
-        curr.push(o)
-      }
-      if (hasComp && o.localDate >= pStart && o.localDate <= pEnd) {
-        comp.push(o)
-      }
-    }
-
-    return { currentOrders: curr, comparisonOrders: comp }
-  }, [
-    segmentedOrders,
-    temporalFilter.preset,
-    temporalFilter.startDate,
-    temporalFilter.endDate,
-    temporalFilter.comparisonMode,
-    temporalFilter.comparisonStartDate,
-    temporalFilter.comparisonEndDate,
-  ])
+  const comparisonOrders = useMemo(() => {
+    return enrichedComparisonAll.filter(o => {
+      if (selectedPlatform !== 'all' && o.platform !== selectedPlatform) return false
+      if (selectedPaymentMethod !== 'all' && o.paymentMethod !== selectedPaymentMethod) return false
+      return true
+    })
+  }, [enrichedComparisonAll, selectedPlatform, selectedPaymentMethod])
 
   // Aggregate KPI Summary Totals (Current vs Comparison)
   const kpiSummary = useMemo(() => {
@@ -529,7 +717,15 @@ export default function RevenueReportPage() {
 
   // Build Time-Series Buckets for Chart & Revenue Breakdown Table
   const bucketRows = useMemo<BucketRow[]>(() => {
-    const bucketsTemplate = generateDateBuckets(temporalFilter.startDate, temporalFilter.endDate, granularity)
+    let effStart = temporalFilter.startDate
+    let effEnd = temporalFilter.endDate
+    if ((!effStart || !effEnd) && currentOrders.length > 0) {
+      const sortedDates = currentOrders.map(o => o.localDate).sort()
+      effStart = sortedDates[0]
+      effEnd = sortedDates[sortedDates.length - 1]
+    }
+
+    const bucketsTemplate = generateDateBuckets(effStart, effEnd, granularity)
     const bucketMap = new Map<string, BucketRow>()
 
     bucketsTemplate.forEach(b => {
@@ -544,6 +740,7 @@ export default function RevenueReportPage() {
         fees: 0,
         refunds: 0,
         netRevenue: 0,
+        compLabel: '',
         compOrders: 0,
         compGrossSales: 0,
         compNetRevenue: 0,
@@ -565,6 +762,7 @@ export default function RevenueReportPage() {
           fees: 0,
           refunds: 0,
           netRevenue: 0,
+          compLabel: '',
           compOrders: 0,
           compGrossSales: 0,
           compNetRevenue: 0,
@@ -583,12 +781,12 @@ export default function RevenueReportPage() {
     // Align comparison buckets by index
     if (temporalFilter.comparisonMode !== 'none' && temporalFilter.comparisonStartDate && temporalFilter.comparisonEndDate) {
       const compTemplate = generateDateBuckets(temporalFilter.comparisonStartDate, temporalFilter.comparisonEndDate, granularity)
-      const compMap = new Map<string, { orders: number; gross: number; net: number }>()
-      compTemplate.forEach(cb => compMap.set(cb.key, { orders: 0, gross: 0, net: 0 }))
+      const compMap = new Map<string, { label: string; orders: number; gross: number; net: number }>()
+      compTemplate.forEach(cb => compMap.set(cb.key, { label: cb.label, orders: 0, gross: 0, net: 0 }))
 
       for (const co of comparisonOrders) {
         const cb = getBucketKeyAndLabel(co.localDate, granularity)
-        const existing = compMap.get(cb.key) || { orders: 0, gross: 0, net: 0 }
+        const existing = compMap.get(cb.key) || { label: cb.label, orders: 0, gross: 0, net: 0 }
         existing.orders += 1
         existing.gross += co.grossSales
         existing.net += co.netRevenue
@@ -601,6 +799,7 @@ export default function RevenueReportPage() {
         const item = bucketMap.get(k)
         const cVal = compVals[idx]
         if (item && cVal) {
+          item.compLabel = cVal.label
           item.compOrders = cVal.orders
           item.compGrossSales = cVal.gross
           item.compNetRevenue = cVal.net
@@ -619,6 +818,87 @@ export default function RevenueReportPage() {
     temporalFilter.comparisonEndDate,
     granularity,
   ])
+
+  // Smart X-Axis Ticks (prevents overlapping/squishing on Week and Day views)
+  const visibleXAxisTicks = useMemo(() => {
+    const total = bucketRows.length
+    if (total === 0) return []
+    const maxLabels = granularity === 'month' ? 12 : 8
+    if (total <= maxLabels) {
+      return bucketRows.map((b, index) => ({
+        key: b.key,
+        label: b.label,
+        index,
+        pct: total === 1 ? 50 : (index / (total - 1)) * 100,
+      }))
+    }
+
+    const step = Math.max(1, Math.ceil((total - 1) / (maxLabels - 1)))
+    const ticks: Array<{ key: string; label: string; index: number; pct: number }> = []
+    for (let i = 0; i < total; i += step) {
+      ticks.push({
+        key: bucketRows[i].key,
+        label: bucketRows[i].label,
+        index: i,
+        pct: (i / (total - 1)) * 100,
+      })
+    }
+
+    // Add last label if not too close to the previous tick
+    const lastIdx = total - 1
+    const lastInserted = ticks[ticks.length - 1]
+    if (lastInserted && lastInserted.index !== lastIdx) {
+      if (lastIdx - lastInserted.index >= Math.floor(step * 0.55)) {
+        ticks.push({
+          key: bucketRows[lastIdx].key,
+          label: bucketRows[lastIdx].label,
+          index: lastIdx,
+          pct: 100,
+        })
+      }
+    }
+
+    return ticks
+  }, [bucketRows, granularity])
+
+  // Tight, Metorik-Grade Y-Axis Scale Calculation (No Excessive Top Gap)
+  const chartScale = useMemo(() => {
+    const dataMax = Math.max(
+      ...bucketRows.map(b =>
+        Math.max(b.grossSales, b.netRevenue, showCompareOnChart ? Math.max(b.compGrossSales, b.compNetRevenue) : 0)
+      ),
+      0
+    )
+
+    if (dataMax <= 0) {
+      const fallbackMax = 10_000_000
+      return {
+        max: fallbackMax,
+        ticks: [10_000_000, 8_000_000, 6_000_000, 4_000_000, 2_000_000, 0],
+      }
+    }
+
+    // Target 6 to 8 intervals so the tallest bar reaches 88% - 96% of the chart height
+    const roughStep = dataMax / 7
+    const mag = Math.pow(10, Math.floor(Math.log10(roughStep)))
+    const niceMultipliers = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 8, 10]
+    let step = mag
+    for (const m of niceMultipliers) {
+      if (m * mag >= roughStep) {
+        step = m * mag
+        break
+      }
+    }
+
+    const numIntervals = Math.max(4, Math.ceil((dataMax * 1.03) / step))
+    const topMax = numIntervals * step
+    const ticks: number[] = []
+    for (let i = numIntervals; i >= 0; i--) {
+      ticks.push(i * step)
+    }
+
+    return { max: topMax, ticks }
+  }, [bucketRows, showCompareOnChart])
 
   // For the Breakdown Table: filter to buckets that have orders (or show all if none have orders) and apply sorting
   const sortedTableRows = useMemo(() => {
@@ -645,7 +925,10 @@ export default function RevenueReportPage() {
   // Build Grouped By rows helper
   const buildGroupedRows = useCallback(
     (dim: GroupDimension | SecondaryGroupDimension): GroupedRow[] => {
-      const map = new Map<string, { label: string; flag?: string; orders: number; net: number; gross: number; taxes: number; shipping: number }>()
+      const map = new Map<
+        string,
+        { label: string; flag?: string; orders: number; net: number; gross: number; taxes: number; refundedTax: number; shipping: number }
+      >()
 
       for (const o of currentOrders) {
         let key = ''
@@ -678,7 +961,7 @@ export default function RevenueReportPage() {
           label = key
         }
 
-        const existing = map.get(key) || { label, flag, orders: 0, net: 0, gross: 0, taxes: 0, shipping: 0 }
+        const existing = map.get(key) || { label, flag, orders: 0, net: 0, gross: 0, taxes: 0, refundedTax: 0, shipping: 0 }
         existing.orders += 1
         existing.net += o.netRevenue
         existing.gross += o.grossSales
@@ -687,26 +970,64 @@ export default function RevenueReportPage() {
         map.set(key, existing)
       }
 
-      return Array.from(map.entries())
-        .map(([key, val]) => ({
-          key,
-          label: val.label,
-          flag: val.flag,
-          orders: val.orders,
-          netRevenue: val.net,
-          avgNet: val.orders > 0 ? val.net / val.orders : 0,
-          grossSales: val.gross,
-          avgGross: val.orders > 0 ? val.gross / val.orders : 0,
-          taxes: val.taxes,
-          shipping: val.shipping,
-        }))
-        .sort((a, b) => b.netRevenue - a.netRevenue)
+      return Array.from(map.entries()).map(([key, val]) => ({
+        key,
+        label: val.label,
+        flag: val.flag,
+        orders: val.orders,
+        netRevenue: val.net,
+        avgNet: val.orders > 0 ? val.net / val.orders : 0,
+        grossSales: val.gross,
+        avgGross: val.orders > 0 ? val.gross / val.orders : 0,
+        taxes: val.taxes,
+        refundedTax: val.refundedTax,
+        totalTax: val.taxes,
+        shippingTax: 0,
+        shipping: val.shipping,
+      }))
     },
     [currentOrders]
   )
 
-  const primaryGroupedRows = useMemo(() => buildGroupedRows(primaryGroupDim), [buildGroupedRows, primaryGroupDim])
-  const secondaryGroupedRows = useMemo(() => buildGroupedRows(secondaryGroupDim), [buildGroupedRows, secondaryGroupDim])
+  const sortGroupedList = useCallback((rows: GroupedRow[], field: GroupSortField, order: 'asc' | 'desc') => {
+    return [...rows].sort((a, b) => {
+      let cmp = 0
+      if (field === 'label') {
+        cmp = a.label.localeCompare(b.label)
+      } else {
+        cmp = (a[field] as number) - (b[field] as number)
+      }
+      return order === 'asc' ? cmp : -cmp
+    })
+  }, [])
+
+  const primaryGroupedRows = useMemo(
+    () => sortGroupedList(buildGroupedRows(primaryGroupDim), primaryGroupSortField, primaryGroupSortOrder),
+    [buildGroupedRows, primaryGroupDim, primaryGroupSortField, primaryGroupSortOrder, sortGroupedList]
+  )
+
+  const secondaryGroupedRows = useMemo(
+    () => sortGroupedList(buildGroupedRows(secondaryGroupDim), secondaryGroupSortField, secondaryGroupSortOrder),
+    [buildGroupedRows, secondaryGroupDim, secondaryGroupSortField, secondaryGroupSortOrder, sortGroupedList]
+  )
+
+  const handlePrimaryGroupSort = (field: GroupSortField) => {
+    if (primaryGroupSortField === field) {
+      setPrimaryGroupSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setPrimaryGroupSortField(field)
+      setPrimaryGroupSortOrder(field === 'label' ? 'asc' : 'desc')
+    }
+  }
+
+  const handleSecondaryGroupSort = (field: GroupSortField) => {
+    if (secondaryGroupSortField === field) {
+      setSecondaryGroupSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSecondaryGroupSortField(field)
+      setSecondaryGroupSortOrder(field === 'label' ? 'asc' : 'desc')
+    }
+  }
 
   // Export Handlers
   const handleExportBreakdown = () => {
@@ -735,7 +1056,7 @@ export default function RevenueReportPage() {
     const ws = XLSX.utils.json_to_sheet(exportData)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Revenue Breakdown')
-    XLSX.writeFile(wb, `Revenue_Breakdown_${temporalFilter.startDate}_to_${temporalFilter.endDate}.xlsx`)
+    XLSX.writeFile(wb, `Revenue_Breakdown_${temporalFilter.startDate || 'ALL'}_to_${temporalFilter.endDate || 'ALL'}.xlsx`)
   }
 
   const handleExportGrouped = (rows: GroupedRow[], dimName: string) => {
@@ -750,31 +1071,8 @@ export default function RevenueReportPage() {
     const ws = XLSX.utils.json_to_sheet(exportData)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Grouped Revenue')
-    XLSX.writeFile(wb, `Revenue_Grouped_${dimName}_${temporalFilter.startDate}.xlsx`)
+    XLSX.writeFile(wb, `Revenue_Grouped_${dimName}_${temporalFilter.startDate || 'ALL'}.xlsx`)
   }
-
-  // Chart Y-Axis Scale Calculation
-  const chartScale = useMemo(() => {
-    const maxVal = Math.max(
-      ...bucketRows.map(b => Math.max(b.grossSales, showCompareOnChart ? b.compGrossSales : 0)),
-      1
-    )
-    // Round up to a clean nice number for 8 ticks
-    const roughStep = maxVal / 7
-    const mag = Math.pow(10, Math.floor(Math.log10(roughStep || 1)))
-    const residual = roughStep / mag
-    let step = mag
-    if (residual > 5) step = 10 * mag
-    else if (residual > 2) step = 5 * mag
-    else if (residual > 1) step = 2 * mag
-
-    const topMax = Math.max(step * 7, 1000000)
-    const ticks: number[] = []
-    for (let i = 7; i >= 0; i--) {
-      ticks.push((topMax / 7) * i)
-    }
-    return { max: topMax, ticks }
-  }, [bucketRows, showCompareOnChart])
 
   const renderGrowthPill = (pct: number, reverse = false) => {
     const rounded = Math.round(pct * 10) / 10
@@ -810,323 +1108,407 @@ export default function RevenueReportPage() {
     tax_code: 'Tax Rate Code',
   }
 
-  return (
-    <div className="min-h-screen bg-[#F4F6FA] text-slate-800 p-4 sm:p-6 md:p-8 space-y-6">
-      <div className="max-w-[1360px] mx-auto space-y-5">
+  // Adaptive bar spacing so Day (365 bars), Week (52 bars), and Month (12 bars) all render cleanly
+  const barGapClass =
+    bucketRows.length > 80
+      ? 'gap-[1px] px-0.5'
+      : bucketRows.length > 24
+      ? 'gap-1 px-1'
+      : 'gap-1.5 sm:gap-2.5 px-2'
 
-        {/* ── TOP HEADER BAR (Metorik Style) ─────────────────────────────── */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-center gap-3 flex-wrap">
+  const barBorderClass = bucketRows.length > 40 ? 'border' : 'border-2'
+
+  return (
+    <div className="space-y-5 text-slate-800 su-fade-in">
+      {/* ── TOP HEADER BAR (Metorik Style, Full Main Layout Width) ─────── */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-500 hover:text-slate-800 shadow-2xs transition cursor-pointer"
+            title="Kembali"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+
+          <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+            Revenue
+          </h1>
+
+          {/* Segment Filter Button & Popover */}
+          <div className="relative">
             <button
               type="button"
-              onClick={() => router.back()}
-              className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-500 hover:text-slate-800 shadow-2xs transition cursor-pointer"
-              title="Kembali"
+              onClick={() => setIsSegmentOpen(prev => !prev)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer shadow-2xs ${
+                selectedPlatform !== 'all' || selectedPaymentMethod !== 'all'
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 hover:bg-indigo-50/40'
+              }`}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="15 18 9 12 15 6" />
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
               </svg>
+              <span>Segment</span>
+              {(selectedPlatform !== 'all' || selectedPaymentMethod !== 'all') && (
+                <span className="ml-0.5 px-1.5 py-0.2 bg-white/20 rounded-full text-[10px]">
+                  Aktif
+                </span>
+              )}
             </button>
 
-            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
-              Revenue
-            </h1>
+            {isSegmentOpen && (
+              <div className="absolute left-0 mt-2 w-72 bg-white border border-slate-200 rounded-xl shadow-xl p-4 z-40 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Filter Segmen Pesanan</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsSegmentOpen(false)}
+                    className="text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
 
-            {/* Segment Filter Button & Popover */}
-            <div className="relative">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Platform / Channel</label>
+                  <select
+                    value={selectedPlatform}
+                    onChange={e => setSelectedPlatform(e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="all">Semua Platform ({availablePlatforms.length})</option>
+                    {availablePlatforms.map(p => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Metode Pembayaran</label>
+                  <select
+                    value={selectedPaymentMethod}
+                    onChange={e => setSelectedPaymentMethod(e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="all">Semua Metode Bayar ({availablePaymentMethods.length})</option>
+                    {availablePaymentMethods.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {(selectedPlatform !== 'all' || selectedPaymentMethod !== 'all') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPlatform('all')
+                      setSelectedPaymentMethod('all')
+                    }}
+                    className="w-full py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-lg border border-rose-200 transition cursor-pointer"
+                  >
+                    Reset Filter Segmen
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {isSyncing && (
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-100">
+              <span className="w-2 h-2 rounded-full bg-indigo-600 animate-ping" />
+              Menyinkronkan...
+            </span>
+          )}
+        </div>
+
+        {/* Lifetimely / Metorik Grade Date & Comparison Filter */}
+        <div className="flex items-center justify-end">
+          <TemporalDateFilter
+            value={temporalFilter}
+            onChange={setTemporalFilter}
+            timezone={activeBusiness?.timezone}
+            showComparison={true}
+            allowAllTime={true}
+          />
+        </div>
+      </div>
+
+      {/* ── SUBTITLE & VIEW ORDERS LINK ────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-600 border-b border-slate-200/80 pb-3">
+        <p>
+          <strong className="font-bold text-slate-900">Net revenue</strong> yang Anda terima pada periode ini — penjualan kotor (gross sales) dikurangi pajak, ongkos kirim, biaya admin/layanan, dan refund.
+        </p>
+        <Link
+          href="/orders"
+          className="text-indigo-600 hover:text-indigo-800 font-bold inline-flex items-center gap-1 shrink-0 hover:underline"
+        >
+          <span>Lihat pesanan di laporan ini</span>
+          <span>&rsaquo;</span>
+        </Link>
+      </div>
+
+      {/* ── SECTION 1: CHART (LEFT) + KPI SUMMARY GRID (RIGHT) ─────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+
+        {/* LEFT: Revenue Bar / Line Chart Card (8 Cols) */}
+        <div className="lg:col-span-8 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between">
+          {/* Card Header */}
+          <div className="px-5 py-3.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h2 className="text-sm font-extrabold text-slate-900">Revenue</h2>
               <button
                 type="button"
-                onClick={() => setIsSegmentOpen(prev => !prev)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer shadow-2xs ${
-                  selectedPlatform !== 'all' || selectedPaymentMethod !== 'all'
-                    ? 'bg-indigo-600 text-white border-indigo-600'
-                    : 'bg-white text-indigo-600 border-indigo-200 hover:border-indigo-400 hover:bg-indigo-50/40'
-                }`}
+                onClick={handleExportBreakdown}
+                title="Download Data Grafik (Excel)"
+                className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition cursor-pointer"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
                 </svg>
-                <span>Segment</span>
-                {(selectedPlatform !== 'all' || selectedPaymentMethod !== 'all') && (
-                  <span className="ml-0.5 px-1.5 py-0.2 bg-white/20 rounded-full text-[10px]">
-                    Aktif
-                  </span>
-                )}
               </button>
 
-              {isSegmentOpen && (
-                <div className="absolute left-0 mt-2 w-72 bg-white border border-slate-200 rounded-xl shadow-xl p-4 z-40 space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                    <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Filter Segmen Pesanan</span>
-                    <button
-                      type="button"
-                      onClick={() => setIsSegmentOpen(false)}
-                      className="text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer"
-                    >
-                      ✕
-                    </button>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Platform / Channel</label>
-                    <select
-                      value={selectedPlatform}
-                      onChange={e => setSelectedPlatform(e.target.value)}
-                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <option value="all">Semua Platform ({availablePlatforms.length})</option>
-                      {availablePlatforms.map(p => (
-                        <option key={p} value={p}>{p}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Metode Pembayaran</label>
-                    <select
-                      value={selectedPaymentMethod}
-                      onChange={e => setSelectedPaymentMethod(e.target.value)}
-                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <option value="all">Semua Metode Bayar ({availablePaymentMethods.length})</option>
-                      {availablePaymentMethods.map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {(selectedPlatform !== 'all' || selectedPaymentMethod !== 'all') && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedPlatform('all')
-                        setSelectedPaymentMethod('all')
-                      }}
-                      className="w-full py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-lg border border-rose-200 transition cursor-pointer"
-                    >
-                      Reset Filter Segmen
-                    </button>
-                  )}
+              {showCompareOnChart && (
+                <div className="hidden sm:inline-flex items-center gap-3 ml-2 text-[11px] font-semibold text-slate-500">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-xs bg-[#6C72EE] inline-block" />
+                    <span>Periode Ini</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-xs bg-slate-300 border border-slate-400 inline-block" />
+                    <span>Pembanding</span>
+                  </span>
                 </div>
               )}
             </div>
 
-            {isSyncing && (
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-100">
-                <span className="w-2 h-2 rounded-full bg-indigo-600 animate-ping" />
-                Menyinkronkan...
-              </span>
-            )}
-          </div>
+            {/* Chart Controls */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setShowCompareOnChart(prev => !prev)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                  showCompareOnChart
+                    ? 'bg-indigo-50 text-indigo-700 border-indigo-300'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span>⇄</span>
+                <span>Compare</span>
+              </button>
 
-          {/* Lifetimely / Metorik Grade Date & Comparison Filter */}
-          <div className="flex items-center justify-end">
-            <TemporalDateFilter
-              value={temporalFilter}
-              onChange={setTemporalFilter}
-              timezone={activeBusiness?.timezone}
-              showComparison={true}
-              allowAllTime={true}
-            />
-          </div>
-        </div>
-
-        {/* ── SUBTITLE & VIEW ORDERS LINK ────────────────────────────────── */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-600 border-b border-slate-200/80 pb-3">
-          <p>
-            <strong className="font-bold text-slate-900">Net revenue</strong> yang Anda terima pada periode ini — penjualan kotor (gross sales) dikurangi pajak, ongkos kirim, biaya admin/layanan, dan refund.
-          </p>
-          <Link
-            href="/orders"
-            className="text-indigo-600 hover:text-indigo-800 font-bold inline-flex items-center gap-1 shrink-0 hover:underline"
-          >
-            <span>Lihat pesanan di laporan ini</span>
-            <span>&rsaquo;</span>
-          </Link>
-        </div>
-
-        {/* ── SECTION 1: CHART (LEFT) + KPI SUMMARY GRID (RIGHT) ─────────── */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
-
-          {/* LEFT: Revenue Bar / Line Chart Card (8 Cols) */}
-          <div className="lg:col-span-8 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between">
-            {/* Card Header */}
-            <div className="px-5 py-3.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <h2 className="text-sm font-extrabold text-slate-900">Revenue</h2>
+              {/* Bar vs Line Toggle */}
+              <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden bg-white">
                 <button
                   type="button"
-                  onClick={handleExportBreakdown}
-                  title="Download Data Grafik (Excel)"
-                  className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition cursor-pointer"
+                  onClick={() => setChartType('bar')}
+                  className={`p-1.5 transition cursor-pointer ${
+                    chartType === 'bar'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-slate-500 hover:bg-slate-50'
+                  }`}
+                  title="Bar Chart"
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <line x1="18" y1="20" x2="18" y2="10" />
+                    <line x1="12" y1="20" x2="12" y2="4" />
+                    <line x1="6" y1="20" x2="6" y2="14" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChartType('line')}
+                  className={`p-1.5 transition cursor-pointer border-l border-slate-200 ${
+                    chartType === 'line'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-slate-500 hover:bg-slate-50'
+                  }`}
+                  title="Line Chart"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <polyline points="22 12 18 8 13 15 9 11 2 18" />
                   </svg>
                 </button>
               </div>
 
-              {/* Chart Controls */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => setShowCompareOnChart(prev => !prev)}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
-                    showCompareOnChart
-                      ? 'bg-indigo-50 text-indigo-700 border-indigo-300'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <span>⇄</span>
-                  <span>Compare</span>
-                </button>
-
-                {/* Bar vs Line Toggle */}
-                <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden bg-white">
-                  <button
-                    type="button"
-                    onClick={() => setChartType('bar')}
-                    className={`p-1.5 transition cursor-pointer ${
-                      chartType === 'bar'
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-slate-500 hover:bg-slate-50'
-                    }`}
-                    title="Bar Chart"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                      <line x1="18" y1="20" x2="18" y2="10" />
-                      <line x1="12" y1="20" x2="12" y2="4" />
-                      <line x1="6" y1="20" x2="6" y2="14" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setChartType('line')}
-                    className={`p-1.5 transition cursor-pointer border-l border-slate-200 ${
-                      chartType === 'line'
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-slate-500 hover:bg-slate-50'
-                    }`}
-                    title="Line Chart"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                      <polyline points="22 12 18 8 13 15 9 11 2 18" />
-                    </svg>
-                  </button>
-                </div>
-
-                {/* Granularity Selector */}
-                <select
-                  value={granularity}
-                  onChange={e => setGranularity(e.target.value as Granularity)}
-                  className="px-2.5 py-1 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                >
-                  <option value="day">Day</option>
-                  <option value="week">Week</option>
-                  <option value="month">Month</option>
-                </select>
-              </div>
+              {/* Granularity Selector */}
+              <select
+                value={granularity}
+                onChange={e => setGranularity(e.target.value as Granularity)}
+                className="px-2.5 py-1 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+              >
+                <option value="day">Day</option>
+                <option value="week">Week</option>
+                <option value="month">Month</option>
+              </select>
             </div>
+          </div>
 
-            {/* Chart Body */}
-            <div className="p-5 flex-1 flex flex-col justify-between relative min-h-[340px]">
-              {/* Hover Tooltip Banner */}
-              {hoveredBucket && (
-                <div className="absolute top-3 right-5 z-20 bg-slate-900/95 text-white px-3.5 py-2.5 rounded-xl shadow-lg text-xs flex flex-wrap items-center gap-4 pointer-events-none border border-slate-700">
-                  <span className="font-extrabold text-amber-300">{hoveredBucket.label}</span>
-                  <span>
-                    Net: <strong className="font-mono">{formatIDR(hoveredBucket.netRevenue)}</strong>
+          {/* Chart Body */}
+          <div className="p-5 flex-1 flex flex-col justify-between relative min-h-[340px]">
+            {/* Hover Tooltip Banner */}
+            {hoveredBucket && (
+              <div className="absolute top-3 right-5 z-20 bg-slate-900/95 text-white px-3.5 py-2 rounded-xl shadow-lg text-xs flex flex-wrap items-center gap-3.5 pointer-events-none border border-slate-700">
+                <span className="font-extrabold text-amber-300">{hoveredBucket.label}</span>
+                <span>
+                  Net: <strong className="font-mono">{formatIDR(hoveredBucket.netRevenue)}</strong>
+                </span>
+                <span>
+                  Gross: <strong className="font-mono text-indigo-300">{formatIDR(hoveredBucket.grossSales)}</strong>
+                </span>
+                <span>
+                  Orders: <strong>{hoveredBucket.orders}</strong>
+                </span>
+                {showCompareOnChart && (
+                  <span className="border-l border-slate-700 pl-3 text-slate-300">
+                    Compare {hoveredBucket.compLabel ? `(${hoveredBucket.compLabel})` : ''}:{' '}
+                    <strong className="font-mono text-white">{formatIDR(hoveredBucket.compNetRevenue)}</strong>
                   </span>
-                  <span>
-                    Gross: <strong className="font-mono text-indigo-300">{formatIDR(hoveredBucket.grossSales)}</strong>
-                  </span>
-                  <span>
-                    Orders: <strong>{hoveredBucket.orders}</strong>
-                  </span>
-                </div>
-              )}
+                )}
+              </div>
+            )}
 
-              {loading ? (
-                <div className="flex-1 flex items-center justify-center text-xs font-bold text-slate-400 animate-pulse">
-                  Memuat grafik Revenue...
-                </div>
-              ) : bucketRows.length === 0 ? (
-                <div className="flex-1 flex items-center justify-center text-xs font-semibold text-slate-400">
-                  Tidak ada data transaksi pada rentang tanggal ini.
-                </div>
-              ) : (
-                <div className="flex-1 flex flex-col justify-between">
-                  {/* Plot Area with Y-Axis */}
-                  <div className="relative flex-1 flex min-h-[260px]">
-                    {/* Y-Axis Labels */}
-                    <div className="w-28 pr-3 flex flex-col justify-between text-[10px] font-mono text-slate-400 text-right select-none py-1">
-                      {chartScale.ticks.map((t, i) => (
-                        <span key={i} className="leading-none">{formatAxisIDR(t)}</span>
+            {loading ? (
+              <div className="flex-1 flex items-center justify-center text-xs font-bold text-slate-400 animate-pulse">
+                Memuat grafik Revenue...
+              </div>
+            ) : bucketRows.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center text-xs font-semibold text-slate-400">
+                Tidak ada data transaksi pada rentang tanggal ini.
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col justify-between">
+                {/* Plot Area with Y-Axis */}
+                <div className="relative flex-1 flex min-h-[260px]">
+                  {/* Y-Axis Labels */}
+                  <div className="w-24 sm:w-28 pr-3 flex flex-col justify-between text-[10px] font-mono text-slate-400 text-right select-none">
+                    {chartScale.ticks.map((t, i) => (
+                      <span key={i} className="leading-none">{formatAxisIDR(t)}</span>
+                    ))}
+                  </div>
+
+                  {/* Grid + Bars / Lines */}
+                  <div className="flex-1 relative border-b border-slate-200">
+                    {/* Horizontal Grid Lines */}
+                    <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
+                      {chartScale.ticks.map((_, i) => (
+                        <div key={i} className="w-full border-b border-dashed border-slate-100" />
                       ))}
                     </div>
 
-                    {/* Grid + Bars / Lines */}
-                    <div className="flex-1 relative border-b border-slate-200">
-                      {/* Horizontal Grid Lines */}
-                      <div className="absolute inset-0 flex flex-col justify-between pointer-events-none py-1">
-                        {chartScale.ticks.map((_, i) => (
-                          <div key={i} className="w-full border-b border-dashed border-slate-100" />
-                        ))}
-                      </div>
+                    {chartType === 'bar' ? (
+                      <div className={`absolute inset-0 flex items-end justify-between ${barGapClass}`}>
+                        {bucketRows.map((b) => {
+                          const grossPct = Math.min(100, (b.grossSales / chartScale.max) * 100)
+                          const netPct = Math.min(100, (b.netRevenue / chartScale.max) * 100)
+                          const deductionPct = Math.max(0, grossPct - netPct)
+                          const compGrossPct = Math.min(100, (b.compGrossSales / chartScale.max) * 100)
+                          const compNetPct = Math.min(100, (b.compNetRevenue / chartScale.max) * 100)
+                          const compDeductionPct = Math.max(0, compGrossPct - compNetPct)
 
-                      {chartType === 'bar' ? (
-                        <div className="absolute inset-0 flex items-end justify-between gap-1 sm:gap-2 px-2 pt-2">
-                          {bucketRows.map((b) => {
-                            const grossPct = Math.min(100, (b.grossSales / chartScale.max) * 100)
-                            const netPct = Math.min(100, (b.netRevenue / chartScale.max) * 100)
-                            const deductionPct = Math.max(0, grossPct - netPct)
-                            const compGrossPct = Math.min(100, (b.compGrossSales / chartScale.max) * 100)
-
-                            return (
-                              <div
-                                key={b.key}
-                                onMouseEnter={() => setHoveredBucket(b)}
-                                onMouseLeave={() => setHoveredBucket(null)}
-                                className="flex-1 h-full flex items-end justify-center gap-0.5 group cursor-pointer relative"
-                              >
-                                {showCompareOnChart && (
-                                  <div
-                                    style={{ height: `${Math.max(compGrossPct, b.compGrossSales > 0 ? 1.5 : 0)}%` }}
-                                    className="w-1/3 max-w-[18px] bg-slate-200 border border-slate-300 rounded-t-xs transition-all duration-300"
-                                    title={`Pembanding (${b.label}): ${formatIDR(b.compNetRevenue)}`}
-                                  />
-                                )}
-
-                                {/* Stacked Metorik Bar: Top Light Cap (Gross - Net) + Bottom Solid Bar (Net Revenue) */}
+                          return (
+                            <div
+                              key={b.key}
+                              onMouseEnter={() => setHoveredBucket(b)}
+                              onMouseLeave={() => setHoveredBucket(null)}
+                              className="flex-1 h-full flex items-end justify-center gap-0.5 group cursor-pointer relative min-w-0"
+                            >
+                              {showCompareOnChart && (
                                 <div
-                                  style={{ height: `${Math.max(grossPct, b.grossSales > 0 ? 2 : 0)}%` }}
-                                  className="w-full max-w-[44px] flex flex-col justify-end rounded-t-xs overflow-hidden transition-all duration-300 group-hover:brightness-95"
+                                  style={{ height: `${Math.max(compGrossPct, b.compGrossSales > 0 ? 1.5 : 0)}%` }}
+                                  className="flex-1 max-w-[22px] flex flex-col justify-end rounded-t-xs overflow-hidden transition-all duration-300 opacity-85"
                                 >
-                                  {deductionPct > 0 && (
+                                  {compDeductionPct > 0 && (
                                     <div
-                                      style={{ height: `${(deductionPct / (grossPct || 1)) * 100}%` }}
-                                      className="w-full bg-[#D9DDFB] border-t-2 border-x-2 border-[#6C72EE]"
+                                      style={{ height: `${(compDeductionPct / (compGrossPct || 1)) * 100}%` }}
+                                      className={`w-full bg-slate-100 border-t border-x border-slate-300`}
                                     />
                                   )}
                                   <div
-                                    style={{ height: `${(netPct / (grossPct || 1)) * 100}%` }}
-                                    className="w-full bg-[#8B92F8] border-2 border-[#6C72EE] flex-1"
+                                    style={{ height: `${(compNetPct / (compGrossPct || 1)) * 100}%` }}
+                                    className="w-full bg-slate-300 border border-slate-400 flex-1"
                                   />
                                 </div>
+                              )}
+
+                              {/* Stacked Metorik Bar: Top Light Cap (Gross - Net) + Bottom Solid Bar (Net Revenue) */}
+                              <div
+                                style={{ height: `${Math.max(grossPct, b.grossSales > 0 ? 1.5 : 0)}%` }}
+                                className="flex-1 max-w-[44px] flex flex-col justify-end rounded-t-xs overflow-hidden transition-all duration-300 group-hover:brightness-95"
+                              >
+                                {deductionPct > 0 && (
+                                  <div
+                                    style={{ height: `${(deductionPct / (grossPct || 1)) * 100}%` }}
+                                    className={`w-full bg-[#D9DDFB] border-t border-x ${barBorderClass} border-[#6C72EE]`}
+                                  />
+                                )}
+                                <div
+                                  style={{ height: `${(netPct / (grossPct || 1)) * 100}%` }}
+                                  className={`w-full bg-[#8B92F8] ${barBorderClass} border-[#6C72EE] flex-1`}
+                                />
                               </div>
-                            )
-                          })}
-                        </div>
-                      ) : (
-                        /* Line Chart Mode */
-                        <svg className="absolute inset-0 w-full h-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
-                          {/* Gross Sales Line */}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      /* Line Chart Mode with non-scaling-stroke + Comparison Line + Interactive Hover */
+                      <div className="absolute inset-0">
+                        <svg className="w-full h-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
+                          <defs>
+                            <linearGradient id="revNetAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#6366F1" stopOpacity="0.18" />
+                              <stop offset="100%" stopColor="#6366F1" stopOpacity="0.0" />
+                            </linearGradient>
+                          </defs>
+
+                          {/* Area fill under Net Revenue */}
+                          {bucketRows.length > 1 && (
+                            <polygon
+                              fill="url(#revNetAreaGrad)"
+                              points={`0,100 ${bucketRows
+                                .map((b, i) => {
+                                  const x = (i / (bucketRows.length - 1)) * 100
+                                  const y = 100 - Math.min(100, (b.netRevenue / chartScale.max) * 100)
+                                  return `${x},${y}`
+                                })
+                                .join(' ')} 100,100`}
+                            />
+                          )}
+
+                          {/* Comparison Net Revenue Line (Dashed Slate) */}
+                          {showCompareOnChart && (
+                            <polyline
+                              fill="none"
+                              stroke="#94A3B8"
+                              strokeWidth="2"
+                              strokeDasharray="5 4"
+                              vectorEffect="non-scaling-stroke"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              points={bucketRows
+                                .map((b, i) => {
+                                  const x = bucketRows.length <= 1 ? 50 : (i / (bucketRows.length - 1)) * 100
+                                  const y = 100 - Math.min(100, (b.compNetRevenue / chartScale.max) * 100)
+                                  return `${x},${y}`
+                                })
+                                .join(' ')}
+                            />
+                          )}
+
+                          {/* Gross Sales Line (Soft Indigo) */}
                           <polyline
                             fill="none"
-                            stroke="#C7D2FE"
-                            strokeWidth="2"
+                            stroke="#A5B4FC"
+                            strokeWidth="1.5"
+                            vectorEffect="non-scaling-stroke"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
                             points={bucketRows
                               .map((b, i) => {
                                 const x = bucketRows.length <= 1 ? 50 : (i / (bucketRows.length - 1)) * 100
@@ -1135,11 +1517,15 @@ export default function RevenueReportPage() {
                               })
                               .join(' ')}
                           />
-                          {/* Net Revenue Line */}
+
+                          {/* Primary Net Revenue Line (Crisp 2px Indigo) */}
                           <polyline
                             fill="none"
                             stroke="#6366F1"
-                            strokeWidth="2.5"
+                            strokeWidth="2"
+                            vectorEffect="non-scaling-stroke"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
                             points={bucketRows
                               .map((b, i) => {
                                 const x = bucketRows.length <= 1 ? 50 : (i / (bucketRows.length - 1)) * 100
@@ -1149,481 +1535,579 @@ export default function RevenueReportPage() {
                               .join(' ')}
                           />
                         </svg>
-                      )}
-                    </div>
-                  </div>
 
-                  {/* X-Axis Labels */}
-                  <div className="flex pl-28 pt-2.5">
-                    <div className="flex-1 flex items-center justify-between px-2 text-[10px] font-semibold text-slate-500">
-                      {bucketRows.map((b, idx) => {
-                        // Show every 2nd label if compact to avoid crowding, just like Metorik
-                        const step = bucketRows.length > 8 ? 2 : 1
-                        const showLabel = idx % step === 0 || idx === bucketRows.length - 1
-                        return (
-                          <div key={b.key} className="flex-1 text-center truncate">
-                            {showLabel ? b.label : ''}
-                          </div>
-                        )
-                      })}
-                    </div>
+                        {/* Interactive Hover Hit Columns & Active Dots for Line Chart */}
+                        <div className="absolute inset-0 flex items-stretch justify-between">
+                          {bucketRows.map((b, i) => {
+                            const isHovered = hoveredBucket?.key === b.key
+                            const netPct = Math.min(100, (b.netRevenue / chartScale.max) * 100)
+                            const compNetPct = Math.min(100, (b.compNetRevenue / chartScale.max) * 100)
+                            return (
+                              <div
+                                key={b.key}
+                                onMouseEnter={() => setHoveredBucket(b)}
+                                onMouseLeave={() => setHoveredBucket(null)}
+                                className="flex-1 h-full relative cursor-pointer"
+                              >
+                                {isHovered && (
+                                  <>
+                                    <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-[1px] bg-indigo-300/70 pointer-events-none" />
+                                    <div
+                                      style={{ bottom: `${netPct}%` }}
+                                      className="absolute left-1/2 -translate-x-1/2 translate-y-1/2 w-2.5 h-2.5 rounded-full bg-indigo-600 ring-2 ring-white shadow-xs pointer-events-none"
+                                    />
+                                    {showCompareOnChart && (
+                                      <div
+                                        style={{ bottom: `${compNetPct}%` }}
+                                        className="absolute left-1/2 -translate-x-1/2 translate-y-1/2 w-2.5 h-2.5 rounded-full bg-slate-400 ring-2 ring-white shadow-xs pointer-events-none"
+                                      />
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
-              )}
+
+                {/* X-Axis Labels (Smart Sampled Ticks — Clean on Day, Week, and Month) */}
+                <div className="flex pl-24 sm:pl-28 pt-2.5">
+                  <div className="relative flex-1 h-5">
+                    {visibleXAxisTicks.map((tick, idx) => {
+                      const isFirst = idx === 0
+                      const isLast = idx === visibleXAxisTicks.length - 1 && visibleXAxisTicks.length > 1
+                      const alignClass = isFirst
+                        ? 'translate-x-0'
+                        : isLast
+                        ? '-translate-x-full'
+                        : '-translate-x-1/2'
+
+                      return (
+                        <span
+                          key={tick.key}
+                          style={{ left: `${tick.pct}%` }}
+                          className={`absolute top-0 text-[10px] font-semibold text-slate-500 whitespace-nowrap select-none ${alignClass}`}
+                        >
+                          {tick.label}
+                        </span>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT: Metorik KPI Summary Grid Card (4 Cols) */}
+        <div className="lg:col-span-4 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between overflow-hidden divide-y divide-slate-100">
+          {/* Top Primary Metric: Net Revenue */}
+          <div className="p-5 space-y-1.5">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
+              <span>Net Revenue</span>
+              <span className="w-2 h-2 rounded-full bg-[#6C72EE] inline-block" />
+            </div>
+            <div className="flex items-baseline gap-2.5 flex-wrap">
+              <span className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+                {formatIDR(kpiSummary.curr.netRevenue)}
+              </span>
+              {renderGrowthPill(kpiSummary.growth.netRevenue)}
             </div>
           </div>
 
-          {/* RIGHT: Metorik KPI Summary Grid Card (4 Cols) */}
-          <div className="lg:col-span-4 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between overflow-hidden divide-y divide-slate-100">
-            {/* Top Primary Metric: Net Revenue */}
-            <div className="p-5 space-y-1.5">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
-                <span>Net Revenue</span>
-                <span className="w-2 h-2 rounded-full bg-[#6C72EE] inline-block" />
-              </div>
-              <div className="flex items-baseline gap-2.5 flex-wrap">
-                <span className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-                  {formatIDR(kpiSummary.curr.netRevenue)}
-                </span>
-                {renderGrowthPill(kpiSummary.growth.netRevenue)}
-              </div>
-            </div>
-
-            {/* Row 2: Gross Sales | Refunds */}
-            <div className="grid grid-cols-2 divide-x divide-slate-100">
-              <div className="p-4 space-y-1">
-                <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                  <span>Gross Sales</span>
-                  <span className="w-2 h-2 rounded-full bg-[#C7D2FE] border border-[#6C72EE] inline-block" />
-                </div>
-                <div className="text-sm sm:text-base font-extrabold text-slate-900">
-                  {formatIDR(kpiSummary.curr.grossSales)}
-                </div>
-                <div>{renderGrowthPill(kpiSummary.growth.grossSales)}</div>
-              </div>
-
-              <div className="p-4 space-y-1">
-                <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                  <span>Refunds</span>
-                  <span className="w-2 h-2 rounded-full bg-slate-200 inline-block" />
-                </div>
-                <div className="text-sm sm:text-base font-extrabold text-slate-900">
-                  {formatIDR(kpiSummary.curr.refunds)}
-                </div>
-                <div>{renderGrowthPill(kpiSummary.growth.refunds, true)}</div>
-              </div>
-            </div>
-
-            {/* Row 3: Taxes | Shipping */}
-            <div className="grid grid-cols-2 divide-x divide-slate-100">
-              <div className="p-4 space-y-1">
-                <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                  <span>Taxes</span>
-                  <span className="w-2 h-2 rounded-full bg-slate-200 inline-block" />
-                </div>
-                <div className="text-sm sm:text-base font-extrabold text-slate-900">
-                  {formatIDR(kpiSummary.curr.taxes)}
-                </div>
-                <div>{renderGrowthPill(kpiSummary.growth.taxes)}</div>
-              </div>
-
-              <div className="p-4 space-y-1">
-                <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                  <span>Shipping</span>
-                  <span className="w-2 h-2 rounded-full bg-slate-200 inline-block" />
-                </div>
-                <div className="text-sm sm:text-base font-extrabold text-slate-900">
-                  {formatIDR(kpiSummary.curr.shipping)}
-                </div>
-                <div>{renderGrowthPill(kpiSummary.growth.shipping)}</div>
-              </div>
-            </div>
-
-            {/* Row 4: Fees */}
+          {/* Row 2: Gross Sales | Refunds */}
+          <div className="grid grid-cols-2 divide-x divide-slate-100">
             <div className="p-4 space-y-1">
               <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                <span>Fees</span>
+                <span>Gross Sales</span>
+                <span className="w-2 h-2 rounded-full bg-[#C7D2FE] border border-[#6C72EE] inline-block" />
+              </div>
+              <div className="text-sm sm:text-base font-extrabold text-slate-900">
+                {formatIDR(kpiSummary.curr.grossSales)}
+              </div>
+              <div>{renderGrowthPill(kpiSummary.growth.grossSales)}</div>
+            </div>
+
+            <div className="p-4 space-y-1">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                <span>Refunds</span>
+                <span className="w-2 h-2 rounded-full bg-rose-300 inline-block" />
+              </div>
+              <div className="text-sm sm:text-base font-extrabold text-slate-900">
+                {formatIDR(kpiSummary.curr.refunds)}
+              </div>
+              <div>{renderGrowthPill(kpiSummary.growth.refunds, true)}</div>
+            </div>
+          </div>
+
+          {/* Row 3: Taxes | Shipping */}
+          <div className="grid grid-cols-2 divide-x divide-slate-100">
+            <div className="p-4 space-y-1">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                <span>Taxes</span>
                 <span className="w-2 h-2 rounded-full bg-slate-200 inline-block" />
               </div>
               <div className="text-sm sm:text-base font-extrabold text-slate-900">
-                {formatIDR(kpiSummary.curr.fees)}
+                {formatIDR(kpiSummary.curr.taxes)}
               </div>
-              <div>{renderGrowthPill(kpiSummary.growth.fees)}</div>
+              <div>{renderGrowthPill(kpiSummary.growth.taxes)}</div>
             </div>
 
-            {/* Row 5: Orders | Average order net */}
-            <div className="grid grid-cols-2 divide-x divide-slate-100 bg-slate-50/40">
-              <div className="p-4 space-y-1">
-                <div className="text-[11px] font-bold text-slate-500">Orders</div>
-                <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="text-base sm:text-lg font-extrabold text-slate-900">
-                    {formatNumber(kpiSummary.curr.orders)}
-                  </span>
-                  {renderGrowthPill(kpiSummary.growth.orders)}
-                </div>
+            <div className="p-4 space-y-1">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                <span>Shipping</span>
+                <span className="w-2 h-2 rounded-full bg-slate-200 inline-block" />
               </div>
+              <div className="text-sm sm:text-base font-extrabold text-slate-900">
+                {formatIDR(kpiSummary.curr.shipping)}
+              </div>
+              <div>{renderGrowthPill(kpiSummary.growth.shipping)}</div>
+            </div>
+          </div>
 
-              <div className="p-4 space-y-1">
-                <div className="text-[11px] font-bold text-slate-500">Average order net</div>
-                <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="text-base sm:text-lg font-extrabold text-slate-900">
-                    {formatIDR(kpiSummary.curr.avgOrderNet)}
-                  </span>
-                  {renderGrowthPill(kpiSummary.growth.avgOrderNet)}
-                </div>
+          {/* Row 4: Fees */}
+          <div className="p-4 space-y-1">
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
+              <span>Fees</span>
+              <span className="w-2 h-2 rounded-full bg-slate-200 inline-block" />
+            </div>
+            <div className="text-sm sm:text-base font-extrabold text-slate-900">
+              {formatIDR(kpiSummary.curr.fees)}
+            </div>
+            <div>{renderGrowthPill(kpiSummary.growth.fees)}</div>
+          </div>
+
+          {/* Row 5: Orders | Average order net */}
+          <div className="grid grid-cols-2 divide-x divide-slate-100 bg-slate-50/40">
+            <div className="p-4 space-y-1">
+              <div className="text-[11px] font-bold text-slate-500">Orders</div>
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-base sm:text-lg font-extrabold text-slate-900">
+                  {formatNumber(kpiSummary.curr.orders)}
+                </span>
+                {renderGrowthPill(kpiSummary.growth.orders)}
+              </div>
+            </div>
+
+            <div className="p-4 space-y-1">
+              <div className="text-[11px] font-bold text-slate-500">Average order net</div>
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-base sm:text-lg font-extrabold text-slate-900">
+                  {formatIDR(kpiSummary.curr.avgOrderNet)}
+                </span>
+                {renderGrowthPill(kpiSummary.growth.avgOrderNet)}
               </div>
             </div>
           </div>
         </div>
+      </div>
 
-        {/* ── SECTION 2: REVENUE BREAKDOWN TABLE ─────────────────────────── */}
-        <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-extrabold text-slate-900">Revenue Breakdown</h2>
+      {/* ── SECTION 2: REVENUE BREAKDOWN TABLE ─────────────────────────── */}
+      <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-sm font-extrabold text-slate-900">Revenue Breakdown</h2>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleExportBreakdown}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition cursor-pointer shadow-2xs"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                <span>Export</span>
-              </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportBreakdown}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition cursor-pointer shadow-2xs"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              <span>Export</span>
+            </button>
 
-              <select
-                value={granularity}
-                onChange={e => setGranularity(e.target.value as Granularity)}
-                className="px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-              >
-                <option value="day">Day</option>
-                <option value="week">Week</option>
-                <option value="month">Month</option>
-              </select>
-            </div>
+            <select
+              value={granularity}
+              onChange={e => setGranularity(e.target.value as Granularity)}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+            >
+              <option value="day">Day</option>
+              <option value="week">Week</option>
+              <option value="month">Month</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs min-w-[780px]">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50/60 text-slate-600 font-bold">
+                {(
+                  [
+                    { key: 'date', label: 'Date' },
+                    { key: 'orders', label: 'Orders' },
+                    { key: 'grossSales', label: 'Gross Sales' },
+                    { key: 'taxes', label: 'Taxes' },
+                    { key: 'shipping', label: 'Shipping' },
+                    { key: 'fees', label: 'Fees' },
+                    { key: 'refunds', label: 'Refunds' },
+                    { key: 'netRevenue', label: 'Net' },
+                  ] as Array<{ key: SortField; label: string }>
+                ).map(col => (
+                  <th
+                    key={col.key}
+                    onClick={() => handleSort(col.key)}
+                    className="py-3 px-4 cursor-pointer select-none hover:text-slate-900 transition"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>{col.label}</span>
+                      <span className="text-[10px] text-slate-400">
+                        {sortField === col.key ? (sortOrder === 'asc' ? '↑' : '↓') : '⇅'}
+                      </span>
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-slate-100">
+              {loading ? (
+                <tr>
+                  <td colSpan={8} className="py-10 text-center text-slate-400 font-semibold">
+                    Memuat rincian Revenue Breakdown...
+                  </td>
+                </tr>
+              ) : sortedTableRows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-10 text-center text-slate-400 font-semibold">
+                    Belum ada data transaksi pada periode ini.
+                  </td>
+                </tr>
+              ) : (
+                sortedTableRows.map(row => (
+                  <tr key={row.key} className="hover:bg-slate-50/70 transition-colors">
+                    <td className="py-3 px-4 font-semibold text-slate-700 whitespace-nowrap">
+                      {row.label}
+                    </td>
+                    <td className="py-3 px-4">
+                      <Link
+                        href="/orders"
+                        className="text-indigo-600 hover:text-indigo-800 font-bold underline decoration-indigo-300 underline-offset-2"
+                      >
+                        {formatNumber(row.orders)}
+                      </Link>
+                    </td>
+                    <td className="py-3 px-4 font-medium text-slate-700 whitespace-nowrap">
+                      {formatIDR(row.grossSales)}
+                    </td>
+                    <td className="py-3 px-4 font-medium text-slate-600 whitespace-nowrap">
+                      {formatIDR(row.taxes)}
+                    </td>
+                    <td className="py-3 px-4 font-medium whitespace-nowrap">
+                      {row.shipping > 0 ? (
+                        <span className="text-rose-500">({formatIDR(row.shipping)})</span>
+                      ) : (
+                        <span className="text-slate-600">{formatIDR(0)}</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 font-medium whitespace-nowrap">
+                      {row.fees > 0 ? (
+                        <span className="text-rose-500">({formatIDR(row.fees)})</span>
+                      ) : (
+                        <span className="text-slate-600">{formatIDR(0)}</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 font-medium whitespace-nowrap">
+                      {row.refunds > 0 ? (
+                        <span className="text-rose-500">({formatIDR(row.refunds)})</span>
+                      ) : (
+                        <span className="text-slate-600">{formatIDR(0)}</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 font-extrabold text-slate-900 whitespace-nowrap">
+                      {formatIDR(row.netRevenue)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+
+            {!loading && sortedTableRows.length > 0 && (
+              <tfoot>
+                <tr className="border-t-2 border-slate-200 bg-slate-50/80 font-extrabold text-slate-900">
+                  <td className="py-3.5 px-4">Totals</td>
+                  <td className="py-3.5 px-4">{formatNumber(kpiSummary.curr.orders)}</td>
+                  <td className="py-3.5 px-4 whitespace-nowrap">{formatIDR(kpiSummary.curr.grossSales)}</td>
+                  <td className="py-3.5 px-4 whitespace-nowrap">{formatIDR(kpiSummary.curr.taxes)}</td>
+                  <td className="py-3.5 px-4 whitespace-nowrap">
+                    {kpiSummary.curr.shipping > 0
+                      ? `(${formatIDR(kpiSummary.curr.shipping)})`
+                      : formatIDR(0)}
+                  </td>
+                  <td className="py-3.5 px-4 whitespace-nowrap">
+                    {kpiSummary.curr.fees > 0
+                      ? `(${formatIDR(kpiSummary.curr.fees)})`
+                      : formatIDR(0)}
+                  </td>
+                  <td className="py-3.5 px-4 whitespace-nowrap">
+                    {kpiSummary.curr.refunds > 0
+                      ? `(${formatIDR(kpiSummary.curr.refunds)})`
+                      : formatIDR(0)}
+                  </td>
+                  <td className="py-3.5 px-4 whitespace-nowrap">{formatIDR(kpiSummary.curr.netRevenue)}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </div>
+
+      {/* ── SECTION 3: GROUPED BY (PRIMARY DIMENSION, Sortable Headers) ── */}
+      <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <span className="text-sm font-extrabold text-slate-900">Grouped by</span>
+            <select
+              value={primaryGroupDim}
+              onChange={e => setPrimaryGroupDim(e.target.value as GroupDimension)}
+              className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+            >
+              <option value="country">Billing Country</option>
+              <option value="city">Kota / Kabupaten</option>
+              <option value="province">Provinsi</option>
+              <option value="platform">Platform / Channel</option>
+              <option value="payment_method">Metode Pembayaran</option>
+              <option value="courier">Kurir Ekspedisi</option>
+            </select>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs min-w-[780px]">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleExportGrouped(primaryGroupedRows, dimensionLabelMap[primaryGroupDim])}
+              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition cursor-pointer shadow-2xs"
+              title="Export Grouped Data"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs min-w-[720px]">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50/60 text-slate-600 font-bold">
+                {(
+                  [
+                    { key: 'label', label: dimensionLabelMap[primaryGroupDim], align: 'left' },
+                    { key: 'orders', label: 'Orders', align: 'right' },
+                    { key: 'netRevenue', label: 'Net Revenue', align: 'right' },
+                    { key: 'avgNet', label: 'Average Net', align: 'right' },
+                    { key: 'grossSales', label: 'Gross Sales', align: 'right' },
+                    { key: 'avgGross', label: 'Average Gross', align: 'right' },
+                  ] as Array<{ key: GroupSortField; label: string; align: 'left' | 'right' }>
+                ).map((col, idx) => (
+                  <th
+                    key={col.key}
+                    onClick={() => handlePrimaryGroupSort(col.key)}
+                    className={`py-3 ${idx === 0 || idx === 5 ? 'px-5' : 'px-4'} ${
+                      col.align === 'right' ? 'text-right' : 'text-left'
+                    } cursor-pointer select-none hover:text-slate-900 transition`}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <span>{col.label}</span>
+                      <span className="text-[10px] text-slate-400">
+                        {primaryGroupSortField === col.key ? (primaryGroupSortOrder === 'asc' ? '↑' : '↓') : '⇅'}
+                      </span>
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {primaryGroupedRows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-400 font-medium">
+                    No matching results
+                  </td>
+                </tr>
+              ) : (
+                primaryGroupedRows.slice(0, 25).map(row => (
+                  <tr key={row.key} className="hover:bg-slate-50/70 transition-colors">
+                    <td className="py-3 px-5 font-semibold text-slate-800">
+                      <span className="inline-flex items-center gap-2">
+                        {row.flag && <span>{row.flag}</span>}
+                        <span className="underline decoration-slate-300 underline-offset-2">{row.label}</span>
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-right font-bold text-indigo-600">
+                      {formatNumber(row.orders)}
+                    </td>
+                    <td className="py-3 px-4 text-right font-medium text-slate-700">
+                      {formatIDR(row.netRevenue)}
+                    </td>
+                    <td className="py-3 px-4 text-right font-medium text-slate-600">
+                      {formatIDR(row.avgNet)}
+                    </td>
+                    <td className="py-3 px-4 text-right font-medium text-slate-700">
+                      {formatIDR(row.grossSales)}
+                    </td>
+                    <td className="py-3 px-5 text-right font-medium text-slate-600">
+                      {formatIDR(row.avgGross)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── SECTION 4: GROUPED BY (SECONDARY DIMENSION, Sortable Headers) ── */}
+      <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <span className="text-sm font-extrabold text-slate-900">Grouped by</span>
+            <select
+              value={secondaryGroupDim}
+              onChange={e => setSecondaryGroupDim(e.target.value as SecondaryGroupDimension)}
+              className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+            >
+              <option value="tax_code">Tax Rate Code</option>
+              <option value="platform">Platform / Channel</option>
+              <option value="payment_method">Metode Pembayaran</option>
+              <option value="courier">Kurir Ekspedisi</option>
+              <option value="city">Kota / Kabupaten</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleExportGrouped(secondaryGroupedRows, dimensionLabelMap[secondaryGroupDim])}
+              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition cursor-pointer shadow-2xs"
+              title="Export Grouped Data"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          {secondaryGroupDim === 'tax_code' ? (
+            <table className="w-full text-left border-collapse text-xs min-w-[720px]">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/60 text-slate-600 font-bold">
                   {(
                     [
-                      { key: 'date', label: 'Date' },
-                      { key: 'orders', label: 'Orders' },
-                      { key: 'grossSales', label: 'Gross Sales' },
-                      { key: 'taxes', label: 'Taxes' },
-                      { key: 'shipping', label: 'Shipping' },
-                      { key: 'fees', label: 'Fees' },
-                      { key: 'refunds', label: 'Refunds' },
-                      { key: 'netRevenue', label: 'Net' },
-                    ] as Array<{ key: SortField; label: string }>
-                  ).map(col => (
+                      { key: 'label', label: 'Tax Rate Code', align: 'left' },
+                      { key: 'orders', label: 'Orders', align: 'right' },
+                      { key: 'taxes', label: 'Net Tax', align: 'right' },
+                      { key: 'refundedTax', label: 'Refunded Tax', align: 'right' },
+                      { key: 'totalTax', label: 'Total Tax', align: 'right' },
+                      { key: 'shippingTax', label: 'Shipping Tax', align: 'right' },
+                      { key: 'netRevenue', label: 'Taxed Sales (Net)', align: 'right' },
+                    ] as Array<{ key: GroupSortField; label: string; align: 'left' | 'right' }>
+                  ).map((col, idx) => (
                     <th
                       key={col.key}
-                      onClick={() => handleSort(col.key)}
-                      className="py-3 px-4 cursor-pointer select-none hover:text-slate-900 transition"
+                      onClick={() => handleSecondaryGroupSort(col.key)}
+                      className={`py-3 ${idx === 0 || idx === 6 ? 'px-5' : 'px-4'} ${
+                        col.align === 'right' ? 'text-right' : 'text-left'
+                      } cursor-pointer select-none hover:text-slate-900 transition`}
                     >
-                      <div className="inline-flex items-center gap-1">
+                      <span className="inline-flex items-center gap-1">
                         <span>{col.label}</span>
                         <span className="text-[10px] text-slate-400">
-                          {sortField === col.key ? (sortOrder === 'asc' ? '↑' : '↓') : '⇅'}
+                          {secondaryGroupSortField === col.key ? (secondaryGroupSortOrder === 'asc' ? '↑' : '↓') : '⇅'}
                         </span>
-                      </div>
+                      </span>
                     </th>
                   ))}
                 </tr>
               </thead>
-
               <tbody className="divide-y divide-slate-100">
-                {loading ? (
+                {secondaryGroupedRows.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-10 text-center text-slate-400 font-semibold">
-                      Memuat rincian Revenue Breakdown...
-                    </td>
-                  </tr>
-                ) : sortedTableRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="py-10 text-center text-slate-400 font-semibold">
-                      Belum ada data transaksi pada periode ini.
+                    <td colSpan={7} className="py-8 text-center text-slate-400 font-medium">
+                      No matching results
                     </td>
                   </tr>
                 ) : (
-                  sortedTableRows.map(row => (
+                  secondaryGroupedRows.map(row => (
                     <tr key={row.key} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="py-3 px-4 font-semibold text-slate-700 whitespace-nowrap">
-                        {row.label}
-                      </td>
-                      <td className="py-3 px-4">
-                        <Link
-                          href="/orders"
-                          className="text-indigo-600 hover:text-indigo-800 font-bold underline decoration-indigo-300 underline-offset-2"
-                        >
-                          {formatNumber(row.orders)}
-                        </Link>
-                      </td>
-                      <td className="py-3 px-4 font-medium text-slate-700 whitespace-nowrap">
-                        {formatIDR(row.grossSales)}
-                      </td>
-                      <td className="py-3 px-4 font-medium text-slate-600 whitespace-nowrap">
-                        {formatIDR(row.taxes)}
-                      </td>
-                      <td className="py-3 px-4 font-medium whitespace-nowrap">
-                        {row.shipping > 0 ? (
-                          <span className="text-rose-500">({formatIDR(row.shipping)})</span>
-                        ) : (
-                          <span className="text-slate-600">{formatIDR(0)}</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 font-medium whitespace-nowrap">
-                        {row.fees > 0 ? (
-                          <span className="text-rose-500">({formatIDR(row.fees)})</span>
-                        ) : (
-                          <span className="text-slate-600">{formatIDR(0)}</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 font-medium whitespace-nowrap">
-                        {row.refunds > 0 ? (
-                          <span className="text-rose-500">({formatIDR(row.refunds)})</span>
-                        ) : (
-                          <span className="text-slate-600">{formatIDR(0)}</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 font-extrabold text-slate-900 whitespace-nowrap">
-                        {formatIDR(row.netRevenue)}
-                      </td>
+                      <td className="py-3 px-5 font-semibold text-slate-800">{row.label}</td>
+                      <td className="py-3 px-4 text-right font-bold text-indigo-600">{formatNumber(row.orders)}</td>
+                      <td className="py-3 px-4 text-right font-medium text-slate-700">{formatIDR(row.taxes)}</td>
+                      <td className="py-3 px-4 text-right font-medium text-slate-600">{formatIDR(row.refundedTax)}</td>
+                      <td className="py-3 px-4 text-right font-medium text-slate-700">{formatIDR(row.totalTax)}</td>
+                      <td className="py-3 px-4 text-right font-medium text-slate-600">{formatIDR(row.shippingTax)}</td>
+                      <td className="py-3 px-5 text-right font-medium text-slate-800">{formatIDR(row.netRevenue)}</td>
                     </tr>
                   ))
                 )}
               </tbody>
-
-              {!loading && sortedTableRows.length > 0 && (
-                <tfoot>
-                  <tr className="border-t-2 border-slate-200 bg-slate-50/80 font-extrabold text-slate-900">
-                    <td className="py-3.5 px-4">Totals</td>
-                    <td className="py-3.5 px-4">{formatNumber(kpiSummary.curr.orders)}</td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">{formatIDR(kpiSummary.curr.grossSales)}</td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">{formatIDR(kpiSummary.curr.taxes)}</td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      {kpiSummary.curr.shipping > 0
-                        ? `(${formatIDR(kpiSummary.curr.shipping)})`
-                        : formatIDR(0)}
-                    </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      {kpiSummary.curr.fees > 0
-                        ? `(${formatIDR(kpiSummary.curr.fees)})`
-                        : formatIDR(0)}
-                    </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      {kpiSummary.curr.refunds > 0
-                        ? `(${formatIDR(kpiSummary.curr.refunds)})`
-                        : formatIDR(0)}
-                    </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">{formatIDR(kpiSummary.curr.netRevenue)}</td>
-                  </tr>
-                </tfoot>
-              )}
             </table>
-          </div>
-        </div>
-
-        {/* ── SECTION 3: GROUPED BY (PRIMARY DIMENSION, e.g. Billing Country / City / Platform) ── */}
-        <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <span className="text-sm font-extrabold text-slate-900">Grouped by</span>
-              <select
-                value={primaryGroupDim}
-                onChange={e => setPrimaryGroupDim(e.target.value as GroupDimension)}
-                className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
-              >
-                <option value="country">Billing Country</option>
-                <option value="city">Kota / Kabupaten</option>
-                <option value="province">Provinsi</option>
-                <option value="platform">Platform / Channel</option>
-                <option value="payment_method">Metode Pembayaran</option>
-                <option value="courier">Kurir Ekspedisi</option>
-              </select>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => handleExportGrouped(primaryGroupedRows, dimensionLabelMap[primaryGroupDim])}
-                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition cursor-pointer shadow-2xs"
-                title="Export Grouped Data"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
+          ) : (
             <table className="w-full text-left border-collapse text-xs min-w-[720px]">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/60 text-slate-600 font-bold">
-                  <th className="py-3 px-5">{dimensionLabelMap[primaryGroupDim]} ⇅</th>
-                  <th className="py-3 px-4 text-right">Orders ⇅</th>
-                  <th className="py-3 px-4 text-right">Net Revenue ⇅</th>
-                  <th className="py-3 px-4 text-right">Average Net ⇅</th>
-                  <th className="py-3 px-4 text-right">Gross Sales ⇅</th>
-                  <th className="py-3 px-5 text-right">Average Gross ⇅</th>
+                  {(
+                    [
+                      { key: 'label', label: dimensionLabelMap[secondaryGroupDim], align: 'left' },
+                      { key: 'orders', label: 'Orders', align: 'right' },
+                      { key: 'netRevenue', label: 'Net Revenue', align: 'right' },
+                      { key: 'avgNet', label: 'Average Net', align: 'right' },
+                      { key: 'grossSales', label: 'Gross Sales', align: 'right' },
+                      { key: 'avgGross', label: 'Average Gross', align: 'right' },
+                    ] as Array<{ key: GroupSortField; label: string; align: 'left' | 'right' }>
+                  ).map((col, idx) => (
+                    <th
+                      key={col.key}
+                      onClick={() => handleSecondaryGroupSort(col.key)}
+                      className={`py-3 ${idx === 0 || idx === 5 ? 'px-5' : 'px-4'} ${
+                        col.align === 'right' ? 'text-right' : 'text-left'
+                      } cursor-pointer select-none hover:text-slate-900 transition`}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        <span>{col.label}</span>
+                        <span className="text-[10px] text-slate-400">
+                          {secondaryGroupSortField === col.key ? (secondaryGroupSortOrder === 'asc' ? '↑' : '↓') : '⇅'}
+                        </span>
+                      </span>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {primaryGroupedRows.length === 0 ? (
+                {secondaryGroupedRows.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-8 text-center text-slate-400 font-medium">
                       No matching results
                     </td>
                   </tr>
                 ) : (
-                  primaryGroupedRows.slice(0, 25).map(row => (
+                  secondaryGroupedRows.slice(0, 25).map(row => (
                     <tr key={row.key} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="py-3 px-5 font-semibold text-slate-800">
-                        <span className="inline-flex items-center gap-2">
-                          {row.flag && <span>{row.flag}</span>}
-                          <span className="underline decoration-slate-300 underline-offset-2">{row.label}</span>
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right font-bold text-indigo-600">
-                        {formatNumber(row.orders)}
-                      </td>
-                      <td className="py-3 px-4 text-right font-medium text-slate-700">
-                        {formatIDR(row.netRevenue)}
-                      </td>
-                      <td className="py-3 px-4 text-right font-medium text-slate-600">
-                        {formatIDR(row.avgNet)}
-                      </td>
-                      <td className="py-3 px-4 text-right font-medium text-slate-700">
-                        {formatIDR(row.grossSales)}
-                      </td>
-                      <td className="py-3 px-5 text-right font-medium text-slate-600">
-                        {formatIDR(row.avgGross)}
-                      </td>
+                      <td className="py-3 px-5 font-semibold text-slate-800">{row.label}</td>
+                      <td className="py-3 px-4 text-right font-bold text-indigo-600">{formatNumber(row.orders)}</td>
+                      <td className="py-3 px-4 text-right font-medium text-slate-700">{formatIDR(row.netRevenue)}</td>
+                      <td className="py-3 px-4 text-right font-medium text-slate-600">{formatIDR(row.avgNet)}</td>
+                      <td className="py-3 px-4 text-right font-medium text-slate-700">{formatIDR(row.grossSales)}</td>
+                      <td className="py-3 px-5 text-right font-medium text-slate-600">{formatIDR(row.avgGross)}</td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
-          </div>
+          )}
         </div>
-
-        {/* ── SECTION 4: GROUPED BY (SECONDARY DIMENSION, e.g. Tax Rate Code / Platform) ── */}
-        <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <span className="text-sm font-extrabold text-slate-900">Grouped by</span>
-              <select
-                value={secondaryGroupDim}
-                onChange={e => setSecondaryGroupDim(e.target.value as SecondaryGroupDimension)}
-                className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
-              >
-                <option value="tax_code">Tax Rate Code</option>
-                <option value="platform">Platform / Channel</option>
-                <option value="payment_method">Metode Pembayaran</option>
-                <option value="courier">Kurir Ekspedisi</option>
-                <option value="city">Kota / Kabupaten</option>
-              </select>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => handleExportGrouped(secondaryGroupedRows, dimensionLabelMap[secondaryGroupDim])}
-                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition cursor-pointer shadow-2xs"
-                title="Export Grouped Data"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            {secondaryGroupDim === 'tax_code' ? (
-              <table className="w-full text-left border-collapse text-xs min-w-[720px]">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/60 text-slate-600 font-bold">
-                    <th className="py-3 px-5">Tax Rate Code ⇅</th>
-                    <th className="py-3 px-4 text-right">Orders ⇅</th>
-                    <th className="py-3 px-4 text-right">Net Tax ⇅</th>
-                    <th className="py-3 px-4 text-right">Refunded Tax ⇅</th>
-                    <th className="py-3 px-4 text-right">Total Tax ⇅</th>
-                    <th className="py-3 px-4 text-right">Shipping Tax ⇅</th>
-                    <th className="py-3 px-5 text-right">Taxed Sales (Net) ⇅</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {secondaryGroupedRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="py-8 text-center text-slate-400 font-medium">
-                        No matching results
-                      </td>
-                    </tr>
-                  ) : (
-                    secondaryGroupedRows.map(row => (
-                      <tr key={row.key} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="py-3 px-5 font-semibold text-slate-800">{row.label}</td>
-                        <td className="py-3 px-4 text-right font-bold text-indigo-600">{formatNumber(row.orders)}</td>
-                        <td className="py-3 px-4 text-right font-medium text-slate-700">{formatIDR(row.taxes)}</td>
-                        <td className="py-3 px-4 text-right font-medium text-slate-600">{formatIDR(0)}</td>
-                        <td className="py-3 px-4 text-right font-medium text-slate-700">{formatIDR(row.taxes)}</td>
-                        <td className="py-3 px-4 text-right font-medium text-slate-600">{formatIDR(0)}</td>
-                        <td className="py-3 px-5 text-right font-medium text-slate-800">{formatIDR(row.netRevenue)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            ) : (
-              <table className="w-full text-left border-collapse text-xs min-w-[720px]">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/60 text-slate-600 font-bold">
-                    <th className="py-3 px-5">{dimensionLabelMap[secondaryGroupDim]} ⇅</th>
-                    <th className="py-3 px-4 text-right">Orders ⇅</th>
-                    <th className="py-3 px-4 text-right">Net Revenue ⇅</th>
-                    <th className="py-3 px-4 text-right">Average Net ⇅</th>
-                    <th className="py-3 px-4 text-right">Gross Sales ⇅</th>
-                    <th className="py-3 px-5 text-right">Average Gross ⇅</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {secondaryGroupedRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-400 font-medium">
-                        No matching results
-                      </td>
-                    </tr>
-                  ) : (
-                    secondaryGroupedRows.slice(0, 25).map(row => (
-                      <tr key={row.key} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="py-3 px-5 font-semibold text-slate-800">{row.label}</td>
-                        <td className="py-3 px-4 text-right font-bold text-indigo-600">{formatNumber(row.orders)}</td>
-                        <td className="py-3 px-4 text-right font-medium text-slate-700">{formatIDR(row.netRevenue)}</td>
-                        <td className="py-3 px-4 text-right font-medium text-slate-600">{formatIDR(row.avgNet)}</td>
-                        <td className="py-3 px-4 text-right font-medium text-slate-700">{formatIDR(row.grossSales)}</td>
-                        <td className="py-3 px-5 text-right font-medium text-slate-600">{formatIDR(row.avgGross)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-
       </div>
     </div>
   )
