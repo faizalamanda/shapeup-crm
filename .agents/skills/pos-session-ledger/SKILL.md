@@ -223,8 +223,9 @@ Untuk menjamin integritas buku besar dan laci kasir saat terjadi pembatalan pesa
 ### 5.1 Real Action First (0ms UI + Hybrid Adaptive Order Numbering)
 - Di kasir fisik (retail/F&B), aksi nyata kasir adalah prioritas utama: modal pembayaran langsung tertutup, keranjang belanja langsung bersih, stok lokal L1/L2 langsung berkurang, dan `PaymentSuccessView` tampil seketika (**0ms**) agar kasir siap melayani antrian berikutnya.
 - **Isolasi Modul Checkout (`lib/pos/posCheckoutService.ts`):** Seluruh orkestrasi pengiriman checkout POS (`submitPosCheckout`), penanda perangkat offline (`getOrCreateDeviceTag`), antrean offline (`flushOfflineOrderQueue`), dan `client_attempt_id` idempotency dipisahkan dari `POSWorkspace.tsx` agar pembaruan UI kasir tidak pernah mengganggu integritas nomor nota.
-- **Hybrid Adaptive Print Confirmation & Anti-Double-Print:**
+- **Hybrid Adaptive Print Confirmation, Optimistic Queued Print & Anti-Double-Print:**
   - Pencetakan struk (`autoPrintAfterPayment`) menunggu nomor nota definitif dari server (~150–300ms via RPC `generate_pos_order_number`) atau beralih otomatis ke nomor partisi perangkat anti-bentrok (`POS-YYMMDD-OF<TAG>-<SEQ>`) setelah batas timeout 5 detik / kondisi offline, lalu di-sync otomatis saat koneksi pulih dengan mempertahankan nomor `OF` tersebut di server.
+  - Tombol **`🖨️ Cetak Struk`** dan shortcut `Enter` di `PaymentSuccessView.tsx` **tidak pernah di-disable** saat `isSyncingOrderNumber`; klik manual pada 0ms langsung di-antrekan via `pendingManualPrintRef` (menampilkan `Mencetak...`) dan langsung menembak printer 1 kali begitu nomor definitif siap.
   - `PaymentSuccessView.tsx` melacak `autoPrintedReceiptRef` berdasarkan `checkoutAttemptId` (bukan referensi objek `receipt`) sehingga pembaruan state tidak pernah memicu cetak ulang ganda.
 
 ### 5.2 Universal Reusable Payment Module ("Sekali Edit, Berubah Semua")

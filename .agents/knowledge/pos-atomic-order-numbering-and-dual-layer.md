@@ -107,7 +107,8 @@ Pendekatan lama (`getNextOptimisticOrderNumber()` berbasis `localStorage` sebelu
    `submitPosCheckout()` mengirim `POST /api/pos/order` beserta `business_id`, header `x-business-id`, dan `client_attempt_id` (UUID idempotency). Server menjalankan RPC atomik `generate_pos_order_number` (`POS-YYYYMMDD-XXXX`), lalu printer mencetak **1 kali** dengan nomor yang 100% identik dengan database.
 3. **Offline / Timeout Fallback (> 5 detik):**
    Jika perangkat offline atau server melebihi 5 detik, sistem otomatis menerbitkan nomor partisi perangkat anti-bentrok `POS-YYMMDD-OF<TAG>-<SEQ>` (19 karakter, pas 1 baris thermal 58mm) dan menyimpannya ke `localStorage` outbox queue (`shapeup_pos_offline_queue_v1_${businessId}`). Saat koneksi pulih (`online` event / mount), `flushOfflineOrderQueue()` mengirim ulang dengan `is_offline_fallback: true` dan server mempertahankan nomor `OF` tersebut apa adanya.
-4. **Anti-Double-Print Guard (`PaymentSuccessView.tsx`):**
-   `autoPrintedReceiptRef` melacak `checkoutAttemptId` (string unik per checkout) alih-alih referensi objek `receipt`, menjamin **zero double-print** dalam kondisi apa pun.
+4. **Optimistic Queued Print & Anti-Double-Print Guard (`PaymentSuccessView.tsx`):**
+   - Tombol **`🖨️ Cetak Struk`** dan tombol `Enter` tetap aktif **0ms** saat `isSyncingOrderNumber = true`; jika diklik sebelum nomor server tiba, perintah cetak disimpan di `pendingManualPrintRef` (`isQueuedPrint = true`) dan langsung dieksekusi seketika begitu nomor definitif tersedia.
+   - `autoPrintedReceiptRef` melacak `checkoutAttemptId` (string unik per checkout) alih-alih referensi objek `receipt`, menjamin **zero double-print** dalam kondisi apa pun.
 
 

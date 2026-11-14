@@ -35,7 +35,7 @@ export interface OfflineOrderQueueItem {
   businessId: string
   orderNumber: string
   queueNumber: number
-  payload: Record<string, any>
+  payload: Record<string, unknown>
   createdAt: string
 }
 
@@ -234,7 +234,7 @@ export async function submitPosCheckout(params: {
   businessId: string
   timezone?: string
   attemptId: string
-  payload: Record<string, any>
+  payload: Record<string, unknown>
   timeoutMs?: number
 }): Promise<PosCheckoutResult> {
   const {
@@ -319,7 +319,7 @@ export async function submitPosCheckout(params: {
     }
 
     return triggerOfflineFallback()
-  } catch (err: any) {
+  } catch {
     clearTimeout(timer)
     // AbortError (timeout > 5s) or TypeError (network disconnected) -> offline fallback
     return triggerOfflineFallback()

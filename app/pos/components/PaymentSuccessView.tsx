@@ -68,6 +68,7 @@ export default function PaymentSuccessView({
   })
 
   const [isPrinting, setIsPrinting] = useState(false)
+  const [isQueuedPrint, setIsQueuedPrint] = useState(false)
   const [hasPrinted, setHasPrinted] = useState(false)
   const [isPrintingKitchen, setIsPrintingKitchen] = useState(false)
   const [hasPrintedKitchen, setHasPrintedKitchen] = useState(false)
@@ -79,6 +80,7 @@ export default function PaymentSuccessView({
 
   // Synchronous guards keyed by stable checkoutAttemptId (never object reference)
   const isPrintingRef = useRef(false)
+  const pendingManualPrintRef = useRef<{ conn?: ConnectionType; size?: PaperSize } | null>(null)
   const lastInitializedKeyRef = useRef<string | null>(null)
   const autoPrintedReceiptRef = useRef<string | null>(null)
   const autoPrintedKitchenRef = useRef<string | null>(null)
@@ -121,11 +123,17 @@ export default function PaymentSuccessView({
     return generateReceiptHtml(receipt, paperSize)
   }, [receipt, paperSize])
 
-  // Handle Print Action
+  // Handle Print Action (0ms optimistic click: queues seamlessly if order_number is still syncing)
   const handlePrint = useCallback(
     async (overrideConn?: ConnectionType, overrideSize?: PaperSize) => {
       if (!receipt || isPrintingRef.current) return
+      if (isSyncingOrderNumber) {
+        pendingManualPrintRef.current = { conn: overrideConn, size: overrideSize }
+        setIsQueuedPrint(true)
+        return
+      }
       isPrintingRef.current = true
+      setIsQueuedPrint(false)
       setIsPrinting(true)
       setPrintMessage(null)
       setNeedsBtReconnect(false)
@@ -150,7 +158,7 @@ export default function PaymentSuccessView({
         setIsPrinting(false)
       }
     },
-    [receipt, connectionType, paperSize]
+    [receipt, connectionType, paperSize, isSyncingOrderNumber]
   )
 
   // Latest handlePrint for effects that must NOT re-run when handlePrint identity changes
@@ -252,6 +260,8 @@ export default function PaymentSuccessView({
 
     if (lastInitializedKeyRef.current !== checkoutKey) {
       lastInitializedKeyRef.current = checkoutKey
+      pendingManualPrintRef.current = null
+      setIsQueuedPrint(false)
       if (settings.paperSize) setPaperSize(settings.paperSize)
       setConnectionType(resolvedConn)
       setPrintMessage(null)
@@ -261,10 +271,17 @@ export default function PaymentSuccessView({
       setNeedsBtReconnect(false)
     }
 
-    // Wait until authoritative server order_number (or 5s offline fallback) is ready before auto-printing
+    // Wait until authoritative server order_number (or 5s offline fallback) is ready before printing
     if (isSyncingOrderNumber) return
 
-    if (settings.autoPrintAfterPayment && autoPrintedReceiptRef.current !== checkoutKey) {
+    // Flush queued manual print click immediately once order_number is confirmed
+    if (pendingManualPrintRef.current) {
+      const pending = pendingManualPrintRef.current
+      pendingManualPrintRef.current = null
+      setIsQueuedPrint(false)
+      autoPrintedReceiptRef.current = checkoutKey
+      handlePrintRef.current(pending.conn || resolvedConn, pending.size || settings.paperSize)
+    } else if (settings.autoPrintAfterPayment && autoPrintedReceiptRef.current !== checkoutKey) {
       autoPrintedReceiptRef.current = checkoutKey
       handlePrintRef.current(resolvedConn, settings.paperSize)
     }
@@ -351,8 +368,8 @@ export default function PaymentSuccessView({
         if (hasPrinted) {
           // If already printed, Enter proceeds to new sale
           onClose()
-        } else if (!isSyncingOrderNumber) {
-          // Otherwise Enter prints receipt once order number is confirmed
+        } else {
+          // Enter prints immediately (queues if order number is still syncing)
           handlePrint()
         }
       }
@@ -598,17 +615,15 @@ export default function PaymentSuccessView({
                 Lewati Struk
               </button>
 
-              {/* Tombol 3: Cetak Struk (Primary Blue) */}
+              {/* Tombol 3: Cetak Struk (Primary Blue — 0ms instant clickable) */}
               <button
                 type="button"
                 onClick={() => handlePrint()}
-                disabled={isPrinting || isSyncingOrderNumber}
+                disabled={isPrinting}
                 className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-extrabold text-xs sm:text-sm shadow-sm transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
                 title="Cetak struk ke printer kasir (Tekan Enter)"
               >
-                {isSyncingOrderNumber ? (
-                  <span>Menyiapkan Nota...</span>
-                ) : isPrinting ? (
+                {isPrinting || isQueuedPrint ? (
                   <span>Mencetak...</span>
                 ) : (
                   <>
