@@ -2,10 +2,11 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
+import { usePageBackNavigation } from '@/hooks/usePageBackNavigation'
+import { fetchAllSupabaseRows } from '@/lib/chunkedQueryHelper'
 import { TemporalDateFilter, TemporalFilterValue } from '@/components/ui/TemporalDateFilter'
 import {
   getLocalDateRangeLimits,
@@ -16,9 +17,8 @@ import {
 } from '@/lib/localzone'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type RawOrderRow = {
+type ProjectedOrderRow = {
   id: string
-  order_number?: string | null
   order_date: string | null
   order_date_utc?: string | null
   created_at?: string | null
@@ -31,13 +31,33 @@ type RawOrderRow = {
   discount_amount?: number | string | null
   other_fees?: number | string | null
   grand_total?: number | string | null
-  raw_source_data?: Record<string, any> | string | null
+  // Projected scalar fields (from RPC or PostgREST JSONB path pushdown)
+  taxes?: number | string | null
+  total_tax?: number | string | null
+  tax_total?: number | string | null
+  shipping_total?: number | string | null
+  country?: string | null
+  billing_country?: string | null
+  shipping_country?: string | null
+  city?: string | null
+  shipping_city?: string | null
+  billing_city?: string | null
+  province?: string | null
+  shipping_state?: string | null
+  billing_state?: string | null
+  courier?: string | null
+  tax_code?: string | null
+  payment_method_title?: string | null
+  channel?: string | null
+  ledger_refund?: number | string | null
+  raw_refunds?: number | string | null
+  refunds_json?: any
 }
 
 type RefundPaymentRow = {
+  id: string
   order_id: string | null
   amount: number | string | null
-  payment_kind: string | null
 }
 
 type EnrichedOrder = {
@@ -110,119 +130,45 @@ type GroupedRow = {
   shipping: number
 }
 
-// L1 In-Memory Cache ONLY (No localStorage / sessionStorage)
-const revenueOrdersMemoryCache = new Map<string, { rows: RawOrderRow[]; timestamp: number }>()
+// L1 In-Memory Cache ONLY (Zero localStorage / sessionStorage per requirement)
+const revenueOrdersMemoryCache = new Map<string, { rows: ProjectedOrderRow[]; timestamp: number }>()
 const refundMapMemoryCache = new Map<string, { map: Map<string, number>; timestamp: number }>()
 const CACHE_TTL_MS = 60 * 1000 // 60s RAM cache
 
-const ORDER_SELECT_COLUMNS =
-  'id, order_number, order_date, order_date_utc, created_at, status, payment_status, payment_method, source_platform, subtotal, shipping_cost, discount_amount, other_fees, grand_total, raw_source_data'
+// Track whether the RPC is installed in Supabase to avoid repeating fallback attempts
+let rpcAvailabilityState: 'unknown' | 'available' | 'unavailable' = 'unknown'
 
-/**
- * Parallel Range Chunking Helper (> 1,000 rows without sequential waterfall):
- * 1. Fetches chunk 0..999 with exact count.
- * 2. Fires all remaining chunks (1000..1999, 2000..2999, ...) simultaneously via Promise.all().
- */
-async function fetchOrdersWindowParallel(
-  businessId: string,
-  startIso: string,
-  endIso: string
-): Promise<RawOrderRow[]> {
-  const cacheKey = `${businessId}_${startIso || 'ALL'}_${endIso || 'ALL'}`
-  const cached = revenueOrdersMemoryCache.get(cacheKey)
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.rows
-  }
+// PostgREST JSONB Sub-path Projection Pushdown (Zero full `raw_source_data` TOAST transfer!)
+const PROJECTED_ORDER_COLUMNS = [
+  'id',
+  'order_date',
+  'order_date_utc',
+  'created_at',
+  'status',
+  'payment_status',
+  'payment_method',
+  'source_platform',
+  'subtotal',
+  'shipping_cost',
+  'discount_amount',
+  'other_fees',
+  'grand_total',
+  'total_tax:raw_source_data->>total_tax',
+  'tax_total:raw_source_data->>tax_total',
+  'shipping_total:raw_source_data->>shipping_total',
+  'billing_country:raw_source_data->billing->>country',
+  'shipping_country:raw_source_data->shipping->>country',
+  'shipping_city:raw_source_data->shipping->>city',
+  'billing_city:raw_source_data->billing->>city',
+  'shipping_state:raw_source_data->shipping->>state',
+  'billing_state:raw_source_data->billing->>state',
+  'payment_method_title:raw_source_data->>payment_method_title',
+  'channel:raw_source_data->source_order->>channel',
+  'refunds_json:raw_source_data->refunds',
+].join(', ')
 
-  const chunkSize = 1000
-  const buildBaseQuery = () => {
-    let q = supabase
-      .from('orders')
-      .select(ORDER_SELECT_COLUMNS, { count: 'exact' })
-      .eq('business_id', businessId)
-
-    if (startIso) q = q.gte('order_date', startIso)
-    if (endIso) q = q.lte('order_date', endIso)
-
-    return q.order('order_date', { ascending: true }).order('id', { ascending: true })
-  }
-
-  const firstRes = await buildBaseQuery().range(0, chunkSize - 1)
-  if (firstRes.error) throw firstRes.error
-
-  const firstRows = (firstRes.data || []) as RawOrderRow[]
-  const totalCount = firstRes.count ?? firstRows.length
-
-  if (firstRows.length < chunkSize || totalCount <= chunkSize) {
-    revenueOrdersMemoryCache.set(cacheKey, { rows: firstRows, timestamp: Date.now() })
-    return firstRows
-  }
-
-  const cappedTotal = Math.min(totalCount, 50_000)
-  const chunkPromises: Promise<RawOrderRow[]>[] = []
-
-  for (let offset = chunkSize; offset < cappedTotal; offset += chunkSize) {
-    const from = offset
-    const to = offset + chunkSize - 1
-    chunkPromises.push(
-      (async () => {
-        let q = supabase
-          .from('orders')
-          .select(ORDER_SELECT_COLUMNS)
-          .eq('business_id', businessId)
-        if (startIso) q = q.gte('order_date', startIso)
-        if (endIso) q = q.lte('order_date', endIso)
-        const { data, error } = await q
-          .order('order_date', { ascending: true })
-          .order('id', { ascending: true })
-          .range(from, to)
-        if (error) throw error
-        return (data || []) as RawOrderRow[]
-      })()
-    )
-  }
-
-  const remainingChunks = await Promise.all(chunkPromises)
-  const allRows = firstRows.concat(...remainingChunks)
-  revenueOrdersMemoryCache.set(cacheKey, { rows: allRows, timestamp: Date.now() })
-  return allRows
-}
-
-/**
- * Fetches all refund entries from `order_payments` (`payment_kind = 'refund'`) in parallel
- * so partial & full POS/Invoice/Order refunds are accurately reflected.
- */
-async function fetchRefundMapParallel(businessId: string): Promise<Map<string, number>> {
-  const cached = refundMapMemoryCache.get(businessId)
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.map
-  }
-
-  const map = new Map<string, number>()
-  try {
-    const { data, error } = await supabase
-      .from('order_payments')
-      .select('order_id, amount, payment_kind')
-      .eq('business_id', businessId)
-      .eq('payment_kind', 'refund')
-      .limit(10000)
-
-    if (!error && Array.isArray(data)) {
-      for (const row of data as RefundPaymentRow[]) {
-        if (!row.order_id) continue
-        const amt = Math.abs(Number(row.amount) || 0)
-        if (amt > 0) {
-          map.set(row.order_id, (map.get(row.order_id) || 0) + amt)
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('[RevenueReport] order_payments refund fetch warning:', e)
-  }
-
-  refundMapMemoryCache.set(businessId, { map, timestamp: Date.now() })
-  return map
-}
+const BARE_SCALAR_COLUMNS =
+  'id, order_date, order_date_utc, created_at, status, payment_status, payment_method, source_platform, subtotal, shipping_cost, discount_amount, other_fees, grand_total'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const COUNTED_STATUSES = new Set([
@@ -277,6 +223,139 @@ const COUNTRY_NAMES: Record<string, { name: string; flag: string }> = {
   JP: { name: 'Japan', flag: '🇯🇵' },
 }
 
+/**
+ * Fetches all refund entries from `order_payments` (`payment_kind = 'refund'`)
+ * using `fetchAllSupabaseRows` with deterministic `.order('id', { ascending: true })`
+ * in strict compliance with the `high-cardinality-data` skill.
+ */
+async function fetchRefundMapCompliant(businessId: string): Promise<Map<string, number>> {
+  const cached = refundMapMemoryCache.get(businessId)
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.map
+  }
+
+  const map = new Map<string, number>()
+  try {
+    const rows = await fetchAllSupabaseRows<RefundPaymentRow>(
+      (from, to) =>
+        supabase
+          .from('order_payments')
+          .select('id, order_id, amount')
+          .eq('business_id', businessId)
+          .eq('payment_kind', 'refund')
+          .order('id', { ascending: true })
+          .range(from, to),
+      1000
+    )
+
+    for (const row of rows) {
+      if (!row.order_id) continue
+      const amt = Math.abs(Number(row.amount) || 0)
+      if (amt > 0) {
+        map.set(row.order_id, (map.get(row.order_id) || 0) + amt)
+      }
+    }
+  } catch (e) {
+    console.warn('[RevenueReport] order_payments refund fetch warning:', e)
+  }
+
+  refundMapMemoryCache.set(businessId, { map, timestamp: Date.now() })
+  return map
+}
+
+/**
+ * Hybrid High-Speed Order Fetcher:
+ * 1. Primary Fast-Path: Calls PostgreSQL RPC `get_revenue_report_orders` (1 RTT, 0 TOAST blobs, pre-joined refunds).
+ * 2. Automatic Fallback: Uses `fetchAllSupabaseRows` (`lib/chunkedQueryHelper.ts`) with
+ *    PostgREST JSONB Sub-path Projection Pushdown & deterministic `.order('id', { ascending: true })`.
+ */
+async function fetchRevenueWindowHybrid(
+  businessId: string,
+  startIso: string,
+  endIso: string
+): Promise<{ rows: ProjectedOrderRow[]; usedRpc: boolean }> {
+  const cacheKey = `${businessId}_${startIso || 'ALL'}_${endIso || 'ALL'}`
+  const cached = revenueOrdersMemoryCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return { rows: cached.rows, usedRpc: rpcAvailabilityState === 'available' }
+  }
+
+  // 1. Try RPC fast-path first unless known unavailable
+  if (rpcAvailabilityState !== 'unavailable') {
+    try {
+      const { data, error } = await supabase.rpc('get_revenue_report_orders', {
+        p_business_id: businessId,
+        p_start_date: startIso || null,
+        p_end_date: endIso || null,
+      })
+
+      if (!error && Array.isArray(data)) {
+        rpcAvailabilityState = 'available'
+        const rows = data as ProjectedOrderRow[]
+        revenueOrdersMemoryCache.set(cacheKey, { rows, timestamp: Date.now() })
+        return { rows, usedRpc: true }
+      }
+
+      if (error) {
+        // PGRST202 = function not found in schema cache (migration not yet executed)
+        if (error.code === 'PGRST202' || String(error.message || '').includes('get_revenue_report_orders')) {
+          rpcAvailabilityState = 'unavailable'
+        } else {
+          console.warn('[RevenueReport] RPC warning, falling back to Projected Range Query:', error.message)
+        }
+      }
+    } catch {
+      // Fallback to projected chunked query
+    }
+  }
+
+  // 2. Compliant Fallback using `fetchAllSupabaseRows` + JSONB Sub-path Projection Pushdown
+  try {
+    const rows = await fetchAllSupabaseRows<ProjectedOrderRow>(
+      (from, to) => {
+        let q = supabase
+          .from('orders')
+          .select<string, ProjectedOrderRow>(PROJECTED_ORDER_COLUMNS)
+          .eq('business_id', businessId)
+
+        if (startIso) q = q.gte('order_date', startIso)
+        if (endIso) q = q.lte('order_date', endIso)
+
+        return q
+          .order('order_date', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to)
+      },
+      1000
+    )
+
+    revenueOrdersMemoryCache.set(cacheKey, { rows, timestamp: Date.now() })
+    return { rows, usedRpc: false }
+  } catch {
+    // Stage 3 Bare Scalar Fallback (High-Cardinality Skill Section 5 compliance)
+    const bareRows = await fetchAllSupabaseRows<ProjectedOrderRow>(
+      (from, to) => {
+        let q = supabase
+          .from('orders')
+          .select(BARE_SCALAR_COLUMNS)
+          .eq('business_id', businessId)
+
+        if (startIso) q = q.gte('order_date', startIso)
+        if (endIso) q = q.lte('order_date', endIso)
+
+        return q
+          .order('order_date', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to)
+      },
+      1000
+    )
+
+    revenueOrdersMemoryCache.set(cacheKey, { rows: bareRows, timestamp: Date.now() })
+    return { rows: bareRows, usedRpc: false }
+  }
+}
+
 function getBucketKeyAndLabel(localYmd: string, granularity: Granularity): { key: string; label: string; sortKey: string } {
   if (!localYmd || !/^\d{4}-\d{2}-\d{2}$/.test(localYmd)) {
     return { key: 'unknown', label: '-', sortKey: '0000-00-00' }
@@ -312,7 +391,7 @@ function getBucketKeyAndLabel(localYmd: string, granularity: Granularity): { key
     const wmName = monthNames[dt.getUTCMonth()]
     return {
       key: `${wy}-${wm}-${wd}`,
-      label: `${ Number(wd) } ${wmName} '${String(wy).slice(-2)}`,
+      label: `${Number(wd)} ${wmName} '${String(wy).slice(-2)}`,
       sortKey: `${wy}-${wm}-${wd}`,
     }
   }
@@ -353,34 +432,18 @@ function generateDateBuckets(startYmd: string, endYmd: string, granularity: Gran
   return Array.from(map.values())
 }
 
-function parseRawSourceData(rawInput: RawOrderRow['raw_source_data']): Record<string, any> {
-  if (!rawInput) return {}
-  if (typeof rawInput === 'object' && !Array.isArray(rawInput)) return rawInput
-  if (typeof rawInput === 'string') {
-    try {
-      const parsed = JSON.parse(rawInput)
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
-    } catch {
-      return {}
-    }
-  }
-  return {}
-}
-
 function enrichOrderRow(
-  row: RawOrderRow,
+  row: ProjectedOrderRow,
   businessTz: string,
   refundByOrderId: Map<string, number>
 ): EnrichedOrder {
   const localDate = getOrderLocalDateKey(row, businessTz)
-  const raw = parseRawSourceData(row.raw_source_data)
-
   const status = normalizeStatus(row.status)
   const paymentStatus = String(row.payment_status || (status === 'completed' ? 'paid' : 'unpaid')).toLowerCase()
 
-  const shipping = Math.max(0, toNum(row.shipping_cost) || toNum(raw.shipping_total))
+  const shipping = Math.max(0, toNum(row.shipping_cost) || toNum(row.shipping_total))
   const fees = Math.max(0, Math.abs(toNum(row.other_fees)))
-  const taxes = Math.max(0, toNum(raw.total_tax) || toNum(raw.tax_total))
+  const taxes = Math.max(0, toNum(row.taxes) || toNum(row.total_tax) || toNum(row.tax_total))
 
   const grandTotal = Math.max(0, toNum(row.grand_total))
   const subtotal = Math.max(0, toNum(row.subtotal))
@@ -390,40 +453,36 @@ function enrichOrderRow(
   const grossSales = grandTotal > 0 ? grandTotal : Math.max(0, subtotal - discount + shipping + fees + taxes)
 
   // Refunds from 3 sources (without double counting):
-  // 1) raw_source_data.refunds (WooCommerce partial/full refunds)
-  let rawRefunds = 0
-  if (Array.isArray(raw.refunds) && raw.refunds.length > 0) {
-    rawRefunds = raw.refunds.reduce(
+  let rawRefunds = toNum(row.raw_refunds)
+  if (rawRefunds <= 0 && Array.isArray(row.refunds_json) && row.refunds_json.length > 0) {
+    rawRefunds = row.refunds_json.reduce(
       (sum: number, r: any) => sum + Math.abs(toNum(r?.total ?? r?.amount ?? r?.refund_total)),
       0
     )
   }
-  // 2) order_payments (payment_kind = 'refund')
-  const ledgerRefund = refundByOrderId.get(String(row.id)) || 0
-  // 3) Full order status is 'refunded' / 'returned' / 'return-request'
+  const ledgerRefund = Math.max(toNum(row.ledger_refund), refundByOrderId.get(String(row.id)) || 0)
   const isRefundStatus = REFUNDED_STATUSES.has(status) || paymentStatus === 'refunded'
   const statusImpliedRefund = isRefundStatus ? Math.max(0, grossSales - shipping - fees - taxes) || grossSales : 0
 
   const refunds = Math.min(grossSales, Math.max(rawRefunds, ledgerRefund, statusImpliedRefund))
   const netRevenue = Math.max(0, grossSales - taxes - shipping - fees - refunds)
 
-  // Dimensional attributes
-  const rawCountry = String(raw.billing?.country || raw.shipping?.country || 'ID').toUpperCase().trim() || 'ID'
-  const rawCity = String(raw.shipping?.city || raw.billing?.city || 'Tidak Diketahui').trim() || 'Tidak Diketahui'
-  const rawState = String(raw.shipping?.state || raw.billing?.state || 'Tidak Diketahui').trim() || 'Tidak Diketahui'
+  const rawCountry =
+    String(row.country || row.billing_country || row.shipping_country || 'ID')
+      .toUpperCase()
+      .trim() || 'ID'
+  const rawCity =
+    String(row.city || row.shipping_city || row.billing_city || 'Tidak Diketahui').trim() ||
+    'Tidak Diketahui'
+  const rawState =
+    String(row.province || row.shipping_state || row.billing_state || 'Tidak Diketahui').trim() ||
+    'Tidak Diketahui'
 
-  const meta = Array.isArray(raw.meta_data) ? raw.meta_data : []
-  const courierMeta =
-    meta.find((m: any) => m?.key === 'shapeup_kurir_awb')?.value ||
-    meta.find((m: any) => m?.key === '_kurir_awb')?.value ||
-    (Array.isArray(raw.shipping_lines) && raw.shipping_lines[0]?.method_title) ||
-    'Tanpa Ekspedisi'
-
-  const taxLines = Array.isArray(raw.tax_lines) ? raw.tax_lines : []
-  const taxCode = taxLines[0]?.rate_code || taxLines[0]?.label || ''
-
-  const platform = String(row.source_platform || raw.source_order?.channel || 'Manual').trim() || 'Manual'
-  const paymentMethod = String(row.payment_method || raw.payment_method_title || 'Manual / Tunai').trim() || 'Manual / Tunai'
+  const courier = String(row.courier || 'Tanpa Ekspedisi').trim() || 'Tanpa Ekspedisi'
+  const taxCode = String(row.tax_code || '').trim()
+  const platform = String(row.source_platform || row.channel || 'Manual').trim() || 'Manual'
+  const paymentMethod =
+    String(row.payment_method || row.payment_method_title || 'Manual / Tunai').trim() || 'Manual / Tunai'
 
   return {
     id: String(row.id),
@@ -435,8 +494,8 @@ function enrichOrderRow(
     country: rawCountry,
     city: rawCity,
     province: rawState,
-    courier: String(courierMeta).trim() || 'Tanpa Ekspedisi',
-    taxCode: String(taxCode).trim(),
+    courier,
+    taxCode,
     grossSales,
     taxes,
     shipping,
@@ -447,7 +506,8 @@ function enrichOrderRow(
 }
 
 export default function RevenueReportPage() {
-  const router = useRouter()
+  // Compliant with `page-layout-ux` skill: yields to active modals & routes to /onboarding on mobile/PWA
+  const goBack = usePageBackNavigation({ mobileFallback: '/onboarding' })
   const { activeBusiness } = useUserContext()
   const businessTz = getBusinessTimezone(activeBusiness?.timezone)
 
@@ -490,15 +550,15 @@ export default function RevenueReportPage() {
   const [secondaryGroupSortField, setSecondaryGroupSortField] = useState<GroupSortField>('netRevenue')
   const [secondaryGroupSortOrder, setSecondaryGroupSortOrder] = useState<'asc' | 'desc'>('desc')
 
-  // Data state (Current + Comparison + Refund Map loaded in parallel)
-  const [rawCurrentOrders, setRawCurrentOrders] = useState<RawOrderRow[]>([])
-  const [rawComparisonOrders, setRawComparisonOrders] = useState<RawOrderRow[]>([])
+  // Data state (Progressive Visual Analytics: Current renders immediately; Comparison streams in parallel)
+  const [rawCurrentOrders, setRawCurrentOrders] = useState<ProjectedOrderRow[]>([])
+  const [rawComparisonOrders, setRawComparisonOrders] = useState<ProjectedOrderRow[]>([])
   const [refundByOrderId, setRefundByOrderId] = useState<Map<string, number>>(() => new Map())
   const [loading, setLoading] = useState<boolean>(true)
   const [isSyncing, setIsSyncing] = useState<boolean>(false)
   const hasLoadedOnceRef = useRef<boolean>(false)
 
-  // Compute separate UTC bounds for Current Period and Comparison Period so they can be fetched in parallel
+  // Compute separate UTC bounds for Current Period and Comparison Period
   const periodBounds = useMemo(() => {
     const isAllTime = temporalFilter.preset === 'all' || (!temporalFilter.startDate && !temporalFilter.endDate)
     if (isAllTime) {
@@ -543,7 +603,8 @@ export default function RevenueReportPage() {
     businessTz,
   ])
 
-  const loadParallelReportData = useCallback(
+  // Progressive & Parallel Data Loader (IEEE TVCG / SIGMOD Progressive Visual Analytics pattern)
+  const loadProgressiveReportData = useCallback(
     async (
       bid: string,
       currStartIso: string,
@@ -558,20 +619,31 @@ export default function RevenueReportPage() {
       setIsSyncing(true)
 
       try {
-        const [currRows, compRows, refundMap] = await Promise.all([
-          fetchOrdersWindowParallel(bid, currStartIso, currEndIso),
+        // Launch Current Period and Comparison Period concurrently
+        const currPromise = fetchRevenueWindowHybrid(bid, currStartIso, currEndIso)
+        const compPromise =
           hasComp && compStartIso && compEndIso
-            ? fetchOrdersWindowParallel(bid, compStartIso, compEndIso)
-            : Promise.resolve([] as RawOrderRow[]),
-          fetchRefundMapParallel(bid),
+            ? fetchRevenueWindowHybrid(bid, compStartIso, compEndIso)
+            : Promise.resolve({ rows: [] as ProjectedOrderRow[], usedRpc: true })
+
+        // Phase 1: Unblock UI as soon as Current Period arrives!
+        const currRes = await currPromise
+        setRawCurrentOrders(currRes.rows)
+        hasLoadedOnceRef.current = true
+        setLoading(false)
+
+        // Phase 2: Resolve Comparison Period & Fallback Refund Map (if RPC wasn't used)
+        const [compRes, fallbackRefundMap] = await Promise.all([
+          compPromise,
+          currRes.usedRpc ? Promise.resolve(new Map<string, number>()) : fetchRefundMapCompliant(bid),
         ])
 
-        hasLoadedOnceRef.current = true
-        setRawCurrentOrders(currRows)
-        setRawComparisonOrders(compRows)
-        setRefundByOrderId(refundMap)
+        setRawComparisonOrders(compRes.rows)
+        if (!currRes.usedRpc) {
+          setRefundByOrderId(fallbackRefundMap)
+        }
       } catch (err) {
-        console.error('[RevenueReport] Failed to load parallel report data:', err)
+        console.error('[RevenueReport] Failed to load report data:', err)
       } finally {
         setLoading(false)
         setIsSyncing(false)
@@ -582,7 +654,7 @@ export default function RevenueReportPage() {
 
   useEffect(() => {
     if (!activeBusiness?.id) return
-    loadParallelReportData(
+    loadProgressiveReportData(
       activeBusiness.id,
       periodBounds.currUtcStart,
       periodBounds.currUtcEnd,
@@ -597,7 +669,7 @@ export default function RevenueReportPage() {
     periodBounds.hasComp,
     periodBounds.compUtcStart,
     periodBounds.compUtcEnd,
-    loadParallelReportData,
+    loadProgressiveReportData,
   ])
 
   // Enrich & filter counted orders
@@ -844,7 +916,6 @@ export default function RevenueReportPage() {
       })
     }
 
-    // Add last label if not too close to the previous tick
     const lastIdx = total - 1
     const lastInserted = ticks[ticks.length - 1]
     if (lastInserted && lastInserted.index !== lastIdx) {
@@ -878,7 +949,6 @@ export default function RevenueReportPage() {
       }
     }
 
-    // Target 6 to 8 intervals so the tallest bar reaches 88% - 96% of the chart height
     const roughStep = dataMax / 7
     const mag = Math.pow(10, Math.floor(Math.log10(roughStep)))
     const niceMultipliers = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 8, 10]
@@ -1108,15 +1178,14 @@ export default function RevenueReportPage() {
     tax_code: 'Tax Rate Code',
   }
 
-  // Adaptive bar spacing so Day (365 bars), Week (52 bars), and Month (12 bars) all render cleanly
-  const barGapClass =
-    bucketRows.length > 80
-      ? 'gap-[1px] px-0.5'
-      : bucketRows.length > 24
-      ? 'gap-1 px-1'
-      : 'gap-1.5 sm:gap-2.5 px-2'
-
-  const barBorderClass = bucketRows.length > 40 ? 'border' : 'border-2'
+  // High-Density Bar Mode (e.g. Day view over 1 year = 365 buckets):
+  // Prevents sub-pixel border/gap collapse so all 365 daily bars remain 100% visible!
+  const isHighDensityBars = bucketRows.length > 60
+  const barGapClass = isHighDensityBars
+    ? 'gap-0 px-0.5'
+    : bucketRows.length > 24
+    ? 'gap-1 px-1'
+    : 'gap-1.5 sm:gap-2.5 px-2'
 
   return (
     <div className="space-y-5 text-slate-800 su-fade-in">
@@ -1125,9 +1194,10 @@ export default function RevenueReportPage() {
         <div className="flex items-center gap-3 flex-wrap">
           <button
             type="button"
-            onClick={() => router.back()}
+            onClick={goBack}
             className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-500 hover:text-slate-800 shadow-2xs transition cursor-pointer"
             title="Kembali"
+            aria-label="Kembali"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="15 18 9 12 15 6" />
@@ -1225,7 +1295,7 @@ export default function RevenueReportPage() {
           )}
         </div>
 
-        {/* Lifetimely / Metorik Grade Date & Comparison Filter */}
+        {/* Lifetimely / Metorik Grade Date & Comparison Filter (Aligned Right so Calendar Popover never clips!) */}
         <div className="flex items-center justify-end">
           <TemporalDateFilter
             value={temporalFilter}
@@ -1233,6 +1303,7 @@ export default function RevenueReportPage() {
             timezone={activeBusiness?.timezone}
             showComparison={true}
             allowAllTime={true}
+            align="right"
           />
         </div>
       </div>
@@ -1411,6 +1482,44 @@ export default function RevenueReportPage() {
                           const compNetPct = Math.min(100, (b.compNetRevenue / chartScale.max) * 100)
                           const compDeductionPct = Math.max(0, compGrossPct - compNetPct)
 
+                          if (isHighDensityBars) {
+                            // High-Density Day Mode (e.g. 365 days): borderless crisp bars so sub-pixel widths never collapse to 0px
+                            return (
+                              <div
+                                key={b.key}
+                                onMouseEnter={() => setHoveredBucket(b)}
+                                onMouseLeave={() => setHoveredBucket(null)}
+                                className="flex-1 h-full flex items-end justify-center group cursor-pointer relative min-w-0 px-[0.25px] hover:bg-indigo-50/50"
+                              >
+                                {showCompareOnChart && b.compGrossSales > 0 && (
+                                  <div
+                                    style={{ height: `${Math.max(compGrossPct, 1.5)}%` }}
+                                    className="w-1/2 min-w-[1px] bg-slate-300 flex flex-col justify-end"
+                                  />
+                                )}
+                                {b.grossSales > 0 && (
+                                  <div
+                                    style={{ height: `${Math.max(grossPct, 1.5)}%` }}
+                                    className="w-full min-w-[1.5px] flex flex-col justify-end group-hover:brightness-90"
+                                  >
+                                    {deductionPct > 0 && (
+                                      <div
+                                        style={{ height: `${(deductionPct / (grossPct || 1)) * 100}%` }}
+                                        className="w-full bg-[#C7D2FE]"
+                                      />
+                                    )}
+                                    <div
+                                      style={{ height: `${(netPct / (grossPct || 1)) * 100}%` }}
+                                      className="w-full bg-[#6C72EE] flex-1"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          }
+
+                          const barBorderClass = bucketRows.length > 35 ? 'border' : 'border-2'
+
                           return (
                             <div
                               key={b.key}
@@ -1426,7 +1535,7 @@ export default function RevenueReportPage() {
                                   {compDeductionPct > 0 && (
                                     <div
                                       style={{ height: `${(compDeductionPct / (compGrossPct || 1)) * 100}%` }}
-                                      className={`w-full bg-slate-100 border-t border-x border-slate-300`}
+                                      className="w-full bg-slate-100 border-t border-x border-slate-300"
                                     />
                                   )}
                                   <div
@@ -1538,7 +1647,7 @@ export default function RevenueReportPage() {
 
                         {/* Interactive Hover Hit Columns & Active Dots for Line Chart */}
                         <div className="absolute inset-0 flex items-stretch justify-between">
-                          {bucketRows.map((b, i) => {
+                          {bucketRows.map((b) => {
                             const isHovered = hoveredBucket?.key === b.key
                             const netPct = Math.min(100, (b.netRevenue / chartScale.max) * 100)
                             const compNetPct = Math.min(100, (b.compNetRevenue / chartScale.max) * 100)

@@ -420,7 +420,7 @@ export function TemporalDateFilter({
       {/* ========================================================================= */}
       <div className="hidden sm:flex flex-wrap items-end gap-3">
         {/* GROUP 1: Primary Date Range Button */}
-        <div ref={primaryContainerRef} className="relative">
+        <div ref={primaryContainerRef} className={align === 'right' ? 'static' : 'relative'}>
           <label className="block text-[11px] font-semibold text-slate-500 mb-1">
             {primaryLabel}
           </label>
@@ -626,7 +626,11 @@ export function TemporalDateFilter({
 
                 {/* Comparison Mode Popover */}
                 {isComparisonOpen && (
-                  <div className="absolute top-full mt-2 left-0 z-50 bg-white rounded-2xl border border-slate-200 shadow-xl p-3 w-[260px]">
+                  <div
+                    className={`absolute top-full mt-2 z-50 bg-white rounded-2xl border border-slate-200 shadow-xl p-3 w-[260px] ${
+                      align === 'right' ? 'right-0' : 'left-0'
+                    }`}
+                  >
                     <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-2 mb-2">
                       Opsi Perbandingan
                     </div>
