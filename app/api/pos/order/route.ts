@@ -11,7 +11,15 @@ import { after } from 'next/server'
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v)
 
+// In-memory single-flight lock per client_attempt_id to prevent concurrent race condition
+// when a slow initial request (> 5s) is still running on the server while the client's
+// offline/timeout reconciliation retry arrives with the same client_attempt_id.
+const inFlightCheckoutAttempts = new Map<string, Promise<void>>()
+
 export async function POST(req: Request) {
+  let releaseAttemptLock: (() => void) | null = null
+  let lockedAttemptKey: string | null = null
+
   try {
     const body = await req.json().catch(() => null)
     if (!body) {
@@ -27,7 +35,24 @@ export async function POST(req: Request) {
 
     const clientAttemptId = typeof body?.client_attempt_id === 'string' ? body.client_attempt_id.trim() : ''
 
+    // Wait if an earlier in-flight request with the exact same client_attempt_id is still executing
+    if (clientAttemptId) {
+      const attemptKey = `${businessId}:${clientAttemptId}`
+      const existingLock = inFlightCheckoutAttempts.get(attemptKey)
+      if (existingLock) {
+        await existingLock.catch(() => {})
+      }
+      lockedAttemptKey = attemptKey
+      const lockPromise = new Promise<void>((resolve) => {
+        releaseAttemptLock = resolve
+      })
+      inFlightCheckoutAttempts.set(attemptKey, lockPromise)
+    }
+
     // 1a. Idempotency Guard: Prevent duplicate order insertion on network retry / offline flush
+    //     Opsi A (Odoo/Square Standard): If initial request succeeded on server with sequential number
+    //     (e.g. POS-YYYYMMDD-XXXX) while client timed out (> 5s) and printed an offline receipt
+    //     (POS-YYMMDD-OF<TAG>-<SEQ>), merge the printed offline number into raw_source_data for full auditability.
     if (clientAttemptId) {
       const { data: existingOrder } = await (supabaseAdmin || supabase)
         .from('orders')
@@ -37,12 +62,52 @@ export async function POST(req: Request) {
         .maybeSingle()
 
       if (existingOrder) {
+        const retryClientOrderNum =
+          typeof body?.order_number === 'string' ? body.order_number.trim().toUpperCase() : ''
+        const existingRaw =
+          existingOrder.raw_source_data && typeof existingOrder.raw_source_data === 'object'
+            ? existingOrder.raw_source_data
+            : {}
+
+        let reconciledFrom: string | null = existingRaw.reconciled_from_number || null
+
+        if (
+          retryClientOrderNum &&
+          retryClientOrderNum !== 'MENYINKRONKAN...' &&
+          retryClientOrderNum !== String(existingOrder.order_number || '').toUpperCase() &&
+          existingRaw.reconciled_from_number !== retryClientOrderNum
+        ) {
+          reconciledFrom = retryClientOrderNum
+          const updatedRaw = {
+            ...existingRaw,
+            is_offline_fallback: true,
+            is_order_number_replaced: true,
+            printed_order_number: retryClientOrderNum,
+            reconciled_from_number: retryClientOrderNum,
+            client_optimistic_number: retryClientOrderNum,
+            authoritative_order_number: existingOrder.order_number,
+            replacement_reason: body?.offline_fallback_reason || 'slow_network_timeout',
+            offline_created_at:
+              typeof body?.offline_created_at === 'string'
+                ? body.offline_created_at
+                : existingRaw.offline_created_at || undefined,
+            reconciled_at: new Date().toISOString()
+          }
+
+          await (supabaseAdmin || supabase)
+            .from('orders')
+            .update({ raw_source_data: updatedRaw })
+            .eq('id', existingOrder.id)
+            .eq('business_id', businessId)
+        }
+
         return NextResponse.json({
           success: true,
           deduplicated: true,
           order_id: existingOrder.id,
           order_number: existingOrder.order_number,
-          queue_number: existingOrder.raw_source_data?.queue_number || 1,
+          reconciled_from_number: reconciledFrom,
+          queue_number: existingRaw?.queue_number || 1,
           payment_status: existingOrder.payment_status,
           amount_paid: existingOrder.amount_paid,
           outstanding: Math.max(0, Number(existingOrder.grand_total || 0) - Number(existingOrder.amount_paid || 0))
@@ -265,8 +330,10 @@ export async function POST(req: Request) {
         ? 'paid' 
         : (totalPaid > 0 ? 'partial' : 'unpaid')
 
-    // 6. Generate Authoritative Atomic Sequential Order Number & Queue Number
-    //    (Or preserve device-partitioned offline fallback number so paper receipt == DB)
+    // 6. Generate Authoritative Atomic Sequential Order Number & Queue Number (Opsi A: Odoo/Square Dual-Identifier Standard)
+    //    Always assign gapless sequential order_number (`POS-YYYYMMDD-XXXX`) in the accounting ledger,
+    //    while recording any offline/slow-network receipt number (`POS-YYMMDD-OF<TAG>-<SEQ>`) in `raw_source_data`
+    //    for bi-directional search and audit transparency in POS Hub.
     const { data: bizData } = await (supabaseAdmin || supabase)
       .from('businesses')
       .select('timezone')
@@ -274,34 +341,30 @@ export async function POST(req: Request) {
       .maybeSingle()
     const businessTimezone = getBusinessTimezone(bizData?.timezone)
 
-    let orderNumber = ''
-    let queueNumber = 1
     const isOfflineFallback = Boolean(body?.is_offline_fallback)
-    const candidateOfflineNum = typeof clientOrderNumber === 'string' ? clientOrderNumber.trim().toUpperCase() : ''
+    const candidateOfflineNum =
+      typeof clientOrderNumber === 'string' &&
+      clientOrderNumber.trim() !== '' &&
+      clientOrderNumber.trim() !== 'Menyinkronkan...'
+        ? clientOrderNumber.trim().toUpperCase()
+        : ''
 
-    if (isOfflineFallback && /^POS-\d{6,8}-OF[A-Z0-9]+-\d+$/.test(candidateOfflineNum)) {
-      const { data: dupCheck } = await (supabaseAdmin || supabase)
-        .from('orders')
-        .select('id')
-        .eq('business_id', businessId)
-        .eq('order_number', candidateOfflineNum)
-        .maybeSingle()
+    const gen = await generatePosOrderNumber(businessId, supabaseAdmin || supabase, {
+      timezone: businessTimezone,
+      prefix: 'POS'
+    })
+    const orderNumber = gen.orderNumber
+    const queueNumber = gen.queueNumber
 
-      if (!dupCheck) {
-        orderNumber = candidateOfflineNum
-        const suffixMatch = candidateOfflineNum.match(/-(\d+)$/)
-        queueNumber = suffixMatch ? parseInt(suffixMatch[1], 10) || 1 : 1
-      }
-    }
-
-    if (!orderNumber) {
-      const gen = await generatePosOrderNumber(businessId, supabaseAdmin || supabase, {
-        timezone: businessTimezone,
-        prefix: 'POS'
-      })
-      orderNumber = gen.orderNumber
-      queueNumber = gen.queueNumber
-    }
+    const isOrderNumberReplaced = Boolean(
+      candidateOfflineNum && candidateOfflineNum.toUpperCase() !== orderNumber.toUpperCase()
+    )
+    const reconciledFromNumber = isOrderNumberReplaced ? candidateOfflineNum : null
+    const replacementReason = isOrderNumberReplaced
+      ? (typeof body?.offline_fallback_reason === 'string' && body.offline_fallback_reason.trim()
+          ? body.offline_fallback_reason.trim()
+          : (isOfflineFallback ? 'offline_sync' : 'legacy_reconciled'))
+      : null
     
     const lineItems = items.map((item: any, idx: number) => {
       const isCustom = String(item.id).startsWith('custom-')
@@ -351,12 +414,23 @@ export async function POST(req: Request) {
       }
     })
 
+    const isLegacyOrderFormat = /^POS-\d{8}$/i.test(candidateOfflineNum)
+
     const rawSourceData = {
       id: orderNumber,
       queue_number: queueNumber,
       client_attempt_id: clientAttemptId || undefined,
-      client_optimistic_number: clientOrderNumber || undefined,
-      is_offline_fallback: isOfflineFallback || undefined,
+      client_optimistic_number: candidateOfflineNum || undefined,
+      legacy_order_number: isLegacyOrderFormat ? candidateOfflineNum : undefined,
+      printed_order_number: candidateOfflineNum || undefined,
+      reconciled_from_number: reconciledFromNumber || undefined,
+      authoritative_order_number: orderNumber,
+      is_offline_fallback: isOfflineFallback || isOrderNumberReplaced || undefined,
+      is_order_number_replaced: isOrderNumberReplaced || undefined,
+      replacement_reason: replacementReason || undefined,
+      offline_created_at:
+        typeof body?.offline_created_at === 'string' ? body.offline_created_at : undefined,
+      reconciled_at: isOrderNumberReplaced ? new Date().toISOString() : undefined,
       status: 'completed',
       currency: 'IDR',
       total: String(numGrandTotal),
@@ -445,7 +519,11 @@ export async function POST(req: Request) {
             cash_received: p.cash_received || p.amount,
             change_amount: p.change_amount || 0,
             reference_number: p.reference_number || null,
-            notes: p.notes || (p.account_name ? `Pembayaran POS #${orderNumber} via ${p.account_name}` : `Pembayaran POS #${orderNumber}`),
+            notes:
+              p.notes ||
+              (p.account_name
+                ? `Pembayaran POS #${orderNumber}${reconciledFromNumber ? ` (Struk Offline: #${reconciledFromNumber})` : ''} via ${p.account_name}`
+                : `Pembayaran POS #${orderNumber}${reconciledFromNumber ? ` (Struk Offline: #${reconciledFromNumber})` : ''}`),
             payment_kind: 'payment'
           }
         })
@@ -481,6 +559,7 @@ export async function POST(req: Request) {
       success: true,
       order_id: order.id,
       order_number: orderNumber,
+      reconciled_from_number: reconciledFromNumber,
       queue_number: queueNumber,
       payment_status: paymentStatus,
       amount_paid: totalPaid,
@@ -490,5 +569,12 @@ export async function POST(req: Request) {
   } catch (err: any) {
     console.error('POS Checkout Error:', err)
     return NextResponse.json({ error: err.message || 'Internal server error' }, { status: 500 })
+  } finally {
+    if (releaseAttemptLock) {
+      ;(releaseAttemptLock as () => void)()
+    }
+    if (lockedAttemptKey) {
+      inFlightCheckoutAttempts.delete(lockedAttemptKey)
+    }
   }
 }

@@ -1,6 +1,7 @@
 "use client"
 import { useState, useEffect, useCallback } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
+import { extractPosOrderNumberAudit } from '@/lib/pos/orderNumberHelper'
 import { supabase } from '@/lib/supabase'
 import { formatDisplayDate, DEFAULT_TIMEZONE } from '@/lib/timeUtils'
 
@@ -181,6 +182,7 @@ export function OrderDetailModal({
   const psc = paymentStatusColor(effectivePayStatus)
   const { courier, resi } = getCourierAndResi()
   const rawAddress = getAddressFromRaw()
+  const posNumAudit = extractPosOrderNumberAudit(order)
 
   return (
     <FullScreenModal
@@ -191,6 +193,14 @@ export function OrderDetailModal({
           <span className="font-extrabold text-slate-900 tracking-tight">
             Nota #{order.order_number || order.id}
           </span>
+          {posNumAudit.isReplaced && posNumAudit.replacedFromNumber && (
+            <span
+              className="text-[10px] font-black px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-mono"
+              title={`Nomor struk awal diganti karena ${posNumAudit.reasonLabel || 'Rekonsiliasi Offline'}`}
+            >
+              🔄 Struk Awal: #{posNumAudit.replacedFromNumber}
+            </span>
+          )}
           <span 
             style={{ background: psc.bg, color: psc.color, border: `1px solid ${psc.border}` }}
             className="text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider inline-flex items-center gap-1"

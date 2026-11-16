@@ -10,6 +10,7 @@ import { getStoredReceiptSettings } from './ReceiptSettingsModal'
 import { getStoredKitchenSettings } from '@/lib/pos/kitchenSettings'
 import { buildKitchenTicketsFromItems, KitchenTicketData } from '@/lib/pos/kitchenTicketBuilder'
 import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
+import { extractPosOrderNumberAudit } from '@/lib/pos/orderNumberHelper'
 import CashPaymentModal, { type PaymentResult } from './CashPaymentModal'
 import POSReturnModal from './POSReturnModal'
 import { supabase } from '@/lib/supabase'
@@ -264,6 +265,7 @@ export default function POSOrderDetailModal({
   const raw = currentOrder?.raw_source_data || {}
   const cashReceivedFallback = Number(raw.cash_received || 0)
   const changeAmountFallback = Number(raw.change_amount || 0)
+  const numberAudit = useMemo(() => extractPosOrderNumberAudit(currentOrder), [currentOrder])
 
   // ─── HANDLER: PRINT RECEIPT ─────────────────────────────────────────────────
   const handleOpenReceipt = () => {
@@ -465,6 +467,16 @@ export default function POSOrderDetailModal({
         title={
           <div className="flex items-center gap-2 flex-wrap">
             <span>Nota #{currentOrder?.order_number || ''}</span>
+            {numberAudit.isReplaced && numberAudit.replacedFromNumber && (
+              <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-mono">
+                🔄 Diganti dari #{numberAudit.replacedFromNumber}
+              </span>
+            )}
+            {!numberAudit.isReplaced && numberAudit.isOfflineFallback && (
+              <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                ⚡ {numberAudit.reasonLabel || 'Nota Offline'}
+              </span>
+            )}
             {isCancelled ? (
               <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200">
                 Dibatalkan / Direfund
@@ -537,6 +549,70 @@ export default function POSOrderDetailModal({
             {refundError && (
               <div className="p-3 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl font-medium">
                 ⚠️ {refundError}
+              </div>
+            )}
+
+            {/* Banner Audit Pergantian Nomor Nota (Opsi A: Dual-Identifier Offline/Slow Network Audit) */}
+            {(numberAudit.isReplaced || numberAudit.isOfflineFallback) && (
+              <div className="p-3.5 bg-amber-50/90 border border-amber-200 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm leading-none">🔄</span>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-amber-950">
+                      Keterangan Rekonsiliasi Nomor Nota ({numberAudit.reasonLabel || 'Offline / Jaringan Lambat'})
+                    </span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md bg-amber-200/80 text-amber-950 font-black text-[10px] uppercase">
+                    Tersinkronisasi ke Buku Besar
+                  </span>
+                </div>
+
+                {numberAudit.isReplaced && numberAudit.replacedFromNumber ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                    <div className="p-2.5 rounded-xl bg-white border border-amber-200/80">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase block">
+                        Nomor Struk Awal (Sebelum Diganti)
+                      </span>
+                      <span className="font-mono font-black text-amber-900 text-xs sm:text-sm block mt-0.5">
+                        #{numberAudit.replacedFromNumber}
+                      </span>
+                      <span className="text-[10px] text-slate-500 block mt-0.5">
+                        Tercetak di kertas struk saat jaringan lambat / offline
+                      </span>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-white border border-emerald-200/90">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase block">
+                        Nomor Nota Resmi (Buku Besar DB)
+                      </span>
+                      <span className="font-mono font-black text-emerald-800 text-xs sm:text-sm block mt-0.5">
+                        #{numberAudit.authoritativeNumber}
+                      </span>
+                      <span className="text-[10px] text-slate-500 block mt-0.5">
+                        Nomor urut akuntansi setelah sinkronisasi server
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-amber-900 font-medium">
+                    Transaksi ini diproses menggunakan penomoran partisi perangkat saat kasir dalam kondisi mode offline / jaringan lambat.
+                  </p>
+                )}
+
+                {(numberAudit.offlineCreatedAt || numberAudit.reconciledAt) && (
+                  <div className="flex items-center gap-3 flex-wrap text-[10px] text-amber-800/90 font-medium pt-0.5">
+                    {numberAudit.offlineCreatedAt && (
+                      <span>
+                        ⏱️ Waktu Kasir: <strong>{formatDisplayDate(numberAudit.offlineCreatedAt, 'datetime', timezone)}</strong>
+                      </span>
+                    )}
+                    {numberAudit.reconciledAt && (
+                      <span>
+                        • ☁️ Waktu Sinkronisasi DB: <strong>{formatDisplayDate(numberAudit.reconciledAt, 'datetime', timezone)}</strong>
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { supabase } from '@/lib/supabase'
 import { formatDisplayDate, DEFAULT_TIMEZONE } from '@/lib/timeUtils'
+import { extractPosOrderNumberAudit, matchesPosOrderNumberSearch } from '@/lib/pos/orderNumberHelper'
 
 type CustomerInfo = {
   name?: string | null
@@ -46,7 +47,7 @@ export default function OrderHistoryModal({
   const [orders, setOrders] = useState<POSOrderHistoryItem[]>([])
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [tabFilter, setTabFilter] = useState<'all' | 'unpaid' | 'paid'>('all')
+  const [tabFilter, setTabFilter] = useState<'all' | 'unpaid' | 'paid' | 'replaced'>('all')
   const [processingRefundId, setProcessingRefundId] = useState<string | null>(null)
 
   const fetchOrders = useCallback(async () => {
@@ -127,20 +128,24 @@ export default function OrderHistoryModal({
     }).format(val || 0)
   }
 
-  // Filtered orders by Search Query and Tab Filter
+  // Filtered orders by Search Query and Tab Filter (Supports Dual-Identifier Search: Official + Offline Number)
   const filteredOrders = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     return orders.filter((o) => {
+      const numAudit = extractPosOrderNumberAudit(o)
+
       // 1. Tab status filter
       if (tabFilter === 'unpaid') {
         if (o.payment_status === 'paid' || o.status === 'cancelled') return false
       } else if (tabFilter === 'paid') {
         if (o.payment_status !== 'paid') return false
+      } else if (tabFilter === 'replaced') {
+        if (!numAudit.isReplaced && !numAudit.isOfflineFallback) return false
       }
 
-      // 2. Search query filter
+      // 2. Search query filter (matches official order_number, replaced offline receipt number, customer name & phone)
       if (!q) return true
-      const matchNo = o.order_number?.toLowerCase().includes(q)
+      const matchNo = matchesPosOrderNumberSearch(o, q)
       const custName = o.customer?.name?.toLowerCase() || ''
       const custPhone = o.customer?.phone?.toLowerCase() || ''
       return matchNo || custName.includes(q) || custPhone.includes(q)
@@ -150,6 +155,13 @@ export default function OrderHistoryModal({
   // Count metrics for tabs
   const unpaidCount = useMemo(() => {
     return orders.filter((o) => o.payment_status !== 'paid' && o.status !== 'cancelled').length
+  }, [orders])
+
+  const replacedCount = useMemo(() => {
+    return orders.filter((o) => {
+      const audit = extractPosOrderNumberAudit(o)
+      return audit.isReplaced || audit.isOfflineFallback
+    }).length
   }, [orders])
 
   const handleRefund = async (orderId: string, orderNumber: string) => {
@@ -282,6 +294,23 @@ export default function OrderHistoryModal({
             >
               ✓ Lunas
             </button>
+            <button
+              type="button"
+              onClick={() => setTabFilter('replaced')}
+              className={`px-3 py-1.5 text-xs font-black rounded-xl transition flex items-center gap-1.5 ${
+                tabFilter === 'replaced'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-white border border-amber-300 text-amber-800 hover:bg-amber-50'
+              }`}
+              title="Filter khusus nota yang nomornya diganti/direkonsiliasi saat offline atau jaringan lambat"
+            >
+              <span>🔄 No. Nota Diganti / Offline</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                tabFilter === 'replaced' ? 'bg-amber-800 text-white' : 'bg-amber-100 text-amber-900 font-bold'
+              }`}>
+                {replacedCount}
+              </span>
+            </button>
           </div>
 
           {/* Search Input */}
@@ -290,7 +319,7 @@ export default function OrderHistoryModal({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="🔍 Cari No. Order / Pelanggan / HP..."
+              placeholder="🔍 Cari No. Order / Struk Offline (OF...) / Pelanggan..."
               className="w-full pl-3.5 pr-8 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
             />
             {searchQuery && (
@@ -348,6 +377,7 @@ export default function OrderHistoryModal({
                     const amountPaid = order.amount_paid || 0
                     const outstanding = Math.max(0, grandTotal - amountPaid)
                     const isPaid = order.payment_status === 'paid' && outstanding <= 0.01
+                    const numAudit = extractPosOrderNumberAudit(order)
 
                     return (
                       <tr 
@@ -356,9 +386,35 @@ export default function OrderHistoryModal({
                           !isPaid && !isCancelled ? 'bg-rose-50/15' : ''
                         }`}
                       >
-                        {/* No Order */}
-                        <td className="px-4 py-3.5 font-mono font-black text-slate-900">
-                          #{order.order_number}
+                        {/* No Order + Keterangan Pergantian Nomor Offline/Jaringan Lambat */}
+                        <td className="px-4 py-3.5">
+                          <div className="font-mono font-black text-slate-900">
+                            #{order.order_number}
+                          </div>
+                          {numAudit.isReplaced && numAudit.replacedFromNumber && (
+                            <div className="mt-1 space-y-0.5">
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold font-mono"
+                                title={`Nomor struk awal diganti ke #${order.order_number} karena ${numAudit.reasonLabel || 'Rekonsiliasi Offline'}`}
+                              >
+                                <span>🔄</span>
+                                <span>Struk Awal: #{numAudit.replacedFromNumber}</span>
+                              </span>
+                              {numAudit.reasonLabel && (
+                                <span className="block text-[10px] text-amber-700 font-semibold">
+                                  Ket: {numAudit.reasonLabel}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {!numAudit.isReplaced && numAudit.isOfflineFallback && (
+                            <div className="mt-1">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold">
+                                <span>⚡</span>
+                                <span>{numAudit.reasonLabel || 'Nota Offline'}</span>
+                              </span>
+                            </div>
+                          )}
                         </td>
 
                         {/* Waktu */}
@@ -531,6 +587,7 @@ export default function OrderHistoryModal({
                 const amountPaid = order.amount_paid || 0
                 const outstanding = Math.max(0, grandTotal - amountPaid)
                 const isPaid = order.payment_status === 'paid' && outstanding <= 0.01
+                const numAudit = extractPosOrderNumberAudit(order)
 
                 return (
                   <div
@@ -542,14 +599,28 @@ export default function OrderHistoryModal({
                     }`}
                   >
                     {/* Top Row: Order Number & Status */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-black text-slate-900 text-xs">
-                          #{order.order_number}
-                        </span>
-                        <span className="text-[10px] text-slate-400">
-                          {formatDisplayDate(order.order_date || order.created_at, 'datetime', timezone)}
-                        </span>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-black text-slate-900 text-xs">
+                            #{order.order_number}
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            {formatDisplayDate(order.order_date || order.created_at, 'datetime', timezone)}
+                          </span>
+                        </div>
+                        {numAudit.isReplaced && numAudit.replacedFromNumber && (
+                          <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold">
+                            <span>🔄</span>
+                            <span>Diganti dari: <strong className="font-mono">#{numAudit.replacedFromNumber}</strong> ({numAudit.reasonLabel || 'Offline'})</span>
+                          </div>
+                        )}
+                        {!numAudit.isReplaced && numAudit.isOfflineFallback && (
+                          <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold">
+                            <span>⚡</span>
+                            <span>{numAudit.reasonLabel || 'Nota Offline'}</span>
+                          </div>
+                        )}
                       </div>
                       {isPaid ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-800 border border-emerald-200">

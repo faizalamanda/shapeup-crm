@@ -15,6 +15,7 @@ import OrderHistoryModal from '../../orders/pos/components/OrderHistoryModal'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
 import { buildReceiptDataFromOrder } from '@/lib/pos/receiptDataBuilder'
 import { prefetchPosCatalog } from '@/lib/posCatalogStore'
+import { flushOfflineOrderQueue } from '@/lib/pos/posCheckoutService'
 
 type Props = {
   onOpenWorkspace: (sessionData?: {
@@ -225,6 +226,23 @@ export default function POSHub({ onOpenWorkspace, preloadedSession }: Props) {
   useEffect(() => {
     loadData({ silent: true })
   }, [loadData])
+
+  // Auto-flush any queued offline / slow-network POS orders when entering POS Hub or when network reconnects
+  useEffect(() => {
+    const bizId = activeBusiness?.id
+    if (!bizId) return
+
+    const syncPendingOfflineOrders = async () => {
+      const res = await flushOfflineOrderQueue(bizId)
+      if (res.syncedCount > 0) {
+        void loadData({ silent: true })
+      }
+    }
+
+    void syncPendingOfflineOrders()
+    window.addEventListener('online', syncPendingOfflineOrders)
+    return () => window.removeEventListener('online', syncPendingOfflineOrders)
+  }, [activeBusiness?.id, loadData])
 
   // Speculative idle prefetch for POS Catalog & Categories during cashier think-time
   // Scheduled via requestIdleCallback / setTimeout so it NEVER blocks initial Hub rendering

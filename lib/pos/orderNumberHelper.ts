@@ -23,6 +23,148 @@ export interface PosOrderNumberResult {
   dateStr: string
 }
 
+export type PosNumberReplacementReason =
+  | 'slow_network_timeout'
+  | 'offline_mode'
+  | 'offline_sync'
+  | 'server_error_fallback'
+  | 'collision_resolved'
+  | 'legacy_reconciled'
+
+export interface PosOrderNumberAuditInfo {
+  /** Nomor nota resmi di buku besar database (misal: POS-20261116-0005) */
+  authoritativeNumber: string
+  /** Nomor nota sementara/offline yang dicetak saat jaringan lambat/offline (misal: POS-261116-OF7K-001) */
+  replacedFromNumber: string | null
+  /** True jika nomor nota mengalami pergantian dari nomor offline/sementara ke nomor sekuensial server */
+  isReplaced: boolean
+  /** True jika transaksi melewati mekanisme fallback offline atau jaringan lambat (> 5 detik) */
+  isOfflineFallback: boolean
+  /** Kode alasan teknis pergantian nomor nota */
+  reasonCode: PosNumberReplacementReason | null
+  /** Label alasan pergantian dalam Bahasa Indonesia untuk UI POS Hub */
+  reasonLabel: string | null
+  /** Waktu transaksi riil saat kasir menekan bayar di perangkat */
+  offlineCreatedAt: string | null
+  /** Waktu rekonsiliasi nomor nota di server database */
+  reconciledAt: string | null
+}
+
+const OFFLINE_NUMBER_REGEX = /^POS-\d{6,8}-OF[A-Z0-9]+-\d+$/i
+
+/**
+ * Mengekstrak informasi audit pergantian nomor nota (Opsi A: Dual-Identifier Audit Trail)
+ * dari objek pesanan Supabase (`orders` beserta `raw_source_data`).
+ */
+export function extractPosOrderNumberAudit(order: any): PosOrderNumberAuditInfo {
+  const authoritativeNumber = String(order?.order_number || order?.orderNumber || '').trim()
+  const raw =
+    order?.raw_source_data && typeof order.raw_source_data === 'object'
+      ? order.raw_source_data
+      : {}
+
+  const candidates = [
+    raw.reconciled_from_number,
+    raw.printed_order_number,
+    raw.client_optimistic_number,
+    raw.legacy_order_number
+  ]
+
+  let replacedFromNumber: string | null = null
+  for (const c of candidates) {
+    if (typeof c === 'string') {
+      const cleaned = c.trim()
+      if (
+        cleaned &&
+        cleaned !== 'Menyinkronkan...' &&
+        cleaned !== 'POS-ORDER' &&
+        cleaned.toUpperCase() !== authoritativeNumber.toUpperCase()
+      ) {
+        replacedFromNumber = cleaned
+        break
+      }
+    }
+  }
+
+  const isAuthOfflinePattern = OFFLINE_NUMBER_REGEX.test(authoritativeNumber)
+  const isReplacedOfflinePattern = replacedFromNumber ? OFFLINE_NUMBER_REGEX.test(replacedFromNumber) : false
+  const isReplaced = Boolean(replacedFromNumber)
+  const isOfflineFallback = Boolean(
+    raw.is_offline_fallback ||
+      raw.is_order_number_replaced ||
+      isAuthOfflinePattern ||
+      isReplacedOfflinePattern ||
+      isReplaced
+  )
+
+  const rawReason = String(raw.replacement_reason || '').trim() as PosNumberReplacementReason
+  let reasonCode: PosNumberReplacementReason | null = null
+  if (
+    rawReason === 'slow_network_timeout' ||
+    rawReason === 'offline_mode' ||
+    rawReason === 'offline_sync' ||
+    rawReason === 'server_error_fallback' ||
+    rawReason === 'collision_resolved' ||
+    rawReason === 'legacy_reconciled'
+  ) {
+    reasonCode = rawReason
+  } else if (isReplaced) {
+    reasonCode = isReplacedOfflinePattern ? 'slow_network_timeout' : 'legacy_reconciled'
+  } else if (isOfflineFallback) {
+    reasonCode = 'offline_mode'
+  }
+
+  let reasonLabel: string | null = null
+  switch (reasonCode) {
+    case 'slow_network_timeout':
+      reasonLabel = 'Jaringan Lambat (> 5 dtk)'
+      break
+    case 'offline_mode':
+    case 'offline_sync':
+      reasonLabel = 'Sinkronisasi Offline'
+      break
+    case 'server_error_fallback':
+      reasonLabel = 'Fallback Gangguan Jaringan'
+      break
+    case 'collision_resolved':
+      reasonLabel = 'Penyesuaian Urutan Server'
+      break
+    case 'legacy_reconciled':
+      reasonLabel = 'Penyesuaian Nomor Nota'
+      break
+    default:
+      reasonLabel = isReplaced
+        ? 'Rekonsiliasi Nomor Nota'
+        : isOfflineFallback
+        ? 'Mode Offline'
+        : null
+  }
+
+  return {
+    authoritativeNumber,
+    replacedFromNumber,
+    isReplaced,
+    isOfflineFallback,
+    reasonCode,
+    reasonLabel,
+    offlineCreatedAt: typeof raw.offline_created_at === 'string' ? raw.offline_created_at : null,
+    reconciledAt: typeof raw.reconciled_at === 'string' ? raw.reconciled_at : null
+  }
+}
+
+/**
+ * Pencarian dua arah (Dual-Identifier Search): mencocokkan kueri kasir terhadap
+ * Nomor Nota Resmi Server (`POS-YYYYMMDD-XXXX`) MAUPUN Nomor Struk Offline/Pengganti (`POS-YYMMDD-OF...`).
+ */
+export function matchesPosOrderNumberSearch(order: any, query: string): boolean {
+  const q = (query || '').trim().toLowerCase().replace(/^#/, '')
+  if (!q) return true
+  const audit = extractPosOrderNumberAudit(order)
+  if (audit.authoritativeNumber.toLowerCase().includes(q)) return true
+  if (audit.replacedFromNumber && audit.replacedFromNumber.toLowerCase().includes(q)) return true
+  return false
+}
+
 /**
  * Generates an atomic, sequential POS order number and queue number.
  */

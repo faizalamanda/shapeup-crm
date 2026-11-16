@@ -27,8 +27,14 @@ export interface PosCheckoutResult {
   orderNumber: string | null
   queueNumber: number | null
   isOffline: boolean
+  reconciledFromNumber?: string | null
   error?: string
 }
+
+export type OfflineFallbackReason =
+  | 'offline_mode'
+  | 'slow_network_timeout'
+  | 'server_error_fallback'
 
 export interface OfflineOrderQueueItem {
   attemptId: string
@@ -37,6 +43,7 @@ export interface OfflineOrderQueueItem {
   queueNumber: number
   payload: Record<string, unknown>
   createdAt: string
+  fallbackReason?: OfflineFallbackReason
 }
 
 export function createCheckoutAttemptId(): string {
@@ -198,7 +205,9 @@ export async function flushOfflineOrderQueue(businessId?: string): Promise<{
             business_id: item.businessId,
             client_attempt_id: item.attemptId,
             order_number: item.orderNumber,
-            is_offline_fallback: true
+            is_offline_fallback: true,
+            offline_fallback_reason: item.fallbackReason || 'offline_mode',
+            offline_created_at: item.createdAt
           })
         })
 
@@ -245,7 +254,9 @@ export async function submitPosCheckout(params: {
     timeoutMs = DEFAULT_CONFIRM_TIMEOUT_MS
   } = params
 
-  const triggerOfflineFallback = (): PosCheckoutResult => {
+  const triggerOfflineFallback = (
+    fallbackReason: OfflineFallbackReason = 'offline_mode'
+  ): PosCheckoutResult => {
     const { orderNumber, queueNumber } = generateOfflineOrderNumber(businessId, timezone)
     enqueueOfflineOrder({
       attemptId,
@@ -253,8 +264,18 @@ export async function submitPosCheckout(params: {
       orderNumber,
       queueNumber,
       payload,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      fallbackReason
     })
+
+    // Jika jaringan hanya lambat (> 5s timeout) namun browser masih online,
+    // jadwalkan rekonsiliasi latar belakang otomatis agar server mencatat nomor struk OF yang tercetak.
+    if (typeof window !== 'undefined' && navigator.onLine !== false) {
+      setTimeout(() => {
+        void flushOfflineOrderQueue(businessId)
+      }, 3500)
+    }
+
     return {
       status: 'offline_fallback',
       orderId: null,
@@ -266,7 +287,7 @@ export async function submitPosCheckout(params: {
 
   // Immediate offline fast-path when browser reports no network
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-    return triggerOfflineFallback()
+    return triggerOfflineFallback('offline_mode')
   }
 
   const controller = new AbortController()
@@ -303,7 +324,7 @@ export async function submitPosCheckout(params: {
         }
       }
       // 5xx / 408 / 429 transient server errors -> safe offline fallback + retry queue
-      return triggerOfflineFallback()
+      return triggerOfflineFallback('server_error_fallback')
     }
 
     if (result?.order_id) {
@@ -314,15 +335,17 @@ export async function submitPosCheckout(params: {
         orderId: result.order_id,
         orderNumber: result.order_number || null,
         queueNumber: result.queue_number ?? null,
+        reconciledFromNumber: result.reconciled_from_number || null,
         isOffline: false
       }
     }
 
-    return triggerOfflineFallback()
-  } catch {
+    return triggerOfflineFallback('server_error_fallback')
+  } catch (err: any) {
     clearTimeout(timer)
-    // AbortError (timeout > 5s) or TypeError (network disconnected) -> offline fallback
-    return triggerOfflineFallback()
+    // AbortError (timeout > 5s) vs TypeError (network disconnected) -> offline fallback with explicit reason
+    const isTimeout = err?.name === 'AbortError'
+    return triggerOfflineFallback(isTimeout ? 'slow_network_timeout' : 'offline_mode')
   }
 }
 

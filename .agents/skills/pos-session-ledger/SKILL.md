@@ -223,8 +223,11 @@ Untuk menjamin integritas buku besar dan laci kasir saat terjadi pembatalan pesa
 ### 5.1 Real Action First (0ms UI + Hybrid Adaptive Order Numbering)
 - Di kasir fisik (retail/F&B), aksi nyata kasir adalah prioritas utama: modal pembayaran langsung tertutup, keranjang belanja langsung bersih, stok lokal L1/L2 langsung berkurang, dan `PaymentSuccessView` tampil seketika (**0ms**) agar kasir siap melayani antrian berikutnya.
 - **Isolasi Modul Checkout (`lib/pos/posCheckoutService.ts`):** Seluruh orkestrasi pengiriman checkout POS (`submitPosCheckout`), penanda perangkat offline (`getOrCreateDeviceTag`), antrean offline (`flushOfflineOrderQueue`), dan `client_attempt_id` idempotency dipisahkan dari `POSWorkspace.tsx` agar pembaruan UI kasir tidak pernah mengganggu integritas nomor nota.
-- **Hybrid Adaptive Print Confirmation, Optimistic Queued Print & Anti-Double-Print:**
-  - Pencetakan struk (`autoPrintAfterPayment`) menunggu nomor nota definitif dari server (~150–300ms via RPC `generate_pos_order_number`) atau beralih otomatis ke nomor partisi perangkat anti-bentrok (`POS-YYMMDD-OF<TAG>-<SEQ>`) setelah batas timeout 5 detik / kondisi offline, lalu di-sync otomatis saat koneksi pulih dengan mempertahankan nomor `OF` tersebut di server.
+- **Hybrid Adaptive Print Confirmation, Optimistic Queued Print & Dual-Identifier Audit Trail (Opsi A — Odoo/Square Standard):**
+  - Pencetakan struk (`autoPrintAfterPayment`) menunggu nomor nota definitif dari server (~150–300ms via RPC `generate_pos_order_number`) atau beralih otomatis ke nomor partisi perangkat anti-bentrok (`POS-YYMMDD-OF<TAG>-<SEQ>`) setelah batas timeout 5 detik / kondisi offline, lalu di-sync otomatis saat koneksi pulih.
+  - **Opsi A (Gapless Server Sequence + Dual-Identifier Cross-Reference):** Saat antrean offline atau retry jaringan lambat (> 5 detik) masuk ke `/api/pos/order`, server **tetap mempertahankan nomor urut resmi `POS-YYYYMMDD-XXXX`** di kolom `orders.order_number` agar buku besar akuntansi tidak bolong (*gapless*), sekaligus menyimpan nomor struk awal `POS-YYMMDD-OF<TAG>-<SEQ>` ke dalam `raw_source_data.reconciled_from_number` (`printed_order_number`, `is_order_number_replaced: true`, `replacement_reason: 'slow_network_timeout' | 'offline_mode'`).
+  - Jika terjadi *in-flight timeout race condition* (request pertama > 5 detik sebenarnya berhasil masuk ke database dengan nomor `POS-YYYYMMDD-XXXX`, sementara kasir sudah mencetak nomor `OF`), saat `flushOfflineOrderQueue` mengirim ulang `client_attempt_id` yang sama (otomatis dijadwalkan 3.5 detik pasca-timeout), **Idempotency Guard** melakukan *Idempotent Metadata Merge* untuk mencatat `reconciled_from_number` ke baris `orders` yang sudah ada.
+  - **Transparansi & Pencarian Dua Arah di POS Hub (`extractPosOrderNumberAudit` & `matchesPosOrderNumberSearch`):** Seluruh tampilan POS Hub (`ShiftDetailModal`, `OrderHistoryModal`, `POSOrderDetailModal`) menampilkan badge **`🔄 Diganti dari: #POS-YYMMDD-OF...`** beserta alasan pergantiannya, mendukung filter khusus **`🔄 No. Nota Diganti / Offline`**, serta mengizinkan pencarian menggunakan nomor resmi server maupun nomor struk offline.
   - Tombol **`🖨️ Cetak Struk`** dan shortcut `Enter` di `PaymentSuccessView.tsx` **tidak pernah di-disable** saat `isSyncingOrderNumber`; klik manual pada 0ms langsung di-antrekan via `pendingManualPrintRef` (menampilkan `Mencetak...`) dan langsung menembak printer 1 kali begitu nomor definitif siap.
   - `PaymentSuccessView.tsx` melacak `autoPrintedReceiptRef` berdasarkan `checkoutAttemptId` (bukan referensi objek `receipt`) sehingga pembaruan state tidak pernah memicu cetak ulang ganda.
 
@@ -971,6 +974,21 @@ $$\text{POS}-\text{YYYYMMDD}-\text{XXXX}$$
   - Permintaan ke server dieksekusi di latar belakang (*fire-and-forget*).
   - Ketika response server tiba, `setLastCreatedOrderId` dan `setReceiptData` merekonsiliasi nomor nota secara mulus *in-place* tanpa kedipan (*zero flicker*).
 - **Speculative Counter Pre-Warming:** Saat `POSWorkspace` dimuat, sistem secara otomatis mem-prewarm nilai counter tertinggi hari ini dari Supabase ke `localStorage` di latar belakang secara *non-blocking*.
+
+### 20.5 Rekonsiliasi Nomor Nota Offline / Jaringan Lambat & Jejak Audit POS Hub (Opsi A — Standar Odoo/Square)
+- **Dual-Identifier Architecture (Opsi A):**
+  - Saat perangkat kasir offline atau koneksi jaringan melebihi batas *timeout* 5 detik, struk kertas pelanggan dicetak menggunakan nomor partisi perangkat anti-bentrok (`POS-YYMMDD-OF<TAG>-<SEQ>`).
+  - Ketika pesanan disinkronkan ke server (`/api/pos/order`), database **tetap menetapkan nomor urut sekuensial resmi `POS-YYYYMMDD-XXXX`** pada kolom `orders.order_number` agar urutan buku besar akuntansi harian tetap rapat (*gapless*).
+  - Nomor struk awal (`POS-YYMMDD-OF<TAG>-<SEQ>`) disimpan permanen di `orders.raw_source_data` pada atribut `reconciled_from_number`, `printed_order_number`, `is_order_number_replaced: true`, `replacement_reason` (`'slow_network_timeout' | 'offline_mode' | 'offline_sync' | 'legacy_reconciled'`), `offline_created_at`, dan `reconciled_at`.
+- **Single-Flight Lock & Idempotent Metadata Merge (Kompatibel Penuh dengan Klien yang Belum Refresh):**
+  - Endpoint `POST /api/pos/order` menggunakan *in-memory single-flight lock* (`inFlightCheckoutAttempts`) per `client_attempt_id`.
+  - Jika request pertama pada jaringan lambat (> 5 detik) masih berjalan atau baru saja selesai di server sementara kasir sudah mencetak nomor `OF...`, maka ketika `flushOfflineOrderQueue` mengirim ulang transaksi dengan `client_attempt_id` yang sama, **Idempotency Guard** melakukan *Idempotent Metadata Merge* untuk meng-update `reconciled_from_number` ke baris `orders` yang sudah ada (tanpa menduplikasi pesanan).
+  - Klien lawas yang belum di-refresh (baik yang mengirim format `POS-\d{8}` maupun antrean offline tanpa `offline_fallback_reason`) tetap ditangani secara transparan dengan menyimpan `legacy_order_number` dan `reconciled_from_number`.
+- **Auto-Flush di POSWorkspace & POSHub:**
+  - Selain saat event `online` dan setelah timeout 3.5 detik di `posCheckoutService.ts`, komponen `POSHub.tsx` juga memanggil `flushOfflineOrderQueue(activeBusiness.id)` saat dibuka sehingga kasir yang langsung beralih ke POS Hub atau me-refresh halaman langsung tersinkronisasi.
+- **Transparansi Visual & Pencarian Dua Arah di POS Hub (`orderNumberHelper.ts`):**
+  - `ShiftDetailModal.tsx`, `OrderHistoryModal.tsx` (termasuk tab filter `🔄 No. Nota Diganti / Offline`), `POSOrderDetailModal.tsx`, dan `OrderDetailModal.tsx` menampilkan badge **`🔄 Diganti dari: #POS-YYMMDD-OF...`** beserta alasan pergantiannya, serta mendukung pencarian dua arah (`matchesPosOrderNumberSearch`) menggunakan nomor resmi server maupun nomor struk kertas awal.
+  - Cetakan ulang struk thermal (`receiptDataBuilder.ts` & `printerAdapter.ts`) otomatis menyertakan baris **`Ref Struk: POS-YYMMDD-OF...`** tepat di bawah `No. Invoice:`.
 
 ---
 

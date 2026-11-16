@@ -136,11 +136,26 @@ export function buildReceiptDataFromOrder(order: any, options: ReceiptBuildOptio
   // 6. Date Resolution
   const dateStr = formatDisplayDate(order.created_at || order.order_date || new Date(), 'receipt', timezone)
 
+  const effectiveOrderNumber = order.order_number || order.orderNumber || 'POS-ORDER'
+  const candidateReconciledFrom = (
+    raw.reconciled_from_number ||
+    raw.printed_order_number ||
+    raw.client_optimistic_number ||
+    ''
+  ).trim()
+  const reconciledFromNumber =
+    candidateReconciledFrom &&
+    candidateReconciledFrom !== 'Menyinkronkan...' &&
+    candidateReconciledFrom.toUpperCase() !== String(effectiveOrderNumber).toUpperCase()
+      ? candidateReconciledFrom
+      : undefined
+
   return {
     businessName: settings.storeName || businessName,
     businessAddress: settings.address || undefined,
     businessPhone: settings.phone || undefined,
-    orderNumber: order.order_number || order.orderNumber || 'POS-ORDER',
+    orderNumber: effectiveOrderNumber,
+    reconciledFromNumber,
     date: dateStr,
     cashierName: options.cashierName || order.cashier_name || 'Kasir',
     customerName: customerName,

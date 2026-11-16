@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { formatDisplayDate } from '@/lib/timeUtils'
 import { ReceiptData } from '@/lib/pos/printerAdapter'
+import { extractPosOrderNumberAudit, matchesPosOrderNumberSearch } from '@/lib/pos/orderNumberHelper'
 
 type Props = {
   isOpen: boolean
@@ -105,12 +106,12 @@ export default function ShiftDetailModal({
       .catch(() => {})
   }, [isOpen])
 
-  // Filtered Orders inside this shift
+  // Filtered Orders inside this shift (supports searching both official order_number & replaced offline receipt number)
   const filteredOrders = useMemo(() => {
     if (!orderSearch.trim()) return orders
     const q = orderSearch.toLowerCase()
     return orders.filter((o) => {
-      const matchNo = o.order_number?.toLowerCase().includes(q)
+      const matchNo = matchesPosOrderNumberSearch(o, q)
       const matchCust = (o.customer?.name || (Array.isArray(o.customer) ? o.customer[0]?.name : ''))?.toLowerCase().includes(q)
       return matchNo || matchCust
     })
@@ -570,7 +571,7 @@ export default function ShiftDetailModal({
                   <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs">🔍</span>
                   <input
                     type="text"
-                    placeholder="Cari nota di shift ini (No. Order / Nama Pelanggan)..."
+                    placeholder="Cari nota di shift ini (No. Order / No. Struk Offline OF... / Nama Pelanggan)..."
                     value={orderSearch}
                     onChange={(e) => setOrderSearch(e.target.value)}
                     className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
@@ -607,6 +608,7 @@ export default function ShiftDetailModal({
                         : []
                       const itemsCount = parsedItems.length || ord.total_qty || 1
                       const methodStr = String(ord.payment_method || 'cash').toLowerCase()
+                      const numAudit = extractPosOrderNumberAudit(ord)
 
                       return (
                         <div
@@ -617,9 +619,26 @@ export default function ShiftDetailModal({
                         >
                           <div className="space-y-1 min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-black text-slate-900 text-xs group-hover:text-indigo-600 transition">
+                              <span className="font-black text-slate-900 text-xs group-hover:text-indigo-600 transition font-mono">
                                 #{ord.order_number}
                               </span>
+                              {numAudit.isReplaced && numAudit.replacedFromNumber && (
+                                <span
+                                  className="px-2 py-0.5 rounded-full text-[9px] font-black bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 font-mono"
+                                  title={`Nomor nota diganti dari struk awal #${numAudit.replacedFromNumber} (${numAudit.reasonLabel || 'Rekonsiliasi Offline'})`}
+                                >
+                                  <span>🔄</span>
+                                  <span>Diganti dari: #{numAudit.replacedFromNumber}</span>
+                                </span>
+                              )}
+                              {!numAudit.isReplaced && numAudit.isOfflineFallback && (
+                                <span
+                                  className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-amber-100 text-amber-900 border border-amber-300"
+                                  title="Transaksi dicatat saat mode offline / jaringan lambat"
+                                >
+                                  ⚡ {numAudit.reasonLabel || 'Nota Offline'}
+                                </span>
+                              )}
                               {ord.is_cross_shift ? (
                                 <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-purple-100 text-purple-800 border border-purple-200">
                                   Pelunasan Piutang
@@ -636,6 +655,15 @@ export default function ShiftDetailModal({
                                 {formatDisplayDate(ord.created_at, 'time', timezone)}
                               </span>
                             </div>
+
+                            {numAudit.isReplaced && numAudit.replacedFromNumber && (
+                              <div className="text-[11px] text-amber-800 font-semibold flex items-center gap-1.5">
+                                <span>ℹ️ Keterangan:</span>
+                                <span>
+                                  Struk tercetak <strong className="font-mono">#{numAudit.replacedFromNumber}</strong> ({numAudit.reasonLabel || 'Jaringan Lambat / Offline'}) → Buku besar <strong className="font-mono">#{ord.order_number}</strong>
+                                </span>
+                              </div>
+                            )}
 
                             <div className="text-xs text-slate-500 flex items-center gap-2 truncate">
                               <span className="font-bold text-slate-700">

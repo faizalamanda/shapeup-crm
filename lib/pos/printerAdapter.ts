@@ -36,6 +36,7 @@ export interface ReceiptData {
   businessPhone?: string
   orderNumber: string
   orderNumberLabel?: string
+  reconciledFromNumber?: string
   date: string
   cashierName: string
   customerName?: string
@@ -327,6 +328,11 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
         <span>${receipt.orderNumberLabel || (receipt.returnNumber ? 'Nota Asal:' : 'No. Invoice:')}</span>
         <span>${escapeHtml(receipt.originalOrderNumber || receipt.orderNumber)}</span>
       </div>
+      ${receipt.reconciledFromNumber ? `
+      <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+        <span>Ref Struk:</span>
+        <span>${escapeHtml(receipt.reconciledFromNumber)}</span>
+      </div>` : ''}
       <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
         <span>Tanggal:</span>
         <span>${escapeHtml(receipt.date)}</span>
@@ -529,6 +535,9 @@ export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize?: PaperSiz
   writeRaw(0x1B, 0x61, 0x00) // Left
   const invoiceLabel = receipt.orderNumberLabel || (receipt.returnNumber ? 'No. Retur:' : 'No. Invoice:')
   writeText(padColumns(invoiceLabel, receipt.originalOrderNumber || receipt.orderNumber))
+  if (receipt.reconciledFromNumber) {
+    writeText(padColumns('Ref Struk:', receipt.reconciledFromNumber))
+  }
   writeText(padColumns('Tanggal:', receipt.date))
   writeText(padColumns('Kasir:', receipt.cashierName))
   if (receipt.customerName) {
