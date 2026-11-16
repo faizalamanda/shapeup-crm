@@ -43,6 +43,7 @@ type CatalogProductRow = {
   cost_price?: number | string | null
   type?: string | null
   hpp_type?: string | null
+  is_sellable?: boolean | null
   category_id?: string | null
   stock_quantity?: number | string | null
   stock_type?: string | null
@@ -81,6 +82,8 @@ type QuadrantType = 'star' | 'cash_cow' | 'puzzle' | 'dog' | 'no_sales'
 
 type YAxisMetric = 'totalProfit' | 'unitMargin' | 'marginPct'
 type ThresholdMode = 'mean' | 'median'
+type MatrixViewMode = 'scatter' | 'board'
+type ChartDensityCap = 'per_quadrant_10' | 'top_25' | 'top_50' | 'top_120'
 
 type ProductMatrixRow = {
   key: string
@@ -128,7 +131,14 @@ type SortField =
   | 'marginPct'
 
 type GroupDimension = 'quadrant' | 'category' | 'hpp_source' | 'platform'
-type GroupSortField = 'label' | 'skuCount' | 'qtySold' | 'netSales' | 'totalHpp' | 'grossProfit' | 'marginPct'
+type GroupSortField =
+  | 'label'
+  | 'skuCount'
+  | 'qtySold'
+  | 'netSales'
+  | 'totalHpp'
+  | 'grossProfit'
+  | 'marginPct'
 
 type GroupedSummaryRow = {
   key: string
@@ -150,12 +160,13 @@ const catalogMemoryCache = new Map<
     products: CatalogProductRow[]
     categoryMap: Map<string, string>
     recipeMap: Map<string, ProductHppResult>
-    purchases: RawPurchaseRow[]
     defaultHppPct: number
     timestamp: number
   }
 >()
+const purchasesMemoryCache = new Map<string, { rows: RawPurchaseRow[]; timestamp: number }>()
 const CACHE_TTL_MS = 60 * 1000
+const TABLE_PAGE_SIZE = 50
 
 const COUNTED_ORDER_STATUSES = new Set([
   'shipped',
@@ -180,6 +191,12 @@ const cleanText = (v: unknown): string =>
     .replace(/\s+/g, ' ')
     .trim()
 
+const truncateLabel = (text: string, maxLen = 20): string => {
+  const clean = cleanText(text)
+  if (clean.length <= maxLen) return clean
+  return `${clean.slice(0, maxLen - 1)}…`
+}
+
 const formatIDR = (val: number) =>
   new Intl.NumberFormat('id-ID', {
     style: 'currency',
@@ -189,11 +206,12 @@ const formatIDR = (val: number) =>
 
 const formatAxisIDR = (val: number) => {
   const abs = Math.abs(val)
+  const sign = val < 0 ? '-' : ''
   if (abs === 0) return 'Rp0'
-  if (abs >= 1_000_000_000) return `Rp${(val / 1_000_000_000).toFixed(1)}M`
-  if (abs >= 1_000_000) return `Rp${(val / 1_000_000).toFixed(1)}jt`
-  if (abs >= 1_000) return `Rp${Math.round(val / 1_000)}rb`
-  return `Rp${Math.round(val)}`
+  if (abs >= 1_000_000_000) return `${sign}Rp${(abs / 1_000_000_000).toFixed(1)}M`
+  if (abs >= 1_000_000) return `${sign}Rp${(abs / 1_000_000).toFixed(1)}jt`
+  if (abs >= 1_000) return `${sign}Rp${Math.round(abs / 1_000)}rb`
+  return `${sign}Rp${Math.round(abs)}`
 }
 
 const formatNumber = (val: number) =>
@@ -246,63 +264,75 @@ const QUADRANT_META: Record<
   {
     label: string
     shortLabel: string
+    subtitle: string
     icon: string
     badgeBg: string
     badgeText: string
     badgeBorder: string
     dotColor: string
     hexColor: string
+    cardHeaderBg: string
   }
 > = {
   star: {
     label: 'Star (Volume Tinggi, Profit Tinggi)',
     shortLabel: 'Star',
+    subtitle: 'Profit Tinggi • Volume Tinggi',
     icon: '⭐',
     badgeBg: 'bg-emerald-50',
     badgeText: 'text-emerald-700',
     badgeBorder: 'border-emerald-200',
     dotColor: 'bg-emerald-500',
     hexColor: '#10B981',
+    cardHeaderBg: 'bg-emerald-50/80 border-emerald-200/80',
   },
   cash_cow: {
     label: 'Cash Cow (Volume Tinggi, Profit Rendah)',
     shortLabel: 'Cash Cow',
+    subtitle: 'Profit Rendah • Volume Tinggi',
     icon: '🐄',
     badgeBg: 'bg-indigo-50',
     badgeText: 'text-indigo-700',
     badgeBorder: 'border-indigo-200',
     dotColor: 'bg-indigo-500',
     hexColor: '#6366F1',
+    cardHeaderBg: 'bg-indigo-50/80 border-indigo-200/80',
   },
   puzzle: {
     label: 'Puzzle (Volume Rendah, Profit Tinggi)',
     shortLabel: 'Puzzle',
+    subtitle: 'Profit Tinggi • Volume Rendah',
     icon: '🧩',
     badgeBg: 'bg-amber-50',
     badgeText: 'text-amber-700',
     badgeBorder: 'border-amber-200',
     dotColor: 'bg-amber-500',
     hexColor: '#F59E0B',
+    cardHeaderBg: 'bg-amber-50/80 border-amber-200/80',
   },
   dog: {
     label: 'Dog (Volume Rendah, Profit Rendah)',
     shortLabel: 'Dog',
+    subtitle: 'Profit Rendah • Volume Rendah',
     icon: '🐶',
     badgeBg: 'bg-rose-50',
     badgeText: 'text-rose-700',
     badgeBorder: 'border-rose-200',
     dotColor: 'bg-rose-500',
     hexColor: '#F43F5E',
+    cardHeaderBg: 'bg-rose-50/80 border-rose-200/80',
   },
   no_sales: {
     label: 'Dead Stock (Belum Terjual)',
     shortLabel: 'Tanpa Penjualan',
+    subtitle: 'Qty Terjual = 0',
     icon: '💤',
     badgeBg: 'bg-slate-100',
     badgeText: 'text-slate-600',
     badgeBorder: 'border-slate-200',
     dotColor: 'bg-slate-400',
     hexColor: '#94A3B8',
+    cardHeaderBg: 'bg-slate-100 border-slate-200',
   },
 }
 
@@ -339,7 +369,7 @@ const HPP_SOURCE_META: Record<
   },
 }
 
-// ─── Data Fetchers (Compliant with `high-cardinality-data` skill) ─────────────
+// ─── Data Fetchers (Compliant with `high-cardinality-data` & `inventory-ledger`) ──
 async function fetchOrdersWindowCompliant(
   businessId: string,
   startIso: string,
@@ -366,7 +396,7 @@ async function fetchOrdersWindowCompliant(
 
       return q
         .order('order_date', { ascending: true })
-        .order('id', { ascending: true })
+        .order('id', { ascending: true }) // Mandatory deterministic tie-breaker
         .range(from, to)
     },
     1000
@@ -376,17 +406,20 @@ async function fetchOrdersWindowCompliant(
   return rows
 }
 
-async function fetchCatalogAndHppSourcesCompliant(businessId: string) {
+/**
+ * Multi-Stage Select Fallback for Catalog + Targeted Variable Recipe HPP Batching
+ * Compliant with `high-cardinality-data` Section 5 & `inventory-ledger` Section 8.
+ */
+async function fetchCatalogMasterCompliant(businessId: string) {
   const cached = catalogMemoryCache.get(businessId)
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     return cached
   }
 
-  // Parallel fetch: Products + Categories + Purchases + Global Integration Config
-  const [products, categoriesRes, purchases, globalConfigRes] = await Promise.all([
+  const [products, categoriesRes, globalConfigRes] = await Promise.all([
     fetchAllBusinessProducts<CatalogProductRow>(supabase, businessId, {
       selectWithVariants:
-        'id, name, price, sku, unit, type, hpp_type, category_id, cost_price, stock_quantity, stock_type, categories(id, name), product_variants(id, name, sku, price, cost_price, stock_quantity)',
+        'id, name, price, sku, unit, type, hpp_type, is_sellable, category_id, cost_price, stock_quantity, stock_type, categories(id, name), product_variants(id, name, sku, price, cost_price, stock_quantity)',
       selectVariantsOnly:
         'id, name, price, sku, unit, type, hpp_type, category_id, cost_price, stock_quantity, stock_type, product_variants(id, name, sku, price, cost_price, stock_quantity)',
       selectFallback:
@@ -396,17 +429,6 @@ async function fetchCatalogAndHppSourcesCompliant(businessId: string) {
       .from('categories')
       .select('id, name')
       .eq('business_id', businessId),
-    fetchAllSupabaseRows<RawPurchaseRow>(
-      (from, to) =>
-        supabase
-          .from('purchases')
-          .select('id, purchase_number, date, subtotal, discount_amount, other_fees, grand_total, items_json')
-          .eq('business_id', businessId)
-          .order('date', { ascending: false })
-          .order('id', { ascending: true })
-          .range(from, to),
-      1000
-    ).catch(() => [] as RawPurchaseRow[]),
     supabase
       .from('integrations')
       .select('platform_name, api_credentials')
@@ -422,15 +444,21 @@ async function fetchCatalogAndHppSourcesCompliant(businessId: string) {
     }
   }
 
-  // Batch fetch variable recipes HPP
-  const physicalIds = products
-    .filter(p => (p.type || 'physical') === 'physical')
+  // Targeted Variable Recipe Query: ONLY query `product_recipes` for products with `hpp_type === 'variable'`
+  // Chunked in batches of 150 IDs so URL never overflows even if a business has hundreds of variable products.
+  const variableProductIds = products
+    .filter(p => (p.type || 'physical') === 'physical' && p.hpp_type === 'variable')
     .map(p => p.id)
 
-  const recipeMap =
-    physicalIds.length > 0
-      ? await calculateProductsHppBatch(physicalIds, supabase)
-      : new Map<string, ProductHppResult>()
+  const recipeMap = new Map<string, ProductHppResult>()
+  const CHUNK_SIZE = 150
+  for (let i = 0; i < variableProductIds.length; i += CHUNK_SIZE) {
+    const batchIds = variableProductIds.slice(i, i + CHUNK_SIZE)
+    const batchMap = await calculateProductsHppBatch(batchIds, supabase)
+    for (const [k, v] of batchMap.entries()) {
+      recipeMap.set(k, v)
+    }
+  }
 
   let defaultHppPct = 0
   const creds = (globalConfigRes.data as any)?.api_credentials
@@ -442,12 +470,39 @@ async function fetchCatalogAndHppSourcesCompliant(businessId: string) {
     products,
     categoryMap,
     recipeMap,
-    purchases,
     defaultHppPct,
     timestamp: Date.now(),
   }
   catalogMemoryCache.set(businessId, result)
   return result
+}
+
+/**
+ * Lazy Purchase History Fetcher:
+ * ONLY executed if at least 1 sold non-variable product has missing Master & Order HPP (`0`).
+ * Capped to latest 500 purchase documents for fast sub-100ms response.
+ */
+async function fetchPurchasesFallbackLazy(businessId: string): Promise<RawPurchaseRow[]> {
+  const cached = purchasesMemoryCache.get(businessId)
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.rows
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('purchases')
+      .select('id, purchase_number, date, subtotal, discount_amount, other_fees, grand_total, items_json')
+      .eq('business_id', businessId)
+      .order('date', { ascending: false })
+      .order('id', { ascending: true })
+      .range(0, 499)
+
+    const rows = !error && Array.isArray(data) ? (data as RawPurchaseRow[]) : []
+    purchasesMemoryCache.set(businessId, { rows, timestamp: Date.now() })
+    return rows
+  } catch {
+    return []
+  }
 }
 
 function computeMedian(values: number[]): number {
@@ -466,9 +521,9 @@ function buildRecommendation(
 ): string {
   const hppPrefix =
     hppSource === 'missing'
-      ? '⚠️ Lengkapi HPP di Master Produk terlebih dahulu (saat ini Rp 0). '
+      ? '⚠️ Lengkapi HPP di Master Produk/Resep terlebih dahulu (saat ini Rp 0). '
       : hppSource === 'order_fallback' || hppSource === 'purchase_fallback'
-      ? 'ℹ️ HPP dari referensi histori — simpan permanen di Master Produk. '
+      ? 'ℹ️ HPP diambil dari referensi histori — disarankan simpan permanen di Master Produk. '
       : ''
 
   switch (quadrant) {
@@ -490,7 +545,7 @@ export default function ProductPerformancePage() {
   const { activeBusiness } = useUserContext()
   const businessTz = getBusinessTimezone(activeBusiness?.timezone)
 
-  // Default to 'last-30' (30 Hari Terakhir) per user confirmation
+  // Default to 'last-30' (30 Hari Terakhir)
   const [temporalFilter, setTemporalFilter] = useState<TemporalFilterValue>(() => {
     const limits = getLocalDateRangeLimits('last-30', businessTz)
     const comp = resolveComparisonRange('previous_period', limits.start, limits.end)
@@ -505,9 +560,12 @@ export default function ProductPerformancePage() {
     }
   })
 
-  // Matrix Chart Controls
+  // Matrix Visual Controls
+  const [viewMode, setViewMode] = useState<MatrixViewMode>('scatter')
   const [yAxisMetric, setYAxisMetric] = useState<YAxisMetric>('totalProfit')
   const [thresholdMode, setThresholdMode] = useState<ThresholdMode>('mean')
+  const [chartDensityCap, setChartDensityCap] = useState<ChartDensityCap>('per_quadrant_10')
+  const [showDirectLabels, setShowDirectLabels] = useState<boolean>(true)
   const [excludeMissingHppFromThreshold, setExcludeMissingHppFromThreshold] = useState<boolean>(true)
   const [hoveredProduct, setHoveredProduct] = useState<ProductMatrixRow | null>(null)
 
@@ -519,11 +577,12 @@ export default function ProductPerformancePage() {
     'all' | 'valid_master' | 'fallback_only' | 'missing_only'
   >('all')
 
-  // Table Filters & Sorting
+  // Table Filters, Pagination & Sorting
   const [activeQuadrantTab, setActiveQuadrantTab] = useState<'all_sold' | QuadrantType | 'missing_hpp'>('all_sold')
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [sortField, setSortField] = useState<SortField>('grossProfit')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const [tablePage, setTablePage] = useState<number>(1)
 
   // Grouped By Section
   const [groupDim, setGroupDim] = useState<GroupDimension>('quadrant')
@@ -537,18 +596,22 @@ export default function ProductPerformancePage() {
     products: CatalogProductRow[]
     categoryMap: Map<string, string>
     recipeMap: Map<string, ProductHppResult>
-    purchases: RawPurchaseRow[]
     defaultHppPct: number
   }>({
     products: [],
     categoryMap: new Map(),
     recipeMap: new Map(),
-    purchases: [],
     defaultHppPct: 0,
   })
+  const [rawPurchases, setRawPurchases] = useState<RawPurchaseRow[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [isSyncing, setIsSyncing] = useState<boolean>(false)
   const hasLoadedOnceRef = useRef<boolean>(false)
+
+  // Reset pagination when filter changes
+  useEffect(() => {
+    setTablePage(1)
+  }, [activeQuadrantTab, searchQuery, selectedCategory, selectedPlatform, selectedHppFilter, temporalFilter])
 
   // Period UTC Bounds
   const periodBounds = useMemo(() => {
@@ -604,6 +667,7 @@ export default function ProductPerformancePage() {
     businessTz,
   ])
 
+  // 2-Phase Progressive Data Loader + Conditional Purchase Fallback
   const loadData = useCallback(
     async (
       bid: string,
@@ -619,8 +683,9 @@ export default function ProductPerformancePage() {
       setIsSyncing(true)
 
       try {
+        // Phase 1: Current Period Orders + Catalog Master (Parallel)
         const currOrdersPromise = fetchOrdersWindowCompliant(bid, currStartIso, currEndIso)
-        const catalogPromise = fetchCatalogAndHppSourcesCompliant(bid)
+        const catalogPromise = fetchCatalogMasterCompliant(bid)
         const compOrdersPromise =
           hasComp && compStartIso && compEndIso
             ? fetchOrdersWindowCompliant(bid, compStartIso, compEndIso)
@@ -632,8 +697,25 @@ export default function ProductPerformancePage() {
         hasLoadedOnceRef.current = true
         setLoading(false)
 
-        const compOrders = await compOrdersPromise
+        // Check if any product in catalog has cost_price <= 0 (so we only fetch `purchases` when needed)
+        const hasZeroCostProduct =
+          catRes.products.length === 0 ||
+          catRes.products.some(
+            p =>
+              p.hpp_type !== 'variable' &&
+              (toNum(p.cost_price) <= 0 ||
+                (Array.isArray(p.product_variants) &&
+                  p.product_variants.some(v => toNum(v.cost_price) <= 0)))
+          )
+
+        // Phase 2: Comparison Period + Conditional Purchases Fallback in background
+        const [compOrders, purchasesRows] = await Promise.all([
+          compOrdersPromise,
+          hasZeroCostProduct ? fetchPurchasesFallbackLazy(bid) : Promise.resolve([] as RawPurchaseRow[]),
+        ])
+
         setRawComparisonOrders(compOrders)
+        setRawPurchases(purchasesRows)
       } catch (err) {
         console.error('[ProductPerformance] Error loading data:', err)
       } finally {
@@ -709,6 +791,7 @@ export default function ProductPerformancePage() {
   const availableCategories = useMemo(() => {
     const set = new Set<string>()
     for (const p of catalogData.products) {
+      if (p.is_sellable === false) continue
       let catName = 'Tanpa Kategori'
       if (p.categories) {
         const cObj = Array.isArray(p.categories) ? p.categories[0] : p.categories
@@ -746,7 +829,6 @@ export default function ProductPerformancePage() {
       }
     }
 
-    // Build Purchase History Cost Fallback Map (Weighted Average & Latest Reference)
     type PurchaseCostStat = {
       totalCost: number
       totalQty: number
@@ -769,7 +851,7 @@ export default function ProductPerformancePage() {
         purchaseCostByKey.set(lookupKey, {
           totalCost: unitCost * qty,
           totalQty: qty,
-          latestUnitCost: unitCost, // purchases are ordered by date DESC so first seen is latest
+          latestUnitCost: unitCost,
           latestPurchaseNumber: poNumber,
           latestDate: poDate,
         })
@@ -779,12 +861,11 @@ export default function ProductPerformancePage() {
       }
     }
 
-    for (const po of catalogData.purchases) {
+    for (const po of rawPurchases) {
       const items = parseJsonArray(po.items_json)
       if (items.length === 0) continue
       const sub = toNum(po.subtotal)
       const grand = toNum(po.grand_total)
-      // Distribute purchase discount/fees proportionally just like POST /api/purchases
       const ratio = sub > 0 && grand > 0 ? grand / sub : 1
       const poNumber = cleanText(po.purchase_number) || 'Nota Pembelian'
       const poDate = cleanText(po.date).slice(0, 10)
@@ -804,7 +885,7 @@ export default function ProductPerformancePage() {
         if (item?.sku) {
           recordPurchaseStat(`sku:${cleanText(item.sku).toLowerCase()}`, netUnitCost, qty, poNumber, poDate)
         }
-        if (item?.name) {
+        if (!item?.product_id && !item?.variant_id && !item?.sku && item?.name) {
           recordPurchaseStat(`name:${cleanText(item.name).toLowerCase()}`, netUnitCost, qty, poNumber, poDate)
         }
       }
@@ -817,7 +898,7 @@ export default function ProductPerformancePage() {
       byName,
       purchaseCostByKey,
     }
-  }, [catalogData])
+  }, [catalogData.products, rawPurchases])
 
   // ─── Core Aggregation & 6-Tier Waterfall HPP Resolution ─────────────────────
   const { matrixRows, platformSummaryRows, thresholdValues } = useMemo(() => {
@@ -842,11 +923,9 @@ export default function ProductPerformancePage() {
       qtySold: number
       grossSales: number
       netSales: number
-      // Order-embedded cost fallback tracking
       orderCostTotal: number
       orderCostQty: number
       lastOrderNumberWithCost: string
-      // Comparison period
       compQtySold: number
       compNetSales: number
     }
@@ -875,6 +954,10 @@ export default function ProductPerformancePage() {
       return 'Tanpa Kategori'
     }
 
+    /**
+     * Compliant with `inventory-ledger` Section 6.1 (SKU-First Deduplication):
+     * Only fall back to name matching when variant_id, product_id, and SKU are all absent!
+     */
     const resolveItemIdentity = (item: any) => {
       const rawVarId = cleanText(item?.variant_id || item?.variation_id || item?.variantId)
       const rawProdId = cleanText(item?.product_id || item?.id)
@@ -888,13 +971,13 @@ export default function ProductPerformancePage() {
         const hit = byVariantId.get(rawVarId)!
         matchedProd = hit.parent
         matchedVar = hit.variant
-      } else if (rawProdId && byProductId.has(rawProdId)) {
-        matchedProd = byProductId.get(rawProdId)!
       } else if (rawSku && bySku.has(rawSku.toLowerCase())) {
         const hit = bySku.get(rawSku.toLowerCase())!
         matchedProd = hit.product
         matchedVar = hit.variant || null
-      } else if (rawName && byName.has(rawName.toLowerCase())) {
+      } else if (rawProdId && byProductId.has(rawProdId)) {
+        matchedProd = byProductId.get(rawProdId)!
+      } else if (!rawSku && rawName && byName.has(rawName.toLowerCase())) {
         const hit = byName.get(rawName.toLowerCase())!
         matchedProd = hit.product
         matchedVar = hit.variant || null
@@ -905,15 +988,18 @@ export default function ProductPerformancePage() {
 
       const canonicalKey = variantId
         ? `var:${variantId}`
-        : productId
-        ? `prod:${productId}`
         : rawSku
         ? `sku:${rawSku.toLowerCase()}`
+        : productId
+        ? `prod:${productId}`
         : `name:${rawName.toLowerCase()}`
 
       const displayName = matchedVar
         ? `${matchedProd?.name || rawName}${
-            matchedVar.name && !String(matchedProd?.name || '').toLowerCase().includes(String(matchedVar.name).toLowerCase())
+            matchedVar.name &&
+            !String(matchedProd?.name || '')
+              .toLowerCase()
+              .includes(String(matchedVar.name).toLowerCase())
               ? ` - ${matchedVar.name}`
               : ''
           }`
@@ -938,14 +1024,17 @@ export default function ProductPerformancePage() {
       }
     }
 
-    // 1. Seed catalog products so we can also detect Dead Stock (Qty = 0) & resolve their HPP
+    // 1. Seed sellable catalog products (Exclude `is_sellable === false` pure raw materials per `inventory-ledger.md` Section 8.1)
     for (const p of catalogData.products) {
       if ((p.type || 'physical') !== 'physical') continue
+      if (p.is_sellable === false) continue
+
       const catName = getCategoryNameForProduct(p)
       if (selectedCategory !== 'all' && catName !== selectedCategory) continue
 
       if (Array.isArray(p.product_variants) && p.product_variants.length > 0) {
         for (const v of p.product_variants) {
+          const vSku = cleanText(v.sku || p.sku)
           const key = `var:${v.id}`
           const fullName = `${p.name} - ${v.name}`
           accumMap.set(key, {
@@ -953,7 +1042,7 @@ export default function ProductPerformancePage() {
             productId: p.id,
             variantId: v.id,
             name: fullName,
-            sku: cleanText(v.sku || p.sku) || '-',
+            sku: vSku || '-',
             categoryName: catName,
             unit: cleanText(p.unit) || 'Pcs',
             stockQuantity: toNum(v.stock_quantity),
@@ -969,13 +1058,14 @@ export default function ProductPerformancePage() {
           })
         }
       } else {
-        const key = `prod:${p.id}`
+        const pSku = cleanText(p.sku)
+        const key = pSku ? `sku:${pSku.toLowerCase()}` : `prod:${p.id}`
         accumMap.set(key, {
           key,
           productId: p.id,
           variantId: null,
           name: p.name,
-          sku: cleanText(p.sku) || '-',
+          sku: pSku || '-',
           categoryName: catName,
           unit: cleanText(p.unit) || 'Pcs',
           stockQuantity: toNum(p.stock_quantity),
@@ -992,7 +1082,6 @@ export default function ProductPerformancePage() {
       }
     }
 
-    // Helper to process order items for Current or Comparison window
     const processOrders = (orders: RawOrderRow[], isCurrent: boolean) => {
       for (const order of orders) {
         const platform = cleanText(order.source_platform || 'Manual') || 'Manual'
@@ -1001,7 +1090,6 @@ export default function ProductPerformancePage() {
         const items = parseJsonArray(order.items_json)
         if (items.length === 0) continue
 
-        // Compute order-level discount ratio so net item sales match actual net order revenue
         let itemsRawTotalSum = 0
         for (const it of items) {
           const qty = Math.max(0, toNum(it?.quantity) || 1)
@@ -1017,7 +1105,6 @@ export default function ProductPerformancePage() {
         const orderSubtotal = toNum(order.subtotal) || itemsRawTotalSum
         const orderDiscount = Math.max(0, toNum(order.discount_amount))
         const expectedNetAfterOrderDisc = Math.max(0, orderSubtotal - orderDiscount)
-        // If itemsRawTotalSum hasn't deducted order-level discount yet, apply proportional factor
         const netAllocationRatio =
           itemsRawTotalSum > 0 && expectedNetAfterOrderDisc < itemsRawTotalSum
             ? expectedNetAfterOrderDisc / itemsRawTotalSum
@@ -1044,6 +1131,9 @@ export default function ProductPerformancePage() {
           const embeddedUnitCost = extractItemEmbeddedCost(it)
 
           let acc = accumMap.get(idInfo.canonicalKey)
+          if (!acc && idInfo.productId && !idInfo.variantId) {
+            acc = accumMap.get(`prod:${idInfo.productId}`)
+          }
           if (!acc) {
             acc = {
               key: idInfo.canonicalKey,
@@ -1081,7 +1171,6 @@ export default function ProductPerformancePage() {
             acc.grossSales += itemGrossSales
             acc.netSales += itemNetSales
 
-            // Track platform summary
             let pRow = platformAggMap.get(platform)
             if (!pRow) {
               pRow = {
@@ -1093,7 +1182,7 @@ export default function ProductPerformancePage() {
               }
               platformAggMap.set(platform, pRow)
             }
-            pRow.skuSet.add(idInfo.canonicalKey)
+            pRow.skuSet.add(acc.key)
             pRow.qtySold += qty
             pRow.netSales += itemNetSales
           } else {
@@ -1107,7 +1196,7 @@ export default function ProductPerformancePage() {
     processOrders(countedCurrentOrders, true)
     processOrders(countedComparisonOrders, false)
 
-    // 2. Resolve 6-Tier Waterfall HPP for each product & compute profit metrics
+    // 2. Resolve 6-Tier Waterfall HPP (Compliant with `lib/hppHelper.ts` & `inventory-ledger.md` Section 8.3)
     const totalVolumeAllSold = Array.from(accumMap.values()).reduce(
       (sum, r) => sum + r.qtySold,
       0
@@ -1121,10 +1210,13 @@ export default function ProductPerformancePage() {
     } => {
       const dbProd = acc.productId ? byProductId.get(acc.productId) : null
       const dbVar = acc.variantId ? byVariantId.get(acc.variantId)?.variant : null
+      const isExplicitVariable = dbProd?.hpp_type === 'variable'
 
       // Tier 1: Variable Recipe HPP (`product_recipes`)
-      if (dbProd?.id) {
-        const recipeInfo = catalogData.recipeMap.get(dbProd.id)
+      // STRICT RULE (`inventory-ledger.md` Sec 8.3): If `hpp_type === 'variable'` and recipe HPP is 0,
+      // DO NOT silently fall back to fixed cost_price or defaultHppPct!
+      if (isExplicitVariable) {
+        const recipeInfo = dbProd?.id ? catalogData.recipeMap.get(dbProd.id) : null
         if (recipeInfo?.isVariable && recipeInfo.unitHpp > 0) {
           return {
             unitHpp: recipeInfo.unitHpp,
@@ -1132,6 +1224,13 @@ export default function ProductPerformancePage() {
             hppSourceLabel: HPP_SOURCE_META.recipe.label,
             hppSourceDetail: `Dihitung otomatis dari ${recipeInfo.ingredients.length} bahan baku resep aktif`,
           }
+        }
+        return {
+          unitHpp: 0,
+          hppSource: 'missing',
+          hppSourceLabel: HPP_SOURCE_META.missing.label,
+          hppSourceDetail:
+            'Produk bertipe Resep (Variable) namun bahan baku resep belum memiliki HPP > Rp 0. Margin tampil 100% (semu).',
         }
       }
 
@@ -1146,7 +1245,7 @@ export default function ProductPerformancePage() {
           hppSourceDetail: 'Diambil dari HPP variasi pada Master Katalog Produk',
         }
       }
-      if (prodMasterCost > 0 && dbProd?.hpp_type !== 'variable') {
+      if (prodMasterCost > 0) {
         return {
           unitHpp: prodMasterCost,
           hppSource: 'master',
@@ -1170,8 +1269,8 @@ export default function ProductPerformancePage() {
       // Tier 4: Fallback 2 — Riwayat Pembelian Supplier (`purchases.items_json`)
       const purchaseStat =
         (acc.variantId && purchaseCostByKey.get(`var:${acc.variantId}`)) ||
-        (acc.productId && purchaseCostByKey.get(`prod:${acc.productId}`)) ||
         (acc.sku !== '-' && purchaseCostByKey.get(`sku:${acc.sku.toLowerCase()}`)) ||
+        (acc.productId && purchaseCostByKey.get(`prod:${acc.productId}`)) ||
         purchaseCostByKey.get(`name:${acc.name.toLowerCase()}`) ||
         null
 
@@ -1202,14 +1301,12 @@ export default function ProductPerformancePage() {
       }
 
       // Tier 6: HPP Kosong (`Rp 0`)
-      const isBrokenRecipe = dbProd?.hpp_type === 'variable'
       return {
         unitHpp: 0,
         hppSource: 'missing',
         hppSourceLabel: HPP_SOURCE_META.missing.label,
-        hppSourceDetail: isBrokenRecipe
-          ? 'Produk bertipe Resep (Variable) namun belum memiliki bahan baku berharga modal > Rp 0. Margin tampil 100% (semu).'
-          : 'HPP belum diatur di Master Produk & tidak ditemukan di riwayat Order/Pembelian. Margin tampil 100% (semu).',
+        hppSourceDetail:
+          'HPP belum diatur di Master Produk & tidak ditemukan di riwayat Order/Pembelian. Margin tampil 100% (semu).',
       }
     }
 
@@ -1218,7 +1315,6 @@ export default function ProductPerformancePage() {
     for (const acc of accumMap.values()) {
       const hppResolved = resolveProductHpp(acc)
 
-      // Apply HPP Segment Filter if active
       if (selectedHppFilter === 'valid_master' && !['master', 'recipe'].includes(hppResolved.hppSource)) {
         continue
       }
@@ -1282,9 +1378,8 @@ export default function ProductPerformancePage() {
       })
     }
 
-    // 3. Calculate BCG Quadrant Cut-off Thresholds (X = Volume, Y = Selected Profit Metric)
+    // 3. Calculate BCG Quadrant Cut-off Thresholds
     const soldRows = preliminaryRows.filter(r => r.qtySold > 0)
-    // Optionally exclude missing HPP items when computing the Y-axis profit threshold so 100% fake margins don't skew the cut-off line
     const yEligibleRows =
       excludeMissingHppFromThreshold && soldRows.some(r => r.hppSource !== 'missing')
         ? soldRows.filter(r => r.hppSource !== 'missing')
@@ -1312,7 +1407,6 @@ export default function ProductPerformancePage() {
       }
     }
 
-    // Also compute Comparison Period Thresholds so we know if a product shifted quadrants!
     const compSoldRows = preliminaryRows.filter(r => r.compQtySold > 0)
     const compXThreshold =
       compSoldRows.length > 0
@@ -1353,7 +1447,7 @@ export default function ProductPerformancePage() {
       r.recommendation = buildRecommendation(r.quadrant, r.hppSource, r.marginPct)
     }
 
-    // Finalize platform summary HPP using resolved unitHpp
+    // Finalize platform summary HPP
     const rowByKey = new Map(preliminaryRows.map(r => [r.key, r]))
     for (const order of countedCurrentOrders) {
       const platform = cleanText(order.source_platform || 'Manual') || 'Manual'
@@ -1363,7 +1457,9 @@ export default function ProductPerformancePage() {
       for (const it of items) {
         const qty = Math.max(0, toNum(it?.quantity) || 1)
         const idInfo = resolveItemIdentity(it)
-        const resolvedRow = rowByKey.get(idInfo.canonicalKey)
+        const resolvedRow =
+          rowByKey.get(idInfo.canonicalKey) ||
+          (idInfo.productId ? rowByKey.get(`prod:${idInfo.productId}`) : undefined)
         if (resolvedRow) {
           pRow.totalHpp += resolvedRow.unitHpp * qty
         }
@@ -1422,18 +1518,26 @@ export default function ProductPerformancePage() {
 
     const byQuadrant: Record<
       QuadrantType,
-      { count: number; qty: number; netSales: number; profit: number; profitSharePct: number }
+      {
+        count: number
+        qty: number
+        netSales: number
+        profit: number
+        profitSharePct: number
+        items: ProductMatrixRow[]
+      }
     > = {
-      star: { count: 0, qty: 0, netSales: 0, profit: 0, profitSharePct: 0 },
-      cash_cow: { count: 0, qty: 0, netSales: 0, profit: 0, profitSharePct: 0 },
-      puzzle: { count: 0, qty: 0, netSales: 0, profit: 0, profitSharePct: 0 },
-      dog: { count: 0, qty: 0, netSales: 0, profit: 0, profitSharePct: 0 },
+      star: { count: 0, qty: 0, netSales: 0, profit: 0, profitSharePct: 0, items: [] },
+      cash_cow: { count: 0, qty: 0, netSales: 0, profit: 0, profitSharePct: 0, items: [] },
+      puzzle: { count: 0, qty: 0, netSales: 0, profit: 0, profitSharePct: 0, items: [] },
+      dog: { count: 0, qty: 0, netSales: 0, profit: 0, profitSharePct: 0, items: [] },
       no_sales: {
         count: deadStockRows.length,
         qty: 0,
         netSales: 0,
         profit: 0,
         profitSharePct: 0,
+        items: deadStockRows,
       },
     }
 
@@ -1443,11 +1547,14 @@ export default function ProductPerformancePage() {
       bucket.qty += r.qtySold
       bucket.netSales += r.netSales
       bucket.profit += r.grossProfit
+      bucket.items.push(r)
     }
 
     for (const q of ['star', 'cash_cow', 'puzzle', 'dog'] as QuadrantType[]) {
       byQuadrant[q].profitSharePct =
         totalGrossProfit > 0 ? Math.max(0, (byQuadrant[q].profit / totalGrossProfit) * 100) : 0
+      // Sort items within each quadrant by Net Sales / Profit descending
+      byQuadrant[q].items.sort((a, b) => b.grossProfit - a.grossProfit || b.qtySold - a.qtySold)
     }
 
     const masterOrRecipeCount = soldRows.filter(r =>
@@ -1480,17 +1587,16 @@ export default function ProductPerformancePage() {
     }
   }, [matrixRows])
 
-  // ─── Scatter Plot Coordinates Calculation ───────────────────────────────────
+  // ─── Symmetric 50:50 Scatter Plot + Rank-Log Coordinate Scaling + Smart Direct Labels ───
   const scatterData = useMemo(() => {
-    const soldRows = matrixRows.filter(r => r.qtySold > 0)
-    if (soldRows.length === 0) {
+    const allSold = matrixRows.filter(r => r.qtySold > 0)
+    if (allSold.length === 0) {
       return {
         points: [],
         maxX: 10,
         minY: 0,
         maxY: 100,
-        xThresholdPct: 50,
-        yThresholdPct: 50,
+        hiddenCountByQuadrant: { star: 0, cash_cow: 0, puzzle: 0, dog: 0 },
       }
     }
 
@@ -1501,69 +1607,171 @@ export default function ProductPerformancePage() {
         ? r.marginPct
         : r.grossProfit
 
-    const xVals = soldRows.map(r => r.qtySold)
-    const yVals = soldRows.map(getY)
+    // 1. Apply Density Cap so thousands of products never freeze or clutter the scatter plot
+    let selectedRows: ProductMatrixRow[] = []
+    const hiddenCountByQuadrant: Record<'star' | 'cash_cow' | 'puzzle' | 'dog', number> = {
+      star: 0,
+      cash_cow: 0,
+      puzzle: 0,
+      dog: 0,
+    }
 
-    // Ensure threshold lines sit nicely inside the visual plot area (clamped 15%..85%)
-    const rawMaxX = Math.max(...xVals, thresholdValues.xThreshold * 1.6, 1)
+    if (chartDensityCap === 'per_quadrant_10') {
+      for (const q of ['star', 'cash_cow', 'puzzle', 'dog'] as const) {
+        const qItems = kpiSummary.byQuadrant[q].items
+        const topSlice = qItems.slice(0, 10)
+        selectedRows.push(...topSlice)
+        hiddenCountByQuadrant[q] = Math.max(0, qItems.length - topSlice.length)
+      }
+    } else {
+      const cap =
+        chartDensityCap === 'top_25' ? 25 : chartDensityCap === 'top_50' ? 50 : 120
+      const sortedByImpact = [...allSold].sort(
+        (a, b) => b.netSales - a.netSales || b.grossProfit - a.grossProfit
+      )
+      selectedRows = sortedByImpact.slice(0, cap)
+      const selectedKeySet = new Set(selectedRows.map(r => r.key))
+      for (const q of ['star', 'cash_cow', 'puzzle', 'dog'] as const) {
+        const totalInQ = kpiSummary.byQuadrant[q].items.length
+        const shownInQ = kpiSummary.byQuadrant[q].items.filter(i =>
+          selectedKeySet.has(i.key)
+        ).length
+        hiddenCountByQuadrant[q] = Math.max(0, totalInQ - shownInQ)
+      }
+    }
+
+    const xVals = allSold.map(r => r.qtySold)
+    const yVals = allSold.map(getY)
+    const rawMaxX = Math.max(...xVals, thresholdValues.xThreshold * 1.2, 1)
     const rawMinY = Math.min(0, ...yVals)
-    const rawMaxY = Math.max(...yVals, thresholdValues.yThreshold * 1.6, 1)
-    const ySpan = Math.max(1, rawMaxY - rawMinY)
+    const rawMaxY = Math.max(...yVals, thresholdValues.yThreshold * 1.2, 1)
+    const maxRevenue = Math.max(...allSold.map(r => r.netSales), 1)
 
-    const maxRevenue = Math.max(...soldRows.map(r => r.netSales), 1)
+    // Group selected points into Left vs Right and Bottom vs Top halves for Rank-Log normalization
+    // SYMMETRIC 50:50 QUADRANT GRID:
+    // Left Half X: 7% .. 45% | Right Half X: 55% .. 91%
+    // Bottom Half Y: 11% .. 44% | Top Half Y: 56% .. 84% (keeps 85%..100% clear for Top Quadrant Titles!)
+    const leftRows = [...selectedRows.filter(r => r.qtySold < thresholdValues.xThreshold)].sort(
+      (a, b) => a.qtySold - b.qtySold
+    )
+    const rightRows = [...selectedRows.filter(r => r.qtySold >= thresholdValues.xThreshold)].sort(
+      (a, b) => a.qtySold - b.qtySold
+    )
+    const bottomRows = [
+      ...selectedRows.filter(r => getY(r) < thresholdValues.yThreshold),
+    ].sort((a, b) => getY(a) - getY(b))
+    const topRows = [
+      ...selectedRows.filter(r => getY(r) >= thresholdValues.yThreshold),
+    ].sort((a, b) => getY(a) - getY(b))
 
-    const clampPct = (pct: number) => Math.max(6, Math.min(94, pct))
+    const xRankMap = new Map<string, number>()
+    leftRows.forEach((r, idx) => {
+      xRankMap.set(r.key, leftRows.length <= 1 ? 0.5 : idx / (leftRows.length - 1))
+    })
+    rightRows.forEach((r, idx) => {
+      xRankMap.set(r.key, rightRows.length <= 1 ? 0.5 : idx / (rightRows.length - 1))
+    })
 
-    const xThresholdPct = clampPct((thresholdValues.xThreshold / rawMaxX) * 100)
-    const yThresholdPct = clampPct(((thresholdValues.yThreshold - rawMinY) / ySpan) * 100)
+    const yRankMap = new Map<string, number>()
+    bottomRows.forEach((r, idx) => {
+      yRankMap.set(r.key, bottomRows.length <= 1 ? 0.5 : idx / (bottomRows.length - 1))
+    })
+    topRows.forEach((r, idx) => {
+      yRankMap.set(r.key, topRows.length <= 1 ? 0.5 : idx / (topRows.length - 1))
+    })
 
-    const points = soldRows.map(r => {
+    // Log-compressed relative position helper (0..1)
+    const calcLogRatio = (val: number, minVal: number, maxVal: number): number => {
+      const span = maxVal - minVal
+      if (span <= 1e-6) return 0.5
+      const clamped = Math.max(minVal, Math.min(maxVal, val))
+      return Math.log1p(clamped - minVal) / Math.log1p(span)
+    }
+
+    const rawPoints = selectedRows.map(r => {
       const yVal = getY(r)
-      // Piecewise linear scaling around threshold so quadrant membership 100% matches visual quadrant!
+      const rankX = xRankMap.get(r.key) ?? 0.5
+      const rankY = yRankMap.get(r.key) ?? 0.5
+
       let xPct = 50
-      if (r.qtySold >= thresholdValues.xThreshold) {
-        const rightSpan = Math.max(1e-6, rawMaxX - thresholdValues.xThreshold)
-        xPct =
-          xThresholdPct +
-          ((r.qtySold - thresholdValues.xThreshold) / rightSpan) * (94 - xThresholdPct)
+      if (r.qtySold < thresholdValues.xThreshold) {
+        const logR = calcLogRatio(r.qtySold, 0, thresholdValues.xThreshold)
+        const blended = 0.45 * logR + 0.55 * rankX
+        xPct = 8 + blended * 36 // 8% .. 44%
       } else {
-        const leftSpan = Math.max(1e-6, thresholdValues.xThreshold)
-        xPct = 6 + (r.qtySold / leftSpan) * Math.max(0, xThresholdPct - 6)
+        const logR = calcLogRatio(r.qtySold, thresholdValues.xThreshold, rawMaxX)
+        const blended = 0.45 * logR + 0.55 * rankX
+        xPct = 56 + blended * 34 // 56% .. 90%
       }
 
       let yPct = 50
-      if (yVal >= thresholdValues.yThreshold) {
-        const topSpan = Math.max(1e-6, rawMaxY - thresholdValues.yThreshold)
-        yPct =
-          yThresholdPct +
-          ((yVal - thresholdValues.yThreshold) / topSpan) * (94 - yThresholdPct)
+      if (yVal < thresholdValues.yThreshold) {
+        const logR = calcLogRatio(yVal, rawMinY, thresholdValues.yThreshold)
+        const blended = 0.45 * logR + 0.55 * rankY
+        yPct = 12 + blended * 32 // 12% .. 44%
       } else {
-        const bottomSpan = Math.max(1e-6, thresholdValues.yThreshold - rawMinY)
-        yPct = 6 + ((yVal - rawMinY) / bottomSpan) * Math.max(0, yThresholdPct - 6)
+        const logR = calcLogRatio(yVal, thresholdValues.yThreshold, rawMaxY)
+        const blended = 0.45 * logR + 0.55 * rankY
+        yPct = 56 + blended * 28 // 56% .. 84%
       }
 
-      // Bubble diameter 12px..28px based on Net Sales
-      const sizePx = Math.round(12 + Math.sqrt(r.netSales / maxRevenue) * 16)
+      const sizePx = Math.round(14 + Math.sqrt(r.netSales / maxRevenue) * 14)
 
       return {
         row: r,
-        xPct: clampPct(xPct),
-        yPct: clampPct(yPct),
+        xPct,
+        yPct,
         sizePx,
+        showPermanentLabel: false,
+        labelPlacement: (xPct > 72 ? 'left' : 'right') as 'left' | 'right',
       }
     })
 
+    // 2. Smart Anti-Collision Permanent Label Assignment (Priority: largest profit/sales per quadrant)
+    const prioritizedForLabels = [...rawPoints].sort(
+      (a, b) => b.row.grossProfit - a.row.grossProfit || b.row.netSales - a.row.netSales
+    )
+    const occupiedBoxes: Array<{ x1: number; x2: number; y1: number; y2: number }> = []
+    const labelCountPerQuadrant: Record<string, number> = {
+      star: 0,
+      cash_cow: 0,
+      puzzle: 0,
+      dog: 0,
+    }
+
+    for (const pt of prioritizedForLabels) {
+      const q = pt.row.quadrant
+      if ((labelCountPerQuadrant[q] || 0) >= 6) continue
+
+      // Approximate label bounding box in percentage coordinates (width ~18%, height ~7.5%)
+      const boxW = 17
+      const boxH = 7.2
+      const x1 = pt.labelPlacement === 'right' ? pt.xPct : pt.xPct - boxW
+      const x2 = pt.labelPlacement === 'right' ? pt.xPct + boxW : pt.xPct
+      const y1 = pt.yPct - boxH / 2
+      const y2 = pt.yPct + boxH / 2
+
+      const collides = occupiedBoxes.some(
+        b => !(x2 < b.x1 || x1 > b.x2 || y2 < b.y1 || y1 > b.y2)
+      )
+
+      if (!collides) {
+        pt.showPermanentLabel = true
+        occupiedBoxes.push({ x1, x2, y1, y2 })
+        labelCountPerQuadrant[q] = (labelCountPerQuadrant[q] || 0) + 1
+      }
+    }
+
     return {
-      points,
+      points: rawPoints,
       maxX: rawMaxX,
       minY: rawMinY,
       maxY: rawMaxY,
-      xThresholdPct,
-      yThresholdPct,
+      hiddenCountByQuadrant,
     }
-  }, [matrixRows, yAxisMetric, thresholdValues])
+  }, [matrixRows, yAxisMetric, thresholdValues, chartDensityCap, kpiSummary.byQuadrant])
 
-  // ─── Filtered & Sorted Breakdown Table Rows ─────────────────────────────────
+  // ─── Filtered & Paginated Breakdown Table Rows ──────────────────────────────
   const filteredTableRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     return matrixRows
@@ -1594,6 +1802,12 @@ export default function ProductPerformancePage() {
         return ((a[sortField] as number) - (b[sortField] as number)) * dir
       })
   }, [matrixRows, activeQuadrantTab, searchQuery, sortField, sortOrder])
+
+  const totalTablePages = Math.max(1, Math.ceil(filteredTableRows.length / TABLE_PAGE_SIZE))
+  const paginatedTableRows = useMemo(() => {
+    const start = (tablePage - 1) * TABLE_PAGE_SIZE
+    return filteredTableRows.slice(start, start + TABLE_PAGE_SIZE)
+  }, [filteredTableRows, tablePage])
 
   // ─── Grouped By Summary Rows ────────────────────────────────────────────────
   const groupedSummaryRows = useMemo(() => {
@@ -1730,9 +1944,9 @@ export default function ProductPerformancePage() {
     )
   }
 
-  const formatYValue = (val: number) => {
+  const formatYValueShort = (val: number) => {
     if (yAxisMetric === 'marginPct') return `${val.toFixed(1)}%`
-    return formatIDR(val)
+    return formatAxisIDR(val)
   }
 
   return (
@@ -1992,7 +2206,7 @@ export default function ProductPerformancePage() {
           </div>
         )}
 
-      {/* ── SECTION 1: BCG MATRIX SCATTER PLOT (LEFT 8) + KPI GRID (RIGHT 4) ─ */}
+      {/* ── SECTION 1: BCG MATRIX CARD (LEFT 8) + KPI GRID (RIGHT 4) ────── */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
         {/* LEFT: Interactive 4-Quadrant BCG Matrix Card (8 Cols) */}
         <div className="lg:col-span-8 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between">
@@ -2024,28 +2238,66 @@ export default function ProductPerformancePage() {
                 </svg>
               </button>
 
-              <div className="hidden sm:inline-flex items-center gap-2.5 ml-1 text-[11px] font-semibold text-slate-500">
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
-                  <span>Star</span>
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 inline-block" />
-                  <span>Cash Cow</span>
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />
-                  <span>Puzzle</span>
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block" />
-                  <span>Dog</span>
-                </span>
+              {/* View Mode Switcher: Scatter Plot vs 4-Quadrant Board */}
+              <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden bg-slate-50 p-0.5 text-[11px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('scatter')}
+                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                    viewMode === 'scatter'
+                      ? 'bg-white text-indigo-700 shadow-2xs border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  🎯 Grafik Kuadran
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('board')}
+                  className={`px-2.5 py-1 rounded-md transition cursor-pointer ${
+                    viewMode === 'board'
+                      ? 'bg-white text-indigo-700 shadow-2xs border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  ⊞ Papan 4 Kuadran
+                </button>
               </div>
             </div>
 
             {/* Matrix Controls */}
             <div className="flex items-center gap-2 flex-wrap">
+              {viewMode === 'scatter' && (
+                <>
+                  {/* Direct Name Labels Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setShowDirectLabels(prev => !prev)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                      showDirectLabels
+                        ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                    }`}
+                    title="Tampilkan nama produk langsung di samping titik tanpa perlu disorot"
+                  >
+                    🏷️ Label Nama
+                  </button>
+
+                  {/* Density / Top-N Selector for Thousands of Products */}
+                  <select
+                    value={chartDensityCap}
+                    onChange={e => setChartDensityCap(e.target.value as ChartDensityCap)}
+                    className="px-2 py-1 rounded-lg text-[11px] font-bold border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                    title="Batasi kepadatan titik agar tetap rapi meskipun ribuan produk"
+                  >
+                    <option value="per_quadrant_10">Top 10 / Kuadran</option>
+                    <option value="top_25">Top 25 Produk</option>
+                    <option value="top_50">Top 50 Produk</option>
+                    <option value="top_120">Top 120 Produk</option>
+                  </select>
+                </>
+              )}
+
               {/* Threshold Mode Toggle */}
               <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden bg-white text-[11px] font-bold">
                 <button
@@ -2068,7 +2320,7 @@ export default function ProductPerformancePage() {
                       ? 'bg-indigo-600 text-white'
                       : 'text-slate-600 hover:bg-slate-50'
                   }`}
-                  title="Garis batas kuadran menggunakan Nilai Tengah (Median) agar tahan terhadap outlier"
+                  title="Garis batas kuadran menggunakan Nilai Tengah (Median)"
                 >
                   Median
                 </button>
@@ -2087,11 +2339,11 @@ export default function ProductPerformancePage() {
             </div>
           </div>
 
-          {/* Matrix Plot Area */}
-          <div className="p-5 flex-1 flex flex-col justify-between relative min-h-[380px]">
-            {/* Hover Tooltip Banner (Matches Revenue Report Tooltip Style) */}
-            {hoveredProduct && (
-              <div className="absolute top-3 right-5 left-5 sm:left-auto z-30 bg-slate-900/95 text-white px-3.5 py-2.5 rounded-xl shadow-lg text-xs flex flex-wrap items-center gap-3 pointer-events-none border border-slate-700">
+          {/* Matrix Body */}
+          <div className="p-5 flex-1 flex flex-col justify-between relative min-h-[430px]">
+            {/* Hover Tooltip Banner */}
+            {hoveredProduct && viewMode === 'scatter' && (
+              <div className="absolute top-3 right-5 left-5 sm:left-auto z-40 bg-slate-900/95 text-white px-3.5 py-2 rounded-xl shadow-lg text-xs flex flex-wrap items-center gap-3 pointer-events-none border border-slate-700">
                 <span className="font-extrabold text-amber-300">
                   {QUADRANT_META[hoveredProduct.quadrant].icon} {hoveredProduct.name}
                 </span>
@@ -2122,178 +2374,300 @@ export default function ProductPerformancePage() {
               <div className="flex-1 flex items-center justify-center text-xs font-bold text-slate-400 animate-pulse">
                 Memuat pemetaan BCG Matrix...
               </div>
-            ) : scatterData.points.length === 0 ? (
+            ) : kpiSummary.soldSkuCount === 0 ? (
               <div className="flex-1 flex items-center justify-center text-xs font-semibold text-slate-400">
                 Tidak ada penjualan produk pada rentang tanggal ini.
               </div>
+            ) : viewMode === 'board' ? (
+              /* ── MODE 2: 4-QUADRANT BOARD (2x2 SYMMETRIC CARDS, ZERO HOVER NEEDED) ── */
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
+                {(['puzzle', 'star', 'dog', 'cash_cow'] as const).map(qKey => {
+                  const qMeta = QUADRANT_META[qKey]
+                  const qData = kpiSummary.byQuadrant[qKey]
+
+                  return (
+                    <div
+                      key={qKey}
+                      className="border border-slate-200 rounded-xl overflow-hidden flex flex-col bg-white shadow-2xs"
+                    >
+                      <div
+                        className={`px-3.5 py-2.5 border-b flex items-center justify-between ${qMeta.cardHeaderBg}`}
+                      >
+                        <div>
+                          <div className={`text-xs font-extrabold ${qMeta.badgeText}`}>
+                            {qMeta.icon} {qMeta.shortLabel.toUpperCase()}
+                          </div>
+                          <div className="text-[10px] font-medium text-slate-600">
+                            {qMeta.subtitle}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setActiveQuadrantTab(prev => (prev === qKey ? 'all_sold' : qKey))
+                          }
+                          className="px-2 py-0.5 rounded-md bg-white/90 border border-slate-200 text-[10px] font-extrabold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                        >
+                          {qData.count} SKU &rsaquo;
+                        </button>
+                      </div>
+
+                      <div className="divide-y divide-slate-100 max-h-[175px] overflow-y-auto flex-1">
+                        {qData.items.length === 0 ? (
+                          <div className="py-8 text-center text-[11px] text-slate-400 font-medium">
+                            Tidak ada produk di kuadran ini
+                          </div>
+                        ) : (
+                          qData.items.slice(0, 25).map((item, idx) => (
+                            <div
+                              key={item.key}
+                              className="px-3.5 py-2 hover:bg-slate-50/90 flex items-center justify-between gap-2 text-xs"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold text-slate-800 truncate flex items-center gap-1.5">
+                                  <span className="text-[10px] font-mono text-slate-400">
+                                    #{idx + 1}
+                                  </span>
+                                  <span className="truncate" title={item.name}>
+                                    {item.name}
+                                  </span>
+                                  {item.hppSource === 'missing' && (
+                                    <span
+                                      className="px-1 py-0.1 rounded bg-amber-100 text-amber-800 text-[9px] font-extrabold shrink-0"
+                                      title={item.hppSourceDetail}
+                                    >
+                                      ⚠️ HPP 0
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-500">
+                                  Terjual: <strong>{formatNumber(item.qtySold)}</strong> {item.unit} • Margin{' '}
+                                  <strong>{item.marginPct.toFixed(0)}%</strong>
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <div className="font-extrabold text-slate-900">
+                                  {formatAxisIDR(item.grossProfit)}
+                                </div>
+                                <div className="text-[10px] text-slate-400">
+                                  Omzet {formatAxisIDR(item.netSales)}
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {qData.items.length > 25 && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveQuadrantTab(qKey)}
+                          className="w-full py-1.5 bg-slate-50 hover:bg-indigo-50 text-[11px] font-bold text-indigo-600 border-t border-slate-100 transition cursor-pointer"
+                        >
+                          Lihat semua {qData.items.length} produk {qMeta.shortLabel} di tabel &darr;
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             ) : (
+              /* ── MODE 1: SYMMETRIC 50:50 SCATTER MATRIX WITH DIRECT PRODUCT LABELS ── */
               <div className="flex-1 flex flex-col justify-between">
-                <div className="relative flex-1 flex min-h-[310px]">
-                  {/* Y-Axis Label & Ticks */}
-                  <div className="w-20 sm:w-24 pr-2.5 flex flex-col justify-between text-[10px] font-mono text-slate-400 text-right select-none py-1">
-                    <span>
-                      {yAxisMetric === 'marginPct'
-                        ? `${scatterData.maxY.toFixed(0)}%`
-                        : formatAxisIDR(scatterData.maxY)}
+                <div className="relative flex-1 flex min-h-[360px]">
+                  {/* Y-Axis Labels (Symmetric 50% Midline) */}
+                  <div className="w-16 sm:w-20 pr-2 flex flex-col justify-between text-[10px] font-mono text-slate-400 text-right select-none py-1">
+                    <span>{formatYValueShort(scatterData.maxY)}</span>
+                    <span className="text-indigo-600 font-bold bg-indigo-50 px-1 py-0.5 rounded border border-indigo-200/70">
+                      {formatYValueShort(thresholdValues.yThreshold)}
                     </span>
-                    <span className="text-indigo-600 font-bold">
-                      {yAxisMetric === 'marginPct'
-                        ? `${thresholdValues.yThreshold.toFixed(1)}%`
-                        : formatAxisIDR(thresholdValues.yThreshold)}
-                    </span>
-                    <span>
-                      {yAxisMetric === 'marginPct'
-                        ? `${scatterData.minY.toFixed(0)}%`
-                        : formatAxisIDR(scatterData.minY)}
-                    </span>
+                    <span>{formatYValueShort(scatterData.minY)}</span>
                   </div>
 
-                  {/* 4-Quadrant Canvas */}
-                  <div className="flex-1 relative rounded-xl border border-slate-200 overflow-hidden bg-slate-50/40">
-                    {/* Top-Left Quadrant: PUZZLE */}
-                    <div
-                      style={{
-                        left: 0,
-                        width: `${scatterData.xThresholdPct}%`,
-                        bottom: `${scatterData.yThresholdPct}%`,
-                        top: 0,
-                      }}
-                      className="absolute bg-amber-50/35 pointer-events-none p-2.5 flex flex-col justify-start items-start"
-                    >
-                      <span className="text-[11px] font-extrabold text-amber-800/80 bg-white/80 px-2 py-0.5 rounded-md border border-amber-200/70 shadow-2xs">
-                        🧩 PUZZLE / QUESTION MARK
-                      </span>
-                      <span className="text-[10px] text-amber-700/70 mt-0.5 hidden sm:inline">
-                        Profit Tinggi • Volume Rendah
-                      </span>
+                  {/* Symmetric 50:50 4-Quadrant Canvas */}
+                  <div className="flex-1 relative rounded-xl border border-slate-200 overflow-hidden bg-white">
+                    {/* Top-Left Quadrant (50% x 50%): PUZZLE */}
+                    <div className="absolute left-0 top-0 w-1/2 h-1/2 bg-amber-50/35 pointer-events-none p-2.5 flex items-start justify-between">
+                      <div>
+                        <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-amber-800 bg-white/90 px-2 py-0.5 rounded-md border border-amber-200/80 shadow-2xs">
+                          🧩 PUZZLE ({kpiSummary.byQuadrant.puzzle.count})
+                        </span>
+                        <div className="text-[10px] text-amber-700/80 mt-0.5 font-medium hidden sm:block">
+                          Profit Tinggi • Volume Rendah
+                        </div>
+                      </div>
+                      {scatterData.hiddenCountByQuadrant.puzzle > 0 && (
+                        <span className="text-[10px] font-bold text-amber-800 bg-amber-100/90 px-1.5 py-0.5 rounded">
+                          +{scatterData.hiddenCountByQuadrant.puzzle} lainnya
+                        </span>
+                      )}
                     </div>
 
-                    {/* Top-Right Quadrant: STAR */}
-                    <div
-                      style={{
-                        left: `${scatterData.xThresholdPct}%`,
-                        right: 0,
-                        bottom: `${scatterData.yThresholdPct}%`,
-                        top: 0,
-                      }}
-                      className="absolute bg-emerald-50/40 pointer-events-none p-2.5 flex flex-col justify-start items-end text-right"
-                    >
-                      <span className="text-[11px] font-extrabold text-emerald-800/85 bg-white/80 px-2 py-0.5 rounded-md border border-emerald-200/70 shadow-2xs">
-                        ⭐ STAR (UNGGULAN)
-                      </span>
-                      <span className="text-[10px] text-emerald-700/75 mt-0.5 hidden sm:inline">
-                        Profit Tinggi • Volume Tinggi
-                      </span>
+                    {/* Top-Right Quadrant (50% x 50%): STAR */}
+                    <div className="absolute right-0 top-0 w-1/2 h-1/2 bg-emerald-50/35 pointer-events-none p-2.5 flex items-start justify-between">
+                      {scatterData.hiddenCountByQuadrant.star > 0 ? (
+                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100/90 px-1.5 py-0.5 rounded">
+                          +{scatterData.hiddenCountByQuadrant.star} lainnya
+                        </span>
+                      ) : (
+                        <span />
+                      )}
+                      <div className="text-right">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-emerald-800 bg-white/90 px-2 py-0.5 rounded-md border border-emerald-200/80 shadow-2xs">
+                          ⭐ STAR ({kpiSummary.byQuadrant.star.count})
+                        </span>
+                        <div className="text-[10px] text-emerald-700/80 mt-0.5 font-medium hidden sm:block">
+                          Profit Tinggi • Volume Tinggi
+                        </div>
+                      </div>
                     </div>
 
-                    {/* Bottom-Left Quadrant: DOG */}
-                    <div
-                      style={{
-                        left: 0,
-                        width: `${scatterData.xThresholdPct}%`,
-                        top: `${100 - scatterData.yThresholdPct}%`,
-                        bottom: 0,
-                      }}
-                      className="absolute bg-rose-50/30 pointer-events-none p-2.5 flex flex-col justify-end items-start"
-                    >
-                      <span className="text-[10px] text-rose-700/70 mb-0.5 hidden sm:inline">
-                        Profit Rendah • Volume Rendah
-                      </span>
-                      <span className="text-[11px] font-extrabold text-rose-800/80 bg-white/80 px-2 py-0.5 rounded-md border border-rose-200/70 shadow-2xs">
-                        🐶 DOG
-                      </span>
+                    {/* Bottom-Left Quadrant (50% x 50%): DOG */}
+                    <div className="absolute left-0 bottom-0 w-1/2 h-1/2 bg-rose-50/30 pointer-events-none p-2.5 flex items-end justify-between">
+                      <div>
+                        <div className="text-[10px] text-rose-700/80 mb-0.5 font-medium hidden sm:block">
+                          Profit Rendah • Volume Rendah
+                        </div>
+                        <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-rose-800 bg-white/90 px-2 py-0.5 rounded-md border border-rose-200/80 shadow-2xs">
+                          🐶 DOG ({kpiSummary.byQuadrant.dog.count})
+                        </span>
+                      </div>
+                      {scatterData.hiddenCountByQuadrant.dog > 0 && (
+                        <span className="text-[10px] font-bold text-rose-800 bg-rose-100/90 px-1.5 py-0.5 rounded">
+                          +{scatterData.hiddenCountByQuadrant.dog} lainnya
+                        </span>
+                      )}
                     </div>
 
-                    {/* Bottom-Right Quadrant: CASH COW */}
-                    <div
-                      style={{
-                        left: `${scatterData.xThresholdPct}%`,
-                        right: 0,
-                        top: `${100 - scatterData.yThresholdPct}%`,
-                        bottom: 0,
-                      }}
-                      className="absolute bg-indigo-50/35 pointer-events-none p-2.5 flex flex-col justify-end items-end text-right"
-                    >
-                      <span className="text-[10px] text-indigo-700/70 mb-0.5 hidden sm:inline">
-                        Profit Rendah • Volume Tinggi
-                      </span>
-                      <span className="text-[11px] font-extrabold text-indigo-800/85 bg-white/80 px-2 py-0.5 rounded-md border border-indigo-200/70 shadow-2xs">
-                        🐄 CASH COW / PLOWHORSE
-                      </span>
+                    {/* Bottom-Right Quadrant (50% x 50%): CASH COW */}
+                    <div className="absolute right-0 bottom-0 w-1/2 h-1/2 bg-indigo-50/35 pointer-events-none p-2.5 flex items-end justify-between">
+                      {scatterData.hiddenCountByQuadrant.cash_cow > 0 ? (
+                        <span className="text-[10px] font-bold text-indigo-800 bg-indigo-100/90 px-1.5 py-0.5 rounded">
+                          +{scatterData.hiddenCountByQuadrant.cash_cow} lainnya
+                        </span>
+                      ) : (
+                        <span />
+                      )}
+                      <div className="text-right">
+                        <div className="text-[10px] text-indigo-700/80 mb-0.5 font-medium hidden sm:block">
+                          Profit Rendah • Volume Tinggi
+                        </div>
+                        <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-indigo-800 bg-white/90 px-2 py-0.5 rounded-md border border-indigo-200/80 shadow-2xs">
+                          🐄 CASH COW ({kpiSummary.byQuadrant.cash_cow.count})
+                        </span>
+                      </div>
                     </div>
 
-                    {/* Vertical Cut-off Line (Volume Threshold) */}
-                    <div
-                      style={{ left: `${scatterData.xThresholdPct}%` }}
-                      className="absolute inset-y-0 border-l-2 border-dashed border-slate-400/80 pointer-events-none z-10"
-                    >
-                      <span className="absolute bottom-1.5 left-1.5 bg-slate-800/90 text-white text-[9px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap">
+                    {/* Center Vertical Cut-off Line (Always at 50%) */}
+                    <div className="absolute left-1/2 inset-y-0 -translate-x-1/2 border-l-2 border-dashed border-slate-400/80 pointer-events-none z-10">
+                      <span className="absolute bottom-1.5 left-1.5 bg-slate-800/90 text-white text-[9px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap shadow-xs">
                         Batas Qty: {formatNumber(thresholdValues.xThreshold)}
                       </span>
                     </div>
 
-                    {/* Horizontal Cut-off Line (Profit Threshold) */}
-                    <div
-                      style={{ bottom: `${scatterData.yThresholdPct}%` }}
-                      className="absolute inset-x-0 border-t-2 border-dashed border-slate-400/80 pointer-events-none z-10"
-                    >
-                      <span className="absolute right-1.5 -top-5 bg-slate-800/90 text-white text-[9px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap">
-                        Batas Y: {formatYValue(thresholdValues.yThreshold)}
+                    {/* Center Horizontal Cut-off Line (Always at 50%) */}
+                    <div className="absolute top-1/2 inset-x-0 -translate-y-1/2 border-t-2 border-dashed border-slate-400/80 pointer-events-none z-10">
+                      <span className="absolute right-1.5 -top-5 bg-slate-800/90 text-white text-[9px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap shadow-xs">
+                        Batas Y: {formatYValueShort(thresholdValues.yThreshold)}
                       </span>
                     </div>
 
-                    {/* Product Bubbles */}
-                    {scatterData.points.map(({ row, xPct, yPct, sizePx }) => {
-                      const qMeta = QUADRANT_META[row.quadrant]
-                      const isMissingHpp = row.hppSource === 'missing'
-                      const isHovered = hoveredProduct?.key === row.key
-                      const isDimmed =
-                        activeQuadrantTab !== 'all_sold' &&
-                        ((activeQuadrantTab === 'missing_hpp' && !isMissingHpp) ||
-                          (['star', 'cash_cow', 'puzzle', 'dog'].includes(activeQuadrantTab) &&
-                            row.quadrant !== activeQuadrantTab))
+                    {/* Product Bubbles + Direct Name Callout Pills */}
+                    {scatterData.points.map(
+                      ({ row, xPct, yPct, sizePx, showPermanentLabel, labelPlacement }) => {
+                        const qMeta = QUADRANT_META[row.quadrant]
+                        const isMissingHpp = row.hppSource === 'missing'
+                        const isHovered = hoveredProduct?.key === row.key
+                        const isDimmed =
+                          activeQuadrantTab !== 'all_sold' &&
+                          ((activeQuadrantTab === 'missing_hpp' && !isMissingHpp) ||
+                            (['star', 'cash_cow', 'puzzle', 'dog'].includes(activeQuadrantTab) &&
+                              row.quadrant !== activeQuadrantTab))
 
-                      return (
-                        <button
-                          key={row.key}
-                          type="button"
-                          onMouseEnter={() => setHoveredProduct(row)}
-                          onMouseLeave={() => setHoveredProduct(null)}
-                          onClick={() =>
-                            setActiveQuadrantTab(prev =>
-                              prev === row.quadrant ? 'all_sold' : row.quadrant
-                            )
-                          }
-                          style={{
-                            left: `${xPct}%`,
-                            bottom: `${yPct}%`,
-                            width: `${sizePx}px`,
-                            height: `${sizePx}px`,
-                            backgroundColor: qMeta.hexColor,
-                          }}
-                          className={`absolute -translate-x-1/2 translate-y-1/2 rounded-full transition-all duration-200 cursor-pointer flex items-center justify-center ${
-                            isHovered
-                              ? 'z-30 scale-125 ring-4 ring-slate-900/80 opacity-100 shadow-lg'
-                              : isDimmed
-                              ? 'z-10 opacity-20'
-                              : 'z-20 opacity-85 hover:opacity-100 hover:scale-110 shadow-xs'
-                          } ${
-                            isMissingHpp
-                              ? 'ring-2 ring-amber-400 border-2 border-dashed border-white'
-                              : 'border border-white/90'
-                          }`}
-                          aria-label={row.name}
-                        />
-                      )
-                    })}
+                        const shouldShowLabel =
+                          isHovered || (showDirectLabels && showPermanentLabel && !isDimmed)
+
+                        return (
+                          <div
+                            key={row.key}
+                            style={{
+                              left: `${xPct}%`,
+                              bottom: `${yPct}%`,
+                            }}
+                            className={`absolute -translate-x-1/2 translate-y-1/2 ${
+                              isHovered ? 'z-30' : shouldShowLabel ? 'z-20' : 'z-10'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onMouseEnter={() => setHoveredProduct(row)}
+                              onMouseLeave={() => setHoveredProduct(null)}
+                              onClick={() =>
+                                setActiveQuadrantTab(prev =>
+                                  prev === row.quadrant ? 'all_sold' : row.quadrant
+                                )
+                              }
+                              style={{
+                                width: `${sizePx}px`,
+                                height: `${sizePx}px`,
+                                backgroundColor: qMeta.hexColor,
+                              }}
+                              className={`rounded-full transition-all duration-150 cursor-pointer flex items-center justify-center ${
+                                isHovered
+                                  ? 'scale-125 ring-4 ring-slate-900/80 opacity-100 shadow-lg'
+                                  : isDimmed
+                                  ? 'opacity-20'
+                                  : 'opacity-90 hover:opacity-100 hover:scale-110 shadow-xs'
+                              } ${
+                                isMissingHpp
+                                  ? 'ring-2 ring-amber-400 border-2 border-dashed border-white'
+                                  : 'border border-white'
+                              }`}
+                              aria-label={row.name}
+                            />
+
+                            {/* Direct Readable Product Name Pill (No Hover Needed!) */}
+                            {shouldShowLabel && (
+                              <div
+                                onMouseEnter={() => setHoveredProduct(row)}
+                                onMouseLeave={() => setHoveredProduct(null)}
+                                onClick={() =>
+                                  setActiveQuadrantTab(prev =>
+                                    prev === row.quadrant ? 'all_sold' : row.quadrant
+                                  )
+                                }
+                                className={`absolute top-1/2 -translate-y-1/2 ${
+                                  labelPlacement === 'right'
+                                    ? 'left-full ml-1.5'
+                                    : 'right-full mr-1.5'
+                                } px-1.5 py-0.5 rounded-md text-[10px] leading-tight whitespace-nowrap cursor-pointer select-none transition shadow-2xs border ${
+                                  isHovered
+                                    ? 'bg-slate-900 text-white border-slate-700 font-extrabold scale-105'
+                                    : 'bg-white/95 text-slate-800 border-slate-200/90 font-bold hover:border-indigo-300'
+                                }`}
+                              >
+                                <span>{truncateLabel(row.name, isHovered ? 34 : 18)}</span>
+                                <span
+                                  className={`ml-1 font-mono text-[9px] ${
+                                    isHovered ? 'text-emerald-300' : 'text-slate-500'
+                                  }`}
+                                >
+                                  ({formatAxisIDR(row.grossProfit)})
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      }
+                    )}
                   </div>
                 </div>
 
                 {/* X-Axis Footer */}
-                <div className="flex pl-20 sm:pl-24 pt-2 items-center justify-between text-[10px] font-semibold text-slate-500 select-none">
+                <div className="flex pl-16 sm:pl-20 pt-2 items-center justify-between text-[10px] font-semibold text-slate-500 select-none">
                   <span>0 Unit</span>
-                  <span className="text-slate-600 font-bold">
-                    Sumbu X: Volume Penjualan (Qty Terjual) &rarr;
+                  <span className="text-indigo-600 font-bold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200/70">
+                    Tengah: {formatNumber(thresholdValues.xThreshold)} Unit
                   </span>
                   <span>Maks: {formatNumber(scatterData.maxX)} Unit</span>
                 </div>
@@ -2637,14 +3011,14 @@ export default function ProductPerformancePage() {
                     Memuat rincian Product Matrix Breakdown...
                   </td>
                 </tr>
-              ) : filteredTableRows.length === 0 ? (
+              ) : paginatedTableRows.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="py-10 text-center text-slate-400 font-semibold">
                     Tidak ada produk yang cocok dengan filter saat ini.
                   </td>
                 </tr>
               ) : (
-                filteredTableRows.slice(0, 150).map(row => {
+                paginatedTableRows.map(row => {
                   const qMeta = QUADRANT_META[row.quadrant]
                   const hppMeta = HPP_SOURCE_META[row.hppSource]
                   const hasShifted =
@@ -2775,7 +3149,7 @@ export default function ProductPerformancePage() {
               <tfoot>
                 <tr className="border-t-2 border-slate-200 bg-slate-50/80 font-extrabold text-slate-900">
                   <td className="py-3.5 px-4" colSpan={2}>
-                    Totals ({filteredTableRows.length} SKU ditampilkan)
+                    Totals ({filteredTableRows.length} SKU sesuai filter)
                   </td>
                   <td className="py-3.5 px-4 text-right whitespace-nowrap">
                     {formatNumber(filteredTableRows.reduce((s, r) => s + r.qtySold, 0))}
@@ -2803,6 +3177,41 @@ export default function ProductPerformancePage() {
             )}
           </table>
         </div>
+
+        {/* DOM Windowing Pagination Footer for Large Catalogs */}
+        {!loading && totalTablePages > 1 && (
+          <div className="px-5 py-3 border-t border-slate-200 bg-slate-50/40 flex items-center justify-between text-xs text-slate-600">
+            <div>
+              Menampilkan{' '}
+              <strong>
+                {(tablePage - 1) * TABLE_PAGE_SIZE + 1}–
+                {Math.min(tablePage * TABLE_PAGE_SIZE, filteredTableRows.length)}
+              </strong>{' '}
+              dari <strong>{filteredTableRows.length}</strong> SKU
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={tablePage <= 1}
+                onClick={() => setTablePage(p => Math.max(1, p - 1))}
+                className="px-3 py-1 rounded-lg border border-slate-200 bg-white font-bold text-slate-700 disabled:opacity-40 hover:bg-slate-50 cursor-pointer"
+              >
+                &larr; Sebelumnya
+              </button>
+              <span className="font-bold text-slate-700">
+                Hal {tablePage} / {totalTablePages}
+              </span>
+              <button
+                type="button"
+                disabled={tablePage >= totalTablePages}
+                onClick={() => setTablePage(p => Math.min(totalTablePages, p + 1))}
+                className="px-3 py-1 rounded-lg border border-slate-200 bg-white font-bold text-slate-700 disabled:opacity-40 hover:bg-slate-50 cursor-pointer"
+              >
+                Berikutnya &rarr;
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── SECTION 3: GROUPED BY SUMMARY TABLE (Matches Revenue Report) ──── */}
@@ -2903,4 +3312,3 @@ export default function ProductPerformancePage() {
     </div>
   )
 }
-
