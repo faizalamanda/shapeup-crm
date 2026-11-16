@@ -577,12 +577,13 @@ export default function ProductPerformancePage() {
     'all' | 'valid_master' | 'fallback_only' | 'missing_only'
   >('all')
 
-  // Table Filters, Pagination & Sorting
+  // Table Filters, Pagination & Sorting (Default Top 10 per user preference)
   const [activeQuadrantTab, setActiveQuadrantTab] = useState<'all_sold' | QuadrantType | 'missing_hpp'>('all_sold')
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [sortField, setSortField] = useState<SortField>('grossProfit')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [tablePage, setTablePage] = useState<number>(1)
+  const [tablePageSize, setTablePageSize] = useState<number>(10)
 
   // Grouped By Section
   const [groupDim, setGroupDim] = useState<GroupDimension>('quadrant')
@@ -611,7 +612,7 @@ export default function ProductPerformancePage() {
   // Reset pagination when filter changes
   useEffect(() => {
     setTablePage(1)
-  }, [activeQuadrantTab, searchQuery, selectedCategory, selectedPlatform, selectedHppFilter, temporalFilter])
+  }, [activeQuadrantTab, searchQuery, selectedCategory, selectedPlatform, selectedHppFilter, temporalFilter, tablePageSize])
 
   // Period UTC Bounds
   const periodBounds = useMemo(() => {
@@ -1803,11 +1804,11 @@ export default function ProductPerformancePage() {
       })
   }, [matrixRows, activeQuadrantTab, searchQuery, sortField, sortOrder])
 
-  const totalTablePages = Math.max(1, Math.ceil(filteredTableRows.length / TABLE_PAGE_SIZE))
+  const totalTablePages = Math.max(1, Math.ceil(filteredTableRows.length / tablePageSize))
   const paginatedTableRows = useMemo(() => {
-    const start = (tablePage - 1) * TABLE_PAGE_SIZE
-    return filteredTableRows.slice(start, start + TABLE_PAGE_SIZE)
-  }, [filteredTableRows, tablePage])
+    const start = (tablePage - 1) * tablePageSize
+    return filteredTableRows.slice(start, start + tablePageSize)
+  }, [filteredTableRows, tablePage, tablePageSize])
 
   // ─── Grouped By Summary Rows ────────────────────────────────────────────────
   const groupedSummaryRows = useMemo(() => {
@@ -1950,14 +1951,15 @@ export default function ProductPerformancePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 p-4 sm:p-6 lg:p-7 space-y-5">
+    <div className="w-full max-w-full min-w-0 space-y-5 text-slate-800 su-fade-in">
       {/* ── TOP HEADER BAR (1:1 Character with Revenue Report) ────────────── */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5 flex-wrap">
+      <div className="flex flex-wrap items-center justify-between gap-4 min-w-0">
+        <div className="flex items-center gap-3 flex-wrap min-w-0">
           <button
             type="button"
             onClick={goBack}
-            className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 shadow-2xs transition cursor-pointer"
+            className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-500 hover:text-slate-800 shadow-2xs transition cursor-pointer shrink-0"
+            title="Kembali"
             aria-label="Kembali"
           >
             <svg
@@ -2007,14 +2009,14 @@ export default function ProductPerformancePage() {
               {(selectedCategory !== 'all' ||
                 selectedPlatform !== 'all' ||
                 selectedHppFilter !== 'all') && (
-                <span className="ml-0.5 px-1.5 py-0.2 bg-white/20 rounded-full text-[10px]">
+                <span className="ml-0.5 px-1.5 py-0.5 bg-white/20 rounded-full text-[10px]">
                   Aktif
                 </span>
               )}
             </button>
 
             {isSegmentOpen && (
-              <div className="absolute left-0 mt-2 w-76 bg-white border border-slate-200 rounded-xl shadow-xl p-4 z-40 space-y-3">
+              <div className="absolute left-0 mt-2 w-72 bg-white border border-slate-200 rounded-xl shadow-xl p-4 z-40 space-y-3">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                   <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">
                     Filter Segmen Produk
@@ -2108,7 +2110,7 @@ export default function ProductPerformancePage() {
         </div>
 
         {/* TemporalDateFilter (Default 30 Hari Terakhir) */}
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end flex-wrap min-w-0 max-w-full">
           <TemporalDateFilter
             value={temporalFilter}
             onChange={setTemporalFilter}
@@ -2121,8 +2123,8 @@ export default function ProductPerformancePage() {
       </div>
 
       {/* ── SUBTITLE & CATALOG LINK ──────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-600 border-b border-slate-200/80 pb-3">
-        <p>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600 border-b border-slate-200/80 pb-3 min-w-0">
+        <p className="min-w-0 flex-1">
           Analisa <strong className="font-bold text-slate-900">BCG Product Matrix</strong> — memetakan setiap produk berdasarkan{' '}
           <strong className="font-semibold text-slate-800">Volume Terjual</strong> vs{' '}
           <strong className="font-semibold text-slate-800">Kontribusi Profit (Laba Kotor)</strong> ke dalam kuadran{' '}
@@ -2144,10 +2146,10 @@ export default function ProductPerformancePage() {
       {!loading &&
         (kpiSummary.hppHealth.missingHppCount > 0 ||
           kpiSummary.hppHealth.fallbackCount > 0) && (
-          <div className="bg-amber-50/90 border border-amber-200/90 rounded-xl px-4 py-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs">
-            <div className="flex items-start sm:items-center gap-2.5 text-amber-900">
-              <span className="text-base leading-none">💡</span>
-              <div>
+          <div className="bg-amber-50/90 border border-amber-200/90 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs min-w-0">
+            <div className="flex items-start sm:items-center gap-3 text-amber-900 min-w-0 flex-1">
+              <span className="text-base leading-none shrink-0">💡</span>
+              <div className="min-w-0 leading-relaxed">
                 <span className="font-extrabold">Informasi Sumber HPP: </span>
                 {kpiSummary.hppHealth.fallbackCount > 0 && (
                   <span>
@@ -2171,10 +2173,10 @@ export default function ProductPerformancePage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5 flex-wrap shrink-0">
+            <div className="flex items-center gap-2.5 flex-wrap">
               {kpiSummary.hppHealth.missingHppCount > 0 && (
                 <>
-                  <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-900 bg-white/80 px-2.5 py-1 rounded-lg border border-amber-300 cursor-pointer select-none">
+                  <label className="inline-flex items-center gap-2 text-[11px] font-bold text-amber-900 bg-white/90 px-3 py-1.5 rounded-lg border border-amber-300 cursor-pointer select-none shadow-2xs">
                     <input
                       type="checkbox"
                       checked={excludeMissingHppFromThreshold}
@@ -2190,7 +2192,7 @@ export default function ProductPerformancePage() {
                         prev === 'missing_hpp' ? 'all_sold' : 'missing_hpp'
                       )
                     }
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border transition cursor-pointer shadow-2xs ${
                       activeQuadrantTab === 'missing_hpp'
                         ? 'bg-amber-800 text-white border-amber-900'
                         : 'bg-white text-amber-900 border-amber-300 hover:bg-amber-100'
@@ -2207,11 +2209,11 @@ export default function ProductPerformancePage() {
         )}
 
       {/* ── SECTION 1: BCG MATRIX CARD (LEFT 8) + KPI GRID (RIGHT 4) ────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch min-w-0">
         {/* LEFT: Interactive 4-Quadrant BCG Matrix Card (8 Cols) */}
-        <div className="lg:col-span-8 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between">
+        <div className="lg:col-span-8 min-w-0 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between overflow-hidden">
           {/* Card Header */}
-          <div className="px-5 py-3.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+          <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 flex-wrap">
               <h2 className="text-sm font-extrabold text-slate-900">
                 BCG Product Portfolio Matrix
@@ -2287,7 +2289,7 @@ export default function ProductPerformancePage() {
                   <select
                     value={chartDensityCap}
                     onChange={e => setChartDensityCap(e.target.value as ChartDensityCap)}
-                    className="px-2 py-1 rounded-lg text-[11px] font-bold border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                    className="px-2.5 py-1 rounded-lg text-[11px] font-bold border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
                     title="Batasi kepadatan titik agar tetap rapi meskipun ribuan produk"
                   >
                     <option value="per_quadrant_10">Top 10 / Kuadran</option>
@@ -2340,10 +2342,10 @@ export default function ProductPerformancePage() {
           </div>
 
           {/* Matrix Body */}
-          <div className="p-5 flex-1 flex flex-col justify-between relative min-h-[430px]">
+          <div className="p-5 flex-1 flex flex-col justify-between relative min-h-[440px] min-w-0">
             {/* Hover Tooltip Banner */}
             {hoveredProduct && viewMode === 'scatter' && (
-              <div className="absolute top-3 right-5 left-5 sm:left-auto z-40 bg-slate-900/95 text-white px-3.5 py-2 rounded-xl shadow-lg text-xs flex flex-wrap items-center gap-3 pointer-events-none border border-slate-700">
+              <div className="absolute top-3 right-5 left-5 sm:left-auto z-40 bg-slate-900/95 text-white px-3.5 py-2.5 rounded-xl shadow-lg text-xs flex flex-wrap items-center gap-3 pointer-events-none border border-slate-700">
                 <span className="font-extrabold text-amber-300">
                   {QUADRANT_META[hoveredProduct.quadrant].icon} {hoveredProduct.name}
                 </span>
@@ -2380,7 +2382,7 @@ export default function ProductPerformancePage() {
               </div>
             ) : viewMode === 'board' ? (
               /* ── MODE 2: 4-QUADRANT BOARD (2x2 SYMMETRIC CARDS, ZERO HOVER NEEDED) ── */
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1 min-w-0">
                 {(['puzzle', 'star', 'dog', 'cash_cow'] as const).map(qKey => {
                   const qMeta = QUADRANT_META[qKey]
                   const qData = kpiSummary.byQuadrant[qKey]
@@ -2388,16 +2390,16 @@ export default function ProductPerformancePage() {
                   return (
                     <div
                       key={qKey}
-                      className="border border-slate-200 rounded-xl overflow-hidden flex flex-col bg-white shadow-2xs"
+                      className="border border-slate-200 rounded-xl overflow-hidden flex flex-col bg-white shadow-2xs min-w-0"
                     >
                       <div
-                        className={`px-3.5 py-2.5 border-b flex items-center justify-between ${qMeta.cardHeaderBg}`}
+                        className={`px-4 py-3 border-b flex items-center justify-between gap-2 ${qMeta.cardHeaderBg}`}
                       >
-                        <div>
+                        <div className="min-w-0 space-y-0.5">
                           <div className={`text-xs font-extrabold ${qMeta.badgeText}`}>
                             {qMeta.icon} {qMeta.shortLabel.toUpperCase()}
                           </div>
-                          <div className="text-[10px] font-medium text-slate-600">
+                          <div className="text-[11px] font-medium text-slate-600">
                             {qMeta.subtitle}
                           </div>
                         </div>
@@ -2406,50 +2408,52 @@ export default function ProductPerformancePage() {
                           onClick={() =>
                             setActiveQuadrantTab(prev => (prev === qKey ? 'all_sold' : qKey))
                           }
-                          className="px-2 py-0.5 rounded-md bg-white/90 border border-slate-200 text-[10px] font-extrabold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                          className="px-2.5 py-1 rounded-lg bg-white/95 border border-slate-200/90 text-[11px] font-extrabold text-slate-700 hover:bg-slate-50 cursor-pointer shrink-0 shadow-2xs"
                         >
                           {qData.count} SKU &rsaquo;
                         </button>
                       </div>
 
-                      <div className="divide-y divide-slate-100 max-h-[175px] overflow-y-auto flex-1">
+                      <div className="divide-y divide-slate-100 max-h-[210px] overflow-y-auto flex-1">
                         {qData.items.length === 0 ? (
-                          <div className="py-8 text-center text-[11px] text-slate-400 font-medium">
+                          <div className="py-10 px-4 text-center text-xs text-slate-400 font-medium">
                             Tidak ada produk di kuadran ini
                           </div>
                         ) : (
                           qData.items.slice(0, 25).map((item, idx) => (
                             <div
                               key={item.key}
-                              className="px-3.5 py-2 hover:bg-slate-50/90 flex items-center justify-between gap-2 text-xs"
+                              className="px-4 py-3 hover:bg-slate-50/90 flex items-center justify-between gap-3 text-xs min-w-0"
                             >
-                              <div className="min-w-0 flex-1">
-                                <div className="font-bold text-slate-800 truncate flex items-center gap-1.5">
-                                  <span className="text-[10px] font-mono text-slate-400">
-                                    #{idx + 1}
-                                  </span>
-                                  <span className="truncate" title={item.name}>
-                                    {item.name}
-                                  </span>
-                                  {item.hppSource === 'missing' && (
-                                    <span
-                                      className="px-1 py-0.1 rounded bg-amber-100 text-amber-800 text-[9px] font-extrabold shrink-0"
-                                      title={item.hppSourceDetail}
-                                    >
-                                      ⚠️ HPP 0
+                              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                                <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 font-mono text-[10px] font-extrabold inline-flex items-center justify-center shrink-0 mt-0.5">
+                                  {idx + 1}
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="font-bold text-slate-800 flex items-center gap-1.5 min-w-0">
+                                    <span className="truncate" title={item.name}>
+                                      {item.name}
                                     </span>
-                                  )}
-                                </div>
-                                <div className="text-[10px] text-slate-500">
-                                  Terjual: <strong>{formatNumber(item.qtySold)}</strong> {item.unit} • Margin{' '}
-                                  <strong>{item.marginPct.toFixed(0)}%</strong>
+                                    {item.hppSource === 'missing' && (
+                                      <span
+                                        className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-extrabold shrink-0"
+                                        title={item.hppSourceDetail}
+                                      >
+                                        ⚠️ HPP 0
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-slate-500 mt-1">
+                                    Terjual: <strong>{formatNumber(item.qtySold)}</strong> {item.unit} • Margin{' '}
+                                    <strong>{item.marginPct.toFixed(0)}%</strong>
+                                  </div>
                                 </div>
                               </div>
-                              <div className="text-right shrink-0">
+                              <div className="text-right shrink-0 space-y-0.5">
                                 <div className="font-extrabold text-slate-900">
                                   {formatAxisIDR(item.grossProfit)}
                                 </div>
-                                <div className="text-[10px] text-slate-400">
+                                <div className="text-[11px] text-slate-400">
                                   Omzet {formatAxisIDR(item.netSales)}
                                 </div>
                               </div>
@@ -2462,7 +2466,7 @@ export default function ProductPerformancePage() {
                         <button
                           type="button"
                           onClick={() => setActiveQuadrantTab(qKey)}
-                          className="w-full py-1.5 bg-slate-50 hover:bg-indigo-50 text-[11px] font-bold text-indigo-600 border-t border-slate-100 transition cursor-pointer"
+                          className="w-full py-2 px-4 bg-slate-50 hover:bg-indigo-50 text-[11px] font-bold text-indigo-600 border-t border-slate-100 transition cursor-pointer"
                         >
                           Lihat semua {qData.items.length} produk {qMeta.shortLabel} di tabel &darr;
                         </button>
@@ -2473,86 +2477,86 @@ export default function ProductPerformancePage() {
               </div>
             ) : (
               /* ── MODE 1: SYMMETRIC 50:50 SCATTER MATRIX WITH DIRECT PRODUCT LABELS ── */
-              <div className="flex-1 flex flex-col justify-between">
-                <div className="relative flex-1 flex min-h-[360px]">
+              <div className="flex-1 flex flex-col justify-between min-w-0">
+                <div className="relative flex-1 flex min-h-[370px] min-w-0">
                   {/* Y-Axis Labels (Symmetric 50% Midline) */}
-                  <div className="w-16 sm:w-20 pr-2 flex flex-col justify-between text-[10px] font-mono text-slate-400 text-right select-none py-1">
+                  <div className="w-16 sm:w-20 pr-3 flex flex-col justify-between text-[10px] font-mono text-slate-400 text-right select-none py-2 shrink-0">
                     <span>{formatYValueShort(scatterData.maxY)}</span>
-                    <span className="text-indigo-600 font-bold bg-indigo-50 px-1 py-0.5 rounded border border-indigo-200/70">
+                    <span className="text-indigo-600 font-bold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200/70">
                       {formatYValueShort(thresholdValues.yThreshold)}
                     </span>
                     <span>{formatYValueShort(scatterData.minY)}</span>
                   </div>
 
                   {/* Symmetric 50:50 4-Quadrant Canvas */}
-                  <div className="flex-1 relative rounded-xl border border-slate-200 overflow-hidden bg-white">
+                  <div className="flex-1 min-w-0 relative rounded-xl border border-slate-200 overflow-hidden bg-white">
                     {/* Top-Left Quadrant (50% x 50%): PUZZLE */}
-                    <div className="absolute left-0 top-0 w-1/2 h-1/2 bg-amber-50/35 pointer-events-none p-2.5 flex items-start justify-between">
+                    <div className="absolute left-0 top-0 w-1/2 h-1/2 bg-amber-50/35 pointer-events-none p-3.5 flex items-start justify-between">
                       <div>
-                        <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-amber-800 bg-white/90 px-2 py-0.5 rounded-md border border-amber-200/80 shadow-2xs">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-amber-800 bg-white/95 px-2.5 py-1 rounded-lg border border-amber-200/80 shadow-2xs">
                           🧩 PUZZLE ({kpiSummary.byQuadrant.puzzle.count})
                         </span>
-                        <div className="text-[10px] text-amber-700/80 mt-0.5 font-medium hidden sm:block">
+                        <div className="text-[10px] text-amber-700/80 mt-1 font-medium hidden sm:block">
                           Profit Tinggi • Volume Rendah
                         </div>
                       </div>
                       {scatterData.hiddenCountByQuadrant.puzzle > 0 && (
-                        <span className="text-[10px] font-bold text-amber-800 bg-amber-100/90 px-1.5 py-0.5 rounded">
+                        <span className="text-[10px] font-bold text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded-md">
                           +{scatterData.hiddenCountByQuadrant.puzzle} lainnya
                         </span>
                       )}
                     </div>
 
                     {/* Top-Right Quadrant (50% x 50%): STAR */}
-                    <div className="absolute right-0 top-0 w-1/2 h-1/2 bg-emerald-50/35 pointer-events-none p-2.5 flex items-start justify-between">
+                    <div className="absolute right-0 top-0 w-1/2 h-1/2 bg-emerald-50/35 pointer-events-none p-3.5 flex items-start justify-between">
                       {scatterData.hiddenCountByQuadrant.star > 0 ? (
-                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100/90 px-1.5 py-0.5 rounded">
+                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100/90 px-2 py-0.5 rounded-md">
                           +{scatterData.hiddenCountByQuadrant.star} lainnya
                         </span>
                       ) : (
                         <span />
                       )}
                       <div className="text-right">
-                        <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-emerald-800 bg-white/90 px-2 py-0.5 rounded-md border border-emerald-200/80 shadow-2xs">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-emerald-800 bg-white/95 px-2.5 py-1 rounded-lg border border-emerald-200/80 shadow-2xs">
                           ⭐ STAR ({kpiSummary.byQuadrant.star.count})
                         </span>
-                        <div className="text-[10px] text-emerald-700/80 mt-0.5 font-medium hidden sm:block">
+                        <div className="text-[10px] text-emerald-700/80 mt-1 font-medium hidden sm:block">
                           Profit Tinggi • Volume Tinggi
                         </div>
                       </div>
                     </div>
 
                     {/* Bottom-Left Quadrant (50% x 50%): DOG */}
-                    <div className="absolute left-0 bottom-0 w-1/2 h-1/2 bg-rose-50/30 pointer-events-none p-2.5 flex items-end justify-between">
+                    <div className="absolute left-0 bottom-0 w-1/2 h-1/2 bg-rose-50/30 pointer-events-none p-3.5 flex items-end justify-between">
                       <div>
-                        <div className="text-[10px] text-rose-700/80 mb-0.5 font-medium hidden sm:block">
+                        <div className="text-[10px] text-rose-700/80 mb-1 font-medium hidden sm:block">
                           Profit Rendah • Volume Rendah
                         </div>
-                        <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-rose-800 bg-white/90 px-2 py-0.5 rounded-md border border-rose-200/80 shadow-2xs">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-rose-800 bg-white/95 px-2.5 py-1 rounded-lg border border-rose-200/80 shadow-2xs">
                           🐶 DOG ({kpiSummary.byQuadrant.dog.count})
                         </span>
                       </div>
                       {scatterData.hiddenCountByQuadrant.dog > 0 && (
-                        <span className="text-[10px] font-bold text-rose-800 bg-rose-100/90 px-1.5 py-0.5 rounded">
+                        <span className="text-[10px] font-bold text-rose-800 bg-rose-100/90 px-2 py-0.5 rounded-md">
                           +{scatterData.hiddenCountByQuadrant.dog} lainnya
                         </span>
                       )}
                     </div>
 
                     {/* Bottom-Right Quadrant (50% x 50%): CASH COW */}
-                    <div className="absolute right-0 bottom-0 w-1/2 h-1/2 bg-indigo-50/35 pointer-events-none p-2.5 flex items-end justify-between">
+                    <div className="absolute right-0 bottom-0 w-1/2 h-1/2 bg-indigo-50/35 pointer-events-none p-3.5 flex items-end justify-between">
                       {scatterData.hiddenCountByQuadrant.cash_cow > 0 ? (
-                        <span className="text-[10px] font-bold text-indigo-800 bg-indigo-100/90 px-1.5 py-0.5 rounded">
+                        <span className="text-[10px] font-bold text-indigo-800 bg-indigo-100/90 px-2 py-0.5 rounded-md">
                           +{scatterData.hiddenCountByQuadrant.cash_cow} lainnya
                         </span>
                       ) : (
                         <span />
                       )}
                       <div className="text-right">
-                        <div className="text-[10px] text-indigo-700/80 mb-0.5 font-medium hidden sm:block">
+                        <div className="text-[10px] text-indigo-700/80 mb-1 font-medium hidden sm:block">
                           Profit Rendah • Volume Tinggi
                         </div>
-                        <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-indigo-800 bg-white/90 px-2 py-0.5 rounded-md border border-indigo-200/80 shadow-2xs">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-indigo-800 bg-white/95 px-2.5 py-1 rounded-lg border border-indigo-200/80 shadow-2xs">
                           🐄 CASH COW ({kpiSummary.byQuadrant.cash_cow.count})
                         </span>
                       </div>
@@ -2560,14 +2564,14 @@ export default function ProductPerformancePage() {
 
                     {/* Center Vertical Cut-off Line (Always at 50%) */}
                     <div className="absolute left-1/2 inset-y-0 -translate-x-1/2 border-l-2 border-dashed border-slate-400/80 pointer-events-none z-10">
-                      <span className="absolute bottom-1.5 left-1.5 bg-slate-800/90 text-white text-[9px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap shadow-xs">
+                      <span className="absolute bottom-2 left-2 bg-slate-800/90 text-white text-[9px] font-mono px-2 py-0.5 rounded whitespace-nowrap shadow-xs">
                         Batas Qty: {formatNumber(thresholdValues.xThreshold)}
                       </span>
                     </div>
 
                     {/* Center Horizontal Cut-off Line (Always at 50%) */}
                     <div className="absolute top-1/2 inset-x-0 -translate-y-1/2 border-t-2 border-dashed border-slate-400/80 pointer-events-none z-10">
-                      <span className="absolute right-1.5 -top-5 bg-slate-800/90 text-white text-[9px] font-mono px-1.5 py-0.5 rounded whitespace-nowrap shadow-xs">
+                      <span className="absolute right-2 -top-6 bg-slate-800/90 text-white text-[9px] font-mono px-2 py-0.5 rounded whitespace-nowrap shadow-xs">
                         Batas Y: {formatYValueShort(thresholdValues.yThreshold)}
                       </span>
                     </div>
@@ -2638,9 +2642,9 @@ export default function ProductPerformancePage() {
                                 }
                                 className={`absolute top-1/2 -translate-y-1/2 ${
                                   labelPlacement === 'right'
-                                    ? 'left-full ml-1.5'
-                                    : 'right-full mr-1.5'
-                                } px-1.5 py-0.5 rounded-md text-[10px] leading-tight whitespace-nowrap cursor-pointer select-none transition shadow-2xs border ${
+                                    ? 'left-full ml-2'
+                                    : 'right-full mr-2'
+                                } px-2 py-0.5 rounded-md text-[10px] leading-tight whitespace-nowrap cursor-pointer select-none transition shadow-2xs border ${
                                   isHovered
                                     ? 'bg-slate-900 text-white border-slate-700 font-extrabold scale-105'
                                     : 'bg-white/95 text-slate-800 border-slate-200/90 font-bold hover:border-indigo-300'
@@ -2664,9 +2668,9 @@ export default function ProductPerformancePage() {
                 </div>
 
                 {/* X-Axis Footer */}
-                <div className="flex pl-16 sm:pl-20 pt-2 items-center justify-between text-[10px] font-semibold text-slate-500 select-none">
+                <div className="flex pl-16 sm:pl-20 pt-3 items-center justify-between text-[10px] font-semibold text-slate-500 select-none">
                   <span>0 Unit</span>
-                  <span className="text-indigo-600 font-bold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200/70">
+                  <span className="text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200/70">
                     Tengah: {formatNumber(thresholdValues.xThreshold)} Unit
                   </span>
                   <span>Maks: {formatNumber(scatterData.maxX)} Unit</span>
@@ -2677,15 +2681,15 @@ export default function ProductPerformancePage() {
         </div>
 
         {/* RIGHT: Metorik-Style KPI & Quadrant Summary Grid Card (4 Cols) */}
-        <div className="lg:col-span-4 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between overflow-hidden divide-y divide-slate-100">
+        <div className="lg:col-span-4 min-w-0 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between overflow-hidden divide-y divide-slate-100">
           {/* Top Primary Metric: Total Gross Profit */}
-          <div className="p-5 space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
+          <div className="p-5 space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
                 <span>Total Gross Profit (Produk)</span>
                 <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
               </div>
-              <span className="text-[11px] font-extrabold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+              <span className="text-[11px] font-extrabold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-md border border-indigo-100">
                 Margin {kpiSummary.overallMarginPct.toFixed(1)}%
               </span>
             </div>
@@ -2695,7 +2699,7 @@ export default function ProductPerformancePage() {
               </span>
               {renderGrowthPill(kpiSummary.growth.grossProfit)}
             </div>
-            <div className="text-[11px] text-slate-500 font-medium">
+            <div className="text-[11px] text-slate-500 font-medium leading-relaxed">
               Dari Net Sales Produk{' '}
               <strong className="text-slate-700">{formatIDR(kpiSummary.totalNetSales)}</strong>{' '}
               (Total HPP: {formatIDR(kpiSummary.totalHpp)})
@@ -2709,22 +2713,22 @@ export default function ProductPerformancePage() {
               onClick={() =>
                 setActiveQuadrantTab(prev => (prev === 'star' ? 'all_sold' : 'star'))
               }
-              className={`p-4 text-left space-y-1 transition cursor-pointer ${
+              className={`p-4 sm:p-5 text-left space-y-1.5 transition cursor-pointer min-w-0 ${
                 activeQuadrantTab === 'star'
                   ? 'bg-emerald-50/70 ring-1 ring-inset ring-emerald-300'
                   : 'hover:bg-slate-50/80'
               }`}
             >
-              <div className="flex items-center justify-between text-[11px] font-bold text-emerald-700">
-                <span>⭐ Stars</span>
-                <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[10px]">
+              <div className="flex items-center justify-between gap-1 text-xs font-bold text-emerald-700">
+                <span className="truncate">⭐ Stars</span>
+                <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] shrink-0">
                   {kpiSummary.byQuadrant.star.count} SKU
                 </span>
               </div>
-              <div className="text-sm sm:text-base font-extrabold text-slate-900">
+              <div className="text-sm sm:text-base font-extrabold text-slate-900 truncate">
                 {formatIDR(kpiSummary.byQuadrant.star.profit)}
               </div>
-              <div className="text-[10px] font-semibold text-slate-500">
+              <div className="text-[11px] font-medium text-slate-500">
                 {kpiSummary.byQuadrant.star.profitSharePct.toFixed(1)}% dari total profit
               </div>
             </button>
@@ -2734,22 +2738,22 @@ export default function ProductPerformancePage() {
               onClick={() =>
                 setActiveQuadrantTab(prev => (prev === 'cash_cow' ? 'all_sold' : 'cash_cow'))
               }
-              className={`p-4 text-left space-y-1 transition cursor-pointer ${
+              className={`p-4 sm:p-5 text-left space-y-1.5 transition cursor-pointer min-w-0 ${
                 activeQuadrantTab === 'cash_cow'
                   ? 'bg-indigo-50/70 ring-1 ring-inset ring-indigo-300'
                   : 'hover:bg-slate-50/80'
               }`}
             >
-              <div className="flex items-center justify-between text-[11px] font-bold text-indigo-700">
-                <span>🐄 Cash Cows</span>
-                <span className="px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-800 text-[10px]">
+              <div className="flex items-center justify-between gap-1 text-xs font-bold text-indigo-700">
+                <span className="truncate">🐄 Cash Cows</span>
+                <span className="px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800 text-[10px] shrink-0">
                   {kpiSummary.byQuadrant.cash_cow.count} SKU
                 </span>
               </div>
-              <div className="text-sm sm:text-base font-extrabold text-slate-900">
+              <div className="text-sm sm:text-base font-extrabold text-slate-900 truncate">
                 {formatIDR(kpiSummary.byQuadrant.cash_cow.profit)}
               </div>
-              <div className="text-[10px] font-semibold text-slate-500">
+              <div className="text-[11px] font-medium text-slate-500">
                 {formatNumber(kpiSummary.byQuadrant.cash_cow.qty)} unit terjual
               </div>
             </button>
@@ -2762,22 +2766,22 @@ export default function ProductPerformancePage() {
               onClick={() =>
                 setActiveQuadrantTab(prev => (prev === 'puzzle' ? 'all_sold' : 'puzzle'))
               }
-              className={`p-4 text-left space-y-1 transition cursor-pointer ${
+              className={`p-4 sm:p-5 text-left space-y-1.5 transition cursor-pointer min-w-0 ${
                 activeQuadrantTab === 'puzzle'
                   ? 'bg-amber-50/70 ring-1 ring-inset ring-amber-300'
                   : 'hover:bg-slate-50/80'
               }`}
             >
-              <div className="flex items-center justify-between text-[11px] font-bold text-amber-700">
-                <span>🧩 Puzzles</span>
-                <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 text-[10px]">
+              <div className="flex items-center justify-between gap-1 text-xs font-bold text-amber-700">
+                <span className="truncate">🧩 Puzzles</span>
+                <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] shrink-0">
                   {kpiSummary.byQuadrant.puzzle.count} SKU
                 </span>
               </div>
-              <div className="text-sm sm:text-base font-extrabold text-slate-900">
+              <div className="text-sm sm:text-base font-extrabold text-slate-900 truncate">
                 {formatIDR(kpiSummary.byQuadrant.puzzle.profit)}
               </div>
-              <div className="text-[10px] font-semibold text-slate-500">
+              <div className="text-[11px] font-medium text-slate-500">
                 Potensi upsell tinggi
               </div>
             </button>
@@ -2787,47 +2791,47 @@ export default function ProductPerformancePage() {
               onClick={() =>
                 setActiveQuadrantTab(prev => (prev === 'dog' ? 'all_sold' : 'dog'))
               }
-              className={`p-4 text-left space-y-1 transition cursor-pointer ${
+              className={`p-4 sm:p-5 text-left space-y-1.5 transition cursor-pointer min-w-0 ${
                 activeQuadrantTab === 'dog'
                   ? 'bg-rose-50/70 ring-1 ring-inset ring-rose-300'
                   : 'hover:bg-slate-50/80'
               }`}
             >
-              <div className="flex items-center justify-between text-[11px] font-bold text-rose-700">
-                <span>🐶 Dogs</span>
-                <span className="px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 text-[10px]">
+              <div className="flex items-center justify-between gap-1 text-xs font-bold text-rose-700">
+                <span className="truncate">🐶 Dogs</span>
+                <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 text-[10px] shrink-0">
                   {kpiSummary.byQuadrant.dog.count} SKU
                 </span>
               </div>
-              <div className="text-sm sm:text-base font-extrabold text-slate-900">
+              <div className="text-sm sm:text-base font-extrabold text-slate-900 truncate">
                 {formatIDR(kpiSummary.byQuadrant.dog.profit)}
               </div>
-              <div className="text-[10px] font-semibold text-slate-500">
+              <div className="text-[11px] font-medium text-slate-500">
                 Evaluasi / clearance
               </div>
             </button>
           </div>
 
           {/* Row 4: HPP Data Source Coverage */}
-          <div className="p-4 space-y-2">
-            <div className="flex items-center justify-between text-[11px] font-bold text-slate-500">
+          <div className="p-5 space-y-2.5">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-600">
               <span>Status Sumber HPP (Produk Terjual)</span>
               <span>{kpiSummary.soldSkuCount} SKU</span>
             </div>
-            <div className="grid grid-cols-3 gap-1.5 text-[11px]">
-              <div className="bg-emerald-50/70 border border-emerald-200/70 rounded-lg px-2.5 py-1.5">
-                <div className="font-extrabold text-emerald-800">
+            <div className="grid grid-cols-3 gap-2.5 text-xs">
+              <div className="bg-emerald-50/70 border border-emerald-200/70 rounded-xl p-3 space-y-1 min-w-0">
+                <div className="text-sm font-extrabold text-emerald-800">
                   {kpiSummary.hppHealth.masterOrRecipeCount}
                 </div>
-                <div className="text-[10px] text-emerald-700 font-medium truncate">
+                <div className="text-[10px] text-emerald-700 font-semibold truncate">
                   Master / Resep
                 </div>
               </div>
-              <div className="bg-blue-50/70 border border-blue-200/70 rounded-lg px-2.5 py-1.5">
-                <div className="font-extrabold text-blue-800">
+              <div className="bg-blue-50/70 border border-blue-200/70 rounded-xl p-3 space-y-1 min-w-0">
+                <div className="text-sm font-extrabold text-blue-800">
                   {kpiSummary.hppHealth.fallbackCount}
                 </div>
-                <div className="text-[10px] text-blue-700 font-medium truncate">
+                <div className="text-[10px] text-blue-700 font-semibold truncate">
                   Ref Order/Beli
                 </div>
               </div>
@@ -2838,9 +2842,9 @@ export default function ProductPerformancePage() {
                     prev === 'missing_hpp' ? 'all_sold' : 'missing_hpp'
                   )
                 }
-                className="bg-amber-50 hover:bg-amber-100/80 border border-amber-300 rounded-lg px-2.5 py-1.5 text-left transition cursor-pointer"
+                className="bg-amber-50 hover:bg-amber-100/80 border border-amber-300 rounded-xl p-3 space-y-1 text-left transition cursor-pointer min-w-0"
               >
-                <div className="font-extrabold text-amber-900">
+                <div className="text-sm font-extrabold text-amber-900">
                   {kpiSummary.hppHealth.missingHppCount}
                 </div>
                 <div className="text-[10px] text-amber-800 font-bold truncate">
@@ -2852,7 +2856,7 @@ export default function ProductPerformancePage() {
 
           {/* Row 5: Total Qty Sold | Active Sold SKUs */}
           <div className="grid grid-cols-2 divide-x divide-slate-100 bg-slate-50/40">
-            <div className="p-4 space-y-1">
+            <div className="p-4 sm:p-5 space-y-1.5 min-w-0">
               <div className="text-[11px] font-bold text-slate-500">Total Qty Terjual</div>
               <div className="flex items-baseline gap-2 flex-wrap">
                 <span className="text-base sm:text-lg font-extrabold text-slate-900">
@@ -2862,7 +2866,7 @@ export default function ProductPerformancePage() {
               </div>
             </div>
 
-            <div className="p-4 space-y-1">
+            <div className="p-4 sm:p-5 space-y-1.5 min-w-0">
               <div className="text-[11px] font-bold text-slate-500">SKU Aktif vs Dead Stock</div>
               <div className="flex items-baseline gap-2 flex-wrap">
                 <span className="text-base sm:text-lg font-extrabold text-slate-900">
@@ -2888,14 +2892,60 @@ export default function ProductPerformancePage() {
       </div>
 
       {/* ── SECTION 2: PRODUCT MATRIX BREAKDOWN TABLE ───────────────────── */}
-      <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-sm font-extrabold text-slate-900 mr-2">
+      <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden min-w-0">
+        <div className="px-5 py-4 border-b border-slate-100 space-y-3">
+          {/* Row 1: Title + Search & Export Controls */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-extrabold text-slate-900">
               Product Matrix Breakdown
             </h2>
 
-            {/* Quadrant Filter Pills */}
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <select
+                value={tablePageSize}
+                onChange={e => setTablePageSize(Number(e.target.value) || 10)}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+                title="Jumlah produk teratas yang ditampilkan di tabel"
+              >
+                <option value={10}>Top 10 Teratas</option>
+                <option value={25}>Top 25 Teratas</option>
+                <option value={50}>Top 50 Teratas</option>
+              </select>
+
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Cari nama produk / SKU / kategori..."
+                className="px-3 py-1.5 rounded-lg text-xs border border-slate-200 bg-slate-50 font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-56 max-w-full"
+              />
+
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition cursor-pointer shadow-2xs"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span>Export</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Row 2: Quadrant Filter Pills */}
+          <div className="flex items-center gap-2 flex-wrap">
             {(
               [
                 { id: 'all_sold', label: `Semua Terjual (${kpiSummary.soldSkuCount})` },
@@ -2925,7 +2975,7 @@ export default function ProductPerformancePage() {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveQuadrantTab(tab.id)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer ${
                   activeQuadrantTab === tab.id
                     ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
                     : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
@@ -2934,38 +2984,6 @@ export default function ProductPerformancePage() {
                 {tab.label}
               </button>
             ))}
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Cari nama produk / SKU / kategori..."
-              className="px-3 py-1.5 rounded-lg text-xs border border-slate-200 bg-slate-50 font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-56"
-            />
-
-            <button
-              type="button"
-              onClick={handleExportExcel}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition cursor-pointer shadow-2xs"
-            >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              <span>Export</span>
-            </button>
           </div>
         </div>
 
@@ -2984,11 +3002,11 @@ export default function ProductPerformancePage() {
                     { key: 'unitMargin', label: 'Margin / Unit', align: 'right' },
                     { key: 'marginPct', label: 'Margin %', align: 'right' },
                   ] as Array<{ key: SortField; label: string; align: 'left' | 'right' }>
-                ).map(col => (
+                ).map((col, idx) => (
                   <th
                     key={col.key}
                     onClick={() => handleSort(col.key)}
-                    className={`py-3 px-4 cursor-pointer select-none hover:text-slate-900 transition ${
+                    className={`py-3.5 ${idx === 0 ? 'px-5' : 'px-4'} cursor-pointer select-none hover:text-slate-900 transition ${
                       col.align === 'right' ? 'text-right' : 'text-left'
                     }`}
                   >
@@ -3000,7 +3018,7 @@ export default function ProductPerformancePage() {
                     </div>
                   </th>
                 ))}
-                <th className="py-3 px-4 text-left">Action / Insight</th>
+                <th className="py-3.5 px-5 text-left">Action / Insight</th>
               </tr>
             </thead>
 
@@ -3018,7 +3036,8 @@ export default function ProductPerformancePage() {
                   </td>
                 </tr>
               ) : (
-                paginatedTableRows.map(row => {
+                paginatedTableRows.map((row, idx) => {
+                  const rankNum = (tablePage - 1) * tablePageSize + idx + 1
                   const qMeta = QUADRANT_META[row.quadrant]
                   const hppMeta = HPP_SOURCE_META[row.hppSource]
                   const hasShifted =
@@ -3030,20 +3049,27 @@ export default function ProductPerformancePage() {
                   return (
                     <tr key={row.key} className="hover:bg-slate-50/70 transition-colors">
                       {/* Product & SKU */}
-                      <td className="py-3 px-4">
-                        <div className="font-bold text-slate-900">{row.name}</div>
-                        <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
-                          {row.sku !== '-' && (
-                            <span className="font-mono bg-slate-100 px-1.5 py-0.2 rounded text-slate-600">
-                              {row.sku}
-                            </span>
-                          )}
-                          <span>{row.categoryName}</span>
+                      <td className="py-3.5 px-5">
+                        <div className="flex items-start gap-2.5">
+                          <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 font-mono text-[10px] font-extrabold inline-flex items-center justify-center shrink-0 mt-0.5">
+                            {rankNum}
+                          </span>
+                          <div>
+                            <div className="font-bold text-slate-900">{row.name}</div>
+                            <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-1">
+                              {row.sku !== '-' && (
+                                <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
+                                  {row.sku}
+                                </span>
+                              )}
+                              <span>{row.categoryName}</span>
+                            </div>
+                          </div>
                         </div>
                       </td>
 
                       {/* BCG Quadrant Badge */}
-                      <td className="py-3 px-4 whitespace-nowrap">
+                      <td className="py-3.5 px-4 whitespace-nowrap">
                         <span
                           className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold border ${qMeta.badgeBg} ${qMeta.badgeText} ${qMeta.badgeBorder}`}
                         >
@@ -3059,25 +3085,25 @@ export default function ProductPerformancePage() {
                       </td>
 
                       {/* Qty Sold */}
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
                         <div className="font-extrabold text-slate-900">
                           {formatNumber(row.qtySold)} {row.unit}
                         </div>
-                        <div className="text-[10px] text-slate-500">
+                        <div className="text-[11px] text-slate-500 mt-0.5">
                           {row.qtySharePct.toFixed(1)}% vol • {row.ordersCount} order
                         </div>
                       </td>
 
                       {/* Net Sales */}
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
                         <div className="font-bold text-slate-800">{formatIDR(row.netSales)}</div>
-                        <div className="text-[10px] text-slate-500">
+                        <div className="text-[11px] text-slate-500 mt-0.5">
                           @{formatIDR(row.avgSellingPrice)}/{row.unit}
                         </div>
                       </td>
 
                       {/* Unit HPP & Explicit Source Badge */}
-                      <td className="py-3 px-4">
+                      <td className="py-3.5 px-4">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-bold text-slate-800">
                             {row.hppSource === 'missing' ? 'Rp 0' : formatIDR(row.unitHpp)}
@@ -3088,13 +3114,13 @@ export default function ProductPerformancePage() {
                             {row.hppSourceLabel}
                           </span>
                         </div>
-                        <div className="text-[10px] text-slate-500 mt-0.5 max-w-[230px] leading-snug">
+                        <div className="text-[11px] text-slate-500 mt-1 max-w-[240px] leading-snug">
                           {row.hppSourceDetail}
                         </div>
                       </td>
 
                       {/* Gross Profit */}
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
                         <div
                           className={`font-extrabold ${
                             row.grossProfit < 0
@@ -3107,19 +3133,19 @@ export default function ProductPerformancePage() {
                           {formatIDR(row.grossProfit)}
                         </div>
                         {row.hppSource === 'missing' && row.qtySold > 0 && (
-                          <div className="text-[10px] font-semibold text-amber-700">
+                          <div className="text-[10px] font-semibold text-amber-700 mt-0.5">
                             *(Belum dikurangi HPP)*
                           </div>
                         )}
                       </td>
 
                       {/* Margin / Unit */}
-                      <td className="py-3 px-4 text-right whitespace-nowrap font-medium text-slate-700">
+                      <td className="py-3.5 px-4 text-right whitespace-nowrap font-medium text-slate-700">
                         {formatIDR(row.unitMargin)}
                       </td>
 
                       {/* Margin % */}
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
                         <span
                           className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold ${
                             row.hppSource === 'missing'
@@ -3136,7 +3162,7 @@ export default function ProductPerformancePage() {
                       </td>
 
                       {/* Strategic Recommendation */}
-                      <td className="py-3 px-4 text-[11px] text-slate-600 max-w-[260px] leading-relaxed">
+                      <td className="py-3.5 px-5 text-[11px] text-slate-600 max-w-[260px] leading-relaxed">
                         {row.recommendation}
                       </td>
                     </tr>
@@ -3148,7 +3174,7 @@ export default function ProductPerformancePage() {
             {!loading && filteredTableRows.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-slate-200 bg-slate-50/80 font-extrabold text-slate-900">
-                  <td className="py-3.5 px-4" colSpan={2}>
+                  <td className="py-3.5 px-5" colSpan={2}>
                     Totals ({filteredTableRows.length} SKU sesuai filter)
                   </td>
                   <td className="py-3.5 px-4 text-right whitespace-nowrap">
@@ -3171,7 +3197,7 @@ export default function ProductPerformancePage() {
                       return net > 0 ? `${((prof / net) * 100).toFixed(1)}%` : '0%'
                     })()}
                   </td>
-                  <td className="py-3.5 px-4" />
+                  <td className="py-3.5 px-5" />
                 </tr>
               </tfoot>
             )}
@@ -3180,32 +3206,32 @@ export default function ProductPerformancePage() {
 
         {/* DOM Windowing Pagination Footer for Large Catalogs */}
         {!loading && totalTablePages > 1 && (
-          <div className="px-5 py-3 border-t border-slate-200 bg-slate-50/40 flex items-center justify-between text-xs text-slate-600">
+          <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50/40 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
             <div>
-              Menampilkan{' '}
+              Menampilkan peringkat{' '}
               <strong>
-                {(tablePage - 1) * TABLE_PAGE_SIZE + 1}–
-                {Math.min(tablePage * TABLE_PAGE_SIZE, filteredTableRows.length)}
+                #{(tablePage - 1) * tablePageSize + 1}–#
+                {Math.min(tablePage * tablePageSize, filteredTableRows.length)}
               </strong>{' '}
-              dari <strong>{filteredTableRows.length}</strong> SKU
+              dari total <strong>{filteredTableRows.length}</strong> SKU
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 disabled={tablePage <= 1}
                 onClick={() => setTablePage(p => Math.max(1, p - 1))}
-                className="px-3 py-1 rounded-lg border border-slate-200 bg-white font-bold text-slate-700 disabled:opacity-40 hover:bg-slate-50 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-bold text-slate-700 disabled:opacity-40 hover:bg-slate-50 cursor-pointer"
               >
                 &larr; Sebelumnya
               </button>
-              <span className="font-bold text-slate-700">
+              <span className="font-bold text-slate-700 px-1">
                 Hal {tablePage} / {totalTablePages}
               </span>
               <button
                 type="button"
                 disabled={tablePage >= totalTablePages}
                 onClick={() => setTablePage(p => Math.min(totalTablePages, p + 1))}
-                className="px-3 py-1 rounded-lg border border-slate-200 bg-white font-bold text-slate-700 disabled:opacity-40 hover:bg-slate-50 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-bold text-slate-700 disabled:opacity-40 hover:bg-slate-50 cursor-pointer"
               >
                 Berikutnya &rarr;
               </button>
@@ -3215,9 +3241,9 @@ export default function ProductPerformancePage() {
       </div>
 
       {/* ── SECTION 3: GROUPED BY SUMMARY TABLE (Matches Revenue Report) ──── */}
-      <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden">
+      <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden min-w-0">
         <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 flex-wrap">
             <span className="text-sm font-extrabold text-slate-900">Grouped by</span>
             <select
               value={groupDim}
@@ -3250,7 +3276,7 @@ export default function ProductPerformancePage() {
                   <th
                     key={col.key}
                     onClick={() => handleGroupSort(col.key)}
-                    className={`py-3 ${idx === 0 || idx === 6 ? 'px-5' : 'px-4'} ${
+                    className={`py-3.5 ${idx === 0 || idx === 6 ? 'px-5' : 'px-4'} ${
                       col.align === 'right' ? 'text-right' : 'text-left'
                     } cursor-pointer select-none hover:text-slate-900 transition`}
                   >
@@ -3278,28 +3304,28 @@ export default function ProductPerformancePage() {
               ) : (
                 groupedSummaryRows.map(row => (
                   <tr key={row.key} className="hover:bg-slate-50/70 transition-colors">
-                    <td className="py-3 px-5 font-semibold text-slate-800">
+                    <td className="py-3.5 px-5 font-semibold text-slate-800">
                       <span className="inline-flex items-center gap-2">
                         {row.badge && <span>{row.badge}</span>}
                         <span>{row.label}</span>
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-right font-bold text-indigo-600">
+                    <td className="py-3.5 px-4 text-right font-bold text-indigo-600">
                       {formatNumber(row.skuCount)}
                     </td>
-                    <td className="py-3 px-4 text-right font-medium text-slate-700">
+                    <td className="py-3.5 px-4 text-right font-medium text-slate-700">
                       {formatNumber(row.qtySold)}
                     </td>
-                    <td className="py-3 px-4 text-right font-medium text-slate-700">
+                    <td className="py-3.5 px-4 text-right font-medium text-slate-700">
                       {formatIDR(row.netSales)}
                     </td>
-                    <td className="py-3 px-4 text-right font-medium text-slate-600">
+                    <td className="py-3.5 px-4 text-right font-medium text-slate-600">
                       {formatIDR(row.totalHpp)}
                     </td>
-                    <td className="py-3 px-4 text-right font-extrabold text-slate-900">
+                    <td className="py-3.5 px-4 text-right font-extrabold text-slate-900">
                       {formatIDR(row.grossProfit)}
                     </td>
-                    <td className="py-3 px-5 text-right font-bold text-emerald-700">
+                    <td className="py-3.5 px-5 text-right font-bold text-emerald-700">
                       {row.marginPct.toFixed(1)}%
                     </td>
                   </tr>

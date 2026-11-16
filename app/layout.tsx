@@ -917,8 +917,8 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
           )}
 
           {/* Page content */}
-          <main style={{ flex: 1, overflowY: 'auto', padding: '28px 28px 48px' }}>
-            <div style={{ maxWidth: '1600px', margin: '0 auto' }} className="su-fade-in">
+          <main style={{ flex: 1, width: '100%', maxWidth: '100%', minWidth: 0, overflowY: 'auto', overflowX: 'hidden', padding: '28px 28px 48px' }}>
+            <div style={{ width: '100%', maxWidth: '1600px', minWidth: 0, margin: '0 auto' }} className="su-fade-in">
               {isAllowedPath ? children : accessDeniedScreen}
             </div>
           </main>
