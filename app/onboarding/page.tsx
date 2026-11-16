@@ -33,6 +33,7 @@ const AVAILABLE_SHORTCUTS: ShortcutItem[] = [
   { id: 'orders', name: 'Orders', href: '/orders', category: 'Penjualan', description: 'Daftar & status riwayat pesanan', icon: '🛒' },
   { id: 'invoices', name: 'Invoices', href: '/orders/invoices', category: 'Penjualan', description: 'Faktur & penagihan pembayaran', icon: '🧾' },
   { id: 'reports_revenue', name: 'Laporan Revenue', href: '/reports/revenue', category: 'Penjualan', description: 'Analitik Gross Sales, Ongkir, Biaya, & Net Revenue', icon: '📊' },
+  { id: 'product_performance', name: 'Product Performance', href: '/reports/product-performance', category: 'Katalog', description: 'BCG Matrix (Star, Cash Cow, Puzzle, Dog) & Profit Produk', icon: '⭐' },
   { id: 'products', name: 'Produk', href: '/products', category: 'Katalog', description: 'Kelola harga, stok, & variasi', icon: '📦' },
   { id: 'stock_opname', name: 'Stok Opname', href: '/stock-opname', category: 'Katalog', description: 'Penyesuaian jumlah stok fisik', icon: '📋' },
   { id: 'customers', name: 'Pelanggan', href: '/customers', category: 'Pelanggan', description: 'Database & riwayat kontak pembeli', icon: '👥' },
