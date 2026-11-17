@@ -153,6 +153,7 @@ const menuItems: MenuItem[] = [
     name: 'Reports',      href: '/reports/revenue',   icon: Icons.reports,
     children: [
       { name: 'Revenue',             href: '/reports/revenue' },
+      { name: 'Pelanggan',           href: '/reports/customers' },
       { name: 'Product Performance', href: '/reports/product-performance' },
       { name: 'Laporan Laba Rugi',   href: '/accounting/profit-loss' },
       { name: 'Neraca Keuangan',     href: '/accounting/balance-sheet' },
