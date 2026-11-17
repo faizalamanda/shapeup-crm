@@ -320,8 +320,11 @@ export default function OrdersReportPage() {
       startDateStr: string,
       endDateStr: string
     ): Promise<OrdersReportRpcResponse> => {
-      const startIso = localDateToUtcBounds(startDateStr, businessTz).startOfDayISO
-      const endIso = localDateToUtcBounds(endDateStr, businessTz).endOfDayISO
+      const bounds = localDateToUtcBounds(startDateStr, endDateStr, businessTz)
+      const startIso = bounds.startOfDayISO
+      const endIso = bounds.endOfDayISO
+      if (!startIso || !endIso) return EMPTY_RESPONSE
+
       const cacheKey = [
         bizId,
         startIso,
@@ -546,167 +549,167 @@ export default function OrdersReportPage() {
   const completionUnitLabel = completionUnit === 'day' ? 'hari' : 'jam'
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-900">
-      <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-5">
-        {/* ─── Top Header Bar ───────────────────────────────────────────────── */}
-        <div className="no-print flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2.5">
+    <div className="w-full max-w-full min-w-0 space-y-5 text-slate-800 su-fade-in">
+      {/* ─── Row 1: Header & Filter Tanggal ──────────────────────────────── */}
+      <div className="no-print flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3 min-w-0">
+          <button
+            type="button"
+            onClick={goBack}
+            aria-label="Kembali"
+            className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-500 hover:text-slate-800 shadow-2xs transition shrink-0"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+          <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">Orders</h1>
+
+          {/* Segment Filter Dropdown */}
+          <div className="relative">
             <button
               type="button"
-              onClick={goBack}
-              aria-label="Kembali"
-              className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition"
+              onClick={() => setIsSegmentOpen((v) => !v)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold shadow-2xs transition ${
+                selectedPlatform !== 'all'
+                  ? 'border-blue-300 bg-blue-50 text-blue-700'
+                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
+              <span>⚙️</span>
+              <span>{selectedPlatform === 'all' ? 'Segment' : `Channel: ${selectedPlatform}`}</span>
             </button>
-            <h1 className="text-xl font-bold text-slate-900">Orders</h1>
-
-            {/* Segment Filter Dropdown */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setIsSegmentOpen((v) => !v)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition ${
-                  selectedPlatform !== 'all'
-                    ? 'border-blue-300 bg-blue-50 text-blue-700'
-                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                <span>⚙️</span>
-                <span>{selectedPlatform === 'all' ? 'Segment' : `Channel: ${selectedPlatform}`}</span>
-              </button>
-              {isSegmentOpen && (
-                <div className="absolute left-0 mt-1.5 w-52 bg-white border border-slate-200 rounded-xl shadow-lg p-2 z-30">
-                  <div className="text-[11px] font-semibold text-slate-400 px-2 py-1 uppercase">
-                    Filter Channel / Platform
-                  </div>
+            {isSegmentOpen && (
+              <div className="absolute left-0 mt-1.5 w-52 bg-white border border-slate-200 rounded-xl shadow-lg p-2 z-30">
+                <div className="text-[11px] font-semibold text-slate-400 px-2 py-1 uppercase">
+                  Filter Channel / Platform
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedPlatform('all')
+                    setIsSegmentOpen(false)
+                  }}
+                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs ${
+                    selectedPlatform === 'all'
+                      ? 'bg-blue-50 text-blue-700 font-semibold'
+                      : 'text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  Semua Channel
+                </button>
+                {data.platforms.map((plat) => (
                   <button
+                    key={plat}
                     type="button"
                     onClick={() => {
-                      setSelectedPlatform('all')
+                      setSelectedPlatform(plat)
                       setIsSegmentOpen(false)
                     }}
                     className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs ${
-                      selectedPlatform === 'all'
+                      selectedPlatform === plat
                         ? 'bg-blue-50 text-blue-700 font-semibold'
                         : 'text-slate-700 hover:bg-slate-50'
                     }`}
                   >
-                    Semua Channel
+                    {plat}
                   </button>
-                  {data.platforms.map((plat) => (
-                    <button
-                      key={plat}
-                      type="button"
-                      onClick={() => {
-                        setSelectedPlatform(plat)
-                        setIsSegmentOpen(false)
-                      }}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs ${
-                        selectedPlatform === plat
-                          ? 'bg-blue-50 text-blue-700 font-semibold'
-                          : 'text-slate-700 hover:bg-slate-50'
-                      }`}
-                    >
-                      {plat}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Guest Exclusion Toggle */}
-            <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 cursor-pointer hover:bg-slate-50 select-none">
-              <input
-                type="checkbox"
-                checked={excludeGuest}
-                onChange={(e) => setExcludeGuest(e.target.checked)}
-                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-              />
-              <span>Kecualikan Tamu POS</span>
-            </label>
+                ))}
+              </div>
+            )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <TemporalDateFilter
-              value={temporalFilter}
-              onChange={setTemporalFilter}
-              timezone={activeBusiness?.timezone}
-              showComparison={true}
-              allowAllTime={false}
-              align="right"
+          {/* Guest Exclusion Toggle */}
+          <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 cursor-pointer hover:bg-slate-50 shadow-2xs select-none">
+            <input
+              type="checkbox"
+              checked={excludeGuest}
+              onChange={(e) => setExcludeGuest(e.target.checked)}
+              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
             />
-          </div>
+            <span>Kecualikan Tamu POS</span>
+          </label>
         </div>
 
-        {/* Subtitle & Quick Link */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs text-slate-500">
-          <p>
-            <strong className="text-slate-700">Net sales</strong> dari pesanan pada periode ini — gross sales dikurangi pajak, ongkir, biaya lain, dan refund.
-          </p>
-          <Link
-            href={`/orders?start=${temporalFilter.startDate}&end=${temporalFilter.endDate}`}
-            className="text-blue-600 hover:text-blue-700 font-medium inline-flex items-center gap-1 shrink-0"
-          >
-            <span>Lihat daftar order di laporan ini</span>
-            <span>&rsaquo;</span>
-          </Link>
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          <TemporalDateFilter
+            value={temporalFilter}
+            onChange={setTemporalFilter}
+            timezone={activeBusiness?.timezone}
+            showComparison={true}
+            allowAllTime={false}
+            align="right"
+          />
         </div>
+      </div>
 
-        {errorMsg && (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {errorMsg}
-          </div>
-        )}
+      {/* ─── Row 2: Subtitle & Quick Link ────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-600 border-b border-slate-200/80 pb-3">
+        <p>
+          <strong className="text-slate-800">Net sales</strong> dari pesanan pada periode ini — gross sales dikurangi pajak, ongkir, biaya lain, dan refund.
+        </p>
+        <Link
+          href={`/orders?start=${temporalFilter.startDate}&end=${temporalFilter.endDate}`}
+          className="text-blue-600 hover:text-blue-800 font-bold inline-flex items-center gap-1 shrink-0 hover:underline"
+        >
+          <span>Lihat daftar order di laporan ini</span>
+          <span aria-hidden="true">&rsaquo;</span>
+        </Link>
+      </div>
 
-        {/* ─── Section 1: Main Orders Chart + KPI Grid ──────────────────────── */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          {/* Left: Chart + Bucket Averages */}
-          <div className="lg:col-span-8 space-y-3">
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-5">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-sm font-bold text-slate-900">Orders</h2>
-                  <button
-                    type="button"
-                    onClick={handleExportMainChart}
-                    title="Export CSV"
-                    className="p-1.5 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 text-xs"
-                  >
-                    ⬇
-                  </button>
-                </div>
+      {errorMsg && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {errorMsg}
+        </div>
+      )}
 
-                <div className="flex items-center gap-2">
-                  {hasComparison && (
-                    <button
-                      type="button"
-                      onClick={() => setShowCompareOnChart((v) => !v)}
-                      className={`px-2.5 py-1 rounded-md border text-xs font-medium transition ${
-                        showCompareOnChart
-                          ? 'border-blue-300 bg-blue-50 text-blue-700'
-                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                      }`}
-                    >
-                      ⇄ Compare
-                    </button>
-                  )}
-                  <select
-                    value={granularity}
-                    onChange={(e) => setGranularity(e.target.value as Granularity)}
-                    className="px-2.5 py-1 rounded-md border border-slate-200 bg-white text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="day">Day</option>
-                    <option value="week">Week</option>
-                    <option value="month">Month</option>
-                  </select>
-                </div>
+      {/* ─── Section 1: Main Orders Chart + KPI Grid ──────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+        {/* Left: Chart + Bucket Averages */}
+        <div className="lg:col-span-8 min-w-0 flex flex-col gap-4">
+          <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden min-w-0 flex-1 flex flex-col relative">
+            <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-bold text-slate-900">Orders</h2>
+                <button
+                  type="button"
+                  onClick={handleExportMainChart}
+                  title="Export CSV"
+                  className="p-1.5 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 text-xs"
+                >
+                  ⬇
+                </button>
               </div>
 
+              <div className="flex items-center gap-2">
+                {hasComparison && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCompareOnChart((v) => !v)}
+                    className={`px-2.5 py-1 rounded-md border text-xs font-medium transition ${
+                      showCompareOnChart
+                        ? 'border-blue-300 bg-blue-50 text-blue-700'
+                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    ⇄ Compare
+                  </button>
+                )}
+                <select
+                  value={granularity}
+                  onChange={(e) => setGranularity(e.target.value as Granularity)}
+                  className="px-2.5 py-1 rounded-md border border-slate-200 bg-white text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="day">Day</option>
+                  <option value="week">Week</option>
+                  <option value="month">Month</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="p-5 flex-1 flex flex-col">
               {/* Dual-axis SVG Chart */}
-              <div className="relative h-64 w-full">
+              <div className="relative flex-1 min-h-[260px] w-full">
                 {loading ? (
                   <div className="h-full flex items-center justify-center text-xs text-slate-400">
                     Memuat grafik orders...
@@ -865,7 +868,7 @@ export default function OrdersReportPage() {
                 )}
               </div>
 
-              <div className="flex items-center gap-4 text-[11px] text-slate-500 mt-1">
+              <div className="flex items-center gap-4 text-[11px] text-slate-500 mt-1 min-h-[24px]">
                 <span className="inline-flex items-center gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-full bg-violet-600 inline-block" /> Net Sales
                 </span>
@@ -877,9 +880,10 @@ export default function OrdersReportPage() {
                 </span>
               </div>
             </div>
+          </div>
 
-            {/* 4-Column Granularity Averages Strip */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
+          {/* 4-Column Granularity Averages Strip */}
+          <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs p-5 grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div>
                 <div className="text-[11px] text-slate-500">Net {granLabel}</div>
                 <div className="text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap">
@@ -928,8 +932,8 @@ export default function OrdersReportPage() {
           </div>
 
           {/* Right: 2 Stacked KPI Cards */}
-          <div className="lg:col-span-4 space-y-3">
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-4">
+          <div className="lg:col-span-4 min-w-0 flex flex-col gap-4">
+            <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs p-5 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <div className="text-xs text-slate-500 flex items-center gap-1.5">
@@ -1523,7 +1527,6 @@ export default function OrdersReportPage() {
           </div>
         </div>
       </div>
-    </div>
   )
 }
 
