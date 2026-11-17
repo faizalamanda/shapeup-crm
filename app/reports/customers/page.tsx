@@ -406,10 +406,11 @@ export default function CustomersReportPage() {
       if (b.total_orders > maxVal) maxVal = b.total_orders
       if (showCompareOnChart && b.compCustomers > maxVal) maxVal = b.compCustomers
     }
-    const rawStep = (maxVal * 1.1) / 4
+    const rawStep = (maxVal * 1.08) / 4
     const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
     const norm = rawStep / mag
-    const niceNorm = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10
+    const niceSteps = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]
+    const niceNorm = niceSteps.find((n) => norm <= n) ?? 10
     const step = Math.max(1, Math.ceil(niceNorm * mag))
     const max = step * 4
     return {
