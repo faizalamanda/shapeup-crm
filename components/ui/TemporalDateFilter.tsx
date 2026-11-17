@@ -171,9 +171,36 @@ export function TemporalDateFilter({
     return Math.max(0, parseInt(p[1] || '1', 10) - 2) // default to show current & previous month
   })
 
-  // Refs for click outside
+  // Refs for click outside & viewport-safe popover clamping
   const primaryContainerRef = useRef<HTMLDivElement>(null)
   const comparisonContainerRef = useRef<HTMLDivElement>(null)
+  const [primaryOffsetX, setPrimaryOffsetX] = useState<number>(0)
+  const [comparisonOffsetX, setComparisonOffsetX] = useState<number>(0)
+
+  const computePopoverOffset = useCallback(
+    (container: HTMLDivElement | null, maxPopoverWidth: number): number => {
+      if (!container || typeof window === 'undefined') return 0
+      const rect = container.getBoundingClientRect()
+      const vw = window.innerWidth
+      const margin = 12
+      const effectiveWidth = Math.min(maxPopoverWidth, vw - margin * 2)
+      const preferredLeft = align === 'right' ? rect.right - effectiveWidth : rect.left
+      const clampedLeft = Math.max(margin, Math.min(preferredLeft, vw - effectiveWidth - margin))
+      return Math.round(clampedLeft - rect.left)
+    },
+    [align]
+  )
+
+  useEffect(() => {
+    if (!isPrimaryOpen && !isComparisonOpen) return
+    const updateOffsets = () => {
+      if (isPrimaryOpen) setPrimaryOffsetX(computePopoverOffset(primaryContainerRef.current, 680))
+      if (isComparisonOpen) setComparisonOffsetX(computePopoverOffset(comparisonContainerRef.current, 260))
+    }
+    updateOffsets()
+    window.addEventListener('resize', updateOffsets)
+    return () => window.removeEventListener('resize', updateOffsets)
+  }, [isPrimaryOpen, isComparisonOpen, computePopoverOffset])
 
   // Reset staging states whenever popover opens
   const openPrimaryPicker = () => {
@@ -181,6 +208,7 @@ export function TemporalDateFilter({
     setTempEnd(activeValue.endDate)
     setTempPreset(activeValue.preset)
     setHoverDate(null)
+    setPrimaryOffsetX(computePopoverOffset(primaryContainerRef.current, 680))
     setIsPrimaryOpen(true)
     setIsComparisonOpen(false)
   }
@@ -189,6 +217,7 @@ export function TemporalDateFilter({
     setTempCompMode(activeValue.comparisonMode)
     setTempCompStart(activeValue.comparisonStartDate)
     setTempCompEnd(activeValue.comparisonEndDate)
+    setComparisonOffsetX(computePopoverOffset(comparisonContainerRef.current, 260))
     setIsComparisonOpen(true)
     setIsPrimaryOpen(false)
   }
@@ -449,9 +478,8 @@ export function TemporalDateFilter({
           {/* DESKTOP POPOVER: Dual Month & Presets */}
           {isPrimaryOpen && (
             <div
-              className={`absolute top-full mt-2 z-50 bg-white rounded-2xl border border-slate-200 shadow-2xl p-4 w-[680px] max-w-[95vw] ${
-                align === 'right' ? 'right-0' : 'left-0'
-              }`}
+              style={{ left: `${primaryOffsetX}px` }}
+              className="absolute top-full mt-2 z-50 bg-white rounded-2xl border border-slate-200 shadow-2xl p-4 w-[680px] max-w-[calc(100vw-24px)]"
             >
               <div className="flex gap-4">
                 {/* Left Column: Preset Shortcuts */}
@@ -627,9 +655,8 @@ export function TemporalDateFilter({
                 {/* Comparison Mode Popover */}
                 {isComparisonOpen && (
                   <div
-                    className={`absolute top-full mt-2 z-50 bg-white rounded-2xl border border-slate-200 shadow-xl p-3 w-[260px] ${
-                      align === 'right' ? 'right-0' : 'left-0'
-                    }`}
+                    style={{ left: `${comparisonOffsetX}px` }}
+                    className="absolute top-full mt-2 z-50 bg-white rounded-2xl border border-slate-200 shadow-xl p-3 w-[260px] max-w-[calc(100vw-24px)]"
                   >
                     <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-2 mb-2">
                       Opsi Perbandingan

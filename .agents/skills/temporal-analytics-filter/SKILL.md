@@ -50,10 +50,13 @@ const [temporalFilter, setTemporalFilter] = useState<TemporalFilterValue>(() => 
   value={temporalFilter}
   onChange={setTemporalFilter}
   timezone={activeBusiness?.timezone}
-  showComparison={true}      // true untuk Dashboard & P&L; false untuk Arus Kas / form sederhana
+  showComparison={true}      // true untuk Dashboard & P&L; false untuk Arus Kas / Retensi Pelanggan
   allowAllTime={true}        // true jika mendukung query tanpa batas waktu
+  align="right"              // opsional; popover otomatis ter-clamp ke batas viewport (margin 12px)
 />
 ```
+
+* **Viewport-Clamped Desktop Popover:** `TemporalDateFilter` secara otomatis menghitung offset horizontal terhadap `window.innerWidth` (`computePopoverOffset()` dengan margin aman `12px`) untuk popover kalender (`680px`) dan opsi perbandingan (`260px`), sehingga tidak pernah terpotong di tepi kiri maupun kanan layar.
 
 ---
 
@@ -101,17 +104,19 @@ Ketika mengimplementasikan perbandingan atau pelaporan pada modul akuntansi (`ap
 
 ---
 
-## 5. Standar Analitik Pelanggan & Kohort Berkecepatan Tinggi (`/reports/customers`)
+## 5. Standar Analitik Pelanggan, Retensi & Kohort Berkecepatan Tinggi (`/reports/customers` & `/reports/customer-retention`)
 
-Untuk laporan yang membutuhkan pemindaian riwayat pesanan seumur hidup (*lifetime orders, spend, items, return rate*) seperti `/reports/customers`:
+Untuk laporan yang membutuhkan pemindaian riwayat pesanan seumur hidup (*lifetime orders, spend, items, return rate, repeat interval*) seperti `/reports/customers` dan `/reports/customer-retention`:
 
-1. **Single-Pass Server-Side Aggregation RPC (`get_customers_report_metrics`):**
+1. **Single-Pass Server-Side Aggregation RPC (`get_customers_report_metrics` & `get_customer_retention_metrics`):**
    * **DILARANG** menarik ribuan/puluhan ribu baris mentah `orders` ke browser untuk dihitung di JavaScript.
-   * Gunakan PostgreSQL RPC `STABLE SECURITY DEFINER` dengan *Multi-Tenant Security Guard* (`owner_id` & `business_staff`) yang menghitung `MIN(order_ts)`, `COUNT(*)`, `SUM(grand_total)`, dan ekstrak `items_json` langsung di DB, lalu hanya mengembalikan ringkasan `summary` dan `buckets` (~2–10 KB JSON).
+   * Gunakan PostgreSQL RPC `STABLE SECURITY DEFINER` dengan *Multi-Tenant Security Guard* (`owner_id` & `business_staff`) yang menghitung `MIN(order_ts)`, `COUNT(*)`, `SUM(grand_total)`, ekstrak `items_json`, serta selisih waktu antar pesanan berurutan (`LAG(order_ts) OVER (PARTITION BY customer_key ORDER BY order_ts)`) langsung di DB, lalu hanya mengembalikan ringkasan `summary` dan `buckets` (~2–10 KB JSON).
 2. **Covering Index Wajib:**
    * Pastikan indeks `idx_orders_biz_cust_date_incl ON public.orders (business_id, customer_id, order_date) INCLUDE (grand_total, status)` tersedia agar agregasi per `customer_id` berjalan via *Index-Only Scan*.
 3. **Isolasi Pelanggan Tamu (`p_exclude_guest`):**
-   * Transaksi POS/Walk-In tanpa identitas pelanggan sering masuk ke akun *Customer Tamu* (`phone = '0'` / `guest@business.com`). Sediakan parameter & toggle `p_exclude_guest` (default `true`) agar metrik *Average LTV*, *Average Orders*, dan *Return Rate* tidak terdistorsi.
+   * Transaksi POS/Walk-In tanpa identitas pelanggan sering masuk ke akun *Customer Tamu* (`phone = '0'` / `guest@business.com`). Sediakan parameter & toggle `p_exclude_guest` (default `true`) agar metrik *Average LTV*, *Average Orders*, *Return Rate*, dan *Retention Rate* tidak terdistorsi.
 4. **Parallel Comparison & L1 Cache:**
-   * Panggil periode berjalan dan periode pembanding secara paralel dengan `Promise.all` (dilindungi `requestIdRef`) serta simpan hasil di L1 RAM Cache (TTL 60 detik).
+   * Untuk laporan komparatif (`/reports/customers`), panggil periode berjalan dan periode pembanding secara paralel dengan `Promise.all` (dilindungi `requestIdRef`). Untuk seluruh laporan kohort, simpan hasil di L1 RAM Cache (TTL 60 detik).
+5. **Knowledge Base Retensi Pelanggan:**
+   * Detail rumus, bucket distribusi, dan kontrak RPC laporan retensi terdokumentasi di [customer-retention-analytics.md](../../knowledge/customer-retention-analytics.md).
 
