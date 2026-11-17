@@ -448,30 +448,25 @@ export default function CustomersReportPage() {
 
   return (
     <div className="w-full max-w-full min-w-0 space-y-5 text-slate-800 su-fade-in">
-      {/* ─── Header & Filter Bar ──────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <Link
-              href="/reports/revenue"
-              className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors"
-              title="Kembali ke Laporan Revenue"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
-            </Link>
-            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-              Laporan Pelanggan
-            </h1>
-          </div>
-          <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Pelanggan yang melakukan pesanan pertama pada periode ini, beserta seluruh transaksi yang dibuat sepanjang masa (lifetime).
-          </p>
-        </div>
+      {/* ─── Top Header Bar (Identik dengan Revenue & Product Performance) ─── */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="flex items-center gap-3 flex-wrap min-w-0">
+          <Link
+            href="/reports/revenue"
+            className="w-8 h-8 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-500 hover:text-slate-800 shadow-2xs transition shrink-0"
+            title="Kembali ke Laporan Revenue"
+            aria-label="Kembali"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </Link>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-medium text-slate-700 cursor-pointer hover:bg-slate-50 select-none">
+          <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+            Laporan Pelanggan
+          </h1>
+
+          <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-700 cursor-pointer hover:bg-slate-50 shadow-2xs select-none">
             <input
               type="checkbox"
               checked={excludeGuest}
@@ -480,7 +475,9 @@ export default function CustomersReportPage() {
             />
             <span>Kecualikan Pelanggan Tamu</span>
           </label>
+        </div>
 
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           <TemporalDateFilter
             value={temporalFilter}
             onChange={setTemporalFilter}
@@ -488,15 +485,21 @@ export default function CustomersReportPage() {
             showComparison={true}
             allowAllTime={false}
           />
-
-          <Link
-            href="/customers"
-            className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 px-2.5 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors"
-          >
-            <span>Lihat daftar pelanggan</span>
-            <span aria-hidden="true">→</span>
-          </Link>
         </div>
+      </div>
+
+      {/* ─── Subtitle & View Customers Link ───────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-600 border-b border-slate-200/80 pb-3">
+        <p>
+          Pelanggan yang melakukan pesanan pertama pada periode ini, beserta seluruh transaksi yang dibuat sepanjang masa (lifetime).
+        </p>
+        <Link
+          href="/customers"
+          className="text-indigo-600 hover:text-indigo-800 font-bold inline-flex items-center gap-1 shrink-0 hover:underline"
+        >
+          <span>Lihat daftar pelanggan</span>
+          <span aria-hidden="true">&rsaquo;</span>
+        </Link>
       </div>
 
       {/* ─── Error Banner ─────────────────────────────────────────────────── */}
@@ -558,9 +561,9 @@ export default function CustomersReportPage() {
             </div>
           </div>
 
-          <div className="p-5 flex-1 flex flex-col justify-between min-h-[300px]">
-            {/* Legend */}
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-4 text-xs text-slate-500">
+          <div className="p-5 flex-1 flex flex-col justify-between min-h-[300px] relative">
+            {/* Legend (Fixed Height, Never Shifts on Hover) */}
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4 text-xs text-slate-500 min-h-[24px]">
               <div className="flex flex-wrap items-center gap-4">
                 <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
                   <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block" />
@@ -577,14 +580,15 @@ export default function CustomersReportPage() {
                   </span>
                 )}
               </div>
-
-              {hoveredBucket && (
-                <div className="text-xs font-medium text-slate-700 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg">
-                  <span className="font-bold">{hoveredBucket.label}:</span>{' '}
-                  {formatInt(hoveredBucket.customers)} pelanggan · {formatInt(hoveredBucket.total_orders)} pesanan · {formatCompactIDR(hoveredBucket.total_ltv)}
-                </div>
-              )}
             </div>
+
+            {/* Floating Hover Tooltip (Absolute — Zero Layout Shift) */}
+            {hoveredBucket && (
+              <div className="pointer-events-none absolute top-4 right-5 z-20 text-xs font-medium text-slate-700 bg-white/95 backdrop-blur-xs border border-slate-200 shadow-sm px-3 py-1.5 rounded-lg">
+                <span className="font-bold text-slate-900">{hoveredBucket.label}:</span>{' '}
+                {formatInt(hoveredBucket.customers)} pelanggan · {formatInt(hoveredBucket.total_orders)} pesanan · {formatCompactIDR(hoveredBucket.total_ltv)}
+              </div>
+            )}
 
             {/* Chart Area */}
             {loading ? (
