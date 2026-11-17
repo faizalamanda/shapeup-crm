@@ -149,6 +149,11 @@ function writeOfflineQueue(businessId: string, items: OfflineOrderQueueItem[]): 
   }
 }
 
+export function getOfflineOrderQueue(businessId?: string): OfflineOrderQueueItem[] {
+  if (!businessId) return []
+  return readOfflineQueue(businessId)
+}
+
 export function getOfflineOrderQueueCount(businessId?: string): number {
   if (!businessId) return 0
   return readOfflineQueue(businessId).length

@@ -2625,7 +2625,7 @@ export default function POSWorkspace({
         <OrderHistoryModal
           isOpen={isOrderHistoryOpen}
           onClose={() => setIsOrderHistoryOpen(false)}
-          businessId={businessId}
+          businessId={businessId || activeBusiness?.id || ''}
           timezone={activeBusiness?.timezone}
           onSelectOrder={(order) => {
             setIsOrderHistoryOpen(false)

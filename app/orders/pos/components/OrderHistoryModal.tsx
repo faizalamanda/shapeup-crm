@@ -5,6 +5,81 @@ import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { supabase } from '@/lib/supabase'
 import { formatDisplayDate, DEFAULT_TIMEZONE } from '@/lib/timeUtils'
 import { extractPosOrderNumberAudit, matchesPosOrderNumberSearch } from '@/lib/pos/orderNumberHelper'
+import {
+  getOfflineOrderQueue,
+  flushOfflineOrderQueue,
+  type OfflineOrderQueueItem
+} from '@/lib/pos/posCheckoutService'
+
+const ORDER_HISTORY_CACHE_PREFIX = 'su_pos_order_history_'
+
+function readOrderHistoryCache(businessId: string): POSOrderHistoryItem[] {
+  if (typeof window === 'undefined' || !businessId) return []
+  try {
+    const raw = sessionStorage.getItem(`${ORDER_HISTORY_CACHE_PREFIX}${businessId}`)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function writeOrderHistoryCache(businessId: string, orders: POSOrderHistoryItem[]): void {
+  if (typeof window === 'undefined' || !businessId) return
+  try {
+    sessionStorage.setItem(`${ORDER_HISTORY_CACHE_PREFIX}${businessId}`, JSON.stringify(orders))
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function mapOfflineQueueItemToHistoryItem(item: OfflineOrderQueueItem): POSOrderHistoryItem {
+  const payload = (item.payload || {}) as Record<string, any>
+  const items = Array.isArray(payload.items) ? payload.items : []
+  const grandTotal = Number(payload.grand_total) || 0
+  const amountPaid = Number(payload.amount_paid ?? grandTotal) || 0
+  const paymentStatus: 'paid' | 'partial' | 'unpaid' =
+    amountPaid >= grandTotal - 0.01 ? 'paid' : amountPaid > 0 ? 'partial' : 'unpaid'
+  const totalQty = items.reduce((sum: number, it: any) => sum + (Number(it?.quantity) || 0), 0)
+  const payments = Array.isArray(payload.payments) ? payload.payments : []
+  const payMethod =
+    payload.payment_method === 'cash'
+      ? 'Cash'
+      : payments.length > 1
+      ? 'Split Payment'
+      : 'Bank/QRIS'
+
+  return {
+    id: `offline-${item.attemptId}`,
+    order_number: item.orderNumber,
+    created_at: item.createdAt,
+    order_date: item.createdAt,
+    grand_total: grandTotal,
+    amount_paid: amountPaid,
+    payment_status: paymentStatus,
+    total_qty: totalQty,
+    status: 'completed',
+    payment_method: payMethod,
+    items_json: items,
+    raw_source_data: {
+      client_attempt_id: item.attemptId,
+      printed_order_number: item.orderNumber,
+      is_offline_fallback: true,
+      replacement_reason: item.fallbackReason || 'offline_mode',
+      offline_created_at: item.createdAt,
+      queue_number: item.queueNumber
+    },
+    customer: {
+      name:
+        typeof payload.customer_name === 'string' && payload.customer_name.trim()
+          ? payload.customer_name.trim()
+          : 'Pelanggan Tamu',
+      phone: null
+    },
+    isPendingOfflineSync: true
+  }
+}
 
 type CustomerInfo = {
   name?: string | null
@@ -25,6 +100,7 @@ export type POSOrderHistoryItem = {
   customer?: CustomerInfo
   items_json?: any[]
   raw_source_data?: any
+  isPendingOfflineSync?: boolean
 }
 
 type OrderHistoryModalProps = {
@@ -49,11 +125,20 @@ export default function OrderHistoryModal({
   const [searchQuery, setSearchQuery] = useState('')
   const [tabFilter, setTabFilter] = useState<'all' | 'unpaid' | 'paid' | 'replaced'>('all')
   const [processingRefundId, setProcessingRefundId] = useState<string | null>(null)
+  const [isOfflineFallbackView, setIsOfflineFallbackView] = useState(false)
+  const [syncingOffline, setSyncingOffline] = useState(false)
 
   const fetchOrders = useCallback(async () => {
     if (!businessId) return
     setLoading(true)
+    let serverOrders: POSOrderHistoryItem[] = []
+    let usedOfflineCache = false
+
     try {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        throw new Error('Browser offline')
+      }
+
       const { data, error } = await supabase
         .from('orders')
         .select(`
@@ -82,7 +167,7 @@ export default function OrderHistoryModal({
 
       if (error) throw error
 
-      const formattedOrders: POSOrderHistoryItem[] = (data || []).map((o: any) => {
+      serverOrders = (data || []).map((o: any) => {
         const grandTotal = Number(o.grand_total) || 0
         const isCompleted = o.status === 'completed'
         const amountPaid = Number(o.amount_paid ?? (isCompleted ? grandTotal : 0))
@@ -106,13 +191,61 @@ export default function OrderHistoryModal({
         }
       })
 
-      setOrders(formattedOrders)
+      writeOrderHistoryCache(businessId, serverOrders)
     } catch (err: any) {
-      console.error('Error fetching POS orders:', err)
+      console.warn('Error fetching POS orders, falling back to local cache:', err?.message || err)
+      serverOrders = readOrderHistoryCache(businessId)
+      usedOfflineCache = true
     } finally {
+      // Merge pending offline / slow-network replacement receipts from localStorage outbox queue
+      const pendingQueue = getOfflineOrderQueue(businessId)
+      const knownAttemptIds = new Set<string>()
+      const knownOrderNumbers = new Set<string>()
+
+      for (const ord of serverOrders) {
+        if (ord.order_number) knownOrderNumbers.add(String(ord.order_number).toUpperCase())
+        const raw = ord.raw_source_data && typeof ord.raw_source_data === 'object' ? ord.raw_source_data : {}
+        if (typeof raw.client_attempt_id === 'string' && raw.client_attempt_id) {
+          knownAttemptIds.add(raw.client_attempt_id)
+        }
+        if (typeof raw.reconciled_from_number === 'string' && raw.reconciled_from_number) {
+          knownOrderNumbers.add(raw.reconciled_from_number.toUpperCase())
+        }
+        if (typeof raw.printed_order_number === 'string' && raw.printed_order_number) {
+          knownOrderNumbers.add(raw.printed_order_number.toUpperCase())
+        }
+      }
+
+      const pendingItems = pendingQueue
+        .filter(
+          (q) =>
+            !knownAttemptIds.has(q.attemptId) &&
+            !knownOrderNumbers.has(String(q.orderNumber || '').toUpperCase())
+        )
+        .map(mapOfflineQueueItemToHistoryItem)
+
+      const merged = [...pendingItems, ...serverOrders].sort((a, b) => {
+        const ta = new Date(a.order_date || a.created_at).getTime() || 0
+        const tb = new Date(b.order_date || b.created_at).getTime() || 0
+        return tb - ta
+      })
+
+      setOrders(merged)
+      setIsOfflineFallbackView(usedOfflineCache)
       setLoading(false)
     }
   }, [businessId])
+
+  const handleSyncOfflineOrders = useCallback(async () => {
+    if (!businessId || syncingOffline) return
+    setSyncingOffline(true)
+    try {
+      await flushOfflineOrderQueue(businessId)
+      await fetchOrders()
+    } finally {
+      setSyncingOffline(false)
+    }
+  }, [businessId, syncingOffline, fetchOrders])
 
   useEffect(() => {
     if (isOpen && businessId) {
@@ -162,6 +295,10 @@ export default function OrderHistoryModal({
       const audit = extractPosOrderNumberAudit(o)
       return audit.isReplaced || audit.isOfflineFallback
     }).length
+  }, [orders])
+
+  const pendingOfflineCount = useMemo(() => {
+    return orders.filter((o) => o.isPendingOfflineSync).length
   }, [orders])
 
   const handleRefund = async (orderId: string, orderNumber: string) => {
@@ -334,6 +471,35 @@ export default function OrderHistoryModal({
           </div>
         </div>
 
+        {/* Offline / Pending Sync Banner */}
+        {(isOfflineFallbackView || pendingOfflineCount > 0) && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 px-4 py-3 rounded-2xl bg-amber-50 border border-amber-300/80 text-amber-950 text-xs">
+            <div className="flex items-start sm:items-center gap-2">
+              <span className="text-base leading-none">⚡</span>
+              <div>
+                <p className="font-extrabold">
+                  {pendingOfflineCount > 0
+                    ? `${pendingOfflineCount} nota pengganti offline/jaringan lambat belum tersinkron ke server.`
+                    : 'Mode Offline / Jaringan Lambat — Menampilkan riwayat transaksi tersimpan lokal.'}
+                </p>
+                <p className="text-[11px] text-amber-800">
+                  Nota dengan nomor <span className="font-mono font-bold">POS-...-OF...</span> akan otomatis diganti ke nomor urut resmi saat koneksi pulih.
+                </p>
+              </div>
+            </div>
+            {pendingOfflineCount > 0 && (
+              <button
+                type="button"
+                disabled={syncingOffline}
+                onClick={handleSyncOfflineOrders}
+                className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs transition shrink-0 disabled:opacity-50"
+              >
+                {syncingOffline ? 'Menyinkronkan...' : '🔄 Sinkronkan Sekarang'}
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Loading State */}
         {loading ? (
           <div className="flex flex-col items-center justify-center py-16 space-y-3">
@@ -408,11 +574,16 @@ export default function OrderHistoryModal({
                             </div>
                           )}
                           {!numAudit.isReplaced && numAudit.isOfflineFallback && (
-                            <div className="mt-1">
+                            <div className="mt-1 flex items-center gap-1 flex-wrap">
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold">
                                 <span>⚡</span>
                                 <span>{numAudit.reasonLabel || 'Nota Offline'}</span>
                               </span>
+                              {order.isPendingOfflineSync && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 border border-slate-300 text-slate-700 text-[10px] font-bold">
+                                  ⏳ Antrean Lokal
+                                </span>
+                              )}
                             </div>
                           )}
                         </td>
@@ -488,7 +659,14 @@ export default function OrderHistoryModal({
 
                         {/* ─── DESKTOP ACTION COLUMN (Aesthetic & Segmented) ─── */}
                         <td className="px-4 py-3.5 text-right whitespace-nowrap">
-                          {!isPaid && !isCancelled ? (
+                          {order.isPendingOfflineSync ? (
+                            <span
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 font-bold text-[11px]"
+                              title="Menunggu sinkronisasi ke server sebelum layanan pelunasan/tukar/refund tersedia"
+                            >
+                              ⏳ Menunggu Sync
+                            </span>
+                          ) : !isPaid && !isCancelled ? (
                             /* Case 1: Tagihan Piutang (Action: Pelunasan Utama) */
                             <div className="flex items-center justify-end gap-1.5">
                               <button
@@ -616,9 +794,16 @@ export default function OrderHistoryModal({
                           </div>
                         )}
                         {!numAudit.isReplaced && numAudit.isOfflineFallback && (
-                          <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold">
-                            <span>⚡</span>
-                            <span>{numAudit.reasonLabel || 'Nota Offline'}</span>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold">
+                              <span>⚡</span>
+                              <span>{numAudit.reasonLabel || 'Nota Offline'}</span>
+                            </div>
+                            {order.isPendingOfflineSync && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 border border-slate-300 text-slate-700 text-[10px] font-bold">
+                                ⏳ Antrean Lokal
+                              </span>
+                            )}
                           </div>
                         )}
                       </div>
@@ -654,7 +839,11 @@ export default function OrderHistoryModal({
 
                     {/* Bottom Action Strip (Thumb-Friendly Touch Targets) */}
                     <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
-                      {!isPaid && !isCancelled ? (
+                      {order.isPendingOfflineSync ? (
+                        <div className="w-full py-2 px-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl font-bold text-xs text-center">
+                          ⏳ Menunggu Sinkronisasi Server
+                        </div>
+                      ) : !isPaid && !isCancelled ? (
                         <button
                           type="button"
                           onClick={() => onSelectOrder?.(order)}
