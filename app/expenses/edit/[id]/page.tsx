@@ -4,8 +4,10 @@ import { useParams, useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { getAccounts } from '@/lib/services/accountService'
-import { getSuppliers } from '@/lib/services/supplierService'
+import { useUserContext } from '@/components/UserContext'
+import { useAccounts, Account } from '@/hooks/useAccounts'
+import { useSuppliers } from '@/hooks/useSuppliers'
+import { invalidateSuppliersCache } from '@/lib/services/supplierService'
 
 const STANDARD_CATEGORIES = [
   { key: 'marketing', name: 'Pemasaran & Promosi', code: '503100', icon: '📢', desc: 'Biaya iklan, sosmed, brosur, promo' },
@@ -39,32 +41,21 @@ const getCategoryDisplay = (account: { code: string; name: string } | null | und
   }
 }
 
-type Account = {
-  id: string
-  code: string
-  name: string
-  type: string
-}
-
-type Supplier = {
-  id: string
-  name: string
-  email?: string | null
-  phone?: string | null
-  address?: string | null
-}
-
 export default function EditExpensePage() {
-  // Using singleton supabase client from @/lib/supabase
+  const { activeBusiness } = useUserContext()
   const router = useRouter()
   const params = useParams()
   const expenseId = params.id as string
 
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [activeBizId, setActiveBizId] = useState<string | null>(null)
-  const [activeBizName, setActiveBizName] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const activeBizId = activeBusiness?.id || null
+  const activeBizName = activeBusiness?.name || 'Bisnis Saya'
+
+  // Decoupled SWR hooks for Accounts and Suppliers (0ms instant loading)
+  const { accounts, loading: accountsLoading } = useAccounts(activeBizId)
+  const { suppliers, setSuppliers, loading: suppliersLoading } = useSuppliers(activeBizId)
+
+  const [expenseLoading, setExpenseLoading] = useState(true)
+  const loading = expenseLoading || accountsLoading || suppliersLoading
   const [mounted, setMounted] = useState(false)
   const [submitLoading, setSubmitLoading] = useState(false)
   const [hasPayments, setHasPayments] = useState(false)
@@ -126,66 +117,49 @@ export default function EditExpensePage() {
     }
   }, [])
 
-  // Load Active Business Profile, Accounts, Suppliers, and the Expense itself
+  // Fetch the expense immediately without auth/profile waterfall
   useEffect(() => {
-    async function loadData() {
+    if (!expenseId) return
+    let cancelled = false
+
+    async function loadExpense() {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          router.push('/login')
-          return
+        const bizQuery = activeBizId ? `&business_id=${encodeURIComponent(activeBizId)}` : ''
+        const expRes = await fetch(`/api/expenses?id=${encodeURIComponent(expenseId)}${bizQuery}`)
+        const expData = await expRes.json().catch(() => null)
+
+        if (!expRes.ok || !expData) {
+          throw new Error(expData?.error || 'Gagal memuat detail pengeluaran')
         }
+        if (cancelled) return
 
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('active_business_id, businesses!active_business_id(name)')
-          .eq('id', user.id)
-          .single()
-
-        if (error) throw error
-
-        const businessId = profile?.active_business_id
-        if (businessId) {
-          setActiveBizId(businessId)
-          const biz = Array.isArray(profile.businesses) ? profile.businesses[0] : profile.businesses
-          setActiveBizName(biz?.name || 'Bisnis Saya')
-
-          // Fetch accounts, suppliers, and current expense in PARALLEL
-          const [accResult, supResult, expRes] = await Promise.all([
-            getAccounts(businessId),
-            getSuppliers(businessId),
-            fetch(`/api/expenses?id=${expenseId}`)
-          ])
-
-          setAccounts(accResult.data || [])
-          setSuppliers(supResult.data || [])
-
-          if (!expRes.ok) throw new Error('Gagal memuat detail pengeluaran')
-          const expData = await expRes.json()
-
-          // Set form fields
-          setFormCategoryAccountId(expData.category_account_id || '')
-          setFormPaymentAccountId(expData.payment_account_id || '')
-          setFormAmount(expData.amount?.toString() || '')
-          setFormDate(expData.date || '')
-          setFormDescription(expData.description || '')
-          setFormVendorName(expData.vendor_name || '')
-          setVendorSearch(expData.vendor_name || '')
-          setFormAttachmentUrl(expData.attachment_url || '')
-          setPaymentStatus(expData.payment_status || 'paid')
-          setDueDate(expData.due_date || '')
-          setAmountPaid(expData.amount_paid?.toString() || '')
-          setHasPayments(expData.payment_status === 'paid' || (expData.expense_payments && expData.expense_payments.length > 0))
-        }
+        setFormCategoryAccountId(expData.category_account_id || '')
+        setFormPaymentAccountId(expData.payment_account_id || '')
+        setFormAmount(expData.amount?.toString() || '')
+        setFormDate(expData.date || '')
+        setFormDescription(expData.description || '')
+        setFormVendorName(expData.vendor_name || '')
+        setVendorSearch(expData.vendor_name || '')
+        setFormAttachmentUrl(expData.attachment_url || '')
+        setPaymentStatus(expData.payment_status || 'paid')
+        setDueDate(expData.due_date || '')
+        setAmountPaid(expData.amount_paid?.toString() || '')
+        setHasPayments(expData.payment_status === 'paid' || (expData.expense_payments && expData.expense_payments.length > 0))
       } catch (err: any) {
-        console.error('Error loading data:', err)
-        alert(err.message || 'Terjadi kesalahan saat memuat data')
+        if (!cancelled) {
+          console.error('Error loading expense:', err)
+          alert(err.message || 'Terjadi kesalahan saat memuat data')
+        }
       } finally {
-        setLoading(false)
+        if (!cancelled) setExpenseLoading(false)
       }
     }
-    loadData()
-  }, [supabase, router, expenseId])
+
+    loadExpense()
+    return () => {
+      cancelled = true
+    }
+  }, [expenseId, activeBizId])
 
   // Filter accounts
   const categoryAccounts = useMemo(() => {
@@ -326,6 +300,9 @@ export default function EditExpensePage() {
 
       const created = await res.json()
       setSuppliers(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)))
+      if (activeBizId) {
+        invalidateSuppliersCache(activeBizId)
+      }
       setFormVendorName(created.name)
       setVendorSearch(created.name)
       setIsVendorModalOpen(false)
@@ -380,10 +357,11 @@ export default function EditExpensePage() {
 
     setSubmitLoading(true)
     try {
-      const res = await fetch(`/api/expenses?id=${expenseId}`, {
+      const res = await fetch(`/api/expenses?id=${encodeURIComponent(expenseId)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          business_id: activeBizId || undefined,
           category_account_id: formCategoryAccountId,
           payment_account_id: formPaymentAccountId || null,
           amount: numAmount,
@@ -397,13 +375,40 @@ export default function EditExpensePage() {
         })
       })
 
+      const updatedData = await res.json().catch(() => null)
       if (!res.ok) {
-        const errData = await res.json()
-        throw new Error(errData.error || 'Gagal memperbarui pengeluaran')
+        throw new Error(updatedData?.error || `Gagal memperbarui pengeluaran (Status: ${res.status})`)
+      }
+
+      // Optimistic cache update for instant read speed on /expenses
+      if (activeBizId && updatedData) {
+        try {
+          const cacheKey = `cache_expenses_${activeBizId}`
+          const cached = localStorage.getItem(cacheKey)
+          if (cached) {
+            const exps = JSON.parse(cached)
+            if (Array.isArray(exps)) {
+              const catAcc = accounts.find(a => a.id === updatedData.category_account_id)
+              const payAcc = accounts.find(a => a.id === updatedData.payment_account_id)
+              const nextExps = exps.map((item: any) =>
+                item.id === updatedData.id
+                  ? {
+                      ...item,
+                      ...updatedData,
+                      category_account: catAcc ? { id: catAcc.id, code: catAcc.code, name: catAcc.name } : item.category_account,
+                      payment_account: payAcc ? { id: payAcc.id, code: payAcc.code, name: payAcc.name } : item.payment_account
+                    }
+                  : item
+              )
+              localStorage.setItem(cacheKey, JSON.stringify(nextExps))
+            }
+          }
+        } catch (cacheErr) {
+          console.error('Failed to update local expense cache:', cacheErr)
+        }
       }
 
       router.push('/expenses')
-      router.refresh()
     } catch (err: any) {
       console.error(err)
       alert(err.message)

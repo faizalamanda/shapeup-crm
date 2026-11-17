@@ -398,17 +398,26 @@ export default function CustomersReportPage() {
     return sorted
   }, [chartBuckets, sortField, sortOrder])
 
-  // Chart Y-axis scale (dual or unified scale: max of customers & orders so bars & line look crisp)
-  const chartMaxY = useMemo(() => {
-    let maxVal = 10
+  // Chart Y-axis scale with clean 4-interval ticks so bars & line fill ~85-90% of height
+  const chartScale = useMemo(() => {
+    let maxVal = 4
     for (const b of chartBuckets) {
       if (b.customers > maxVal) maxVal = b.customers
       if (b.total_orders > maxVal) maxVal = b.total_orders
       if (showCompareOnChart && b.compCustomers > maxVal) maxVal = b.compCustomers
     }
-    const magnitude = Math.pow(10, Math.floor(Math.log10(maxVal)))
-    return Math.ceil((maxVal * 1.15) / magnitude) * magnitude
+    const rawStep = (maxVal * 1.1) / 4
+    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
+    const norm = rawStep / mag
+    const niceNorm = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10
+    const step = Math.max(1, Math.ceil(niceNorm * mag))
+    const max = step * 4
+    return {
+      max,
+      ticks: [max, step * 3, step * 2, step, 0],
+    }
   }, [chartBuckets, showCompareOnChart])
+  const chartMaxY = chartScale.max
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -603,24 +612,24 @@ export default function CustomersReportPage() {
                 Belum ada data pelanggan baru pada rentang tanggal ini.
               </div>
             ) : (
-              <div className="relative flex-1 flex flex-col">
-                <div className="relative h-[220px] flex">
+              <div className="relative flex-1 flex flex-col justify-between">
+                <div className="relative flex-1 flex min-h-[260px]">
                   {/* Y-axis labels */}
-                  <div className="w-10 pr-2 flex flex-col justify-between text-[11px] text-slate-400 text-right select-none shrink-0">
-                    <span>{formatInt(chartMaxY)}</span>
-                    <span>{formatInt(Math.round(chartMaxY * 0.66))}</span>
-                    <span>{formatInt(Math.round(chartMaxY * 0.33))}</span>
-                    <span>0</span>
+                  <div className="w-11 pr-2.5 flex flex-col justify-between text-[11px] font-mono text-slate-400 text-right select-none shrink-0 py-0">
+                    {chartScale.ticks.map((t, i) => (
+                      <span key={i} className="leading-none -translate-y-1/2 first:translate-y-0 last:translate-y-1/2">
+                        {formatInt(t)}
+                      </span>
+                    ))}
                   </div>
 
                   {/* Plot Area */}
                   <div className="flex-1 relative border-l border-b border-slate-200 min-w-0">
                     {/* Horizontal grid lines */}
                     <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
-                      <div className="border-t border-slate-100 w-full" />
-                      <div className="border-t border-slate-100 w-full" />
-                      <div className="border-t border-slate-100 w-full" />
-                      <div />
+                      {chartScale.ticks.map((_, i) => (
+                        <div key={i} className="border-t border-dashed border-slate-100 w-full last:border-t-0" />
+                      ))}
                     </div>
 
                     {/* Bars Layer (Total Lifetime Orders per cohort bucket) */}
@@ -699,7 +708,7 @@ export default function CustomersReportPage() {
                 </div>
 
                 {/* X-axis Labels */}
-                <div className="pl-10 flex items-center justify-between mt-2 text-[11px] text-slate-400 select-none overflow-hidden">
+                <div className="pl-11 flex items-center justify-between pt-2.5 text-[11px] font-medium text-slate-400 select-none overflow-hidden">
                   {chartBuckets.map((b, idx) => {
                     const step = Math.max(1, Math.ceil(chartBuckets.length / 8))
                     const show = idx % step === 0 || idx === chartBuckets.length - 1

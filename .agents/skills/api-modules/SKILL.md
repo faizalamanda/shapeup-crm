@@ -259,18 +259,39 @@ const accountMap = await getOrCreateDefaultAccounts(businessId, supabase)
 
 ---
 
-### 5. `lib/expenseLedger.ts` — COA Account Resolution (Expenses/Purchases)
+### 5. `lib/expenseLedger.ts` — Expense Ledger, COA & Semi-Modular ACID RPC
+
+Modul terpusat (*Single Source of Truth*) untuk validasi, resolusi akun COA, penyusunan baris jurnal pengeluaran, serta eksekusi transaksi ACID via Semi-Modular RPC (`create_expense_transaction_v1` & `update_expense_transaction_v1`).
 
 ```typescript
-import { ensureExpenseAccounts } from '@/lib/expenseLedger'
+import {
+  ensureExpenseAccounts,
+  prepareExpenseLedgerData,
+  createExpenseWithLedger,
+  updateExpenseWithLedger
+} from '@/lib/expenseLedger'
+
+// 1. Resolusi COA standar pengeluaran (cached per business)
 const accountMap = await ensureExpenseAccounts(businessId, supabase)
 // accountMap['201000'] = Hutang Usaha UUID
 // accountMap['503000'] = Beban Operasional UUID
+
+// 2. Buat pengeluaran + transaksi + journal_lines + expense_payments (1 RPC ACID)
+const createRes = await createExpenseWithLedger(businessId, body, supabaseAdmin)
+
+// 3. Update pengeluaran + rebuild journal_lines secara atomik (1 RPC ACID)
+const updateRes = await updateExpenseWithLedger(businessId, expenseId, body, supabaseAdmin)
+
+// 4. Untuk bulk import, gunakan prepareExpenseLedgerData() per baris
+const prepared = await prepareExpenseLedgerData(row, businessId, supabaseAdmin, hutangAccountId)
 ```
 
-**Cached:** Setelah call pertama per business, langsung return dari memory.
+**Fitur:**
+- **Single Source of Truth:** Validasi nominal/status, sanitasi UUID (`isUuid`), `formatTransactionDate(date)`, dan penyusunan `journal_lines` terpusat di satu tempat.
+- **Lazy COA Lookup:** `ensureExpenseAccounts()` hanya dipanggil saat ada sisa hutang (`numOutstanding > 0` atau `status === 'unpaid'`).
+- **1-Roundtrip ACID RPC:** `create_expense_transaction_v1` dan `update_expense_transaction_v1` menggabungkan seluruh mutasi (`transactions`, `journal_lines`, `expenses`, `expense_payments`) ke dalam 1 blok transaksi database dengan *Tenant Ownership / Staff Guard* dan `FOR UPDATE` row locking saat edit.
 
-**Dipakai di:** `purchases/route.ts`, `expenses/route.ts`, `expenses/[id]/pay/route.ts`, dll.
+**Dipakai di:** `app/api/expenses/route.ts` (`POST`, `PUT`), `app/api/expenses/bulk/route.ts`, `purchases/route.ts`, `expenses/[id]/pay/route.ts`.
 
 ---
 

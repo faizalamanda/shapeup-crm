@@ -83,3 +83,7 @@ await pushWebhookToAccurate(data);
 ```
 
 Dengan mematuhi pola ini, ShapeUp CRM mendapatkan **Performa In-Memory (Anti-Timeout)**, **Keamanan Transaksi (ACID)**, dan **Kemudahan Maintenance (Modular)** secara bersamaan.
+
+## Implementasi Aktif di Codebase
+- **Purchases (`app/api/purchases/route.ts`):** `create_purchase_transaction_v1`
+- **Expenses (`lib/expenseLedger.ts` → `app/api/expenses/route.ts`):** `create_expense_transaction_v1` & `update_expense_transaction_v1` (menyatukan validasi/jurnal di `prepareExpenseLedgerData()` lalu mengeksekusi `transactions` + `journal_lines` + `expenses` + `expense_payments` dalam 1 RPC ACID dengan `FOR UPDATE` row lock saat edit).
