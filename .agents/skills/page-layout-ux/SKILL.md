@@ -63,3 +63,8 @@ Karena `<main>` di `app/layout.tsx` telah membungkus seluruh halaman dengan `pad
    - **Baris Tabel Data (`th` & `td`):** `py-3.5 px-4` (atau `px-5` untuk kolom pertama dan terakhir) dengan jarak vertikal sub-teks `mt-1` (`4px`).
    - **Larangan Kelas Arbitrer Non-Standar:** Gunakan hanya skala spacing Tailwind yang valid (`py-0.5`, `py-1`, `px-2`, `px-3`, `px-4`, `p-4`, `p-5`). Dilarang menulis kelas tidak valid seperti `py-0.2` atau `py-0.1` karena akan diabaikan oleh compiler CSS (menghasilkan padding `0px`).
 
+4. **Header Laporan 2-Baris & Invarian Kestabilan Grafik (*Zero Layout Shift*):**
+   - **Posisi Filter Tanggal:** Baris teratas (`flex flex-col lg:flex-row lg:items-center justify-between gap-4`) memuat tombol kembali + judul + filter inline di kiri, dan `TemporalDateFilter` sejajar di kanan atas. Subjudul deskripsi dan tautan aksi (mis. *Lihat daftar pelanggan ›*) ditempatkan di baris kedua (`border-b border-slate-200/80 pb-3`).
+   - **Tooltip Hover Grafik (`absolute`):** Dilarang merender tooltip hover secara *inline* di dalam baris legenda karena mengubah tinggi baris dan membuat grafik naik-turun saat disorot. Gunakan tooltip mengambang `absolute top-4 right-5 pointer-events-none` dengan tinggi legenda tetap (`min-h-[24px]`).
+   - **Tinggi Area Plot Grafik:** Pada grid `items-stretch` (`lg:col-span-8` vs `lg:col-span-4`), area plot grafik **wajib** menggunakan `flex-1 min-h-[260px]` (bukan tinggi kaku seperti `h-[220px]`) serta skala sumbu Y 4-interval yang rapi (*nice-step*) agar grafik mengisi penuh tinggi kartu sejajar dengan panel KPI kanan.
+

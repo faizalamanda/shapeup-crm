@@ -47,3 +47,8 @@ Saat halaman membuka modal dialog apapun, gunakan `FullScreenModal` atau daftark
    - **Sub-Card (misal Papan 4 Kuadran):** Header `px-4 py-3`, setiap baris item `px-4 py-3` dengan badge nomor urut bulat (`w-5 h-5 rounded-full`) berjarak `gap-2.5` dari nama produk, serta jarak `mt-1` antara nama produk dan sub-info kuantitas/margin.
    - **KPI Grid Summary (`lg:col-span-4`):** Setiap sel kuadran/metrik menggunakan `p-4 sm:p-5` dengan jarak antar-baris teks `space-y-1.5` agar angka utama, badge SKU, dan sub-teks memiliki ruang napas visual yang lega.
 
+4. **Posisi Header `TemporalDateFilter` & Kestabilan Grafik Analitik:**
+   - **Header 2-Baris Konsisten:** Gunakan struktur yang seragam di seluruh `/reports/*` (`/reports/revenue`, `/reports/product-performance`, `/reports/customers`): baris 1 (`flex-col lg:flex-row lg:items-center justify-between gap-4`) untuk judul + kontrol segmen di kiri dan `TemporalDateFilter` di kanan; baris 2 untuk subjudul deskripsi + tautan aksi kanan.
+   - **Pencegahan Grafik Bergerak Saat Hover (*Zero Layout Shift*):** Tooltip hover tidak boleh disisipkan di aliran flex/legenda normal karena menyebabkan tinggi kontainer berubah saat kursor masuk/keluar. Selalu gunakan `absolute` floating tooltip dengan `pointer-events-none`.
+   - **Proporsi Tinggi Plot Area:** Jangan mengunci area plot dengan tinggi tetap kecil (mis. `h-[220px]`) di dalam kartu `flex-1` karena meninggalkan ruang kosong besar di bawah sumbu X ketika kartu KPI kanan lebih tinggi. Gunakan `flex-1 min-h-[260px]` dengan skala sumbu Y 4-interval (*nice-step*).
+

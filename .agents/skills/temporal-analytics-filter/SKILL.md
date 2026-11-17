@@ -99,3 +99,19 @@ Ketika mengimplementasikan perbandingan atau pelaporan pada modul akuntansi (`ap
    * Seluruh bilah filter wajib dibungkus kelas CSS `no-print`.
    * Sediakan header cetak khusus (`print:block`) yang mencantumkan rentang tanggal berjalan dan tanggal pembanding secara formal.
 
+---
+
+## 5. Standar Analitik Pelanggan & Kohort Berkecepatan Tinggi (`/reports/customers`)
+
+Untuk laporan yang membutuhkan pemindaian riwayat pesanan seumur hidup (*lifetime orders, spend, items, return rate*) seperti `/reports/customers`:
+
+1. **Single-Pass Server-Side Aggregation RPC (`get_customers_report_metrics`):**
+   * **DILARANG** menarik ribuan/puluhan ribu baris mentah `orders` ke browser untuk dihitung di JavaScript.
+   * Gunakan PostgreSQL RPC `STABLE SECURITY DEFINER` dengan *Multi-Tenant Security Guard* (`owner_id` & `business_staff`) yang menghitung `MIN(order_ts)`, `COUNT(*)`, `SUM(grand_total)`, dan ekstrak `items_json` langsung di DB, lalu hanya mengembalikan ringkasan `summary` dan `buckets` (~2–10 KB JSON).
+2. **Covering Index Wajib:**
+   * Pastikan indeks `idx_orders_biz_cust_date_incl ON public.orders (business_id, customer_id, order_date) INCLUDE (grand_total, status)` tersedia agar agregasi per `customer_id` berjalan via *Index-Only Scan*.
+3. **Isolasi Pelanggan Tamu (`p_exclude_guest`):**
+   * Transaksi POS/Walk-In tanpa identitas pelanggan sering masuk ke akun *Customer Tamu* (`phone = '0'` / `guest@business.com`). Sediakan parameter & toggle `p_exclude_guest` (default `true`) agar metrik *Average LTV*, *Average Orders*, dan *Return Rate* tidak terdistorsi.
+4. **Parallel Comparison & L1 Cache:**
+   * Panggil periode berjalan dan periode pembanding secara paralel dengan `Promise.all` (dilindungi `requestIdRef`) serta simpan hasil di L1 RAM Cache (TTL 60 detik).
+
