@@ -15,28 +15,25 @@ Dokumen ini mendefinisikan standar arsitektur, rumus metrik, sumber data buku be
 
 ## 2. Seksi Analitik & Rumus Metrik
 
-### A. Pendapatan & Order (`orders` + `order_payments`)
-- **Gross Sales:** `grand_total` (jika `> 0`), atau `GREATEST(0, subtotal - discount + shipping + fees + taxes)`.
-- **Refunds:** `LEAST(gross_sales, GREATEST(raw_refunds, ledger_refund, status_implied_refund))`.
-- **Net Revenue (Net Sales):** `GREATEST(0, gross_sales - taxes - shipping - fees - refunds)`.
-- **Channel & UTM Attribution:** Mengelompokkan `source_platform` / `raw_source_data->'source_order'->>'channel'` dan `raw_source_data->'source_order'->>'utm_source'`.
-
-### B. Biaya & Profitabilitas (`journal_lines` + `transactions` + `accounts`)
-Semua baris jurnal bertipe `EXPENSE` (`SUM(debit - credit)`) dalam rentang `p_start_date` s.d. `p_end_date` dikelompokkan berdasarkan kode/sub-tipe COA:
-- **COGS / HPP (`cogs`):** `sub_type = 'cogs'` atau `code = '501000'`.
-- **Gaji & Upah (`payroll`):** `code = '503300'` atau nama mengandung `gaji` / `upah`.
-- **Transportasi & Kirim (`shipping`):** `code = '503500'` atau nama mengandung `transport` / `pengiriman` / `ongkir`.
-- **Biaya Bank & Transaksi (`transaction_fees`):** `code = '504000'` (ditambah `orders.other_fees`).
-- **Operasional & Lainnya (`operational`):** Seluruh akun `EXPENSE` lainnya (`502000`, `503000–503200`, `503400`, `503600–503900`, `505000`, dll.).
-- **Total Costs:** $\text{COGS} + \text{Payroll} + \text{Shipping Cost} + \text{Transaction Fees} + \text{Operational Cost}$.
+### A. Pendapatan, Biaya & Profitabilitas — 100% Single Source of Truth (`journal_lines` + `transactions` + `accounts`)
+Angka finansial utama (`net_revenue`, `total_costs`, `cogs`, `gross_profit`, `net_profit`, `net_profit_margin`) bersumber **100% dari Jurnal Ledger Akuntansi** (basis akrual berdasarkan `transactions.date`), sehingga identik dan rekonsiliatif dengan [Laporan Laba Rugi](../../app/accounting/profit-loss/page.tsx):
+- **Net Revenue (`net_revenue`):** `SUM(credit - debit)` untuk seluruh baris jurnal pada akun bertipe `REVENUE` (`401000`, `401100`, `402000`, `403000`, dll.).
+- **Total Costs (`total_costs`):** `SUM(debit - credit)` untuk seluruh baris jurnal pada akun bertipe `EXPENSE`, dikelompokkan berdasarkan kode/sub-tipe COA:
+  - **COGS / HPP (`cogs`):** `sub_type = 'cogs'` atau `code = '501000'`.
+  - **Gaji & Upah (`payroll`):** `code = '503300'` atau nama mengandung `gaji` / `upah`.
+  - **Transportasi & Kirim (`shipping`):** `code = '503500'` atau nama mengandung `transport` / `pengiriman` / `ongkir`.
+  - **Biaya Bank & Transaksi (`transaction_fees`):** `code = '504000'` atau nama mengandung `administrasi bank` / `bunga`.
+  - **Operasional & Lainnya (`operational`):** Seluruh akun `EXPENSE` lainnya (`502000`, `503000–503200`, `503400`, `503600–503900`, `505000`, dll.).
 - **Net Profit:** $\text{Net Revenue} - \text{Total Costs}$.
 - **Net Profit Margin:** $\frac{\text{Net Profit}}{\text{Net Revenue}} \times 100\%$.
 - **Gross Profit & Margin:** $\text{Net Revenue} - \text{COGS}$ dan $\frac{\text{Gross Profit}}{\text{Net Revenue}} \times 100\%$.
 
-### C. Ringkasan Order, Pelanggan & Lainnya
-- **Order Summary:** `Avg. Order Value (AOV)`, `Avg. Order Profit`, `Avg. Order Cost`, `Avg. Items per Order`, dan `Purchase Frequency` ($\frac{\text{Orders}}{\text{Total Customers}}$).
+### B. Metrik Operasional, Channel & Atribusi (`orders` + `order_payments`)
+Tabel `orders` dan `order_payments` digunakan khusus untuk metrik operasional dan atribusi yang tidak tersimpan di jurnal per-item/per-pelanggan:
+- **Gross Sales & Net Sales per Channel/UTM:** `gross_sales` (`grand_total` atau `subtotal - discount + shipping + fees + taxes`), `refunds`, `net_sales`, serta atribusi `source_platform` / `utm_source`.
+- **Order Summary:** `Orders`, `Avg. Order Value (AOV)`, `Avg. Order Profit`, `Avg. Order Cost`, `Avg. Items per Order`, dan `Purchase Frequency` ($\frac{\text{Orders}}{\text{Total Customers}}$).
 - **Customer Summary:** `Total Customers`, `New Customers` (berdasarkan `MIN(order_ts)` sepanjang masa), `Returning Customers`, dan `Repurchase Rate (%)`.
-- **Others:** `Shipping Charged`, `Taxes Collected`, `Fees`, `Discounts`, dan `Refunds`.
+- **Others:** `Shipping Charged`, `Taxes Collected`, `Order Fees`, `Discounts`, dan `Refunds`.
 
 ---
 

@@ -542,9 +542,8 @@ export default function ProfitDashboardPage() {
       {/* ─── Row 2: Subjudul & Tautan Terkait ──────────────────────────────── */}
       <div className="no-print flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 pb-3 text-xs text-slate-500">
         <p className="min-w-0">
-          Ringkasan profitabilitas real-time untuk{' '}
-          <span className="font-semibold text-slate-700">{activeBusiness?.name || 'Bisnis Aktif'}</span>{' '}
-          ({businessTz}) berdasarkan pesanan &amp; buku besar akuntansi.
+          Profitabilitas <span className="font-semibold text-slate-700">{activeBusiness?.name || 'Bisnis Aktif'}</span>{' '}
+          ({businessTz}) bersumber langsung dari <span className="font-semibold text-slate-700">Jurnal Ledger Akuntansi</span>; metrik order &amp; channel dari transaksi pesanan.
         </p>
         <div className="flex items-center gap-3 shrink-0 font-semibold">
           <Link href="/accounting/profit-loss" className="text-indigo-600 hover:text-indigo-700">
@@ -555,6 +554,25 @@ export default function ProfitDashboardPage() {
           </Link>
         </div>
       </div>
+
+      {(selectedPlatform !== 'all' || excludeGuest) && (
+        <div className="no-print bg-blue-50/70 border border-blue-200/80 text-blue-800 px-4 py-2.5 rounded-xl text-xs flex items-center justify-between gap-3">
+          <span>
+            ℹ️ Filter segmen aktif ({selectedPlatform !== 'all' ? `Channel: ${selectedPlatform}` : 'Semua Channel'}
+            {excludeGuest ? ', tanpa tamu' : ''}). Angka <strong>Revenue, Total Costs &amp; Net Profit</strong> tetap mencerminkan total Buku Besar Akuntansi bisnis aktif, sedangkan metrik Order, Channel &amp; Pelanggan mengikuti filter segmen.
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedPlatform('all')
+              setExcludeGuest(false)
+            }}
+            className="shrink-0 font-semibold text-blue-700 hover:underline"
+          >
+            Reset Filter
+          </button>
+        </div>
+      )}
 
       {/* Print-Only Header */}
       <div className="hidden print:block border-b border-slate-300 pb-3 mb-4">

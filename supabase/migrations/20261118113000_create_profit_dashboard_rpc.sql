@@ -262,6 +262,24 @@ BEGIN
       AND t.date <= p_end_date
       AND a.type = 'EXPENSE'
   ),
+  -- Revenue Journal Lines (Single Source of Truth from Accounting Ledger)
+  period_revenue_lines AS (
+    SELECT
+      to_char(date_trunc(v_gran, (t.date AT TIME ZONE v_tz)), 'YYYY-MM-DD') AS bucket_date,
+      (COALESCE(jl.credit, 0) - COALESCE(jl.debit, 0)) AS net_revenue_amount
+    FROM public.journal_lines jl
+    JOIN public.transactions t ON jl.transaction_id = t.id
+    JOIN public.accounts a ON jl.account_id = a.id
+    WHERE t.business_id = p_business_id
+      AND t.date >= p_start_date
+      AND t.date <= p_end_date
+      AND a.type = 'REVENUE'
+  ),
+  revenue_summary AS (
+    SELECT
+      COALESCE(SUM(net_revenue_amount), 0) AS ledger_revenue
+    FROM period_revenue_lines
+  ),
   expense_summary AS (
     SELECT
       COALESCE(SUM(CASE WHEN cost_group = 'cogs' THEN net_amount ELSE 0 END), 0) AS cogs,
@@ -277,7 +295,7 @@ BEGIN
       COUNT(*)::int AS orders,
       COALESCE(SUM(items_qty), 0)::numeric AS items,
       COALESCE(SUM(gross_sales), 0)::numeric AS gross_sales,
-      COALESCE(SUM(net_sales), 0)::numeric AS net_revenue,
+      COALESCE(SUM(net_sales), 0)::numeric AS order_net_sales,
       COALESCE(SUM(shipping), 0)::numeric AS shipping_charged,
       COALESCE(SUM(taxes), 0)::numeric AS taxes_collected,
       COALESCE(SUM(fees), 0)::numeric AS order_fees,
@@ -294,33 +312,33 @@ BEGIN
       os.orders,
       os.items,
       os.gross_sales,
-      os.net_revenue,
+      rs.ledger_revenue AS net_revenue,
       es.cogs,
       es.payroll,
       es.shipping_cost,
-      (es.bank_fees + os.order_fees) AS transaction_fees,
+      es.bank_fees AS transaction_fees,
       es.operational_cost,
-      (es.ledger_total_costs + os.order_fees) AS total_costs,
-      (os.net_revenue - (es.ledger_total_costs + os.order_fees)) AS net_profit,
+      es.ledger_total_costs AS total_costs,
+      (rs.ledger_revenue - es.ledger_total_costs) AS net_profit,
       CASE
-        WHEN os.net_revenue > 0 THEN ROUND(((os.net_revenue - (es.ledger_total_costs + os.order_fees)) / os.net_revenue) * 100, 2)
+        WHEN rs.ledger_revenue > 0 THEN ROUND(((rs.ledger_revenue - es.ledger_total_costs) / rs.ledger_revenue) * 100, 2)
         ELSE 0
       END AS net_profit_margin,
-      (os.net_revenue - es.cogs) AS gross_profit,
+      (rs.ledger_revenue - es.cogs) AS gross_profit,
       CASE
-        WHEN os.net_revenue > 0 THEN ROUND(((os.net_revenue - es.cogs) / os.net_revenue) * 100, 2)
+        WHEN rs.ledger_revenue > 0 THEN ROUND(((rs.ledger_revenue - es.cogs) / rs.ledger_revenue) * 100, 2)
         ELSE 0
       END AS gross_margin,
       CASE
-        WHEN os.orders > 0 THEN ROUND(os.net_revenue / os.orders, 0)
+        WHEN os.orders > 0 THEN ROUND(os.order_net_sales / os.orders, 0)
         ELSE 0
       END AS avg_order_value,
       CASE
-        WHEN os.orders > 0 THEN ROUND((os.net_revenue - (es.ledger_total_costs + os.order_fees)) / os.orders, 0)
+        WHEN os.orders > 0 THEN ROUND((rs.ledger_revenue - es.ledger_total_costs) / os.orders, 0)
         ELSE 0
       END AS avg_order_profit,
       CASE
-        WHEN os.orders > 0 THEN ROUND((es.ledger_total_costs + os.order_fees) / os.orders, 0)
+        WHEN os.orders > 0 THEN ROUND(es.ledger_total_costs / os.orders, 0)
         ELSE 0
       END AS avg_order_cost,
       CASE
@@ -345,6 +363,7 @@ BEGIN
       os.refunds,
       os.utm_attributed_revenue
     FROM order_summary os
+    CROSS JOIN revenue_summary rs
     CROSS JOIN expense_summary es
   ),
   order_ts_buckets AS (
@@ -352,9 +371,15 @@ BEGIN
       bucket_date,
       COUNT(*)::int AS orders,
       COALESCE(SUM(gross_sales), 0)::numeric AS gross_sales,
-      COALESCE(SUM(net_sales), 0)::numeric AS net_revenue,
-      COALESCE(SUM(fees), 0)::numeric AS order_fees
+      COALESCE(SUM(net_sales), 0)::numeric AS order_net_sales
     FROM period_orders
+    GROUP BY bucket_date
+  ),
+  revenue_ts_buckets AS (
+    SELECT
+      bucket_date,
+      COALESCE(SUM(net_revenue_amount), 0)::numeric AS ledger_revenue
+    FROM period_revenue_lines
     GROUP BY bucket_date
   ),
   expense_ts_buckets AS (
@@ -367,25 +392,26 @@ BEGIN
   ),
   merged_ts AS (
     SELECT
-      COALESCE(o.bucket_date, e.bucket_date) AS bucket_date,
+      COALESCE(r.bucket_date, e.bucket_date, o.bucket_date) AS bucket_date,
       COALESCE(o.orders, 0) AS orders,
       COALESCE(o.gross_sales, 0) AS gross_sales,
-      COALESCE(o.net_revenue, 0) AS net_revenue,
+      COALESCE(r.ledger_revenue, 0) AS net_revenue,
       COALESCE(e.cogs, 0) AS cogs,
-      (COALESCE(e.ledger_costs, 0) + COALESCE(o.order_fees, 0)) AS total_costs,
-      (COALESCE(o.net_revenue, 0) - (COALESCE(e.ledger_costs, 0) + COALESCE(o.order_fees, 0))) AS net_profit,
+      COALESCE(e.ledger_costs, 0) AS total_costs,
+      (COALESCE(r.ledger_revenue, 0) - COALESCE(e.ledger_costs, 0)) AS net_profit,
       CASE
-        WHEN COALESCE(o.net_revenue, 0) > 0 THEN
-          ROUND(((COALESCE(o.net_revenue, 0) - (COALESCE(e.ledger_costs, 0) + COALESCE(o.order_fees, 0))) / o.net_revenue) * 100, 2)
+        WHEN COALESCE(r.ledger_revenue, 0) > 0 THEN
+          ROUND(((COALESCE(r.ledger_revenue, 0) - COALESCE(e.ledger_costs, 0)) / r.ledger_revenue) * 100, 2)
         ELSE 0
       END AS net_profit_margin,
       CASE
-        WHEN COALESCE(o.orders, 0) > 0 THEN ROUND(COALESCE(o.net_revenue, 0) / o.orders, 0)
+        WHEN COALESCE(o.orders, 0) > 0 THEN ROUND(COALESCE(o.order_net_sales, 0) / o.orders, 0)
         ELSE 0
       END AS avg_order_value
-    FROM order_ts_buckets o
-    FULL OUTER JOIN expense_ts_buckets e ON o.bucket_date = e.bucket_date
-    ORDER BY COALESCE(o.bucket_date, e.bucket_date) ASC
+    FROM revenue_ts_buckets r
+    FULL OUTER JOIN expense_ts_buckets e ON r.bucket_date = e.bucket_date
+    FULL OUTER JOIN order_ts_buckets o ON COALESCE(r.bucket_date, e.bucket_date) = o.bucket_date
+    ORDER BY COALESCE(r.bucket_date, e.bucket_date, o.bucket_date) ASC
   ),
   channel_breakdown AS (
     SELECT
