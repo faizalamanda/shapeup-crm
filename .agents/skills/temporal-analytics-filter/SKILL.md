@@ -88,9 +88,10 @@ Ketika mengimplementasikan perbandingan atau pelaporan pada modul akuntansi (`ap
      fetchLedgerBalances(supabase, businessId, compEnd, compStart, timezone, basis),
    ])
    ```
-2. **Standar Database RPC (`get_cash_flow_summary` & `get_ledger_balances`):**
+2. **Standar Database RPC (`get_cash_flow_summary`, `get_cash_flow_analytics` & `get_ledger_balances`):**
    * Wajib berstatus `STABLE SECURITY DEFINER` dengan **Multi-Tenant Security Guard** (`businesses.owner_id = auth.uid() UNION business_staff.profile_id = auth.uid()`, dengan bypass untuk `service_role`).
    * `get_cash_flow_summary` menggunakan **Single-Pass CTE Materialization** (`period_cash_txs` & `counter_lines`) serta **Single-Pass `FILTER (WHERE t.date < p_start_date)`** untuk menghitung saldo kas awal dan akhir dalam 1 kali scan tabel, sekaligus mengecualikan pembayaran gaji yang di-void (`sp.status = 'active'` & `sp.reversal_transaction_id`).
+   * `get_cash_flow_analytics` (untuk **Cash Flow Dashboard** `/reports/cash-flow`) menghasilkan *continuous time-series* `running_balance` (*Cash Real*) per granularitas (`day`/`week`/`month`) di zona waktu bisnis, dengan agregasi bersih per transaksi agar transfer internal kas tidak dihitung ganda, serta breakdown per rekening Kas/Bank. Detail lengkap ada di [cash-flow-dashboard.md](../../knowledge/cash-flow-dashboard.md).
    * `get_ledger_balances` (`p_basis = 'cash'`) wajib mendorong filter tanggal (`p_start_date` & `p_end_date`) langsung ke dalam setiap cabang `UNION ALL` (*Date Predicate Pushdown*) agar memanfaatkan indeks `idx_transactions_biz_date`.
 3. **Multi-Column Presentation:**
    * Jika perbandingan aktif, tampilkan 4 kolom: `Kategori Akun`, `Periode Berjalan`, `Pembanding`, dan `Δ% (Varians)`.
@@ -104,19 +105,19 @@ Ketika mengimplementasikan perbandingan atau pelaporan pada modul akuntansi (`ap
 
 ---
 
-## 5. Standar Analitik Pelanggan, Retensi, Kohort & Orders Berkecepatan Tinggi (`/reports/orders`, `/reports/customers` & `/reports/customer-retention`)
+## 5. Standar Analitik Pelanggan, Retensi, Orders & Profit Berkecepatan Tinggi (`/reports/orders`, `/reports/customers`, `/reports/customer-retention` & `/reports/profit`)
 
-Untuk laporan yang membutuhkan agregasi volume order besar maupun pemindaian riwayat pesanan seumur hidup (*lifetime orders, spend, items, return rate, repeat interval, heatmap, completion time*) seperti `/reports/orders`, `/reports/customers`, dan `/reports/customer-retention`:
+Untuk laporan yang membutuhkan agregasi volume order besar, mutasi jurnal COA, maupun pemindaian riwayat pesanan seumur hidup (*lifetime orders, spend, items, return rate, repeat interval, heatmap, completion time, net profit*) seperti `/reports/orders`, `/reports/customers`, `/reports/customer-retention`, dan `/reports/profit`:
 
-1. **Single-Pass Server-Side Aggregation RPC (`get_orders_report_metrics`, `get_customers_report_metrics` & `get_customer_retention_metrics`):**
+1. **Single-Pass Server-Side Aggregation RPC (`get_orders_report_metrics`, `get_customers_report_metrics`, `get_customer_retention_metrics` & `get_profit_dashboard_metrics`):**
    * **DILARANG** menarik ribuan/puluhan ribu baris mentah `orders` ke browser untuk dihitung di JavaScript.
    * Gunakan PostgreSQL RPC `STABLE SECURITY DEFINER` dengan *Multi-Tenant Security Guard* (`owner_id` & `business_staff`) yang menghitung agregat langsung di DB, lalu hanya mengembalikan ringkasan `summary`, `time_series`, `heatmap`, dan `buckets` (~2–25 KB JSON).
 2. **Covering Index Wajib:**
    * Pastikan indeks `idx_orders_biz_cust_date_incl ON public.orders (business_id, customer_id, order_date) INCLUDE (grand_total, status)` tersedia agar agregasi per `customer_id` berjalan via *Index-Only Scan*.
 3. **Isolasi Pelanggan Tamu (`p_exclude_guest`):**
-   * Transaksi POS/Walk-In tanpa identitas pelanggan sering masuk ke akun *Customer Tamu* (`phone = '0'` / `guest@business.com`). Sediakan parameter & toggle `p_exclude_guest` (default `true` untuk Retensi/Pelanggan; default `false` dengan toggle aktif untuk `/reports/orders`) agar metrik tidak terdistorsi.
+   * Transaksi POS/Walk-In tanpa identitas pelanggan sering masuk ke akun *Customer Tamu* (`phone = '0'` / `guest@business.com`). Sediakan parameter & toggle `p_exclude_guest` (default `true` untuk Retensi/Pelanggan; default `false` dengan toggle aktif untuk `/reports/orders` dan `/reports/profit`) agar metrik tidak terdistorsi.
 4. **Parallel Comparison & L1 Cache:**
-   * Untuk laporan komparatif (`/reports/orders` & `/reports/customers`), panggil periode berjalan dan periode pembanding secara paralel dengan `Promise.all` (dilindungi `requestIdRef`). Simpan hasil di L1 RAM Cache (TTL 60 detik).
+   * Untuk laporan komparatif (`/reports/orders`, `/reports/customers` & `/reports/profit`), panggil periode berjalan dan periode pembanding secara paralel dengan `Promise.all` (dilindungi `requestIdRef`). Simpan hasil di L1 RAM Cache (TTL 60 detik).
 5. **Knowledge Base Laporan Analitik:**
-   * Detail rumus, bucket distribusi, filter cakupan (*Time to Complete*), dan kontrak RPC terdokumentasi di [orders-analytics-report.md](../../knowledge/orders-analytics-report.md) dan [customer-retention-analytics.md](../../knowledge/customer-retention-analytics.md).
+   * Detail rumus, bucket distribusi, filter cakupan (*Time to Complete*), dan kontrak RPC terdokumentasi di [orders-analytics-report.md](../../knowledge/orders-analytics-report.md), [customer-retention-analytics.md](../../knowledge/customer-retention-analytics.md), dan [profit-dashboard-analytics.md](../../knowledge/profit-dashboard-analytics.md).
 

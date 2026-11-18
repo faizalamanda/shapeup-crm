@@ -317,7 +317,7 @@ export default function CashFlowAnalyticsPage() {
           </button>
 
           <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
-            Cash Flow &amp; Cash Real
+            Cash Flow Dashboard
           </h1>
 
           {/* Filter Akun Kas & Bank */}
