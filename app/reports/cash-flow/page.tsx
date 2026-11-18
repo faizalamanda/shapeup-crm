@@ -801,7 +801,7 @@ export default function CashFlowAnalyticsPage() {
             <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2 bg-slate-50/50">
               <div className="min-w-0">
                 <h3 className="text-sm font-bold text-slate-900 truncate">Piutang Usaha</h3>
-                <p className="text-[11px] text-slate-500">Tagihan pelanggan belum lunas</p>
+                <p className="text-[11px] text-slate-500">Saldo Buku Besar COA (103000)</p>
               </div>
               <Link
                 href="/orders/invoices"
@@ -814,7 +814,7 @@ export default function CashFlowAnalyticsPage() {
             <div className="px-4 py-3 divide-y divide-slate-100 flex-1 flex flex-col justify-between">
               <div className="pb-2.5">
                 <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
-                  <span className="font-medium">Belum Lunas (Outstanding)</span>
+                  <span className="font-medium">Saldo Piutang (Neraca)</span>
                   <span className="text-[11px] font-semibold text-slate-400">
                     {loading ? '...' : `${apArData.receivables.outstanding_count} order`}
                   </span>
@@ -822,6 +822,11 @@ export default function CashFlowAnalyticsPage() {
                 <div className="text-lg sm:text-xl font-black text-slate-900 mt-0.5 truncate">
                   {loading ? '...' : formatCurrencyIDR(apArData.receivables.outstanding_amount)}
                 </div>
+                {!loading && Math.abs(apArData.receivables.unreconciled_amount || 0) > 1 && (
+                  <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+                    Dokumen: {formatCompactIDR(apArData.receivables.doc_outstanding_amount || 0)} • Jurnal lain: {(apArData.receivables.unreconciled_amount || 0) >= 0 ? '+' : ''}{formatCompactIDR(apArData.receivables.unreconciled_amount || 0)}
+                  </div>
+                )}
               </div>
 
               <div className="py-2.5">
@@ -871,7 +876,7 @@ export default function CashFlowAnalyticsPage() {
             <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2 bg-slate-50/50">
               <div className="min-w-0">
                 <h3 className="text-sm font-bold text-slate-900 truncate">Hutang Usaha</h3>
-                <p className="text-[11px] text-slate-500">Pembelian stok &amp; biaya tempo</p>
+                <p className="text-[11px] text-slate-500">Saldo Buku Besar COA (201xxx)</p>
               </div>
               <div className="flex items-center gap-2 shrink-0 text-[11px] font-semibold">
                 <Link href="/purchases" className="text-blue-600 hover:text-blue-700">
@@ -886,7 +891,7 @@ export default function CashFlowAnalyticsPage() {
             <div className="px-4 py-3 divide-y divide-slate-100 flex-1 flex flex-col justify-between">
               <div className="pb-2.5">
                 <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
-                  <span className="font-medium">Belum Lunas (Outstanding)</span>
+                  <span className="font-medium">Saldo Hutang (Neraca)</span>
                   <span className="text-[11px] font-semibold text-slate-400">
                     {loading ? '...' : `${apArData.payables.outstanding_count} tagihan`}
                   </span>
@@ -894,9 +899,11 @@ export default function CashFlowAnalyticsPage() {
                 <div className="text-lg sm:text-xl font-black text-slate-900 mt-0.5 truncate">
                   {loading ? '...' : formatCurrencyIDR(apArData.payables.outstanding_amount)}
                 </div>
-                {!loading && apArData.payables.outstanding_count > 0 && (
+                {!loading && (apArData.payables.outstanding_count > 0 || Math.abs(apArData.payables.salary_payable_amount || 0) > 1 || Math.abs(apArData.payables.unreconciled_amount || 0) > 1) && (
                   <div className="text-[10px] text-slate-400 mt-0.5 truncate">
-                    Pembelian: {formatCompactIDR(apArData.payables.purchases_amount)} ({apArData.payables.purchases_count}) • Biaya: {formatCompactIDR(apArData.payables.expenses_amount)} ({apArData.payables.expenses_count})
+                    Beli: {formatCompactIDR(apArData.payables.purchases_amount)} • Biaya: {formatCompactIDR(apArData.payables.expenses_amount)}
+                    {Math.abs(apArData.payables.salary_payable_amount || 0) > 1 ? ` • Gaji: ${formatCompactIDR(apArData.payables.salary_payable_amount || 0)}` : ''}
+                    {Math.abs(apArData.payables.unreconciled_amount || 0) > 1 ? ` • Jurnal lain: ${(apArData.payables.unreconciled_amount || 0) >= 0 ? '+' : ''}${formatCompactIDR(apArData.payables.unreconciled_amount || 0)}` : ''}
                   </div>
                 )}
               </div>

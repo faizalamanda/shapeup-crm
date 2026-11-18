@@ -36,6 +36,21 @@ Konsisten dengan `get_cash_flow_summary`, seluruh akun Kas & Bank diidentifikasi
 
 ---
 
+## 3B. Kontrak Database RPC: `get_ap_ar_summary` (Visibilitas Piutang & Hutang)
+
+- **Lokasi Migrasi:** [20261118134000_add_ap_ar_summary_rpc.sql](file:///home/faiz-jazuli/shapeup-crm/supabase/migrations/20261118134000_add_ap_ar_summary_rpc.sql)
+- **Keamanan:** `STABLE SECURITY DEFINER` dengan *Multi-Tenant Security Guard* (`owner_id` & `business_staff`, bypass untuk `service_role`).
+- **Parameter:** `(p_business_id uuid, p_timezone text DEFAULT 'Asia/Jakarta')`.
+- **Sifat Data:** Snapshot posisi saat ini (`v_today := (NOW() AT TIME ZONE v_tz)::date`), independen dari rentang `start_date`–`end_date` maupun filter rekening `p_account_id` pada grafik.
+- **Sumber & Aturan Perhitungan (Journal-First / 1:1 dengan Neraca):**
+  - **Saldo Utama (Single Source of Truth dari `journal_lines` + `accounts`):**
+    - **Piutang Usaha (`receivables.outstanding_amount`):** Total `SUM(debit - credit)` pada akun `ASSET` dengan `sub_type = 'receivable'` (atau `code LIKE '103%'` / `LOWER(name) LIKE '%piutang%'`).
+    - **Hutang Usaha (`payables.outstanding_amount`):** Total `SUM(credit - debit)` pada akun `LIABILITY` dengan `sub_type = 'payable'` (atau `code LIKE '2010%'`, `2011%`, `hutang usaha`, `hutang gaji`), disertai pemisahan `trade_payable_amount` (`201000`) dan `salary_payable_amount` (`201100`).
+  - **Rincian Aging & Rekonsiliasi Dokumen (`orders`, `purchases`, `expenses`):**
+    - `orders` aktif belum lunas (`status NOT IN ('cancelled', 'pending')`) dan `purchases` + `expenses` berstatus `unpaid`/`partial` digunakan untuk menghitung *Overdue* (`due_date < v_today`) dan *Due Soon* (`v_today <= due_date <= v_today + 7`), serta `unreconciled_amount` (`saldo COA - total dokumen`) jika ada jurnal manual atau saldo awal.
+
+---
+
 ## 4. API & Client Caching
 
 - **API Endpoint:** `GET /api/accounting/reports?mode=cash-flow-analytics` & `GET /api/accounting/reports?mode=ap-ar-summary` ([app/api/accounting/reports/route.ts](file:///home/faiz-jazuli/shapeup-crm/app/api/accounting/reports/route.ts))

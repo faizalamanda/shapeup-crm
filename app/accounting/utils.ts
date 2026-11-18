@@ -522,6 +522,8 @@ export async function fetchCashFlowAnalytics(
 
 export interface ApArReceivablesSummary {
   outstanding_amount: number
+  doc_outstanding_amount?: number
+  unreconciled_amount?: number
   outstanding_count: number
   overdue_amount: number
   overdue_count: number
@@ -530,6 +532,8 @@ export interface ApArReceivablesSummary {
 }
 
 export interface ApArPayablesSummary extends ApArReceivablesSummary {
+  trade_payable_amount?: number
+  salary_payable_amount?: number
   purchases_amount: number
   purchases_count: number
   expenses_amount: number

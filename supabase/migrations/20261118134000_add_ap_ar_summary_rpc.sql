@@ -2,12 +2,17 @@
 -- Migration: Add get_ap_ar_summary RPC for Cash Flow Dashboard AP/AR Visibility
 -- Description:
 --   1. Multi-Tenant Security Guard (AGENTS.md Rule #14)
---   2. Computes current snapshot of Accounts Receivable (orders unpaid/partial,
---      excluding cancelled/pending drafts and legacy completed-null-status orders)
---   3. Computes current snapshot of Accounts Payable (purchases + expenses
---      with payment_status IN ('unpaid', 'partial'))
---   4. Classifies into Outstanding, Overdue (due_date < today in business tz),
---      and Due Soon (today <= due_date <= today + 7 days)
+--   2. Journal-First Single Source of Truth (COA / journal_lines):
+--      - AR (Piutang Usaha): ASSET accounts with sub_type = 'receivable'
+--        (or code LIKE '103%' / name LIKE '%piutang%'), balance = SUM(debit - credit)
+--      - AP (Hutang Usaha & Gaji): LIABILITY accounts with sub_type = 'payable'
+--        (or code LIKE '201%' / name LIKE '%hutang%' excluding tax/unearned),
+--        balance = SUM(credit - debit), broken down into 201000 vs 201100
+--      This guarantees exact 1:1 parity with Neraca (Balance Sheet).
+--   3. Document Aging Breakdown (orders, purchases, expenses):
+--      - Computes Overdue (due_date < today) & Due Soon (today..today+7)
+--      - Exposes doc_outstanding_amount alongside ledger_outstanding_amount
+--        for transparent reconciliation of manual journals / unposted docs.
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION public.get_ap_ar_summary(
@@ -23,14 +28,25 @@ DECLARE
     v_tz text := COALESCE(NULLIF(TRIM(p_timezone), ''), 'Asia/Jakarta');
     v_today date;
     v_due_soon_end date;
-    v_ar_outstanding_amount numeric := 0;
-    v_ar_outstanding_count bigint := 0;
+
+    -- Ledger (COA / journal_lines) totals
+    v_ar_account_ids uuid[];
+    v_ap_account_ids uuid[];
+    v_ap_salary_account_ids uuid[];
+    v_ar_ledger_amount numeric := 0;
+    v_ap_ledger_amount numeric := 0;
+    v_ap_salary_ledger_amount numeric := 0;
+
+    -- Document (orders / purchases / expenses) totals & aging
+    v_ar_doc_amount numeric := 0;
+    v_ar_doc_count bigint := 0;
     v_ar_overdue_amount numeric := 0;
     v_ar_overdue_count bigint := 0;
     v_ar_due_soon_amount numeric := 0;
     v_ar_due_soon_count bigint := 0;
-    v_ap_outstanding_amount numeric := 0;
-    v_ap_outstanding_count bigint := 0;
+
+    v_ap_doc_amount numeric := 0;
+    v_ap_doc_count bigint := 0;
     v_ap_overdue_amount numeric := 0;
     v_ap_overdue_count bigint := 0;
     v_ap_due_soon_amount numeric := 0;
@@ -57,7 +73,52 @@ BEGIN
     v_today := (NOW() AT TIME ZONE v_tz)::date;
     v_due_soon_end := v_today + 7;
 
-    -- 1. Accounts Receivable (Piutang Usaha) from public.orders
+    -- 1. Identify AR & AP COA accounts consistently with Balance Sheet
+    SELECT array_agg(id) INTO v_ar_account_ids
+    FROM public.accounts
+    WHERE business_id = p_business_id
+      AND type = 'ASSET'
+      AND (
+        sub_type = 'receivable' OR
+        (sub_type IS NULL AND (code LIKE '103%' OR LOWER(name) LIKE '%piutang%'))
+      );
+
+    SELECT
+        array_agg(id),
+        array_agg(id) FILTER (WHERE code LIKE '2011%' OR LOWER(name) LIKE '%gaji%')
+    INTO v_ap_account_ids, v_ap_salary_account_ids
+    FROM public.accounts
+    WHERE business_id = p_business_id
+      AND type = 'LIABILITY'
+      AND (
+        sub_type = 'payable' OR
+        (sub_type IS NULL AND (code LIKE '2010%' OR code LIKE '2011%' OR LOWER(name) LIKE '%hutang usaha%' OR LOWER(name) LIKE '%hutang gaji%'))
+      );
+
+    -- 2. Compute exact General Ledger balances from journal_lines (1:1 with Neraca)
+    IF v_ar_account_ids IS NOT NULL AND array_length(v_ar_account_ids, 1) > 0 THEN
+        SELECT COALESCE(SUM(jl.debit - jl.credit), 0)
+        INTO v_ar_ledger_amount
+        FROM public.journal_lines jl
+        JOIN public.transactions t ON t.id = jl.transaction_id
+        WHERE t.business_id = p_business_id
+          AND jl.account_id = ANY(v_ar_account_ids);
+    END IF;
+
+    IF v_ap_account_ids IS NOT NULL AND array_length(v_ap_account_ids, 1) > 0 THEN
+        SELECT
+            COALESCE(SUM(jl.credit - jl.debit), 0),
+            COALESCE(SUM(jl.credit - jl.debit) FILTER (
+                WHERE v_ap_salary_account_ids IS NOT NULL AND jl.account_id = ANY(v_ap_salary_account_ids)
+            ), 0)
+        INTO v_ap_ledger_amount, v_ap_salary_ledger_amount
+        FROM public.journal_lines jl
+        JOIN public.transactions t ON t.id = jl.transaction_id
+        WHERE t.business_id = p_business_id
+          AND jl.account_id = ANY(v_ap_account_ids);
+    END IF;
+
+    -- 3. Accounts Receivable Document Aging from public.orders
     WITH ar_rows AS (
         SELECT
             GREATEST(0, COALESCE(o.grand_total, 0) - COALESCE(o.amount_paid, 0)) AS remaining,
@@ -86,15 +147,15 @@ BEGIN
         COALESCE(SUM(remaining) FILTER (WHERE due_date IS NOT NULL AND due_date >= v_today AND due_date <= v_due_soon_end), 0),
         COUNT(*) FILTER (WHERE due_date IS NOT NULL AND due_date >= v_today AND due_date <= v_due_soon_end)
     INTO
-        v_ar_outstanding_amount,
-        v_ar_outstanding_count,
+        v_ar_doc_amount,
+        v_ar_doc_count,
         v_ar_overdue_amount,
         v_ar_overdue_count,
         v_ar_due_soon_amount,
         v_ar_due_soon_count
     FROM ar_rows;
 
-    -- 2. Accounts Payable (Hutang Usaha) from public.purchases + public.expenses
+    -- 4. Accounts Payable Document Aging from public.purchases + public.expenses
     WITH ap_purchases AS (
         SELECT
             GREATEST(0, COALESCE(p.grand_total, 0) - COALESCE(p.amount_paid, 0)) AS remaining,
@@ -133,8 +194,8 @@ BEGIN
         COALESCE((SELECT SUM(remaining) FROM ap_expenses), 0),
         COALESCE((SELECT COUNT(*) FROM ap_expenses), 0)
     INTO
-        v_ap_outstanding_amount,
-        v_ap_outstanding_count,
+        v_ap_doc_amount,
+        v_ap_doc_count,
         v_ap_overdue_amount,
         v_ap_overdue_count,
         v_ap_due_soon_amount,
@@ -147,16 +208,22 @@ BEGIN
     RETURN json_build_object(
         'as_of_date', v_today,
         'receivables', json_build_object(
-            'outstanding_amount', v_ar_outstanding_amount,
-            'outstanding_count', v_ar_outstanding_count,
+            'outstanding_amount', v_ar_ledger_amount,
+            'doc_outstanding_amount', v_ar_doc_amount,
+            'unreconciled_amount', v_ar_ledger_amount - v_ar_doc_amount,
+            'outstanding_count', v_ar_doc_count,
             'overdue_amount', v_ar_overdue_amount,
             'overdue_count', v_ar_overdue_count,
             'due_soon_amount', v_ar_due_soon_amount,
             'due_soon_count', v_ar_due_soon_count
         ),
         'payables', json_build_object(
-            'outstanding_amount', v_ap_outstanding_amount,
-            'outstanding_count', v_ap_outstanding_count,
+            'outstanding_amount', v_ap_ledger_amount,
+            'trade_payable_amount', v_ap_ledger_amount - v_ap_salary_ledger_amount,
+            'salary_payable_amount', v_ap_salary_ledger_amount,
+            'doc_outstanding_amount', v_ap_doc_amount,
+            'unreconciled_amount', (v_ap_ledger_amount - v_ap_salary_ledger_amount) - v_ap_doc_amount,
+            'outstanding_count', v_ap_doc_count,
             'overdue_amount', v_ap_overdue_amount,
             'overdue_count', v_ap_overdue_count,
             'due_soon_amount', v_ap_due_soon_amount,
@@ -171,4 +238,3 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.get_ap_ar_summary(uuid, text) TO authenticated, service_role;
-

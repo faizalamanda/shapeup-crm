@@ -123,7 +123,14 @@ export async function GET(req: NextRequest) {
           const dueSoonDate = new Date(Date.UTC(ty, (tm || 1) - 1, (td || 1) + 7))
           const dueSoonEndStr = dueSoonDate.toISOString().slice(0, 10)
 
-          const [ordersRes, purchasesRes, expensesRes] = await Promise.all([
+          const [accounts, ledgerRes, ordersRes, purchasesRes, expensesRes] = await Promise.all([
+            getBusinessAccountsCached(businessId, supabaseAdmin),
+            supabaseAdmin.rpc('get_ledger_balances', {
+              p_business_id: businessId,
+              p_start_date: null,
+              p_end_date: getUtcTimestampInTimezone('2099-12-31', '23:59:59.999', tz),
+              p_basis: 'accrual',
+            }),
             supabaseAdmin
               .from('orders')
               .select('grand_total, amount_paid, payment_status, status, raw_source_data')
@@ -146,8 +153,51 @@ export async function GET(req: NextRequest) {
           if (purchasesRes.error) throw purchasesRes.error
           if (expensesRes.error) throw expensesRes.error
 
+          const ledgerMap = new Map<string, { debit: number; credit: number }>()
+          if (Array.isArray(ledgerRes.data)) {
+            for (const row of ledgerRes.data) {
+              ledgerMap.set(row.account_id, {
+                debit: parseFloat(row.debit_sum || 0),
+                credit: parseFloat(row.credit_sum || 0),
+              })
+            }
+          }
+
+          let arLedgerAmount = 0
+          let apLedgerAmount = 0
+          let apSalaryLedgerAmount = 0
+          for (const acc of accounts) {
+            const bal = ledgerMap.get(acc.id)
+            if (!bal) continue
+            const code = String(acc.code || '')
+            const name = String(acc.name || '').toLowerCase()
+            if (
+              acc.type === 'ASSET' &&
+              (acc.sub_type === 'receivable' ||
+                (!acc.sub_type && (code.startsWith('103') || name.includes('piutang'))))
+            ) {
+              arLedgerAmount += bal.debit - bal.credit
+            } else if (
+              acc.type === 'LIABILITY' &&
+              (acc.sub_type === 'payable' ||
+                (!acc.sub_type &&
+                  (code.startsWith('2010') ||
+                    code.startsWith('2011') ||
+                    name.includes('hutang usaha') ||
+                    name.includes('hutang gaji'))))
+            ) {
+              const net = bal.credit - bal.debit
+              apLedgerAmount += net
+              if (code.startsWith('2011') || name.includes('gaji')) {
+                apSalaryLedgerAmount += net
+              }
+            }
+          }
+
           const ar = {
-            outstanding_amount: 0,
+            outstanding_amount: arLedgerAmount,
+            doc_outstanding_amount: 0,
+            unreconciled_amount: 0,
             outstanding_count: 0,
             overdue_amount: 0,
             overdue_count: 0,
@@ -162,7 +212,7 @@ export async function GET(req: NextRequest) {
             const remaining = Math.max(0, Number(o.grand_total || 0) - Number(o.amount_paid || 0))
             if (remaining <= 0.01) continue
 
-            ar.outstanding_amount += remaining
+            ar.doc_outstanding_amount += remaining
             ar.outstanding_count += 1
             const rawDue = typeof o.raw_source_data?.due_date === 'string' ? o.raw_source_data.due_date.slice(0, 10) : ''
             const due = /^\d{4}-\d{2}-\d{2}$/.test(rawDue) ? rawDue : null
@@ -176,9 +226,14 @@ export async function GET(req: NextRequest) {
               }
             }
           }
+          ar.unreconciled_amount = ar.outstanding_amount - ar.doc_outstanding_amount
 
           const ap = {
-            outstanding_amount: 0,
+            outstanding_amount: apLedgerAmount,
+            trade_payable_amount: apLedgerAmount - apSalaryLedgerAmount,
+            salary_payable_amount: apSalaryLedgerAmount,
+            doc_outstanding_amount: 0,
+            unreconciled_amount: 0,
             outstanding_count: 0,
             overdue_amount: 0,
             overdue_count: 0,
@@ -192,7 +247,7 @@ export async function GET(req: NextRequest) {
 
           const accumulateAp = (remaining: number, due: string | null, kind: 'purchase' | 'expense') => {
             if (remaining <= 0.01) return
-            ap.outstanding_amount += remaining
+            ap.doc_outstanding_amount += remaining
             ap.outstanding_count += 1
             if (kind === 'purchase') {
               ap.purchases_amount += remaining
@@ -224,6 +279,7 @@ export async function GET(req: NextRequest) {
                 : Number(e.amount || 0) - Number(e.amount_paid || 0)
             accumulateAp(Math.max(0, rawRem), e.due_date ? String(e.due_date).slice(0, 10) : null, 'expense')
           }
+          ap.unreconciled_amount = ap.trade_payable_amount - ap.doc_outstanding_amount
 
           const fallbackPayload = { as_of_date: todayStr, receivables: ar, payables: ap }
           reportCache.set(cacheKey, { data: fallbackPayload, expiresAt: Date.now() + REPORT_TTL_MS })
