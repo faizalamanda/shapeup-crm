@@ -152,6 +152,7 @@ const menuItems: MenuItem[] = [
   {
     name: 'Reports',      href: '/reports/revenue',   icon: Icons.reports,
     children: [
+      { name: 'Profit Dashboard',    href: '/reports/profit' },
       { name: 'Revenue',             href: '/reports/revenue' },
       { name: 'Orders',              href: '/reports/orders' },
       { name: 'Pelanggan',           href: '/reports/customers' },
