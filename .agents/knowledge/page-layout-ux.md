@@ -33,9 +33,11 @@ Saat halaman membuka modal dialog apapun, gunakan `FullScreenModal` atau daftark
    - Elemen `<main>` pada `app/layout.tsx` sudah memberikan `padding: '28px 28px 48px'`, latar belakang `var(--su-bg)`, dan pembatas `<div style={{ maxWidth: '1600px', margin: '0 auto' }}>`.
    - Halaman di bawah `/reports/*` atau `/dashboard` harus langsung merender `<div className="w-full max-w-full min-w-0 space-y-5 text-slate-800 su-fade-in">` tanpa membungkus ulang dengan `min-h-screen bg-... p-6`.
 
-2. **Kewajiban `min-w-0` dan `flex-wrap` untuk Mencegah Sisi Kanan Terpotong:**
+2. **Kewajiban `overflow-x: clip`, `min-w-0`, dan `flex-wrap` untuk Sticky Topbar & Anti-Overflow:**
+   - Pada `app/globals.css` (`html`, `body`) dan `app/layout.tsx` (`<main>`), **wajib** gunakan `overflow-x: clip` (dilarang menggunakan `overflow-x: hidden` pada `html`/`body` maupun `overflowY: 'auto'` pada `<main>` tanpa tinggi tetap). Secara spesifikasi CSS, `overflow-x: hidden` pada ancestor memaksa `overflow-y` menjadi `auto` dan menciptakan *scroll container* baru yang mematahkan `position: sticky; top: 0` pada `<header>` topbar (menu mobile maupun breadcrumb/profil desktop) saat viewport di-scroll.
+   - `<header>` topbar di `app/layout.tsx` menggunakan `position: 'sticky', top: 0, zIndex: 40, flexShrink: 0` agar selalu menempel di bagian atas viewport pada seluruh ukuran layar.
    - Pada CSS Grid (`grid-cols-12`) dan Flexbox, elemen anak secara default memiliki `min-width: auto` (`min-content`). Jika sebuah baris header (`Judul + Filter Segmen + TemporalDateFilter`) atau toolbar tabel (`Judul + 6 Filter Pills + Search + Export`) menggunakan `lg:flex-row` tanpa `flex-wrap`, lebar minimum baris tersebut dapat menembus `> 1.300px`.
-   - Pada layar laptop standar (`1280px–1440px` dikurangi sidebar `240px`), hal ini membuat seluruh kontainer halaman melebar keluar batas layar kanan dan terpotong oleh `body { overflow-x: hidden }`.
+   - Pada layar laptop standar (`1280px–1440px` dikurangi sidebar `240px`), hal ini membuat seluruh kontainer halaman melebar keluar batas layar kanan dan terpotong oleh `body { overflow-x: clip }`.
    - **Solusi Permanen:**
      - Selalu gunakan `flex flex-wrap items-center justify-between gap-3` pada setiap baris header, banner informasi, dan toolbar tabel.
      - Selalu tambahkan `min-w-0` pada setiap kolom grid (`lg:col-span-8 min-w-0`, `lg:col-span-4 min-w-0`) dan sub-kartu di dalamnya.

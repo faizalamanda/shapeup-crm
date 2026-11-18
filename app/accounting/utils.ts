@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 import { 
   DateRangeKey, 
+  DEFAULT_TIMEZONE,
   getLocalDateRangeLimits, 
   getUtcTimestampInTimezone, 
   localDateToUtcBounds 
@@ -395,6 +396,121 @@ export async function fetchLedgerBalances(
       }
       clientReportCache.set(cacheKey, { data: result, expiresAt: Date.now() + CLIENT_REPORT_TTL_MS })
       return result
+    } finally {
+      clientInFlightMap.delete(cacheKey)
+    }
+  })()
+
+  clientInFlightMap.set(cacheKey, promise)
+  return await promise
+}
+
+export interface CashFlowTimeSeriesPoint {
+  date: string
+  inflow: number
+  outflow: number
+  net_change: number
+  running_balance: number
+}
+
+export interface CashAccountBalanceItem {
+  account_id: string
+  code: string
+  name: string
+  starting_balance: number
+  inflow: number
+  outflow: number
+  ending_balance: number
+}
+
+export interface CashFlowCounterItem {
+  account_id: string
+  code: string
+  name: string
+  type: string
+  amount: number
+}
+
+export interface CashFlowAnalyticsData {
+  starting_cash: number
+  ending_cash: number
+  net_change: number
+  total_inflow: number
+  total_outflow: number
+  cash_accounts: CashAccountBalanceItem[]
+  time_series: CashFlowTimeSeriesPoint[]
+  top_inflows: CashFlowCounterItem[]
+  top_outflows: CashFlowCounterItem[]
+}
+
+// Fetch cash flow analytics (time-series running balance, per-account breakdown, top flows)
+export async function fetchCashFlowAnalytics(
+  supabase: any,
+  businessId: string,
+  startDate: string,
+  endDate: string,
+  timezone: string = DEFAULT_TIMEZONE,
+  granularity: 'day' | 'week' | 'month' = 'day',
+  accountId: string | null = null
+): Promise<CashFlowAnalyticsData> {
+  const cleanAccountId = accountId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(accountId)
+    ? accountId
+    : null
+  const cacheKey = `cfa:${businessId}:${startDate}:${endDate}:${timezone}:${granularity}:${cleanAccountId || 'all'}`
+  const now = Date.now()
+  const cached = clientReportCache.get(cacheKey)
+  if (cached && cached.expiresAt > now) {
+    return cached.data
+  }
+
+  if (clientInFlightMap.has(cacheKey)) {
+    return await clientInFlightMap.get(cacheKey)!
+  }
+
+  const promise = (async () => {
+    try {
+      if (typeof window !== 'undefined') {
+        try {
+          const params = new URLSearchParams({
+            mode: 'cash-flow-analytics',
+            business_id: businessId,
+            start_date: startDate,
+            end_date: endDate,
+            timezone,
+            granularity,
+            ...(cleanAccountId ? { account_id: cleanAccountId } : {})
+          })
+          const res = await fetch(`/api/accounting/reports?${params.toString()}`, {
+            headers: { 'x-business-id': businessId }
+          })
+          const json = await res.json().catch(() => null)
+          if (res.ok && json?.data) {
+            clientReportCache.set(cacheKey, { data: json.data, expiresAt: Date.now() + CLIENT_REPORT_TTL_MS })
+            return json.data
+          }
+        } catch {
+          // Fallback to direct RPC below
+        }
+      }
+
+      const startOfDayISO = getUtcTimestamp(startDate, '00:00:00.000', timezone)
+      const endOfDayISO = getUtcTimestamp(endDate, '23:59:59.999', timezone)
+
+      const { data, error } = await supabase.rpc('get_cash_flow_analytics', {
+        p_business_id: businessId,
+        p_start_date: startOfDayISO,
+        p_end_date: endOfDayISO,
+        p_timezone: timezone,
+        p_granularity: granularity,
+        p_account_id: cleanAccountId
+      })
+
+      if (error) {
+        throw new Error(`Gagal memuat analitik arus kas: ${error.message}`)
+      }
+
+      clientReportCache.set(cacheKey, { data, expiresAt: Date.now() + CLIENT_REPORT_TTL_MS })
+      return data
     } finally {
       clientInFlightMap.delete(cacheKey)
     }

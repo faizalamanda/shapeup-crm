@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
 import { getUtcTimestampInTimezone, getBusinessTimezone } from '@/lib/localzone'
+import { isUuid } from '@/lib/utils'
 
 interface CachedEntry<T> {
   data: T
@@ -121,6 +122,53 @@ export async function GET(req: NextRequest) {
 
       inFlightMap.set(cacheKey, cfPromise)
       const data = await cfPromise
+      return NextResponse.json({ data })
+    }
+
+    if (mode === 'cash-flow-analytics') {
+      if (!startOfDayISO) {
+        return NextResponse.json({ error: 'Parameter start_date wajib diisi untuk analitik arus kas' }, { status: 400 })
+      }
+
+      const rawGranularity = url.searchParams.get('granularity') || 'day'
+      const granularity = rawGranularity === 'week' || rawGranularity === 'month' ? rawGranularity : 'day'
+      const rawAccountId = url.searchParams.get('account_id') || ''
+      const accountId = isUuid(rawAccountId) ? rawAccountId : null
+
+      const cacheKey = `cfa:${businessId}:${startOfDayISO}:${endOfDayISO}:${tz}:${granularity}:${accountId || 'all'}`
+      const now = Date.now()
+      if (!bustCache) {
+        const cached = reportCache.get(cacheKey)
+        if (cached && cached.expiresAt > now) {
+          return NextResponse.json({ data: cached.data, cached: true })
+        }
+      }
+
+      if (inFlightMap.has(cacheKey)) {
+        const data = await inFlightMap.get(cacheKey)!
+        return NextResponse.json({ data, deduplicated: true })
+      }
+
+      const cfaPromise = (async () => {
+        try {
+          const { data, error } = await supabaseAdmin.rpc('get_cash_flow_analytics', {
+            p_business_id: businessId,
+            p_start_date: startOfDayISO,
+            p_end_date: endOfDayISO,
+            p_timezone: tz,
+            p_granularity: granularity,
+            p_account_id: accountId
+          })
+          if (error) throw new Error(`Failed to fetch cash flow analytics: ${error.message}`)
+          reportCache.set(cacheKey, { data, expiresAt: Date.now() + REPORT_TTL_MS })
+          return data
+        } finally {
+          inFlightMap.delete(cacheKey)
+        }
+      })()
+
+      inFlightMap.set(cacheKey, cfaPromise)
+      const data = await cfaPromise
       return NextResponse.json({ data })
     }
 

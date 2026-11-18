@@ -46,8 +46,10 @@ Karena `<main>` di `app/layout.tsx` telah membungkus seluruh halaman dengan `pad
      <div className="w-full max-w-full min-w-0 space-y-5 text-slate-800 su-fade-in">
      ```
 
-2. **Pencegahan Horizontal Overflow / Terpotong di Sisi Kanan (`min-w-0` & `flex-wrap` Invariant):**
-   - Karena `body` memiliki `overflow-x: hidden`, baris Flexbox atau CSS Grid yang memiliki `min-content` lebih lebar dari layar laptop (`1280px–1440px` dikurangi sidebar `240px`) akan memaksa halaman melebar dan **memotong sisi kanan kartu/filter**.
+2. **Pencegahan Horizontal Overflow & Invarian Sticky Topbar (`overflow-x: clip`, `min-w-0`, `flex-wrap`):**
+   - `html` dan `body` di `app/globals.css` serta `<main>` di `app/layout.tsx` **WAJIB** menggunakan `overflow-x: clip` (bukan `overflow-x: hidden`, dan tanpa `overflowY: 'auto'` pada `<main>`). `overflow-x: hidden` memaksa browser membentuk *scroll container* yang mematahkan `position: sticky; top: 0` pada `<header>` topbar (baik tombol menu mobile maupun breadcrumb/user chip desktop) saat halaman di-scroll.
+   - `<header>` topbar di `app/layout.tsx` wajib mempertahankan `position: 'sticky', top: 0, zIndex: 40, flexShrink: 0`.
+   - Karena `body` memiliki `overflow-x: clip`, baris Flexbox atau CSS Grid yang memiliki `min-content` lebih lebar dari layar laptop (`1280px–1440px` dikurangi sidebar `240px`) akan memaksa halaman melebar dan **memotong sisi kanan kartu/filter**.
    - **Aturan Wajib:**
      - Setiap baris header/toolbar/banner yang menyandingkan judul di kiri dan filter di kanan (termasuk `TemporalDateFilter` atau deretan filter tab) **WAJIB** menggunakan `flex flex-wrap items-center justify-between gap-3` (jangan gunakan `lg:flex-row` tanpa `flex-wrap` jika isi kiri + kanan lebar).
      - Setiap kontainer Grid (`grid-cols-1 lg:grid-cols-12 gap-5`) dan setiap kolom anaknya (`lg:col-span-8 min-w-0`, `lg:col-span-4 min-w-0`) **WAJIB** menyertakan kelas `min-w-0` agar elemen anak (seperti tabel `overflow-x-auto` atau nama produk panjang `truncate`) tidak memaksa kolom grid melebar melampaui proporsi 8:4.

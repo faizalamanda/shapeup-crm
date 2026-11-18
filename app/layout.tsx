@@ -153,6 +153,7 @@ const menuItems: MenuItem[] = [
     name: 'Reports',      href: '/reports/revenue',   icon: Icons.reports,
     children: [
       { name: 'Profit Dashboard',    href: '/reports/profit' },
+      { name: 'Cash Flow (Cash Real)', href: '/reports/cash-flow' },
       { name: 'Revenue',             href: '/reports/revenue' },
       { name: 'Orders',              href: '/reports/orders' },
       { name: 'Pelanggan',           href: '/reports/customers' },
@@ -853,7 +854,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
           <header style={{
             height: '52px', background: 'var(--su-card)',
             borderBottom: '1px solid var(--su-border)',
-            position: 'sticky', top: 0, zIndex: 40,
+            position: 'sticky', top: 0, zIndex: 40, flexShrink: 0,
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             padding: '0 24px',
           }}>
@@ -921,7 +922,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
           )}
 
           {/* Page content */}
-          <main style={{ flex: 1, width: '100%', maxWidth: '100%', minWidth: 0, overflowY: 'auto', overflowX: 'hidden', padding: '28px 28px 48px' }}>
+          <main style={{ flex: 1, width: '100%', maxWidth: '100%', minWidth: 0, overflowX: 'clip', padding: '28px 28px 48px' }}>
             <div style={{ width: '100%', maxWidth: '1600px', minWidth: 0, margin: '0 auto' }} className="su-fade-in">
               {isAllowedPath ? children : accessDeniedScreen}
             </div>
