@@ -71,7 +71,7 @@ Konsisten dengan `get_cash_flow_summary`, seluruh akun Kas & Bank diidentifikasi
     - Sumbu Y kanan: **Kas Masuk** (batang hijau) & **Kas Keluar** (batang merah), dapat di-toggle.
     - Mendukung garis pembanding putus-putus (*comparison period*) dan tooltip `absolute` (*Zero Layout Shift*).
   - **Kanan (`xl:col-span-4`) — Visibilitas Piutang & Hutang (AP/AR):**
-    - **Piutang Usaha:** Semua `orders` aktif belum lunas (`status NOT IN ('cancelled', 'pending')`), menampilkan *Belum Lunas (Outstanding)*, *Jatuh Tempo (Overdue)*, dan *Jatuh Tempo ≤ 7 Hari*.
-    - **Hutang Usaha:** Gabungan `purchases` dan `expenses` berstatus `unpaid`/`partial`, menampilkan *Belum Lunas (Outstanding)* (beserta rincian Pembelian vs Biaya), *Jatuh Tempo (Overdue)*, dan *Jatuh Tempo ≤ 7 Hari*.
+    - **Piutang Usaha:** Saldo utama **1:1 dengan Neraca** dari Buku Besar COA (`103000` / `receivable`), ditambah rincian *Jatuh Tempo (Overdue)* & *Jatuh Tempo ≤ 7 Hari* dari `orders`, serta catatan rekonsiliasi jika ada selisih terhadap dokumen.
+    - **Hutang Usaha:** Saldo utama **1:1 dengan Neraca** dari Buku Besar COA (`201000` & `201100` / `payable`), dilengkapi rincian Pembelian, Biaya, Hutang Gaji, *Jatuh Tempo (Overdue)*, *Jatuh Tempo ≤ 7 Hari*, serta catatan rekonsiliasi jurnal lain jika ada selisih.
 - **Akses Kontrol:** Terdaftar di menu **Reports → Cash Flow Dashboard** ([app/layout.tsx](file:///home/faiz-jazuli/shapeup-crm/app/layout.tsx)) dan dilindungi oleh izin `view_reports` di [lib/permissions.ts](file:///home/faiz-jazuli/shapeup-crm/lib/permissions.ts).
 
