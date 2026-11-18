@@ -520,3 +520,84 @@ export async function fetchCashFlowAnalytics(
   return await promise
 }
 
+export interface ApArReceivablesSummary {
+  outstanding_amount: number
+  outstanding_count: number
+  overdue_amount: number
+  overdue_count: number
+  due_soon_amount: number
+  due_soon_count: number
+}
+
+export interface ApArPayablesSummary extends ApArReceivablesSummary {
+  purchases_amount: number
+  purchases_count: number
+  expenses_amount: number
+  expenses_count: number
+}
+
+export interface ApArSummaryData {
+  as_of_date: string
+  receivables: ApArReceivablesSummary
+  payables: ApArPayablesSummary
+}
+
+export async function fetchApArSummary(
+  supabase: any,
+  businessId: string,
+  timezone: string = DEFAULT_TIMEZONE
+): Promise<ApArSummaryData> {
+  const cacheKey = `apar:${businessId}:${timezone}`
+  const now = Date.now()
+  const cached = clientReportCache.get(cacheKey)
+  if (cached && cached.expiresAt > now) {
+    return cached.data
+  }
+
+  if (clientInFlightMap.has(cacheKey)) {
+    return await clientInFlightMap.get(cacheKey)!
+  }
+
+  const promise = (async () => {
+    try {
+      if (typeof window !== 'undefined') {
+        try {
+          const params = new URLSearchParams({
+            mode: 'ap-ar-summary',
+            business_id: businessId,
+            timezone,
+          })
+          const res = await fetch(`/api/accounting/reports?${params.toString()}`, {
+            headers: { 'x-business-id': businessId },
+          })
+          const json = await res.json().catch(() => null)
+          if (res.ok && json?.data) {
+            clientReportCache.set(cacheKey, { data: json.data, expiresAt: Date.now() + CLIENT_REPORT_TTL_MS })
+            return json.data
+          }
+        } catch {
+          // Fallback to direct RPC below
+        }
+      }
+
+      const { data, error } = await supabase.rpc('get_ap_ar_summary', {
+        p_business_id: businessId,
+        p_timezone: timezone,
+      })
+
+      if (error) {
+        throw new Error(`Gagal memuat ringkasan piutang & hutang: ${error.message}`)
+      }
+
+      clientReportCache.set(cacheKey, { data, expiresAt: Date.now() + CLIENT_REPORT_TTL_MS })
+      return data
+    } finally {
+      clientInFlightMap.delete(cacheKey)
+    }
+  })()
+
+  clientInFlightMap.set(cacheKey, promise)
+  return await promise
+}
+
+

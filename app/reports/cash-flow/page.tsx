@@ -14,11 +14,37 @@ import {
 import {
   formatCurrencyIDR,
   fetchCashFlowAnalytics,
+  fetchApArSummary,
   CashFlowAnalyticsData,
   CashFlowTimeSeriesPoint,
+  ApArSummaryData,
 } from '@/app/accounting/utils'
 
 type Granularity = 'day' | 'week' | 'month'
+
+const EMPTY_AP_AR: ApArSummaryData = {
+  as_of_date: '',
+  receivables: {
+    outstanding_amount: 0,
+    outstanding_count: 0,
+    overdue_amount: 0,
+    overdue_count: 0,
+    due_soon_amount: 0,
+    due_soon_count: 0,
+  },
+  payables: {
+    outstanding_amount: 0,
+    outstanding_count: 0,
+    overdue_amount: 0,
+    overdue_count: 0,
+    due_soon_amount: 0,
+    due_soon_count: 0,
+    purchases_amount: 0,
+    purchases_count: 0,
+    expenses_amount: 0,
+    expenses_count: 0,
+  },
+}
 
 const EMPTY_DATA: CashFlowAnalyticsData = {
   starting_cash: 0,
@@ -133,6 +159,7 @@ export default function CashFlowAnalyticsPage() {
 
   const [data, setData] = useState<CashFlowAnalyticsData>(EMPTY_DATA)
   const [compData, setCompData] = useState<CashFlowAnalyticsData | null>(null)
+  const [apArData, setApArData] = useState<ApArSummaryData>(EMPTY_AP_AR)
   const [loading, setLoading] = useState<boolean>(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -185,11 +212,21 @@ export default function CashFlowAnalyticsPage() {
         )
       }
 
-      const [currRes, prevRes] = await Promise.all(promises)
+      const apArPromise = fetchApArSummary(supabase, activeBusiness.id, businessTz).catch((e) => {
+        console.warn('AP/AR summary load warning:', e)
+        return EMPTY_AP_AR
+      })
+
+      const [analyticsResults, apArRes] = await Promise.all([
+        Promise.all(promises),
+        apArPromise,
+      ])
       if (reqId !== requestIdRef.current) return
 
+      const [currRes, prevRes] = analyticsResults
       setData(currRes || EMPTY_DATA)
       setCompData(prevRes || null)
+      setApArData(apArRes || EMPTY_AP_AR)
     } catch (err: any) {
       if (reqId !== requestIdRef.current) return
       console.error('Error loading cash flow analytics:', err)
@@ -482,8 +519,9 @@ export default function CashFlowAnalyticsPage() {
         </div>
       </div>
 
-      {/* ─── Section 2: Main Combo Chart (Saldo Cash Real + Inflow/Outflow) ── */}
-      <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden min-w-0 relative">
+      {/* ─── Section 2: Baris Kedua — Combo Chart (Kiri) & AP/AR Visibility (Kanan) ── */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-stretch">
+        <div className="xl:col-span-8 bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden min-w-0 relative flex flex-col">
         <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-sm font-bold text-slate-900">
@@ -753,6 +791,157 @@ export default function CashFlowAnalyticsPage() {
               </svg>
             </div>
           )}
+        </div>
+        </div>
+
+        {/* Right: AP/AR Visibility (Piutang & Hutang Usaha) */}
+        <div className="xl:col-span-4 flex flex-col gap-4 min-w-0">
+          {/* Card 1: Piutang Usaha (Invoices / Orders Due) */}
+          <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden flex-1 flex flex-col">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2 bg-slate-50/50">
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-slate-900 truncate">Piutang Usaha</h3>
+                <p className="text-[11px] text-slate-500">Tagihan pelanggan belum lunas</p>
+              </div>
+              <Link
+                href="/orders/invoices"
+                className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 shrink-0"
+              >
+                Kelola ›
+              </Link>
+            </div>
+
+            <div className="px-4 py-3 divide-y divide-slate-100 flex-1 flex flex-col justify-between">
+              <div className="pb-2.5">
+                <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
+                  <span className="font-medium">Belum Lunas (Outstanding)</span>
+                  <span className="text-[11px] font-semibold text-slate-400">
+                    {loading ? '...' : `${apArData.receivables.outstanding_count} order`}
+                  </span>
+                </div>
+                <div className="text-lg sm:text-xl font-black text-slate-900 mt-0.5 truncate">
+                  {loading ? '...' : formatCurrencyIDR(apArData.receivables.outstanding_amount)}
+                </div>
+              </div>
+
+              <div className="py-2.5">
+                <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
+                  <span className="font-medium">Jatuh Tempo (Overdue)</span>
+                  <span
+                    className={`text-[11px] font-semibold ${
+                      apArData.receivables.overdue_count > 0 ? 'text-rose-600' : 'text-slate-400'
+                    }`}
+                  >
+                    {loading ? '...' : `${apArData.receivables.overdue_count} order`}
+                  </span>
+                </div>
+                <div
+                  className={`text-base sm:text-lg font-extrabold mt-0.5 truncate ${
+                    apArData.receivables.overdue_amount > 0 ? 'text-rose-600' : 'text-slate-800'
+                  }`}
+                >
+                  {loading ? '...' : formatCurrencyIDR(apArData.receivables.overdue_amount)}
+                </div>
+              </div>
+
+              <div className="pt-2.5">
+                <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
+                  <span className="font-medium">Jatuh Tempo ≤ 7 Hari</span>
+                  <span
+                    className={`text-[11px] font-semibold ${
+                      apArData.receivables.due_soon_count > 0 ? 'text-amber-600' : 'text-slate-400'
+                    }`}
+                  >
+                    {loading ? '...' : `${apArData.receivables.due_soon_count} order`}
+                  </span>
+                </div>
+                <div
+                  className={`text-base sm:text-lg font-extrabold mt-0.5 truncate ${
+                    apArData.receivables.due_soon_amount > 0 ? 'text-amber-600' : 'text-slate-800'
+                  }`}
+                >
+                  {loading ? '...' : formatCurrencyIDR(apArData.receivables.due_soon_amount)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 2: Hutang Usaha (Bills to Pay: Purchases & Expenses) */}
+          <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden flex-1 flex flex-col">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2 bg-slate-50/50">
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-slate-900 truncate">Hutang Usaha</h3>
+                <p className="text-[11px] text-slate-500">Pembelian stok &amp; biaya tempo</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 text-[11px] font-semibold">
+                <Link href="/purchases" className="text-blue-600 hover:text-blue-700">
+                  Beli ›
+                </Link>
+                <Link href="/expenses" className="text-blue-600 hover:text-blue-700">
+                  Biaya ›
+                </Link>
+              </div>
+            </div>
+
+            <div className="px-4 py-3 divide-y divide-slate-100 flex-1 flex flex-col justify-between">
+              <div className="pb-2.5">
+                <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
+                  <span className="font-medium">Belum Lunas (Outstanding)</span>
+                  <span className="text-[11px] font-semibold text-slate-400">
+                    {loading ? '...' : `${apArData.payables.outstanding_count} tagihan`}
+                  </span>
+                </div>
+                <div className="text-lg sm:text-xl font-black text-slate-900 mt-0.5 truncate">
+                  {loading ? '...' : formatCurrencyIDR(apArData.payables.outstanding_amount)}
+                </div>
+                {!loading && apArData.payables.outstanding_count > 0 && (
+                  <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+                    Pembelian: {formatCompactIDR(apArData.payables.purchases_amount)} ({apArData.payables.purchases_count}) • Biaya: {formatCompactIDR(apArData.payables.expenses_amount)} ({apArData.payables.expenses_count})
+                  </div>
+                )}
+              </div>
+
+              <div className="py-2.5">
+                <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
+                  <span className="font-medium">Jatuh Tempo (Overdue)</span>
+                  <span
+                    className={`text-[11px] font-semibold ${
+                      apArData.payables.overdue_count > 0 ? 'text-rose-600' : 'text-slate-400'
+                    }`}
+                  >
+                    {loading ? '...' : `${apArData.payables.overdue_count} tagihan`}
+                  </span>
+                </div>
+                <div
+                  className={`text-base sm:text-lg font-extrabold mt-0.5 truncate ${
+                    apArData.payables.overdue_amount > 0 ? 'text-rose-600' : 'text-slate-800'
+                  }`}
+                >
+                  {loading ? '...' : formatCurrencyIDR(apArData.payables.overdue_amount)}
+                </div>
+              </div>
+
+              <div className="pt-2.5">
+                <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
+                  <span className="font-medium">Jatuh Tempo ≤ 7 Hari</span>
+                  <span
+                    className={`text-[11px] font-semibold ${
+                      apArData.payables.due_soon_count > 0 ? 'text-amber-600' : 'text-slate-400'
+                    }`}
+                  >
+                    {loading ? '...' : `${apArData.payables.due_soon_count} tagihan`}
+                  </span>
+                </div>
+                <div
+                  className={`text-base sm:text-lg font-extrabold mt-0.5 truncate ${
+                    apArData.payables.due_soon_amount > 0 ? 'text-amber-600' : 'text-slate-800'
+                  }`}
+                >
+                  {loading ? '...' : formatCurrencyIDR(apArData.payables.due_soon_amount)}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

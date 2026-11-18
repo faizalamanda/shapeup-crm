@@ -38,10 +38,11 @@ Konsisten dengan `get_cash_flow_summary`, seluruh akun Kas & Bank diidentifikasi
 
 ## 4. API & Client Caching
 
-- **API Endpoint:** `GET /api/accounting/reports?mode=cash-flow-analytics` ([app/api/accounting/reports/route.ts](file:///home/faiz-jazuli/shapeup-crm/app/api/accounting/reports/route.ts))
+- **API Endpoint:** `GET /api/accounting/reports?mode=cash-flow-analytics` & `GET /api/accounting/reports?mode=ap-ar-summary` ([app/api/accounting/reports/route.ts](file:///home/faiz-jazuli/shapeup-crm/app/api/accounting/reports/route.ts))
   - Validasi `account_id` wajib menggunakan `isUuid()` (`AGENTS.md` Rule #9).
   - Menggunakan L0 Server Cache (TTL 15 detik) dan *in-flight promise deduplication*.
-- **Client Helper:** `fetchCashFlowAnalytics()` di [app/accounting/utils.ts](file:///home/faiz-jazuli/shapeup-crm/app/accounting/utils.ts) dengan L1 Client Cache (TTL 15 detik) dan fallback RPC langsung.
+  - `mode=ap-ar-summary` memanggil RPC `get_ap_ar_summary` ([20261118134000_add_ap_ar_summary_rpc.sql](file:///home/faiz-jazuli/shapeup-crm/supabase/migrations/20261118134000_add_ap_ar_summary_rpc.sql)) dengan fallback kueri paralel jika migrasi belum diterapkan.
+- **Client Helper:** `fetchCashFlowAnalytics()` & `fetchApArSummary()` di [app/accounting/utils.ts](file:///home/faiz-jazuli/shapeup-crm/app/accounting/utils.ts) dengan L1 Client Cache (TTL 15 detik) dan fallback RPC langsung.
 
 ---
 
@@ -49,9 +50,13 @@ Konsisten dengan `get_cash_flow_summary`, seluruh akun Kas & Bank diidentifikasi
 
 - **Header & Kontrol:** Mengikuti standar `page-layout-ux` (2-row header, `usePageBackNavigation`, filter rekening kas/bank, pemilih granularitas `Harian`/`Mingguan`/`Bulanan`, dan `TemporalDateFilter` dengan `showComparison={true}`).
 - **4 KPI Cards:** *Cash Real Akhir*, *Total Kas Masuk*, *Total Kas Keluar* (`reversePolarity = true`), dan *Arus Kas Bersih (Net)*.
-- **Combo Chart SVG:**
-  - Sumbu Y kiri: **Saldo Cash Real** (garis & area biru).
-  - Sumbu Y kanan: **Kas Masuk** (batang hijau) & **Kas Keluar** (batang merah), dapat di-toggle.
-  - Mendukung garis pembanding putus-putus (*comparison period*) dan tooltip `absolute` (*Zero Layout Shift*).
+- **Baris Kedua (Grid 12 Kolom):**
+  - **Kiri (`xl:col-span-8`) — Combo Chart SVG:**
+    - Sumbu Y kiri: **Saldo Cash Real** (garis & area biru).
+    - Sumbu Y kanan: **Kas Masuk** (batang hijau) & **Kas Keluar** (batang merah), dapat di-toggle.
+    - Mendukung garis pembanding putus-putus (*comparison period*) dan tooltip `absolute` (*Zero Layout Shift*).
+  - **Kanan (`xl:col-span-4`) — Visibilitas Piutang & Hutang (AP/AR):**
+    - **Piutang Usaha:** Semua `orders` aktif belum lunas (`status NOT IN ('cancelled', 'pending')`), menampilkan *Belum Lunas (Outstanding)*, *Jatuh Tempo (Overdue)*, dan *Jatuh Tempo ≤ 7 Hari*.
+    - **Hutang Usaha:** Gabungan `purchases` dan `expenses` berstatus `unpaid`/`partial`, menampilkan *Belum Lunas (Outstanding)* (beserta rincian Pembelian vs Biaya), *Jatuh Tempo (Overdue)*, dan *Jatuh Tempo ≤ 7 Hari*.
 - **Akses Kontrol:** Terdaftar di menu **Reports → Cash Flow Dashboard** ([app/layout.tsx](file:///home/faiz-jazuli/shapeup-crm/app/layout.tsx)) dan dilindungi oleh izin `view_reports` di [lib/permissions.ts](file:///home/faiz-jazuli/shapeup-crm/lib/permissions.ts).
 

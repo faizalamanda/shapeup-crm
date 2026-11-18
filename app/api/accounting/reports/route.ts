@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
     const basis = url.searchParams.get('basis') === 'cash' ? 'cash' : 'accrual'
     const bustCache = url.searchParams.get('refresh') === '1'
 
-    if (!endDate) {
+    if (!endDate && mode !== 'ap-ar-summary') {
       return NextResponse.json({ error: 'Parameter end_date wajib diisi' }, { status: 400 })
     }
 
@@ -84,7 +84,159 @@ export async function GET(req: NextRequest) {
     }
 
     const startOfDayISO = startDate ? getUtcTimestampInTimezone(startDate, '00:00:00.000', tz) : null
-    const endOfDayISO = getUtcTimestampInTimezone(endDate, '23:59:59.999', tz)
+    const endOfDayISO = endDate ? getUtcTimestampInTimezone(endDate, '23:59:59.999', tz) : null
+
+    if (mode === 'ap-ar-summary') {
+      const cacheKey = `apar:${businessId}:${tz}`
+      const now = Date.now()
+      if (!bustCache) {
+        const cached = reportCache.get(cacheKey)
+        if (cached && cached.expiresAt > now) {
+          return NextResponse.json({ data: cached.data, cached: true })
+        }
+      }
+
+      if (inFlightMap.has(cacheKey)) {
+        const data = await inFlightMap.get(cacheKey)!
+        return NextResponse.json({ data, deduplicated: true })
+      }
+
+      const aparPromise = (async () => {
+        try {
+          const { data, error } = await supabaseAdmin.rpc('get_ap_ar_summary', {
+            p_business_id: businessId,
+            p_timezone: tz,
+          })
+          if (!error && data) {
+            reportCache.set(cacheKey, { data, expiresAt: Date.now() + REPORT_TTL_MS })
+            return data
+          }
+
+          // Fallback if RPC migration is not yet applied on the remote DB
+          const todayStr = new Intl.DateTimeFormat('en-CA', {
+            timeZone: tz,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(new Date())
+          const [ty, tm, td] = todayStr.split('-').map(Number)
+          const dueSoonDate = new Date(Date.UTC(ty, (tm || 1) - 1, (td || 1) + 7))
+          const dueSoonEndStr = dueSoonDate.toISOString().slice(0, 10)
+
+          const [ordersRes, purchasesRes, expensesRes] = await Promise.all([
+            supabaseAdmin
+              .from('orders')
+              .select('grand_total, amount_paid, payment_status, status, raw_source_data')
+              .eq('business_id', businessId)
+              .not('status', 'in', '(cancelled,pending)')
+              .or('payment_status.in.(unpaid,partial),payment_status.is.null'),
+            supabaseAdmin
+              .from('purchases')
+              .select('grand_total, amount_paid, payment_status, due_date')
+              .eq('business_id', businessId)
+              .in('payment_status', ['unpaid', 'partial']),
+            supabaseAdmin
+              .from('expenses')
+              .select('amount, amount_paid, outstanding_amount, payment_status, due_date')
+              .eq('business_id', businessId)
+              .in('payment_status', ['unpaid', 'partial']),
+          ])
+
+          if (ordersRes.error) throw ordersRes.error
+          if (purchasesRes.error) throw purchasesRes.error
+          if (expensesRes.error) throw expensesRes.error
+
+          const ar = {
+            outstanding_amount: 0,
+            outstanding_count: 0,
+            overdue_amount: 0,
+            overdue_count: 0,
+            due_soon_amount: 0,
+            due_soon_count: 0,
+          }
+
+          for (const o of ordersRes.data || []) {
+            const effPayStatus =
+              o.payment_status ?? (o.status === 'completed' && Number(o.amount_paid || 0) === 0 ? 'paid' : 'unpaid')
+            if (effPayStatus !== 'unpaid' && effPayStatus !== 'partial') continue
+            const remaining = Math.max(0, Number(o.grand_total || 0) - Number(o.amount_paid || 0))
+            if (remaining <= 0.01) continue
+
+            ar.outstanding_amount += remaining
+            ar.outstanding_count += 1
+            const rawDue = typeof o.raw_source_data?.due_date === 'string' ? o.raw_source_data.due_date.slice(0, 10) : ''
+            const due = /^\d{4}-\d{2}-\d{2}$/.test(rawDue) ? rawDue : null
+            if (due) {
+              if (due < todayStr) {
+                ar.overdue_amount += remaining
+                ar.overdue_count += 1
+              } else if (due <= dueSoonEndStr) {
+                ar.due_soon_amount += remaining
+                ar.due_soon_count += 1
+              }
+            }
+          }
+
+          const ap = {
+            outstanding_amount: 0,
+            outstanding_count: 0,
+            overdue_amount: 0,
+            overdue_count: 0,
+            due_soon_amount: 0,
+            due_soon_count: 0,
+            purchases_amount: 0,
+            purchases_count: 0,
+            expenses_amount: 0,
+            expenses_count: 0,
+          }
+
+          const accumulateAp = (remaining: number, due: string | null, kind: 'purchase' | 'expense') => {
+            if (remaining <= 0.01) return
+            ap.outstanding_amount += remaining
+            ap.outstanding_count += 1
+            if (kind === 'purchase') {
+              ap.purchases_amount += remaining
+              ap.purchases_count += 1
+            } else {
+              ap.expenses_amount += remaining
+              ap.expenses_count += 1
+            }
+            if (due) {
+              if (due < todayStr) {
+                ap.overdue_amount += remaining
+                ap.overdue_count += 1
+              } else if (due <= dueSoonEndStr) {
+                ap.due_soon_amount += remaining
+                ap.due_soon_count += 1
+              }
+            }
+          }
+
+          for (const p of purchasesRes.data || []) {
+            const remaining = Math.max(0, Number(p.grand_total || 0) - Number(p.amount_paid || 0))
+            accumulateAp(remaining, p.due_date ? String(p.due_date).slice(0, 10) : null, 'purchase')
+          }
+
+          for (const e of expensesRes.data || []) {
+            const rawRem =
+              e.outstanding_amount !== null && e.outstanding_amount !== undefined
+                ? Number(e.outstanding_amount)
+                : Number(e.amount || 0) - Number(e.amount_paid || 0)
+            accumulateAp(Math.max(0, rawRem), e.due_date ? String(e.due_date).slice(0, 10) : null, 'expense')
+          }
+
+          const fallbackPayload = { as_of_date: todayStr, receivables: ar, payables: ap }
+          reportCache.set(cacheKey, { data: fallbackPayload, expiresAt: Date.now() + REPORT_TTL_MS })
+          return fallbackPayload
+        } finally {
+          inFlightMap.delete(cacheKey)
+        }
+      })()
+
+      inFlightMap.set(cacheKey, aparPromise)
+      const data = await aparPromise
+      return NextResponse.json({ data })
+    }
 
     if (mode === 'cash-flow') {
       if (!startOfDayISO) {
