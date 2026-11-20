@@ -172,6 +172,12 @@ export default function NewInvoicePage() {
   const [utmSource, setUtmSource] = useState<string>('')
   const [utmCampaign, setUtmCampaign] = useState<string>('')
 
+  // Business-level Custom Options (Channels, Couriers, UTM)
+  const [serverCustomChannels, setServerCustomChannels] = useState<string[]>([])
+  const [serverCustomCouriers, setServerCustomCouriers] = useState<string[]>([])
+  const [serverCustomUtmSources, setServerCustomUtmSources] = useState<string[]>([])
+  const [serverCustomUtmCampaigns, setServerCustomUtmCampaigns] = useState<string[]>([])
+
   // Set default dates on mount
   useEffect(() => {
     const today = new Date()
@@ -241,6 +247,30 @@ export default function NewInvoicePage() {
           if (accJson?.success && Array.isArray(accJson.payment_accounts)) {
             accList = accJson.payment_accounts as COAAccount[]
           }
+          if (accJson?.custom_options) {
+            const opts = accJson.custom_options
+            if (Array.isArray(opts.custom_channels)) setServerCustomChannels(opts.custom_channels)
+            if (Array.isArray(opts.custom_couriers)) setServerCustomCouriers(opts.custom_couriers)
+            if (Array.isArray(opts.custom_utm_sources)) setServerCustomUtmSources(opts.custom_utm_sources)
+            if (Array.isArray(opts.custom_utm_campaigns)) setServerCustomUtmCampaigns(opts.custom_utm_campaigns)
+          }
+        }
+        // Merge L2 localStorage custom options for instant 0ms availability per business
+        if (typeof window !== 'undefined' && activeBusiness.id) {
+          try {
+            const rawLocal = localStorage.getItem(`su_invoice_custom_opts_${activeBusiness.id}`)
+            if (rawLocal) {
+              const parsed = JSON.parse(rawLocal)
+              if (Array.isArray(parsed.custom_channels)) {
+                setServerCustomChannels(prev => Array.from(new Set([...prev, ...parsed.custom_channels])))
+              }
+              if (Array.isArray(parsed.custom_couriers)) {
+                setServerCustomCouriers(prev => Array.from(new Set([...prev, ...parsed.custom_couriers])))
+              }
+            }
+          } catch {
+            // ignore storage parse error
+          }
         }
         setPaymentAccounts(accList)
         if (accList.length > 0) {
@@ -259,6 +289,92 @@ export default function NewInvoicePage() {
 
     loadData()
   }, [activeBusiness, userProfile, bizLoading, supabase])
+
+  const STANDARD_CHANNELS = useMemo(
+    () => ['Invoice', 'WhatsApp', 'Instagram', 'Manual', 'Shopee', 'Tokopedia', 'TikTok', 'WooCommerce'],
+    []
+  )
+  const STANDARD_COURIERS = useMemo(
+    () => ['JNE', 'J&T', 'Sicepat', 'POS', 'Tiki', 'Anteraja', 'Wahana', 'SPX'],
+    []
+  )
+
+  // Combine server custom channels + customer directory custom marketplace platforms (case-insensitive deduplication)
+  const customChannels = useMemo(() => {
+    const stdLower = new Set([...STANDARD_CHANNELS.map(c => c.toLowerCase()), 'pos', 'lainnya'])
+    const map = new Map<string, string>()
+    const add = (val?: string | null) => {
+      const str = String(val || '').trim()
+      if (!str) return
+      const lower = str.toLowerCase()
+      if (stdLower.has(lower)) return
+      if (!map.has(lower)) map.set(lower, str)
+    }
+    serverCustomChannels.forEach(add)
+    customers.forEach(c => {
+      add(c.metadata?.marketplace_profiles?.other_platform)
+      add(c.metadata?.lead_source)
+      add(c.metadata?.custom_channel)
+    })
+    add(newCustForm.marketplace_profiles?.other_platform)
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b, 'id'))
+  }, [serverCustomChannels, customers, newCustForm.marketplace_profiles?.other_platform, STANDARD_CHANNELS])
+
+  const customCouriers = useMemo(() => {
+    const stdLower = new Set([...STANDARD_COURIERS.map(c => c.toLowerCase()), 'lainnya'])
+    const map = new Map<string, string>()
+    serverCustomCouriers.forEach(val => {
+      const str = String(val || '').trim()
+      if (!str) return
+      const lower = str.toLowerCase()
+      if (!stdLower.has(lower) && !map.has(lower)) map.set(lower, str)
+    })
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b, 'id'))
+  }, [serverCustomCouriers, STANDARD_COURIERS])
+
+  const persistBusinessCustomOption = (type: 'channel' | 'courier', rawVal: string) => {
+    const val = rawVal.trim()
+    if (!val || val.toLowerCase() === 'lainnya') return val
+    if (type === 'channel') {
+      const stdMatch = STANDARD_CHANNELS.find(s => s.toLowerCase() === val.toLowerCase())
+      if (stdMatch) return stdMatch
+      const custMatch = customChannels.find(c => c.toLowerCase() === val.toLowerCase())
+      const finalVal = custMatch || val
+      if (!custMatch) {
+        setServerCustomChannels(prev => Array.from(new Set([...prev, finalVal])))
+      }
+      if (typeof window !== 'undefined' && (businessId || activeBusiness?.id)) {
+        const bid = businessId || activeBusiness?.id
+        try {
+          const existing = JSON.parse(localStorage.getItem(`su_invoice_custom_opts_${bid}`) || '{}')
+          const list = Array.from(new Set([...(existing.custom_channels || []), finalVal]))
+          localStorage.setItem(`su_invoice_custom_opts_${bid}`, JSON.stringify({ ...existing, custom_channels: list }))
+        } catch {
+          // ignore
+        }
+      }
+      return finalVal
+    } else {
+      const stdMatch = STANDARD_COURIERS.find(s => s.toLowerCase() === val.toLowerCase())
+      if (stdMatch) return stdMatch
+      const custMatch = customCouriers.find(c => c.toLowerCase() === val.toLowerCase())
+      const finalVal = custMatch || val
+      if (!custMatch) {
+        setServerCustomCouriers(prev => Array.from(new Set([...prev, finalVal])))
+      }
+      if (typeof window !== 'undefined' && (businessId || activeBusiness?.id)) {
+        const bid = businessId || activeBusiness?.id
+        try {
+          const existing = JSON.parse(localStorage.getItem(`su_invoice_custom_opts_${bid}`) || '{}')
+          const list = Array.from(new Set([...(existing.custom_couriers || []), finalVal]))
+          localStorage.setItem(`su_invoice_custom_opts_${bid}`, JSON.stringify({ ...existing, custom_couriers: list }))
+        } catch {
+          // ignore
+        }
+      }
+      return finalVal
+    }
+  }
 
   // Unfold products into flat discrete items (Variants as individual rows, or parent product if no variants)
   const comboboxProducts = useMemo<ProductComboboxItem[]>(() => {
@@ -438,7 +554,10 @@ export default function NewInvoicePage() {
       }
     }
 
-    const finalSourcePlatform = sourcePlatform === 'Lainnya' ? (customSourcePlatform.trim() || 'Lainnya') : sourcePlatform
+    const rawResolvedChannel = sourcePlatform === 'Lainnya' ? (customSourcePlatform.trim() || 'Invoice') : sourcePlatform
+    const finalSourcePlatform = persistBusinessCustomOption('channel', rawResolvedChannel) || 'Invoice'
+    const rawResolvedCourier = courier === 'Lainnya' ? customCourier.trim() : courier
+    const finalCourier = rawResolvedCourier ? persistBusinessCustomOption('courier', rawResolvedCourier) : ''
 
     setSubmitting(true)
     setErrorMessage('')
@@ -480,7 +599,7 @@ export default function NewInvoicePage() {
         show_notes: showNotes,
         show_address: showAddress,
         show_shipping: showShipping,
-        courier: courier === 'Lainnya' ? customCourier : courier,
+        courier: finalCourier,
         tracking_number: trackingNumber
       }
 
@@ -589,13 +708,57 @@ export default function NewInvoicePage() {
                     }))
                   }}
                 />
-                {selectedCustomerId && (
-                  <div className="mt-2 p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-semibold text-slate-700">
-                    📍 <span className="font-bold">Alamat:</span> {
-                      formatAddress(customers.find(c => c.id === selectedCustomerId)?.address_data)
+                {selectedCustomerId && (() => {
+                  const selCust = customers.find(c => c.id === selectedCustomerId)
+                  const mk = selCust?.metadata?.marketplace_profiles
+                  const detectedChannels: { platform: string; handle: string }[] = []
+                  if (mk && typeof mk === 'object') {
+                    if (mk.shopee) detectedChannels.push({ platform: 'Shopee', handle: String(mk.shopee) })
+                    if (mk.tiktok) detectedChannels.push({ platform: 'TikTok', handle: String(mk.tiktok) })
+                    if (mk.tokopedia) detectedChannels.push({ platform: 'Tokopedia', handle: String(mk.tokopedia) })
+                    if (mk.other_handle || mk.other_platform) {
+                      const platName = String(mk.other_platform || 'Lainnya').trim()
+                      if (platName) {
+                        detectedChannels.push({ platform: platName, handle: String(mk.other_handle || '-') })
+                      }
                     }
-                  </div>
-                )}
+                  }
+                  return (
+                    <div className="mt-2 p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-semibold text-slate-700 space-y-2">
+                      <div>
+                        📍 <span className="font-bold">Alamat:</span> {formatAddress(selCust?.address_data)}
+                      </div>
+                      {detectedChannels.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/70">
+                          <span className="text-[10px] font-bold text-slate-500">Kanal Akun Customer:</span>
+                          {detectedChannels.map(dc => {
+                            const isCurrentChannel = sourcePlatform.toLowerCase() === dc.platform.toLowerCase()
+                            return (
+                              <button
+                                key={`${dc.platform}-${dc.handle}`}
+                                type="button"
+                                onClick={() => {
+                                  const saved = persistBusinessCustomOption('channel', dc.platform)
+                                  setSourcePlatform(saved)
+                                  setCustomSourcePlatform('')
+                                }}
+                                className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full border transition-all ${
+                                  isCurrentChannel
+                                    ? 'bg-blue-600 text-white border-blue-600'
+                                    : 'bg-white text-slate-700 border-slate-200 hover:border-blue-300 hover:text-blue-700'
+                                }`}
+                                title="Klik untuk menjadikan Kanal Sumber Pesanan invoice ini"
+                              >
+                                <span>🏷️ {dc.platform}: {dc.handle.replace(/^@/, '')}</span>
+                                <span className="text-[9px] opacity-80">{isCurrentChannel ? '(Aktif)' : '→ Pakai Kanal'}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             ) : (
               <div className="border-t border-slate-100 pt-3">
@@ -603,6 +766,7 @@ export default function NewInvoicePage() {
                   value={newCustForm}
                   onChange={setNewCustForm}
                   compact
+                  customPlatforms={customChannels}
                 />
               </div>
             )}
@@ -796,24 +960,56 @@ export default function NewInvoicePage() {
                 className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
               >
                 <option value="">-- Pilih Kurir --</option>
-                <option value="JNE">JNE</option>
-                <option value="J&T">J&T</option>
-                <option value="Sicepat">Sicepat</option>
-                <option value="POS">POS Indonesia</option>
-                <option value="Tiki">TIKI</option>
-                <option value="Anteraja">Anteraja</option>
-                <option value="Wahana">Wahana</option>
-                <option value="SPX">SPX (Shopee Xpress)</option>
-                <option value="Lainnya">Lainnya / Custom</option>
+                <optgroup label="Kurir Standar">
+                  <option value="JNE">JNE</option>
+                  <option value="J&T">J&T</option>
+                  <option value="Sicepat">Sicepat</option>
+                  <option value="POS">POS Indonesia</option>
+                  <option value="Tiki">TIKI</option>
+                  <option value="Anteraja">Anteraja</option>
+                  <option value="Wahana">Wahana</option>
+                  <option value="SPX">SPX (Shopee Xpress)</option>
+                </optgroup>
+                {customCouriers.length > 0 && (
+                  <optgroup label="Kurir Kustom Bisnis Anda">
+                    {customCouriers.map(c => (
+                      <option key={c} value={c}>🚚 {c}</option>
+                    ))}
+                  </optgroup>
+                )}
+                <option value="Lainnya">➕ Tambah Kurir Kustom Baru...</option>
               </select>
               {courier === 'Lainnya' && (
-                <input
-                  type="text"
-                  placeholder="Masukkan nama kurir custom..."
-                  value={customCourier}
-                  onChange={e => setCustomCourier(e.target.value)}
-                  className="w-full mt-2 p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
-                />
+                <div className="mt-2 flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Ketik nama kurir kustom (misal: Indah Cargo, Lalamove)..."
+                    value={customCourier}
+                    onChange={e => setCustomCourier(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && customCourier.trim()) {
+                        e.preventDefault()
+                        const saved = persistBusinessCustomOption('courier', customCourier)
+                        setCourier(saved)
+                        setCustomCourier('')
+                      }
+                    }}
+                    className="flex-1 p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+                  />
+                  <button
+                    type="button"
+                    disabled={!customCourier.trim()}
+                    onClick={() => {
+                      if (!customCourier.trim()) return
+                      const saved = persistBusinessCustomOption('courier', customCourier)
+                      setCourier(saved)
+                      setCustomCourier('')
+                    }}
+                    className="px-3 py-2 text-xs font-bold rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-all shrink-0"
+                  >
+                    + Simpan Kurir
+                  </button>
+                </div>
               )}
             </div>
             <div className="space-y-1">
@@ -841,7 +1037,11 @@ export default function NewInvoicePage() {
                     Sumber Pesanan & Opsi Lanjutan (Attribution)
                   </h2>
                   <p className="text-[10px] text-[#70706E]">
-                    Kanal penjualan: <span className="font-bold text-[#1C1C1A]">{sourcePlatform}</span> {sourceOrderRef && `• Ref: ${sourceOrderRef}`}
+                    Kanal penjualan:{' '}
+                    <span className="font-bold text-[#1C1C1A]">
+                      {sourcePlatform === 'Lainnya' ? (customSourcePlatform.trim() || 'Lainnya (Kustom)') : sourcePlatform}
+                    </span>{' '}
+                    {sourceOrderRef && `• Ref: ${sourceOrderRef}`}
                   </p>
                 </div>
               </div>
@@ -855,33 +1055,91 @@ export default function NewInvoicePage() {
 
             {showAdvancedSource && (
               <div className="pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-200">
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   <label className="text-xs font-bold text-[#70706E]">Kanal Sumber Pesanan (Sales Channel)</label>
                   <select
                     value={sourcePlatform}
                     onChange={e => setSourcePlatform(e.target.value)}
                     className="w-full p-2.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
                   >
-                    <option value="Invoice">📄 Invoice (Faktur Langsung - Default)</option>
-                    <option value="WhatsApp">📱 WhatsApp / Chat CS</option>
-                    <option value="Instagram">📸 Instagram Direct Message</option>
-                    <option value="Manual">💼 Manual (Sales Lapangan / B2B)</option>
-                    <option value="Shopee">🛍️ Shopee</option>
-                    <option value="Tokopedia">🟢 Tokopedia</option>
-                    <option value="TikTok">🎵 TikTok Shop</option>
-                    <option value="WooCommerce">🌐 WooCommerce / Website</option>
-                    <option value="Lainnya">✏️ Lainnya (Kustom)</option>
+                    <optgroup label="Kanal Standar">
+                      <option value="Invoice">📄 Invoice (Faktur Langsung - Default)</option>
+                      <option value="WhatsApp">📱 WhatsApp / Chat CS</option>
+                      <option value="Instagram">📸 Instagram Direct Message</option>
+                      <option value="Manual">💼 Manual (Sales Lapangan / B2B)</option>
+                      <option value="Shopee">🛍️ Shopee</option>
+                      <option value="Tokopedia">🟢 Tokopedia</option>
+                      <option value="TikTok">🎵 TikTok Shop</option>
+                      <option value="WooCommerce">🌐 WooCommerce / Website</option>
+                    </optgroup>
+                    {customChannels.length > 0 && (
+                      <optgroup label="Kanal Kustom Bisnis Anda">
+                        {customChannels.map(ch => (
+                          <option key={ch} value={ch}>🏷️ {ch}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    <option value="Lainnya">➕ Tambah Kanal Kustom Baru...</option>
                   </select>
+
                   {sourcePlatform === 'Lainnya' && (
-                    <input
-                      type="text"
-                      placeholder="Masukkan nama kanal kustom..."
-                      value={customSourcePlatform}
-                      onChange={e => setCustomSourcePlatform(e.target.value)}
-                      className="w-full mt-2 p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
-                    />
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Ketik nama kanal kustom (misal: Lazada, Blibli, Reseller B2B)..."
+                        value={customSourcePlatform}
+                        onChange={e => setCustomSourcePlatform(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && customSourcePlatform.trim()) {
+                            e.preventDefault()
+                            const saved = persistBusinessCustomOption('channel', customSourcePlatform)
+                            setSourcePlatform(saved)
+                            setCustomSourcePlatform('')
+                          }
+                        }}
+                        className="flex-1 p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
+                      />
+                      <button
+                        type="button"
+                        disabled={!customSourcePlatform.trim()}
+                        onClick={() => {
+                          if (!customSourcePlatform.trim()) return
+                          const saved = persistBusinessCustomOption('channel', customSourcePlatform)
+                          setSourcePlatform(saved)
+                          setCustomSourcePlatform('')
+                        }}
+                        className="px-3 py-2 text-xs font-bold rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-all shrink-0"
+                      >
+                        + Simpan Kanal
+                      </button>
+                    </div>
                   )}
-                  <p className="text-[10px] text-[#70706E]">Data ini akan diagregasi pada Laporan Sumber Penjualan.</p>
+
+                  {customChannels.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      <span className="text-[10px] font-bold text-slate-400">Kanal Kustom Bisnis:</span>
+                      {customChannels.map(ch => (
+                        <button
+                          key={ch}
+                          type="button"
+                          onClick={() => {
+                            setSourcePlatform(ch)
+                            setCustomSourcePlatform('')
+                          }}
+                          className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border transition-all ${
+                            sourcePlatform === ch
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-blue-300 hover:text-blue-700'
+                          }`}
+                        >
+                          🏷️ {ch}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-[#70706E]">
+                    Kanal kustom yang Anda tambahkan otomatis tersimpan untuk bisnis ini dan diagregasi pada Laporan Sumber Penjualan.
+                  </p>
                 </div>
 
                 <div className="space-y-1">
@@ -901,11 +1159,19 @@ export default function NewInvoicePage() {
                   <label className="text-xs font-bold text-[#70706E]">Sumber Iklan / Traffic (UTM Source - Opsional)</label>
                   <input
                     type="text"
+                    list="su-invoice-utm-sources"
                     placeholder="Misal: meta_ads, google, tiktok_ads, influencer..."
                     value={utmSource}
                     onChange={e => setUtmSource(e.target.value)}
                     className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
                   />
+                  {serverCustomUtmSources.length > 0 && (
+                    <datalist id="su-invoice-utm-sources">
+                      {serverCustomUtmSources.map(u => (
+                        <option key={u} value={u} />
+                      ))}
+                    </datalist>
+                  )}
                 </div>
 
                 {/* UTM Campaign */}
@@ -913,11 +1179,19 @@ export default function NewInvoicePage() {
                   <label className="text-xs font-bold text-[#70706E]">Nama Kampanye (UTM Campaign - Opsional)</label>
                   <input
                     type="text"
+                    list="su-invoice-utm-campaigns"
                     placeholder="Misal: promo_11_11, launching_b2b..."
                     value={utmCampaign}
                     onChange={e => setUtmCampaign(e.target.value)}
                     className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
                   />
+                  {serverCustomUtmCampaigns.length > 0 && (
+                    <datalist id="su-invoice-utm-campaigns">
+                      {serverCustomUtmCampaigns.map(u => (
+                        <option key={u} value={u} />
+                      ))}
+                    </datalist>
+                  )}
                 </div>
               </div>
             )}

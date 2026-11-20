@@ -226,11 +226,18 @@ export function CustomerSelectCombobox({
                         const mkList = mk
                           ? Object.entries(mk)
                               .filter(([k, v]) => Boolean(v) && k !== 'other_platform')
-                              .map(([k, v]) => `${k.charAt(0).toUpperCase() + k.slice(1)}: ${String(v).replace(/^@/, '')}`)
+                              .map(([k, v]) => {
+                                const label =
+                                  k === 'other_handle'
+                                    ? (mk.other_platform ? String(mk.other_platform).trim() : 'Marketplace')
+                                    : k.charAt(0).toUpperCase() + k.slice(1)
+                                return `${label}: ${String(v).replace(/^@/, '')}`
+                              })
                           : []
                         return (
                           <span className="text-[11px] text-slate-500 font-mono truncate">
                             {c.phone ? `📱 ${c.phone}` : (mkList.length > 0 ? `🛍️ ${mkList.slice(0, 2).join(' • ')}` : '📱 (Tanpa No HP)')}
+                            {c.phone && mkList.length > 0 ? ` • 🛍️ ${mkList.slice(0, 2).join(' • ')}` : ''}
                             {c.email ? ` • ✉️ ${c.email}` : ''}
                           </span>
                         )

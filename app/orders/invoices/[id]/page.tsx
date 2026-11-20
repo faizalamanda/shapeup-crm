@@ -1144,16 +1144,22 @@ export default function InvoiceDetailPage() {
                       if (list.length === 0) return null
                       return (
                         <div className="flex flex-wrap gap-1.5 pt-1">
-                          {list.map(([platform, handle]) => (
-                            <span
-                              key={platform}
-                              className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200/80"
-                            >
-                              <span>{platform === 'shopee' ? '🛍️' : platform === 'tiktok' ? '🎵' : platform === 'tokopedia' ? '🟢' : '🏬'}</span>
-                              <span className="capitalize">{platform}:</span>
-                              <span className="font-mono text-slate-900 font-bold">{String(handle).replace(/^@/, '')}</span>
-                            </span>
-                          ))}
+                          {list.map(([platform, handle]) => {
+                            const displayPlatform =
+                              platform === 'other_handle'
+                                ? (mk.other_platform ? String(mk.other_platform).trim() : 'Marketplace')
+                                : platform
+                            return (
+                              <span
+                                key={platform}
+                                className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200/80"
+                              >
+                                <span>{platform === 'shopee' ? '🛍️' : platform === 'tiktok' ? '🎵' : platform === 'tokopedia' ? '🟢' : '🏷️'}</span>
+                                <span className="capitalize">{displayPlatform}:</span>
+                                <span className="font-mono text-slate-900 font-bold">{String(handle).replace(/^@/, '')}</span>
+                              </span>
+                            )
+                          })}
                         </div>
                       )
                     })()}

@@ -112,6 +112,9 @@ const getChannelBadge = (sourcePlatform?: string, sourceOrder?: { channel?: stri
   } else if (channel === 'Manual') {
     icon = '💼'
     color = 'bg-amber-50 text-amber-700 border-amber-200'
+  } else if (channel !== 'Invoice') {
+    icon = '🏷️'
+    color = 'bg-blue-50 text-blue-700 border-blue-200'
   }
 
   return (

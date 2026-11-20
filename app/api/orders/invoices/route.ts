@@ -11,6 +11,134 @@ if (!(global as any).invoicesCache) {
   (global as any).invoicesCache = globalCache;
 }
 
+export const STANDARD_INVOICE_CHANNELS = [
+  'Invoice',
+  'WhatsApp',
+  'Instagram',
+  'Manual',
+  'Shopee',
+  'Tokopedia',
+  'TikTok',
+  'WooCommerce'
+]
+
+export const STANDARD_INVOICE_COURIERS = [
+  'JNE',
+  'J&T',
+  'Sicepat',
+  'POS',
+  'Tiki',
+  'Anteraja',
+  'Wahana',
+  'SPX'
+]
+
+export type BusinessCustomInvoiceOptions = {
+  custom_channels: string[]
+  custom_couriers: string[]
+  custom_utm_sources: string[]
+  custom_utm_campaigns: string[]
+}
+
+export function canonicalizeOption(input: string | null | undefined, standardList: string[], customList: string[] = []): string {
+  const trimmed = String(input || '').trim()
+  if (!trimmed) return ''
+  const lower = trimmed.toLowerCase()
+  const stdMatch = standardList.find(s => s.toLowerCase() === lower)
+  if (stdMatch) return stdMatch
+  const custMatch = customList.find(c => c.toLowerCase() === lower)
+  if (custMatch) return custMatch
+  return trimmed
+}
+
+export async function getBusinessCustomInvoiceOptions(
+  businessId: string,
+  supabaseAdmin: any
+): Promise<BusinessCustomInvoiceOptions> {
+  const cacheKey = `${businessId}:__custom_options__`
+  const cached = globalCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < 30000) {
+    return cached.data as BusinessCustomInvoiceOptions
+  }
+
+  const [{ data: ordersData }, { data: customersData }] = await Promise.all([
+    supabaseAdmin
+      .from('orders')
+      .select('source_platform, raw_source_data')
+      .eq('business_id', businessId)
+      .order('created_at', { ascending: false })
+      .limit(500),
+    supabaseAdmin
+      .from('customers')
+      .select('metadata')
+      .eq('business_id', businessId)
+      .not('metadata', 'is', null)
+      .limit(300)
+  ])
+
+  const stdChannelLower = new Set([...STANDARD_INVOICE_CHANNELS.map(c => c.toLowerCase()), 'pos', 'lainnya'])
+  const stdCourierLower = new Set([...STANDARD_INVOICE_COURIERS.map(c => c.toLowerCase()), 'lainnya'])
+
+  const channelMap = new Map<string, string>()
+  const courierMap = new Map<string, string>()
+  const utmSourceMap = new Map<string, string>()
+  const utmCampaignMap = new Map<string, string>()
+
+  const addUnique = (map: Map<string, string>, val: any, excludedLowerSet?: Set<string>) => {
+    const str = String(val || '').trim()
+    if (!str) return
+    const lower = str.toLowerCase()
+    if (excludedLowerSet && excludedLowerSet.has(lower)) return
+    if (!map.has(lower)) {
+      map.set(lower, str)
+    }
+  }
+
+  if (Array.isArray(ordersData)) {
+    for (const row of ordersData) {
+      const raw = row.raw_source_data || {}
+      const ch = raw.source_order?.channel || row.source_platform
+      addUnique(channelMap, ch, stdChannelLower)
+
+      addUnique(utmSourceMap, raw.source_order?.utm_source)
+      addUnique(utmCampaignMap, raw.source_order?.utm_campaign)
+
+      if (Array.isArray(raw.meta_data)) {
+        const kurir =
+          raw.meta_data.find((m: any) => m?.key === 'shapeup_kurir_awb')?.value ||
+          raw.meta_data.find((m: any) => m?.key === '_kurir_awb')?.value
+        addUnique(courierMap, kurir, stdCourierLower)
+      }
+    }
+  }
+
+  if (Array.isArray(customersData)) {
+    for (const c of customersData) {
+      const mk = c.metadata?.marketplace_profiles
+      if (mk && typeof mk === 'object') {
+        addUnique(channelMap, mk.other_platform, stdChannelLower)
+        for (const key of Object.keys(mk)) {
+          if (key !== 'other_platform' && key !== 'other_handle' && mk[key]) {
+            addUnique(channelMap, key, stdChannelLower)
+          }
+        }
+      }
+      addUnique(channelMap, c.metadata?.lead_source, stdChannelLower)
+      addUnique(channelMap, c.metadata?.custom_channel, stdChannelLower)
+    }
+  }
+
+  const result: BusinessCustomInvoiceOptions = {
+    custom_channels: Array.from(channelMap.values()).sort((a, b) => a.localeCompare(b, 'id')),
+    custom_couriers: Array.from(courierMap.values()).sort((a, b) => a.localeCompare(b, 'id')),
+    custom_utm_sources: Array.from(utmSourceMap.values()).sort((a, b) => a.localeCompare(b, 'id')),
+    custom_utm_campaigns: Array.from(utmCampaignMap.values()).sort((a, b) => a.localeCompare(b, 'id'))
+  }
+
+  globalCache.set(cacheKey, { data: result, timestamp: Date.now() })
+  return result
+}
+
 export function getInvoicesCache(cacheKey: string) {
   const cached = globalCache.get(cacheKey)
   if (cached && Date.now() - cached.timestamp < 10000) { // 10 seconds cache
@@ -51,8 +179,15 @@ export async function GET(req: Request) {
     const onlyAccounts = searchParams.get('only_accounts') === 'true'
 
     if (onlyAccounts) {
-      const paymentAccounts = await getActivePaymentAccounts(businessId, supabaseAdmin)
-      return NextResponse.json({ success: true, payment_accounts: paymentAccounts })
+      const [paymentAccounts, customOptions] = await Promise.all([
+        getActivePaymentAccounts(businessId, supabaseAdmin),
+        getBusinessCustomInvoiceOptions(businessId, supabaseAdmin)
+      ])
+      return NextResponse.json({
+        success: true,
+        payment_accounts: paymentAccounts,
+        custom_options: customOptions
+      })
     }
 
     // Check Server-Side Cache
@@ -277,7 +412,20 @@ export async function POST(req: Request) {
       }
     }
 
-    // 4. Save Invoice in orders table
+    // 4. Normalize Channel & Courier against Business Custom Options (Case-Insensitive Canonicalization)
+    const existingCustomOpts = await getBusinessCustomInvoiceOptions(businessId, supabaseAdmin)
+    const canonicalChannel = canonicalizeOption(
+      source_platform || 'Invoice',
+      STANDARD_INVOICE_CHANNELS,
+      existingCustomOpts.custom_channels
+    ) || 'Invoice'
+    const canonicalCourier = canonicalizeOption(
+      courier || '',
+      STANDARD_INVOICE_COURIERS,
+      existingCustomOpts.custom_couriers
+    )
+
+    // Save Invoice in orders table
     const rawSourceData = {
       is_invoice: true,
       due_date: due_date || null,
@@ -294,14 +442,14 @@ export async function POST(req: Request) {
       show_address,
       show_shipping,
       source_order: {
-        channel: source_platform || 'Invoice',
+        channel: canonicalChannel,
         reference_no: source_order_ref || '',
         utm_source: utm_source || '',
         utm_campaign: utm_campaign || '',
         ...(marketplace_profiles ? { marketplace_profiles } : {})
       },
       meta_data: [
-        { key: 'shapeup_kurir_awb', value: courier || '' },
+        { key: 'shapeup_kurir_awb', value: canonicalCourier },
         { key: 'shapeup_resi_awb', value: tracking_number || '' }
       ]
     }
@@ -339,7 +487,7 @@ export async function POST(req: Request) {
         user_id: user.id, // Save creator ID!
         customer_id: resolvedCustomerId,
         order_number: finalInvoiceNumber,
-        source_platform: source_platform || 'Invoice',
+        source_platform: canonicalChannel,
         order_date: dateObj.toISOString(),
         order_date_utc: dateObj.toISOString(),
         total_qty: totalQty,

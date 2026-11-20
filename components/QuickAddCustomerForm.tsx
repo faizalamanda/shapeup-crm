@@ -59,12 +59,13 @@ interface QuickAddCustomerFormProps {
   value: NewCustomerFormData
   onChange: (data: NewCustomerFormData) => void
   compact?: boolean
+  customPlatforms?: string[]
 }
 
 const inputCls = "w-full p-2 text-sm rounded-xl border border-[#EBEBEA] focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all"
 const labelCls = "text-xs font-bold text-[#70706E] block mb-1"
 
-export function QuickAddCustomerForm({ value, onChange, compact = false }: QuickAddCustomerFormProps) {
+export function QuickAddCustomerForm({ value, onChange, compact = false, customPlatforms = [] }: QuickAddCustomerFormProps) {
   const [showMarketplaceSection, setShowMarketplaceSection] = useState(
     Boolean(
       value.marketplace_profiles?.shopee ||
@@ -188,27 +189,54 @@ export function QuickAddCustomerForm({ value, onChange, compact = false }: Quick
 
             {/* Platform Lainnya (Tokopedia, Lazada, Amazon, dll) */}
             {showOtherPlatform ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-                <div>
-                  <label className="text-[11px] font-bold text-slate-600 mb-1 block">Nama Platform Lain</label>
-                  <input
-                    type="text"
-                    value={value.marketplace_profiles?.other_platform || ''}
-                    onChange={e => setMarketplace('other_platform', e.target.value)}
-                    placeholder="Contoh: Tokopedia, Lazada, Amazon, Etsy"
-                    className={inputCls}
-                  />
+              <div className="space-y-2 pt-1">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-600 mb-1 block">Nama Platform Lain</label>
+                    <input
+                      type="text"
+                      list="su-custom-marketplace-platforms"
+                      value={value.marketplace_profiles?.other_platform || ''}
+                      onChange={e => setMarketplace('other_platform', e.target.value)}
+                      placeholder="Contoh: Tokopedia, Lazada, Amazon, Etsy"
+                      className={inputCls}
+                    />
+                    <datalist id="su-custom-marketplace-platforms">
+                      {Array.from(new Set(['Tokopedia', 'Lazada', 'Blibli', 'Amazon', 'Etsy', ...customPlatforms])).map(plat => (
+                        <option key={plat} value={plat} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-600 mb-1 block">Username / ID Pembeli</label>
+                    <input
+                      type="text"
+                      value={value.marketplace_profiles?.other_handle || ''}
+                      onChange={e => setMarketplace('other_handle', e.target.value.replace(/^@/, ''))}
+                      placeholder="Contoh: budi_collection"
+                      className={inputCls}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="text-[11px] font-bold text-slate-600 mb-1 block">Username / ID Pembeli</label>
-                  <input
-                    type="text"
-                    value={value.marketplace_profiles?.other_handle || ''}
-                    onChange={e => setMarketplace('other_handle', e.target.value.replace(/^@/, ''))}
-                    placeholder="Contoh: budi_collection"
-                    className={inputCls}
-                  />
-                </div>
+                {customPlatforms.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                    <span className="text-[10px] font-bold text-slate-400">Kanal Bisnis:</span>
+                    {customPlatforms.map(plat => (
+                      <button
+                        key={plat}
+                        type="button"
+                        onClick={() => setMarketplace('other_platform', plat)}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-all ${
+                          value.marketplace_profiles?.other_platform === plat
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-700'
+                        }`}
+                      >
+                        🏷️ {plat}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="pt-1">

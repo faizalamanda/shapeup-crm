@@ -72,7 +72,18 @@ Marketplace (Shopee, TikTok Shop, Tokopedia, Lazada, Amazon, dll.) menerapkan se
    - **Tier 1:** Jika ada nomor HP $\rightarrow$ Cocokkan simetris E.164 (`08` $\leftrightarrow$ `628`).
    - **Tier 2:** Jika nomor HP kosong $\rightarrow$ Cocokkan username marketplace pembeli di tabel `customers` pada unit bisnis terkait. Jika cocok, sambungkan ke pelanggan existing (*repeat buyer attribution*).
    - **Tier 3:** Jika tidak ditemukan $\rightarrow$ Terbitkan pelanggan baru dengan metadata marketplace.
-4. **Visual Badge Gudang:** Tampilan rincian invoice dan struk cetak wajib merender badge platform (`Shopee: budi_olshop`, `TikTok: anita_store`) untuk memudahkan operasional packing dan cross-check resi kurir.
+4. **Visual Badge Gudang & Resolusi `other_platform`:** Tampilan rincian invoice (`/orders/invoices/[id]`) dan `CustomerSelectCombobox` wajib merender badge platform (`Shopee: budi_olshop`, `TikTok: anita_store`). Untuk platform kustom (`other_handle`), label platform **WAJIB** menggunakan nilai `marketplace_profiles.other_platform` (misal: `🏷️ Lazada: budi_collection`), dilarang menampilkan key mentah `Other_handle`.
+
+### 2.4 Auto-Discovery & Persistensi Kanal / Kurir / UTM Kustom Milik Bisnis (Adaptive Taxonomy)
+Untuk mencegah *folksonomy drift* (variasi ketik/typo yang memecah laporan analitik) dan menghilangkan friksi UX mengetik ulang kanal kustom:
+1. **Server-Side Hybrid Auto-Discovery (`getBusinessCustomInvoiceOptions`):**
+   - Endpoint `GET /api/orders/invoices?only_accounts=true` dan `GET /api/orders/invoices/[id]` mengekstrak daftar unik **`custom_channels`**, **`custom_couriers`**, **`custom_utm_sources`**, dan **`custom_utm_campaigns`** milik `business_id` aktif (di-cache 30 detik di memori server dan di-invalidate otomatis saat mutasi invoice).
+   - `custom_channels` dikumpulkan dari `orders.source_platform`, `orders.raw_source_data.source_order.channel`, serta `customers.metadata.marketplace_profiles.other_platform` (dan `lead_source` / `custom_channel`), dide-duplikasi secara *case-insensitive* terhadap kanal standar (`STANDARD_INVOICE_CHANNELS`).
+2. **Case-Insensitive Canonicalization (`canonicalizeOption`):**
+   - Pada `POST /api/orders/invoices` dan `PUT /api/orders/invoices/[id]`, nilai `source_platform` dan `courier` dinormalisasi terhadap daftar standar dan daftar kustom bisnis yang sudah ada (misal input `"lazada"` otomatis disatukan ke `"Lazada"` jika bisnis sudah memiliki kanal `"Lazada"`).
+3. **L2 Client Storage & First-Class Dropdown Options:**
+   - Di halaman Buat Baru (`/orders/invoices/new`) dan Edit (`/orders/invoices/[id]/edit`), opsi kustom disimpan juga pada `localStorage` ber-namespace `su_invoice_custom_opts_${businessId}` untuk ketersediaan instan `0ms`.
+   - Kanal dan kurir kustom milik bisnis ditampilkan langsung sebagai `<optgroup label="Kanal Kustom Bisnis Anda">` (`🏷️`) dan `<optgroup label="Kurir Kustom Bisnis Anda">` (`🚚`), dilengkapi tombol `+ Simpan Kanal` / `+ Simpan Kurir`, *quick-select chips*, serta tombol 1-klik `Kanal Akun Customer` saat pelanggan pemilik akun marketplace dipilih.
 
 ---
 

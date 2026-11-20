@@ -197,18 +197,45 @@ export default function OrderPage() {
     'ewallet',
   ], [])
 
-  const availableOrderSources = useMemo(() => [
-    'WooCommerce',
-    'Invoice',
-    'POS',
-    'Manual',
-    'Shopee',
-    'Tokopedia',
-    'TikTok',
-    'Lazada',
-    'WhatsApp',
-    'Instagram',
-  ], [])
+  const availableOrderSources = useMemo(() => {
+    const defaults = [
+      'WooCommerce',
+      'Invoice',
+      'POS',
+      'Manual',
+      'Shopee',
+      'Tokopedia',
+      'TikTok',
+      'Lazada',
+      'WhatsApp',
+      'Instagram',
+    ]
+    const lowerMap = new Map<string, string>()
+    defaults.forEach(s => lowerMap.set(s.toLowerCase(), s))
+    orders.forEach(o => {
+      const ch = String(o.raw_source_data?.source_order?.channel || o.source_platform || '').trim()
+      if (ch && !lowerMap.has(ch.toLowerCase())) {
+        lowerMap.set(ch.toLowerCase(), ch)
+      }
+    })
+    if (typeof window !== 'undefined' && activeBizId) {
+      try {
+        const rawLocal = localStorage.getItem(`su_invoice_custom_opts_${activeBizId}`)
+        if (rawLocal) {
+          const parsed = JSON.parse(rawLocal)
+          if (Array.isArray(parsed.custom_channels)) {
+            parsed.custom_channels.forEach((ch: string) => {
+              const s = String(ch || '').trim()
+              if (s && !lowerMap.has(s.toLowerCase())) lowerMap.set(s.toLowerCase(), s)
+            })
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return Array.from(lowerMap.values())
+  }, [orders, activeBizId])
 
   const [availableProducts, setAvailableProducts] = useState<string[]>([])
 

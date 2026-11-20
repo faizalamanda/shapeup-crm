@@ -3,7 +3,13 @@ import { getActivePaymentAccounts, resolvePaymentAccountFromCOA } from '@/lib/ac
 import { resolveOrCreateCustomer } from '@/lib/customerHelper'
 import { syncOrderToLedger } from '@/lib/orderLedger'
 import { isUuid } from '@/lib/utils'
-import { invalidateInvoicesCache } from '../route'
+import {
+  invalidateInvoicesCache,
+  getBusinessCustomInvoiceOptions,
+  canonicalizeOption,
+  STANDARD_INVOICE_CHANNELS,
+  STANDARD_INVOICE_COURIERS
+} from '../route'
 import { NextResponse } from 'next/server'
 
 export async function GET(
@@ -32,14 +38,15 @@ export async function GET(
       return NextResponse.json({ error: 'Invoice tidak ditemukan' }, { status: 404 })
     }
 
-    // Fetch active Cash/Bank COA accounts of this business & order_payments in parallel
-    const [{ data: allOrderPays }, paymentAccounts] = await Promise.all([
+    // Fetch active Cash/Bank COA accounts of this business, order_payments, and custom options in parallel
+    const [{ data: allOrderPays }, paymentAccounts, customOptions] = await Promise.all([
       supabaseAdmin
         .from('order_payments')
         .select('*')
         .eq('order_id', id)
         .order('created_at', { ascending: true }),
-      getActivePaymentAccounts(businessId, supabaseAdmin)
+      getActivePaymentAccounts(businessId, supabaseAdmin),
+      getBusinessCustomInvoiceOptions(businessId, supabaseAdmin)
     ])
 
     const reversedPayIds = new Set(
@@ -88,6 +95,7 @@ export async function GET(
     return NextResponse.json({
       success: true,
       payment_accounts: paymentAccounts,
+      custom_options: customOptions,
       invoice: {
         ...invoice,
         payment_status: normalizedPaymentStatus,
@@ -205,6 +213,16 @@ export async function PUT(
       return NextResponse.json({ success: true, message: 'Invoice berhasil dibatalkan' })
     }
 
+    const existingCustomOpts = await getBusinessCustomInvoiceOptions(businessId, supabaseAdmin)
+    const normalizedSourcePlatform =
+      source_platform !== undefined
+        ? (canonicalizeOption(source_platform, STANDARD_INVOICE_CHANNELS, existingCustomOpts.custom_channels) || 'Invoice')
+        : undefined
+    const normalizedCourier =
+      courier !== undefined
+        ? canonicalizeOption(courier, STANDARD_INVOICE_COURIERS, existingCustomOpts.custom_couriers)
+        : undefined
+
     // Check if it's purely a design/customization update on an already completed & paid invoice
     const isPaymentUpdateRequested =
       payment_status !== undefined ||
@@ -234,20 +252,20 @@ export async function PUT(
         show_address: show_address !== undefined ? show_address : (currentRaw.show_address !== undefined ? currentRaw.show_address : true),
         show_shipping: show_shipping !== undefined ? show_shipping : (currentRaw.show_shipping !== undefined ? currentRaw.show_shipping : true),
         source_order: {
-          channel: source_platform !== undefined ? source_platform : (currentRaw.source_order?.channel || existing.source_platform || 'Invoice'),
+          channel: normalizedSourcePlatform !== undefined ? normalizedSourcePlatform : (currentRaw.source_order?.channel || existing.source_platform || 'Invoice'),
           reference_no: source_order_ref !== undefined ? source_order_ref : (currentRaw.source_order?.reference_no || ''),
           utm_source: utm_source !== undefined ? utm_source : (currentRaw.source_order?.utm_source || ''),
           utm_campaign: utm_campaign !== undefined ? utm_campaign : (currentRaw.source_order?.utm_campaign || '')
         },
         meta_data: [
-          { key: 'shapeup_kurir_awb', value: courier !== undefined ? courier : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_kurir_awb')?.value || '') },
+          { key: 'shapeup_kurir_awb', value: normalizedCourier !== undefined ? normalizedCourier : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_kurir_awb')?.value || '') },
           { key: 'shapeup_resi_awb', value: tracking_number !== undefined ? tracking_number : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_resi_awb')?.value || '') }
         ]
       }
 
       const updateData: Record<string, any> = { raw_source_data: updatedRaw }
-      if (source_platform !== undefined) {
-        updateData.source_platform = source_platform
+      if (normalizedSourcePlatform !== undefined) {
+        updateData.source_platform = normalizedSourcePlatform
       }
 
       const { data: updated, error: updErr } = await supabaseAdmin
@@ -304,13 +322,13 @@ export async function PUT(
       show_address: show_address !== undefined ? show_address : (currentRaw.show_address !== undefined ? currentRaw.show_address : true),
       show_shipping: show_shipping !== undefined ? show_shipping : (currentRaw.show_shipping !== undefined ? currentRaw.show_shipping : true),
       source_order: {
-        channel: source_platform !== undefined ? source_platform : (currentRaw.source_order?.channel || existing.source_platform || 'Invoice'),
+        channel: normalizedSourcePlatform !== undefined ? normalizedSourcePlatform : (currentRaw.source_order?.channel || existing.source_platform || 'Invoice'),
         reference_no: source_order_ref !== undefined ? source_order_ref : (currentRaw.source_order?.reference_no || ''),
         utm_source: utm_source !== undefined ? utm_source : (currentRaw.source_order?.utm_source || ''),
         utm_campaign: utm_campaign !== undefined ? utm_campaign : (currentRaw.source_order?.utm_campaign || '')
       },
       meta_data: [
-        { key: 'shapeup_kurir_awb', value: courier !== undefined ? courier : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_kurir_awb')?.value || '') },
+        { key: 'shapeup_kurir_awb', value: normalizedCourier !== undefined ? normalizedCourier : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_kurir_awb')?.value || '') },
         { key: 'shapeup_resi_awb', value: tracking_number !== undefined ? tracking_number : (currentRaw.meta_data?.find((m: any) => m.key === 'shapeup_resi_awb')?.value || '') }
       ]
     }
@@ -362,7 +380,7 @@ export async function PUT(
 
     const updatePayload: Record<string, any> = {
       customer_id: resolvedCustomerId,
-      source_platform: source_platform !== undefined ? source_platform : existing.source_platform,
+      source_platform: normalizedSourcePlatform !== undefined ? normalizedSourcePlatform : existing.source_platform,
       order_date: !isItemsLocked && order_date ? new Date(order_date).toISOString() : existing.order_date,
       order_date_utc: !isItemsLocked && order_date ? new Date(order_date).toISOString() : existing.order_date_utc,
       total_qty: totalQty,
