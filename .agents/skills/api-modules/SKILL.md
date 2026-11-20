@@ -501,9 +501,9 @@ Pahami pemisahan tanggung jawab antara **`syncOrderToLedger()`** dan **`lib/paym
    - **Kapan Digunakan:** Saat pesanan sudah ada di sistem sebelumnya (stok dan penjualan sudah diakui di masa lalu), lalu ada transaksi keuangan lanjutan.
    - **Fungsi Utama:**
      - `recordOrderPayment()`: Pelunasan cicilan / DP susulan (murni Debit Kas/Bank `101000`/`101200` dan Kredit Piutang Usaha `103000` tanpa memicu mutasi stok ulang).
-     - `voidOrderPayment()`: Pembatalan satu baris pembayaran yang salah tender secara *append-only* (Debit Piutang, Kredit Kas/Bank).
+     - `voidOrderPayment()`: Pembatalan satu baris pembayaran yang salah tender/akun secara *append-only* (Debit Piutang `103000`, Kredit Kas/Bank COA asal) pada tanggal efektif pembayaran asal (*PSAK 225 Same-Date Reversal*). Digunakan baik di Kasir POS (`POST /api/pos/order/payment-void`) maupun di Modul Invoice (`POST /api/orders/invoices/[id]/payment` dengan `action: 'void' | 'replace'`, serta saat koreksi pembayaran di `PUT /api/orders/invoices/[id]`).
      - `voidPosCashMovement()`: Pembatalan mutasi kas keluar/masuk (*petty cash*) pada sesi shift POS aktif via jurnal pembalik kompensasi berpasangan (*Compensating Reversal*).
-     - `recalculateOrderPaymentStatus()`: Sinkronisasi ulang `amount_paid` dan `payment_status` (`unpaid`, `partial`, `paid`).
+     - `recalculateOrderPaymentStatus()`: Sinkronisasi ulang `amount_paid`, `payment_status` (`unpaid`, `partial`, `paid`), dan `payment_method` (mengikuti metode pembayaran aktif terakhir atau `null` jika `unpaid`).
 
 ---
 

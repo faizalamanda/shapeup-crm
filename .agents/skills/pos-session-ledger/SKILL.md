@@ -157,16 +157,17 @@ Ketika kasir memilih produk yang memiliki varian atau modifier, antarmuka membuk
 
 Dilarang keras melakukan `DELETE` atau menghapus rekaman pembayaran historis.
 
-### 3.1 Void Per Baris Tender (Payment Line Void)
-- Kasir dapat membatalkan baris tender tertentu jika salah memasukkan nominal atau salah memilih metode (misal terlanjur klik Tunai padahal pelanggan bayar QRIS).
+### 3.1 Void Per Baris Tender / Pembayaran (Payment Line Void — POS & Invoice)
+- Kasir POS maupun Admin/Staf Invoice dapat membatalkan baris pembayaran tertentu jika salah memasukkan nominal atau salah memilih metode/akun Kas & Bank COA (misal terlanjur klik Tunai/BCA padahal pelanggan bayar QRIS/Mandiri).
 - Alur:
-  1. Panggil `POST /api/pos/order/payment-void` dengan `payment_id` dan `void_reason`.
-  2. Sistem memasukkan baris baru ke `order_payments` dengan:
+  1. **Kasir POS:** Panggil `POST /api/pos/order/payment-void` dengan `payment_id` dan `void_reason` (dilindungi *Active Shift Gating*).
+  2. **Faktur / Invoice:** Panggil `POST /api/orders/invoices/[id]/payment` dengan `action: 'void'` (atau `action: 'replace'` untuk sekaligus mencatat pembayaran pengganti dalam 1 langkah).
+  3. Sistem (`voidOrderPayment` di `lib/paymentLedger.ts`) memasukkan baris baru ke `order_payments` dengan:
      - `payment_kind = 'void'`
      - `voided_payment_id = original_payment.id`
-     - `shift_id = active_shift.id` (mengurangi kas fisik di laci kasir saat ini jika tunai).
-  3. Memposting jurnal pembalik (Debit Piutang `103000`, Credit Kas/Bank).
-  4. Menghitung ulang saldo terbayar (`orders.amount_paid`) dan status pembayaran (`orders.payment_status`).
+     - `shift_id = active_shift.id` (untuk POS, mengurangi kas fisik di laci kasir saat ini jika tunai).
+  4. Memposting jurnal pembalik (Debit Piutang `103000`, Credit Kas/Bank COA asal) pada tanggal efektif pembayaran asal (*PSAK 225 Same-Date Reversal*) agar rekonsiliasi bank dan arus kas pada tanggal tersebut bersih (*net zero*).
+  5. Menghitung ulang saldo terbayar (`orders.amount_paid`), status pembayaran (`orders.payment_status`), dan metode bayar aktif (`orders.payment_method`).
 
 ### 3.2 Pembatalan & Refund Pesanan Penuh (Full Order Refund)
 - Saat pesanan dibatalkan/direfund:

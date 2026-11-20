@@ -145,22 +145,24 @@ export async function syncOrderToLedger(
 
       const isSalesTx = (tx: any) => 
         (tx.description.includes('Penjualan') || tx.description.includes('Penerbitan') || tx.description.includes('Sales')) && 
-        !tx.description.includes('Pembatalan') && !tx.description.includes('Retur') && !tx.description.includes('Refund') && !tx.description.includes('Reversal')
+        !tx.description.includes('Pembatalan') && !tx.description.includes('Retur') && !tx.description.includes('Refund') && !tx.description.includes('Reversal') && !tx.description.includes('Void')
 
       const isPaymentTx = (tx: any) => 
         (tx.description.includes('Pelunasan') || tx.description.includes('Pembayaran') || tx.description.includes('Payment')) && 
-        !tx.description.includes('Pembatalan') && !tx.description.includes('Retur') && !tx.description.includes('Refund') && !tx.description.includes('Reversal')
+        !tx.description.includes('Pembatalan') && !tx.description.includes('Retur') && !tx.description.includes('Refund') && !tx.description.includes('Reversal') && !tx.description.includes('Void')
 
       const isReversalSalesTx = (tx: any) => 
-        (tx.description.includes('Pembatalan') || tx.description.includes('Retur') || tx.description.includes('Refund') || tx.description.includes('Reversal')) && 
+        (tx.description.includes('Pembatalan') || tx.description.includes('Retur') || tx.description.includes('Refund') || tx.description.includes('Reversal') || tx.description.includes('Void')) && 
         (tx.description.includes('Penjualan') || tx.description.includes('Penerbitan') || tx.description.includes('Sales'))
 
       const isReversalPaymentTx = (tx: any) => 
         (tx.description.includes('Pembatalan') || tx.description.includes('Retur') || tx.description.includes('Refund') || tx.description.includes('Reversal')) && 
         (tx.description.includes('Pelunasan') || tx.description.includes('Pembayaran') || tx.description.includes('Payment'))
 
-      salesTx = txs?.find(isSalesTx)
-      paymentTx = txs?.find(isPaymentTx)
+      const allSalesTxs = (txs || []).filter(isSalesTx)
+      const allPaymentTxs = (txs || []).filter(isPaymentTx)
+      salesTx = allSalesTxs.length > 0 ? allSalesTxs[allSalesTxs.length - 1] : undefined
+      paymentTx = allPaymentTxs.length > 0 ? allPaymentTxs[allPaymentTxs.length - 1] : undefined
       reversalSalesTx = txs?.find(isReversalSalesTx)
       reversalPaymentTx = txs?.find(isReversalPaymentTx)
 
@@ -382,7 +384,16 @@ export async function syncOrderToLedger(
 
         const existingTxIds = new Set((txs || []).map((t: any) => t.id))
 
-        if (!paymentTx) {
+        // Check if existing paymentTxs belong to already-voided payments
+        const voidedTxIds = new Set(
+          (allOrderPays || [])
+            .filter((p: any) => p.payment_kind === 'payment' && reversedIds.has(p.id) && p.transaction_id)
+            .map((p: any) => p.transaction_id)
+        )
+        const activePaymentTxs = allPaymentTxs.filter((tx: any) => !voidedTxIds.has(tx.id))
+        const activePaymentTx = activePaymentTxs.length > 0 ? activePaymentTxs[activePaymentTxs.length - 1] : undefined
+
+        if (!activePaymentTx) {
           if (existingOrderPays && existingOrderPays.length > 0) {
             if (existingOrderPays[0].created_at) {
               paymentDate = existingOrderPays[0].created_at
@@ -422,11 +433,12 @@ export async function syncOrderToLedger(
           }
 
           if (paymentLines.length > 0 && totalPaymentAmount > 0) {
+            const firstUnlinkedRef = existingOrderPays?.[0]?.id ? ` (Ref ${String(existingOrderPays[0].id).slice(0, 8)})` : ''
             effectivePostResult = await postJournalTransaction(
               businessId,
               orderId,
               paymentDate,
-              `Pembayaran ${platform} #${orderNumber}`,
+              paymentTx ? `Pembayaran ${platform} #${orderNumber}${firstUnlinkedRef}` : `Pembayaran ${platform} #${orderNumber}`,
               paymentLines,
               supabase,
               false // Always check existing to prevent duplicate transactions
@@ -446,73 +458,37 @@ export async function syncOrderToLedger(
               }
             }
           }
-        } else if (paymentTx && existingOrderPays && existingOrderPays.length > 0) {
-          // If paymentTx already exists:
-          // Case A: Single active payment whose amount/account/date was edited in Edit Invoice
-          if (existingOrderPays.length === 1) {
-            const p = existingOrderPays[0]
+        } else if (activePaymentTx && existingOrderPays && existingOrderPays.length > 0) {
+          // Post any unlinked or orphaned active payments (e.g. replacement payment or installment payment)
+          const unlinkedPays = existingOrderPays.filter(
+            (p: any) => (!p.transaction_id || !existingTxIds.has(p.transaction_id)) && Number(p.amount) > 0
+          )
+          for (const p of unlinkedPays) {
             const pAmt = Number(p.amount) || 0
+            if (pAmt <= 0) continue
             const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
             const pDate = p.created_at || (p.date ? `${p.date}T12:00:00Z` : paymentDate)
-            const existingLines = paymentTx.journal_lines || []
-            const debitLine = existingLines.find((jl: any) => Number(jl.debit) > 0)
-            const creditLine = existingLines.find((jl: any) => Number(jl.credit) > 0)
-
-            const linesMismatch =
-              !debitLine ||
-              !creditLine ||
-              Math.abs(Number(debitLine.debit) - pAmt) > 0.01 ||
-              Math.abs(Number(creditLine.credit) - pAmt) > 0.01 ||
-              debitLine.account_id !== accId
-
-            if (linesMismatch && pAmt > 0) {
-              await supabase.from('journal_lines').delete().eq('transaction_id', paymentTx.id)
-              await supabase.from('journal_lines').insert([
-                { transaction_id: paymentTx.id, account_id: accId, debit: pAmt, credit: 0 },
-                { transaction_id: paymentTx.id, account_id: accountMap['103000'], debit: 0, credit: pAmt }
-              ])
-            }
-            if (pDate && paymentTx.date !== pDate) {
-              await supabase.from('transactions').update({ date: pDate }).eq('id', paymentTx.id)
-            }
-            if (p.transaction_id !== paymentTx.id || p.payment_method_account_id !== accId) {
+            const pLines = [
+              { account_id: accId, debit: pAmt, credit: 0 },
+              { account_id: accountMap['103000'], debit: 0, credit: pAmt }
+            ]
+            const installmentTx = await postJournalTransaction(
+              businessId,
+              orderId,
+              pDate,
+              `Pembayaran ${platform} #${orderNumber} (${p.notes || `Ref ${String(p.id).slice(0, 8)}`})`,
+              pLines,
+              supabase,
+              false
+            )
+            if (installmentTx?.transactionId) {
               await supabase
                 .from('order_payments')
-                .update({ transaction_id: paymentTx.id, payment_method_account_id: accId })
+                .update({
+                  transaction_id: installmentTx.transactionId,
+                  payment_method_account_id: accId
+                })
                 .eq('id', p.id)
-            }
-          } else {
-            // Case B: Multiple installment payments — post any unlinked or orphaned installment payments
-            const unlinkedPays = existingOrderPays.filter(
-              (p: any) => (!p.transaction_id || !existingTxIds.has(p.transaction_id)) && Number(p.amount) > 0
-            )
-            for (const p of unlinkedPays) {
-              const pAmt = Number(p.amount) || 0
-              if (pAmt <= 0) continue
-              const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
-              const pDate = p.created_at || (p.date ? `${p.date}T12:00:00Z` : paymentDate)
-              const pLines = [
-                { account_id: accId, debit: pAmt, credit: 0 },
-                { account_id: accountMap['103000'], debit: 0, credit: pAmt }
-              ]
-              const installmentTx = await postJournalTransaction(
-                businessId,
-                orderId,
-                pDate,
-                `Pembayaran ${platform} #${orderNumber} (${p.notes || `Ref ${String(p.id).slice(0, 8)}`})`,
-                pLines,
-                supabase,
-                false
-              )
-              if (installmentTx?.transactionId) {
-                await supabase
-                  .from('order_payments')
-                  .update({
-                    transaction_id: installmentTx.transactionId,
-                    payment_method_account_id: accId
-                  })
-                  .eq('id', p.id)
-              }
             }
           }
         }
@@ -598,41 +574,48 @@ export async function syncOrderToLedger(
       }
       if (!reversalPaymentTx) {
         let reversalLines: any[] = []
-        if (paymentTx && paymentTx.journal_lines && paymentTx.journal_lines.length > 0) {
+        // Always check active unvoided payments from order_payments first so we never double-reverse voided payments
+        const { data: allPaysForRev } = await supabase
+          .from('order_payments')
+          .select('*')
+          .eq('order_id', orderId)
+
+        const voidedOrRefundedIds = new Set(
+          (allPaysForRev || [])
+            .filter((p: any) => p.payment_kind === 'void' || p.payment_kind === 'refund')
+            .map((p: any) => p.voided_payment_id)
+            .filter(Boolean)
+        )
+        const paysToReverse = (allPaysForRev || []).filter(
+          (p: any) => p.payment_kind === 'payment' && !voidedOrRefundedIds.has(p.id)
+        )
+
+        if (paysToReverse && paysToReverse.length > 0) {
+          let totalRevAmt = 0
+          for (const p of paysToReverse) {
+            const pAmt = Number(p.amount) || 0
+            if (pAmt <= 0) continue
+            const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
+            reversalLines.push({
+              account_id: accId,
+              debit: 0,
+              credit: pAmt
+            })
+            totalRevAmt += pAmt
+          }
+          if (totalRevAmt > 0) {
+            reversalLines.unshift({
+              account_id: accountMap['103000'],
+              debit: totalRevAmt,
+              credit: 0
+            })
+          }
+        } else if ((!allPaysForRev || allPaysForRev.length === 0) && paymentTx && paymentTx.journal_lines && paymentTx.journal_lines.length > 0) {
           reversalLines = paymentTx.journal_lines.map((line: any) => ({
             account_id: line.account_id,
             debit: line.credit,
             credit: line.debit
           }))
-        } else {
-          // Fallback: If paymentTx wasn't previously generated, reverse active payments from order_payments
-          const { data: paysToReverse } = await supabase
-            .from('order_payments')
-            .select('*')
-            .eq('order_id', orderId)
-            .eq('payment_kind', 'payment')
-
-          if (paysToReverse && paysToReverse.length > 0) {
-            let totalRevAmt = 0
-            for (const p of paysToReverse) {
-              const pAmt = Number(p.amount) || 0
-              if (pAmt <= 0) continue
-              const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
-              reversalLines.push({
-                account_id: accId,
-                debit: 0,
-                credit: pAmt
-              })
-              totalRevAmt += pAmt
-            }
-            if (totalRevAmt > 0) {
-              reversalLines.unshift({
-                account_id: accountMap['103000'],
-                debit: totalRevAmt,
-                credit: 0
-              })
-            }
-          }
         }
 
         if (reversalLines.length > 0) {
@@ -659,41 +642,47 @@ export async function syncOrderToLedger(
       }
       if (!reversalPaymentTx) {
         let reversalLines: any[] = []
-        if (paymentTx && paymentTx.journal_lines && paymentTx.journal_lines.length > 0) {
+        const { data: allPaysForRev } = await supabase
+          .from('order_payments')
+          .select('*')
+          .eq('order_id', orderId)
+
+        const voidedOrRefundedIds = new Set(
+          (allPaysForRev || [])
+            .filter((p: any) => p.payment_kind === 'void' || p.payment_kind === 'refund')
+            .map((p: any) => p.voided_payment_id)
+            .filter(Boolean)
+        )
+        const paysToReverse = (allPaysForRev || []).filter(
+          (p: any) => p.payment_kind === 'payment' && !voidedOrRefundedIds.has(p.id)
+        )
+
+        if (paysToReverse && paysToReverse.length > 0) {
+          let totalRevAmt = 0
+          for (const p of paysToReverse) {
+            const pAmt = Number(p.amount) || 0
+            if (pAmt <= 0) continue
+            const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
+            reversalLines.push({
+              account_id: accId,
+              debit: 0,
+              credit: pAmt
+            })
+            totalRevAmt += pAmt
+          }
+          if (totalRevAmt > 0) {
+            reversalLines.unshift({
+              account_id: accountMap['103000'],
+              debit: totalRevAmt,
+              credit: 0
+            })
+          }
+        } else if ((!allPaysForRev || allPaysForRev.length === 0) && paymentTx && paymentTx.journal_lines && paymentTx.journal_lines.length > 0) {
           reversalLines = paymentTx.journal_lines.map((line: any) => ({
             account_id: line.account_id,
             debit: line.credit,
             credit: line.debit
           }))
-        } else {
-          // Fallback: If paymentTx wasn't previously generated, reverse active payments from order_payments
-          const { data: paysToReverse } = await supabase
-            .from('order_payments')
-            .select('*')
-            .eq('order_id', orderId)
-            .eq('payment_kind', 'payment')
-
-          if (paysToReverse && paysToReverse.length > 0) {
-            let totalRevAmt = 0
-            for (const p of paysToReverse) {
-              const pAmt = Number(p.amount) || 0
-              if (pAmt <= 0) continue
-              const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
-              reversalLines.push({
-                account_id: accId,
-                debit: 0,
-                credit: pAmt
-              })
-              totalRevAmt += pAmt
-            }
-            if (totalRevAmt > 0) {
-              reversalLines.unshift({
-                account_id: accountMap['103000'],
-                debit: totalRevAmt,
-                credit: 0
-              })
-            }
-          }
         }
 
         if (reversalLines.length > 0) {
@@ -718,41 +707,47 @@ export async function syncOrderToLedger(
       }
       if (!reversalPaymentTx) {
         let reversalLines: any[] = []
-        if (paymentTx && paymentTx.journal_lines && paymentTx.journal_lines.length > 0) {
+        const { data: allPaysForRev } = await supabase
+          .from('order_payments')
+          .select('*')
+          .eq('order_id', orderId)
+
+        const voidedOrRefundedIds = new Set(
+          (allPaysForRev || [])
+            .filter((p: any) => p.payment_kind === 'void' || p.payment_kind === 'refund')
+            .map((p: any) => p.voided_payment_id)
+            .filter(Boolean)
+        )
+        const paysToReverse = (allPaysForRev || []).filter(
+          (p: any) => p.payment_kind === 'payment' && !voidedOrRefundedIds.has(p.id)
+        )
+
+        if (paysToReverse && paysToReverse.length > 0) {
+          let totalRevAmt = 0
+          for (const p of paysToReverse) {
+            const pAmt = Number(p.amount) || 0
+            if (pAmt <= 0) continue
+            const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
+            reversalLines.push({
+              account_id: accId,
+              debit: 0,
+              credit: pAmt
+            })
+            totalRevAmt += pAmt
+          }
+          if (totalRevAmt > 0) {
+            reversalLines.unshift({
+              account_id: accountMap['103000'],
+              debit: totalRevAmt,
+              credit: 0
+            })
+          }
+        } else if ((!allPaysForRev || allPaysForRev.length === 0) && paymentTx && paymentTx.journal_lines && paymentTx.journal_lines.length > 0) {
           reversalLines = paymentTx.journal_lines.map((line: any) => ({
             account_id: line.account_id,
             debit: line.credit,
             credit: line.debit
           }))
-        } else {
-          // Fallback: If paymentTx wasn't previously generated, reverse active payments from order_payments
-          const { data: paysToReverse } = await supabase
-            .from('order_payments')
-            .select('*')
-            .eq('order_id', orderId)
-            .eq('payment_kind', 'payment')
-
-          if (paysToReverse && paysToReverse.length > 0) {
-            let totalRevAmt = 0
-            for (const p of paysToReverse) {
-              const pAmt = Number(p.amount) || 0
-              if (pAmt <= 0) continue
-              const accId = p.payment_method_account_id || resolveFallbackAccountId(p.payment_method)
-              reversalLines.push({
-                account_id: accId,
-                debit: 0,
-                credit: pAmt
-              })
-              totalRevAmt += pAmt
-            }
-            if (totalRevAmt > 0) {
-              reversalLines.unshift({
-                account_id: accountMap['103000'],
-                debit: totalRevAmt,
-                credit: 0
-              })
-            }
-          }
         }
 
         if (reversalLines.length > 0) {

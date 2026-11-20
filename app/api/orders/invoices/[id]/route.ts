@@ -1,6 +1,7 @@
 import { getApiContext } from '@/lib/apiContext'
 import { getActivePaymentAccounts, resolvePaymentAccountFromCOA } from '@/lib/accountHelper'
 import { resolveOrCreateCustomer } from '@/lib/customerHelper'
+import { recordOrderPayment, voidOrderPayment } from '@/lib/paymentLedger'
 import { syncOrderToLedger } from '@/lib/orderLedger'
 import { isUuid } from '@/lib/utils'
 import {
@@ -49,34 +50,43 @@ export async function GET(
       getBusinessCustomInvoiceOptions(businessId, supabaseAdmin)
     ])
 
-    const reversedPayIds = new Set(
-      (allOrderPays || [])
-        .filter((p: any) => p.payment_kind === 'void' || p.payment_kind === 'refund')
-        .map((p: any) => p.voided_payment_id)
-        .filter(Boolean)
-    )
-    const activePayments = (allOrderPays || []).filter(
-      (p: any) => p.payment_kind === 'payment' && !reversedPayIds.has(p.id)
-    )
+    const voidByTargetId = new Map<string, any>()
+    for (const p of allOrderPays || []) {
+      if ((p.payment_kind === 'void' || p.payment_kind === 'refund') && p.voided_payment_id) {
+        voidByTargetId.set(p.voided_payment_id, p)
+      }
+    }
 
-    const enrichedPayments = activePayments.map((p: any) => {
+    const enrichPaymentRow = (p: any) => {
       const resolvedAcc = resolvePaymentAccountFromCOA(
         paymentAccounts,
         p.payment_method,
         p.payment_method_account_id
       )
+      const reversalEntry = voidByTargetId.get(p.id) || null
       return {
         ...p,
         payment_method_account_id: p.payment_method_account_id || resolvedAcc?.id || null,
-        payment_account: resolvedAcc
+        payment_account: resolvedAcc,
+        is_voided: Boolean(reversalEntry),
+        void_entry: reversalEntry
       }
-    })
+    }
+
+    const enrichedAllPayments = (allOrderPays || []).map(enrichPaymentRow)
+    const enrichedPayments = enrichedAllPayments.filter(
+      (p: any) => p.payment_kind === 'payment' && !p.is_voided
+    )
 
     // Normalize legacy invoice payment_status & amount_paid if missing
+    // IMPORTANT: If order_payments has void/refund history and 0 active payments, respect the voided state (unpaid)
+    const hasPaymentHistory = Array.isArray(allOrderPays) && allOrderPays.length > 0
     const grandTotalNum = Number(invoice.grand_total || 0)
     const normalizedPaymentStatus = invoice.payment_status
-      || (invoice.status === 'completed' ? 'paid' : (Number(invoice.amount_paid || 0) >= grandTotalNum - 0.01 && grandTotalNum > 0 ? 'paid' : (Number(invoice.amount_paid || 0) > 0 ? 'partial' : 'unpaid')))
-    const normalizedAmountPaid = normalizedPaymentStatus === 'paid' && !Number(invoice.amount_paid)
+      || (hasPaymentHistory
+          ? (enrichedPayments.length === 0 ? 'unpaid' : (Number(invoice.amount_paid || 0) >= grandTotalNum - 0.01 ? 'paid' : 'partial'))
+          : (invoice.status === 'completed' ? 'paid' : (Number(invoice.amount_paid || 0) >= grandTotalNum - 0.01 && grandTotalNum > 0 ? 'paid' : (Number(invoice.amount_paid || 0) > 0 ? 'partial' : 'unpaid'))))
+    const normalizedAmountPaid = normalizedPaymentStatus === 'paid' && !Number(invoice.amount_paid) && !hasPaymentHistory
       ? grandTotalNum
       : Number(invoice.amount_paid || 0)
 
@@ -101,7 +111,8 @@ export async function GET(
         payment_status: normalizedPaymentStatus,
         amount_paid: normalizedAmountPaid,
         creator,
-        payments: enrichedPayments
+        payments: enrichedPayments,
+        payment_history: enrichedAllPayments
       }
     })
   } catch (err: any) {
@@ -445,7 +456,7 @@ export async function PUT(
 
     if (updErr) throw updErr
 
-    // 3.4. Synchronize order_payments if payment details were updated in Edit Invoice
+    // 3.4. Synchronize order_payments using Pure Append-Only Void & Re-Record (Zero DELETE Policy — PSAK 225 / IAS 8)
     if (isPaymentUpdateRequested) {
       const targetAmountPaid = Number(updated.amount_paid || 0)
       const { data: allPays } = await supabaseAdmin
@@ -464,67 +475,112 @@ export async function PUT(
         (p: any) => p.payment_kind === 'payment' && !reversedIds.has(p.id)
       )
 
-      const payDateObj = payment_date ? new Date(payment_date) : (order_date ? new Date(order_date) : new Date())
+      const payDateIso = payment_date
+        ? new Date(payment_date).toISOString()
+        : (order_date ? new Date(order_date).toISOString() : new Date().toISOString())
       const effectiveMethodName = resolvedPayMethodName || updated.payment_method || 'Bank Transfer'
-
-      // Helper to remove existing non-reversal payment transactions for this order when re-building payment ledger
-      const removeExistingPaymentTransactions = async (specificTxIds?: string[]) => {
-        if (specificTxIds && specificTxIds.length > 0) {
-          await supabaseAdmin.from('transactions').delete().in('id', specificTxIds)
-        }
-        const { data: legacyPayTxs } = await supabaseAdmin
-          .from('transactions')
-          .select('id, description')
-          .eq('order_id', id)
-        const toRemove = (legacyPayTxs || []).filter((tx: any) =>
-          (tx.description?.includes('Pembayaran') || tx.description?.includes('Pelunasan') || tx.description?.includes('Payment')) &&
-          !tx.description?.includes('Pembatalan') && !tx.description?.includes('Retur') && !tx.description?.includes('Refund') && !tx.description?.includes('Void') && !tx.description?.includes('Reversal')
-        )
-        if (toRemove.length > 0) {
-          await supabaseAdmin.from('transactions').delete().in('id', toRemove.map((t: any) => t.id))
-        }
-      }
+      const actorName = user.user_metadata?.full_name || 'Staff'
 
       if (targetAmountPaid > 0) {
         if (existingPays.length === 0) {
-          await removeExistingPaymentTransactions()
-          const { error: insPayErr } = await supabaseAdmin.from('order_payments').insert({
-            payment_kind: 'payment',
-            business_id: businessId,
-            order_id: id,
-            date: payDateObj.toISOString().split('T')[0],
-            amount: targetAmountPaid,
-            payment_method: effectiveMethodName,
-            payment_method_account_id: resolvedPayAccId,
-            notes: `Pembayaran ${updated.source_platform || 'Invoice'} #${updated.order_number}`,
-            created_at: payDateObj.toISOString()
-          })
-          if (insPayErr) {
-            console.warn('[EditInvoice] Failed to insert order_payments:', insPayErr.message)
+          // Check if this is a legacy paid invoice whose initial payment was never in order_payments
+          const hadLegacyPaidWithoutRows =
+            (!allPays || allPays.length === 0) &&
+            (Number(existing.amount_paid || 0) > 0 || existing.payment_status === 'paid')
+
+          if (hadLegacyPaidWithoutRows) {
+            const legacyAmt = Number(existing.amount_paid || existing.grand_total || 0)
+            const paymentAccounts = await getActivePaymentAccounts(businessId, supabaseAdmin)
+            const legacyAcc = resolvePaymentAccountFromCOA(paymentAccounts, existing.payment_method, null)
+            const baseDateIso = existing.order_date || existing.created_at || new Date().toISOString()
+
+            const { data: txs } = await supabaseAdmin
+              .from('transactions')
+              .select('id, description')
+              .eq('order_id', id)
+            const legacyPayTx = (txs || []).find((tx: any) =>
+              (tx.description?.includes('Pembayaran') || tx.description?.includes('Pelunasan')) &&
+              !tx.description?.includes('Void') && !tx.description?.includes('Pembatalan')
+            )
+
+            const { data: baselinePay } = await supabaseAdmin
+              .from('order_payments')
+              .insert({
+                payment_kind: 'payment',
+                business_id: businessId,
+                order_id: id,
+                transaction_id: legacyPayTx?.id || null,
+                date: String(baseDateIso).split('T')[0],
+                amount: legacyAmt,
+                payment_method: legacyAcc?.name || existing.payment_method || 'Bank Transfer',
+                payment_method_account_id: legacyAcc?.id || null,
+                notes: `Pembayaran ${existing.source_platform || 'Invoice'} #${existing.order_number} (Data Historis)`,
+                created_at: baseDateIso
+              })
+              .select('id')
+              .single()
+
+            if (baselinePay?.id) {
+              await voidOrderPayment({
+                businessId,
+                paymentId: baselinePay.id,
+                voidReason: `Koreksi Pembayaran Historis via Edit Invoice (Diganti ke ${effectiveMethodName})`,
+                sourceLabel: `Invoice #${updated.order_number}`,
+                cashierName: actorName,
+                supabase: supabaseAdmin
+              })
+            }
           }
+
+          // Record initial/new payment via universal engine
+          await supabaseAdmin
+            .from('orders')
+            .update({ amount_paid: 0, payment_status: 'unpaid' })
+            .eq('id', id)
+
+          await recordOrderPayment({
+            businessId,
+            orderId: id,
+            amount: targetAmountPaid,
+            paymentMethod: effectiveMethodName,
+            paymentMethodAccountId: resolvedPayAccId,
+            paymentDate: payDateIso,
+            notes: `Pembayaran ${updated.source_platform || 'Invoice'} #${updated.order_number}`,
+            cashierName: actorName,
+            supabase: supabaseAdmin
+          })
         } else if (existingPays.length === 1) {
           const singlePay = existingPays[0]
           const nextAccId = resolvedPayAccId || singlePay.payment_method_account_id
-          const nextDateStr = payment_date ? payDateObj.toISOString().split('T')[0] : singlePay.date
+          const nextDateStr = payment_date ? payDateIso.split('T')[0] : singlePay.date
           const hasChanged =
             Math.abs(Number(singlePay.amount) - targetAmountPaid) > 0.01 ||
             singlePay.payment_method_account_id !== nextAccId ||
             singlePay.payment_method !== effectiveMethodName ||
-            (payment_date && singlePay.date !== nextDateStr) ||
-            !singlePay.transaction_id
+            (payment_date && singlePay.date !== nextDateStr)
 
           if (hasChanged) {
-            await removeExistingPaymentTransactions(singlePay.transaction_id ? [singlePay.transaction_id] : [])
-            await supabaseAdmin
-              .from('order_payments')
-              .update({
-                amount: targetAmountPaid,
-                payment_method: effectiveMethodName,
-                payment_method_account_id: nextAccId,
-                transaction_id: null,
-                ...(payment_date ? { date: nextDateStr, created_at: payDateObj.toISOString() } : {})
-              })
-              .eq('id', singlePay.id)
+            // Append-Only Void old payment & record replacement payment
+            await voidOrderPayment({
+              businessId,
+              paymentId: singlePay.id,
+              voidReason: `Koreksi Pembayaran via Edit Invoice (Diganti ke ${effectiveMethodName})`,
+              sourceLabel: `Invoice #${updated.order_number}`,
+              cashierName: actorName,
+              supabase: supabaseAdmin
+            })
+
+            await recordOrderPayment({
+              businessId,
+              orderId: id,
+              amount: targetAmountPaid,
+              paymentMethod: effectiveMethodName,
+              paymentMethodAccountId: nextAccId,
+              paymentDate: payment_date ? payDateIso : (singlePay.created_at || singlePay.date || payDateIso),
+              notes: `Pembayaran (Koreksi) ${updated.source_platform || 'Invoice'} #${updated.order_number}`,
+              cashierName: actorName,
+              supabase: supabaseAdmin
+            })
           }
         } else {
           // Multiple active payments exist (e.g., previous DP + new settlement in Edit Invoice)
@@ -532,41 +588,105 @@ export async function PUT(
           const diff = targetAmountPaid - currentSum
 
           if (diff > 0.01) {
-            // Add the delta as a new installment payment row so history of previous DP is preserved
-            await supabaseAdmin.from('order_payments').insert({
-              payment_kind: 'payment',
-              business_id: businessId,
-              order_id: id,
-              date: payDateObj.toISOString().split('T')[0],
+            // Temporarily set amount_paid to currentSum so recordOrderPayment can record the delta installment
+            await supabaseAdmin
+              .from('orders')
+              .update({ amount_paid: currentSum, payment_status: 'partial' })
+              .eq('id', id)
+
+            await recordOrderPayment({
+              businessId,
+              orderId: id,
               amount: diff,
-              payment_method: effectiveMethodName,
-              payment_method_account_id: resolvedPayAccId,
+              paymentMethod: effectiveMethodName,
+              paymentMethodAccountId: resolvedPayAccId,
+              paymentDate: payDateIso,
               notes: `${updated.payment_status === 'paid' ? 'Pelunasan' : 'Pembayaran Lanjutan'} ${updated.source_platform || 'Invoice'} #${updated.order_number}`,
-              created_at: payDateObj.toISOString()
+              cashierName: actorName,
+              supabase: supabaseAdmin
             })
           } else if (diff < -0.01) {
-            // Total paid was reduced below previous multi-payment sum: consolidate into single updated payment record
-            const oldTxIds = existingPays.map((p: any) => p.transaction_id).filter(Boolean)
-            await removeExistingPaymentTransactions(oldTxIds)
-            await supabaseAdmin.from('order_payments').delete().in('id', existingPays.map((p: any) => p.id))
-            await supabaseAdmin.from('order_payments').insert({
-              payment_kind: 'payment',
-              business_id: businessId,
-              order_id: id,
-              date: payDateObj.toISOString().split('T')[0],
+            // Total paid was reduced below previous multi-payment sum: append-only void all active payments & record consolidated payment
+            for (const p of existingPays) {
+              await voidOrderPayment({
+                businessId,
+                paymentId: p.id,
+                voidReason: 'Penyesuaian & Konsolidasi Nominal Pembayaran via Edit Invoice',
+                sourceLabel: `Invoice #${updated.order_number}`,
+                cashierName: actorName,
+                supabase: supabaseAdmin
+              })
+            }
+
+            await recordOrderPayment({
+              businessId,
+              orderId: id,
               amount: targetAmountPaid,
-              payment_method: effectiveMethodName,
-              payment_method_account_id: resolvedPayAccId,
-              notes: `Pembayaran ${updated.source_platform || 'Invoice'} #${updated.order_number}`,
-              created_at: payDateObj.toISOString()
+              paymentMethod: effectiveMethodName,
+              paymentMethodAccountId: resolvedPayAccId,
+              paymentDate: payDateIso,
+              notes: `Pembayaran (Konsolidasi) ${updated.source_platform || 'Invoice'} #${updated.order_number}`,
+              cashierName: actorName,
+              supabase: supabaseAdmin
             })
           }
         }
       } else if (updated.payment_status === 'unpaid' || targetAmountPaid <= 0) {
-        const oldTxIds = existingPays.map((p: any) => p.transaction_id).filter(Boolean)
-        await removeExistingPaymentTransactions(oldTxIds)
-        if (existingPays.length > 0) {
-          await supabaseAdmin.from('order_payments').delete().in('id', existingPays.map((p: any) => p.id))
+        if (existingPays.length === 0 && (!allPays || allPays.length === 0) && (Number(existing.amount_paid || 0) > 0 || existing.payment_status === 'paid')) {
+          // Legacy paid invoice with 0 order_payments rows being set to Unpaid
+          const legacyAmt = Number(existing.amount_paid || existing.grand_total || 0)
+          const paymentAccounts = await getActivePaymentAccounts(businessId, supabaseAdmin)
+          const legacyAcc = resolvePaymentAccountFromCOA(paymentAccounts, existing.payment_method, null)
+          const baseDateIso = existing.order_date || existing.created_at || new Date().toISOString()
+
+          const { data: txs } = await supabaseAdmin
+            .from('transactions')
+            .select('id, description')
+            .eq('order_id', id)
+          const legacyPayTx = (txs || []).find((tx: any) =>
+            (tx.description?.includes('Pembayaran') || tx.description?.includes('Pelunasan')) &&
+            !tx.description?.includes('Void') && !tx.description?.includes('Pembatalan')
+          )
+
+          const { data: baselinePay } = await supabaseAdmin
+            .from('order_payments')
+            .insert({
+              payment_kind: 'payment',
+              business_id: businessId,
+              order_id: id,
+              transaction_id: legacyPayTx?.id || null,
+              date: String(baseDateIso).split('T')[0],
+              amount: legacyAmt,
+              payment_method: legacyAcc?.name || existing.payment_method || 'Bank Transfer',
+              payment_method_account_id: legacyAcc?.id || null,
+              notes: `Pembayaran ${existing.source_platform || 'Invoice'} #${existing.order_number} (Data Historis)`,
+              created_at: baseDateIso
+            })
+            .select('id')
+            .single()
+
+          if (baselinePay?.id) {
+            await voidOrderPayment({
+              businessId,
+              paymentId: baselinePay.id,
+              voidReason: 'Status pembayaran diubah menjadi Belum Bayar (Unpaid) via Edit Invoice',
+              sourceLabel: `Invoice #${updated.order_number}`,
+              cashierName: actorName,
+              supabase: supabaseAdmin
+            })
+          }
+        } else {
+          // Append-Only Void all active payments when changed to Unpaid
+          for (const p of existingPays) {
+            await voidOrderPayment({
+              businessId,
+              paymentId: p.id,
+              voidReason: 'Status pembayaran diubah menjadi Belum Bayar (Unpaid) via Edit Invoice',
+              sourceLabel: `Invoice #${updated.order_number}`,
+              cashierName: actorName,
+              supabase: supabaseAdmin
+            })
+          }
         }
       }
     }

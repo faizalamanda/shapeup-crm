@@ -43,6 +43,15 @@ type PaymentRecord = {
   amount: number
   payment_method: string
   payment_method_account_id?: string | null
+  payment_kind?: 'payment' | 'void' | 'refund'
+  voided_payment_id?: string | null
+  is_voided?: boolean
+  void_entry?: {
+    id: string
+    date?: string
+    created_at?: string
+    notes?: string
+  } | null
   payment_account?: {
     id: string
     code: string
@@ -100,6 +109,7 @@ type Invoice = {
     email: string
   } | null
   payments?: PaymentRecord[]
+  payment_history?: PaymentRecord[]
 }
 
 type JournalLine = {
@@ -228,8 +238,12 @@ export default function InvoiceDetailPage() {
     return invoice.user_id === currentUserProfile.id
   }, [currentUserProfile, invoice])
 
-  // Payment Record Modal
+  // Payment Record / Replace / Void Modal
   const [showPaymentModal, setShowPaymentModal] = useState<boolean>(false)
+  const [paymentModalMode, setPaymentModalMode] = useState<'record' | 'replace' | 'void'>('record')
+  const [targetPaymentForAction, setTargetPaymentForAction] = useState<PaymentRecord | null>(null)
+  const [voidReasonInput, setVoidReasonInput] = useState<string>('')
+  const [showVoidedHistory, setShowVoidedHistory] = useState<boolean>(false)
   const [paymentAccounts, setPaymentAccounts] = useState<COAAccount[]>([])
   const [paymentAccountId, setPaymentAccountId] = useState<string>('')
   const [paymentMethod, setPaymentMethod] = useState<string>('Bank Transfer')
@@ -463,17 +477,56 @@ export default function InvoiceDetailPage() {
     }
   }, [activeTab, ledgerTransactions.length, stockMoves.length, fetchLedger, fetchStockMoves])
 
-  // Set default payment date and remaining balance on modal open
-  useEffect(() => {
-    if (showPaymentModal && invoice) {
-      const today = new Date()
-      setPaymentDate(today.toISOString().split('T')[0])
-      const remaining = Math.max(0, Number(invoice.grand_total || 0) - Number(invoice.amount_paid || 0))
-      setPaymentAmountInput(remaining)
-      setIsFullSettlement(true)
-      setPaymentNotesInput('')
+  // Helper to open Record / Replace / Void Payment Modal
+  const openRecordPaymentModal = () => {
+    if (!invoice) return
+    const today = new Date().toISOString().split('T')[0]
+    const remaining = Math.max(0, Number(invoice.grand_total || 0) - Number(invoice.amount_paid || 0))
+    setPaymentModalMode('record')
+    setTargetPaymentForAction(null)
+    setVoidReasonInput('')
+    setPaymentDate(today)
+    setPaymentAmountInput(remaining)
+    setIsFullSettlement(true)
+    setPaymentNotesInput('')
+    setShowPaymentModal(true)
+  }
+
+  const openReplacePaymentModal = (pay: PaymentRecord | null) => {
+    if (!invoice) return
+    const rawDate = pay?.date || pay?.payment_date || pay?.created_at || invoice.order_date
+    const formattedDate = rawDate ? new Date(rawDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+    const targetAmt = Number(pay?.amount || invoice.amount_paid || invoice.grand_total || 0)
+
+    setPaymentModalMode('replace')
+    setTargetPaymentForAction(pay)
+    setVoidReasonInput('Salah pilih akun / metode pembayaran')
+    setPaymentDate(formattedDate)
+    setPaymentAmountInput(targetAmt)
+    setIsFullSettlement(targetAmt >= Number(invoice.grand_total || 0) - 0.01)
+    setPaymentNotesInput('')
+
+    if (paymentAccounts.length > 0) {
+      const currentAcc = resolvePaymentAccountFromCOA(
+        paymentAccounts,
+        pay?.payment_method || invoice.payment_method,
+        pay?.payment_method_account_id
+      )
+      // Pre-select a different account if possible, or keep current so user can pick
+      const matched = currentAcc || paymentAccounts[0]
+      setPaymentAccountId(matched.id)
+      setPaymentMethod(matched.name)
     }
-  }, [showPaymentModal, invoice])
+    setShowPaymentModal(true)
+  }
+
+  const openVoidPaymentModal = (pay: PaymentRecord | null) => {
+    if (!invoice) return
+    setPaymentModalMode('void')
+    setTargetPaymentForAction(pay)
+    setVoidReasonInput('')
+    setShowPaymentModal(true)
+  }
 
   // Load persistent fields from localStorage on mount/when invoice changes
   useEffect(() => {
@@ -707,9 +760,110 @@ export default function InvoiceDetailPage() {
     }
   }
 
-  // Record Payment
+  // Record / Replace / Void Payment Handler
   const handleRecordPayment = async () => {
     if (!invoice) return
+
+    if (paymentModalMode === 'void') {
+      const cleanReason = voidReasonInput.trim()
+      if (cleanReason.length < 5) {
+        setErrorMessage('Alasan pembatalan (void) wajib diisi minimal 5 karakter untuk jejak audit akuntansi.')
+        return
+      }
+
+      setSubmitting(true)
+      setErrorMessage('')
+      setSuccessMessage('')
+      try {
+        const response = await fetch(`/api/orders/invoices/${invoiceId}/payment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'void',
+            payment_id: targetPaymentForAction?.id || null,
+            void_reason: cleanReason
+          })
+        })
+
+        const resJson = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(resJson.error || 'Gagal membatalkan (void) pembayaran')
+        }
+
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('shapeup_invoices_cache')
+        }
+        setShowPaymentModal(false)
+        setSuccessMessage(
+          resJson.message || 'Pembayaran berhasil dibatalkan (void) dan jurnal pembalik telah diposting ke Buku Besar.'
+        )
+        await Promise.all([fetchInvoiceDetails(true), fetchLedger(), fetchStockMoves()])
+      } catch (err: any) {
+        setErrorMessage(err.message)
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
+
+    if (paymentModalMode === 'replace') {
+      const cleanReason = voidReasonInput.trim()
+      if (cleanReason.length < 5) {
+        setErrorMessage('Alasan penggantian pembayaran wajib diisi minimal 5 karakter untuk jejak audit akuntansi.')
+        return
+      }
+
+      const oldAmt = Number(targetPaymentForAction?.amount || invoice.amount_paid || 0)
+      const currentRemaining = Math.max(0, Number(invoice.grand_total || 0) - Number(invoice.amount_paid || 0))
+      const maxReplaceable = Math.min(Number(invoice.grand_total || 0), currentRemaining + oldAmt)
+      const amountToPay = isFullSettlement ? maxReplaceable : Math.min(maxReplaceable, Math.max(1, Number(paymentAmountInput)))
+
+      if (amountToPay <= 0) {
+        setErrorMessage('Nominal pembayaran pengganti harus lebih besar dari 0.')
+        return
+      }
+
+      setSubmitting(true)
+      setErrorMessage('')
+      setSuccessMessage('')
+      try {
+        const response = await fetch(`/api/orders/invoices/${invoiceId}/payment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'replace',
+            payment_id: targetPaymentForAction?.id || null,
+            void_reason: cleanReason,
+            amount: amountToPay,
+            payment_method: paymentMethod,
+            payment_method_account_id: paymentAccountId || null,
+            payment_date: paymentDate ? new Date(paymentDate).toISOString() : new Date().toISOString(),
+            notes: paymentNotesInput.trim() || undefined
+          })
+        })
+
+        const resJson = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(resJson.error || 'Gagal mengganti pembayaran')
+        }
+
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('shapeup_invoices_cache')
+        }
+        setShowPaymentModal(false)
+        setSuccessMessage(
+          resJson.message ||
+            `Pembayaran lama berhasil di-void dan diganti ke ${paymentMethod} (${formatIDR(amountToPay)}).`
+        )
+        await Promise.all([fetchInvoiceDetails(true), fetchLedger(), fetchStockMoves()])
+      } catch (err: any) {
+        setErrorMessage(err.message)
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
+
     const remaining = Math.max(0, Number(invoice.grand_total || 0) - Number(invoice.amount_paid || 0))
     const amountToPay = isFullSettlement ? remaining : Math.min(remaining, Math.max(1, Number(paymentAmountInput)))
 
@@ -726,6 +880,7 @@ export default function InvoiceDetailPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          action: 'record',
           amount: amountToPay,
           payment_method: paymentMethod,
           payment_method_account_id: paymentAccountId || null,
@@ -1514,7 +1669,7 @@ export default function InvoiceDetailPage() {
                 {invoice.payment_status !== 'paid' && invoice.status !== 'cancelled' && (
                   <button
                     type="button"
-                    onClick={() => setShowPaymentModal(true)}
+                    onClick={openRecordPaymentModal}
                     className="w-full py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-all cursor-pointer"
                   >
                     💰 Catat Pembayaran / DP / Pelunasan
@@ -1677,51 +1832,168 @@ export default function InvoiceDetailPage() {
                   </div>
                 )}
 
-                {/* Payment History List */}
-                {((invoice.payments && invoice.payments.length > 0) || Number(invoice.amount_paid || 0) > 0) && (
-                  <div className="pt-3 border-t border-slate-200/80 space-y-2">
-                    <span className="text-[11px] font-bold text-[#70706E] uppercase tracking-wider">
-                      Riwayat Pembayaran ({invoice.payments && invoice.payments.length > 0 ? invoice.payments.length : 1}):
-                    </span>
-                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                      {invoice.payments && invoice.payments.length > 0 ? (
-                        invoice.payments.map((p, pIdx) => {
-                          const rawDate = p.payment_date || p.date || p.created_at
-                          const accountLabel = p.payment_account
-                            ? `[${p.payment_account.code}] ${p.payment_account.name}`
-                            : (p.payment_method || 'Pembayaran')
-                          return (
-                            <div key={p.id || pIdx} className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex justify-between items-center text-xs">
+                {/* Payment History List & Audit Trail (Append-Only Ledger) */}
+                {((invoice.payments && invoice.payments.length > 0) ||
+                  (invoice.payment_history && invoice.payment_history.length > 0) ||
+                  Number(invoice.amount_paid || 0) > 0) && (() => {
+                  const activePayments = invoice.payments || []
+                  const allHistory = invoice.payment_history || []
+                  const voidedOriginals = allHistory.filter(p => p.payment_kind === 'payment' && p.is_voided)
+
+                  return (
+                    <div className="pt-3 border-t border-slate-200/80 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-[#70706E] uppercase tracking-wider">
+                          Riwayat Pembayaran ({activePayments.length > 0 ? activePayments.length : (Number(invoice.amount_paid || 0) > 0 ? 1 : 0)} Aktif):
+                        </span>
+                        {voidedOriginals.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setShowVoidedHistory(prev => !prev)}
+                            className="text-[10px] font-bold text-slate-600 hover:text-slate-900 underline cursor-pointer"
+                          >
+                            {showVoidedHistory ? 'Sembunyikan Void' : `Lihat ${voidedOriginals.length} Void`}
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="space-y-2 max-h-64 overflow-y-auto pr-0.5">
+                        {activePayments.length > 0 ? (
+                          activePayments.map((p, pIdx) => {
+                            const rawDate = p.payment_date || p.date || p.created_at
+                            const accountLabel = p.payment_account
+                              ? `[${p.payment_account.code}] ${p.payment_account.name}`
+                              : (p.payment_method || 'Pembayaran')
+                            return (
+                              <div key={p.id || pIdx} className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                                <div className="flex justify-between items-start gap-2">
+                                  <div>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-bold text-slate-800">{accountLabel}</span>
+                                      <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase rounded bg-emerald-100 text-emerald-800">
+                                        Diterima
+                                      </span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                      {rawDate ? new Date(rawDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                                      {p.notes ? ` • ${p.notes}` : ''}
+                                    </div>
+                                  </div>
+                                  <div className="font-extrabold text-emerald-700 shrink-0">
+                                    {formatIDR(Number(p.amount || 0))}
+                                  </div>
+                                </div>
+
+                                {canEdit && invoice.status !== 'cancelled' && (
+                                  <div className="flex items-center justify-end gap-1.5 pt-1.5 border-t border-slate-200/70">
+                                    <button
+                                      type="button"
+                                      disabled={submitting}
+                                      onClick={() => openReplacePaymentModal(p)}
+                                      title="Void pembayaran ini dan langsung ganti ke akun Kas/Bank atau metode bayar lain"
+                                      className="px-2.5 py-1 bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                    >
+                                      🔄 Ganti Pembayaran
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={submitting}
+                                      onClick={() => openVoidPaymentModal(p)}
+                                      title="Batalkan (Void) pembayaran ini dan buka kembali saldo piutang invoice"
+                                      className="px-2.5 py-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                    >
+                                      🚫 Void
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })
+                        ) : Number(invoice.amount_paid || 0) > 0 ? (
+                          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                            <div className="flex justify-between items-start gap-2">
                               <div>
-                                <div className="font-bold text-slate-800">{accountLabel}</div>
-                                <div className="text-[10px] text-slate-500 font-mono">
-                                  {rawDate ? new Date(rawDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
-                                  {p.notes ? ` • ${p.notes}` : ''}
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-slate-800">{invoice.payment_method || 'Pembayaran Tercatat'}</span>
+                                  <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase rounded bg-emerald-100 text-emerald-800">
+                                    Diterima
+                                  </span>
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                  {invoice.order_date ? new Date(invoice.order_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                                  {' • Data Historis'}
                                 </div>
                               </div>
-                              <div className="font-extrabold text-emerald-700">
-                                {formatIDR(Number(p.amount || 0))}
+                              <div className="font-extrabold text-emerald-700 shrink-0">
+                                {formatIDR(Number(invoice.amount_paid || 0))}
                               </div>
                             </div>
-                          )
-                        })
-                      ) : (
-                        <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex justify-between items-center text-xs">
-                          <div>
-                            <div className="font-bold text-slate-800">{invoice.payment_method || 'Pembayaran Tercatat'}</div>
-                            <div className="text-[10px] text-slate-500 font-mono">
-                              {invoice.order_date ? new Date(invoice.order_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
-                              {' • Data Historis'}
-                            </div>
+
+                            {canEdit && invoice.status !== 'cancelled' && (
+                              <div className="flex items-center justify-end gap-1.5 pt-1.5 border-t border-slate-200/70">
+                                <button
+                                  type="button"
+                                  disabled={submitting}
+                                  onClick={() => openReplacePaymentModal(null)}
+                                  className="px-2.5 py-1 bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                >
+                                  🔄 Ganti Pembayaran
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={submitting}
+                                  onClick={() => openVoidPaymentModal(null)}
+                                  className="px-2.5 py-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                >
+                                  🚫 Void
+                                </button>
+                              </div>
+                            )}
                           </div>
-                          <div className="font-extrabold text-emerald-700">
-                            {formatIDR(Number(invoice.amount_paid || 0))}
+                        ) : (
+                          <div className="p-2.5 bg-amber-50/70 border border-amber-200 rounded-xl text-[11px] text-amber-800 font-medium">
+                            Seluruh pembayaran sebelumnya telah di-void. Tagihan saat ini berstatus Belum Bayar.
                           </div>
-                        </div>
-                      )}
+                        )}
+
+                        {/* Voided Payments Audit Trail */}
+                        {(showVoidedHistory || (activePayments.length === 0 && Number(invoice.amount_paid || 0) === 0)) &&
+                          voidedOriginals.map((vp, vIdx) => {
+                            const rawDate = vp.payment_date || vp.date || vp.created_at
+                            const accountLabel = vp.payment_account
+                              ? `[${vp.payment_account.code}] ${vp.payment_account.name}`
+                              : (vp.payment_method || 'Pembayaran')
+                            return (
+                              <div
+                                key={vp.id || `void-${vIdx}`}
+                                className="p-2.5 bg-rose-50/40 border border-rose-200/70 rounded-xl flex justify-between items-start gap-2 text-xs opacity-80"
+                              >
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-bold text-slate-600 line-through">{accountLabel}</span>
+                                    <span className="px-1.5 py-0.5 text-[9px] font-extrabold uppercase rounded bg-rose-100 text-rose-800 border border-rose-200">
+                                      Dibatalkan (Void)
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 font-mono">
+                                    Tgl Bayar: {rawDate ? new Date(rawDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}
+                                  </div>
+                                  {vp.void_entry?.notes && (
+                                    <div className="text-[10px] text-rose-700 font-semibold italic">
+                                      {vp.void_entry.notes}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="font-extrabold text-slate-400 line-through shrink-0">
+                                  {formatIDR(Number(vp.amount || 0))}
+                                </div>
+                              </div>
+                            )
+                          })}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )
+                })()}
               </div>
             )}
 
@@ -2045,145 +2317,240 @@ export default function InvoiceDetailPage() {
         </div>
       </div>
 
-      {/* Record Payment popup */}
+      {/* Record / Replace / Void Payment popup */}
       {showPaymentModal && (() => {
-        const remainingBalance = Math.max(0, Number(invoice.grand_total || 0) - Number(invoice.amount_paid || 0))
-        const effectiveAmount = isFullSettlement ? remainingBalance : Math.min(remainingBalance, Math.max(1, Number(paymentAmountInput || 0)))
+        const oldPayAmount = Number(targetPaymentForAction?.amount || invoice.amount_paid || 0)
+        const currentRemaining = Math.max(0, Number(invoice.grand_total || 0) - Number(invoice.amount_paid || 0))
+        const remainingBalance =
+          paymentModalMode === 'replace'
+            ? Math.min(Number(invoice.grand_total || 0), currentRemaining + oldPayAmount)
+            : currentRemaining
+
+        const effectiveAmount = isFullSettlement
+          ? remainingBalance
+          : Math.min(remainingBalance, Math.max(1, Number(paymentAmountInput || 0)))
         const nextRemaining = Math.max(0, remainingBalance - effectiveAmount)
+
+        const oldAccountLabel = targetPaymentForAction?.payment_account
+          ? `[${targetPaymentForAction.payment_account.code}] ${targetPaymentForAction.payment_account.name}`
+          : (targetPaymentForAction?.payment_method || invoice.payment_method || 'Pembayaran')
 
         return (
           <div className="fixed inset-0 bg-[#1C1C1A]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl border border-[#EBEBEA] shadow-xl p-6 max-w-sm w-full space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-white rounded-2xl border border-[#EBEBEA] shadow-xl p-6 max-w-md w-full space-y-4 animate-in fade-in zoom-in-95 duration-200">
               <div>
-                <h3 className="text-sm font-black text-[#1C1C1A]">Catat Pembayaran Invoice</h3>
-                <p className="text-xs text-[#70706E] mt-1">
-                  Sisa tagihan saat ini: <span className="font-bold text-rose-700">{formatIDR(remainingBalance)}</span>
-                </p>
+                <h3 className="text-sm font-black text-[#1C1C1A]">
+                  {paymentModalMode === 'void'
+                    ? '🚫 Batalkan (Void) Pembayaran Invoice'
+                    : paymentModalMode === 'replace'
+                    ? '🔄 Void & Ganti Pembayaran Invoice'
+                    : '💰 Catat Pembayaran Invoice'}
+                </h3>
+                {paymentModalMode === 'void' ? (
+                  <p className="text-xs text-[#70706E] mt-1 leading-relaxed">
+                    Sesuai standar akuntansi (<span className="font-bold text-slate-700">PSAK 225 & PSAK 109</span>), pembatalan pembayaran akan memposting <span className="font-bold text-slate-800">Jurnal Pembalik (Debit Piutang Usaha, Kredit Kas/Bank)</span> pada tanggal pembayaran asal dan membuka kembali piutang tagihan tanpa menghapus jejak audit.
+                  </p>
+                ) : paymentModalMode === 'replace' ? (
+                  <p className="text-xs text-[#70706E] mt-1 leading-relaxed">
+                    Pembayaran lama (<span className="font-bold text-slate-800">{oldAccountLabel} • {formatIDR(oldPayAmount)}</span>) akan di-void secara otomatis dan langsung digantikan dengan pencatatan pembayaran baru di bawah ini.
+                  </p>
+                ) : (
+                  <p className="text-xs text-[#70706E] mt-1">
+                    Sisa tagihan saat ini: <span className="font-bold text-rose-700">{formatIDR(remainingBalance)}</span>
+                  </p>
+                )}
               </div>
 
-              <div className="space-y-3">
-                {/* Settlement Type Toggle */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-[#70706E]">Jenis Pembayaran</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsFullSettlement(true)
-                        setPaymentAmountInput(remainingBalance)
-                      }}
-                      className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${
-                        isFullSettlement
-                          ? 'bg-blue-50 text-[#1E40AF] border-blue-200 shadow-sm'
-                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      Pelunasan Penuh
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsFullSettlement(false)
-                        if (paymentAmountInput >= remainingBalance) {
-                          setPaymentAmountInput(Math.round(remainingBalance / 2))
-                        }
-                      }}
-                      className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${
-                        !isFullSettlement
-                          ? 'bg-blue-50 text-[#1E40AF] border-blue-200 shadow-sm'
-                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      Sebagian / DP
-                    </button>
+              {paymentModalMode === 'void' ? (
+                <div className="space-y-3">
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-rose-700 font-semibold">Akun / Metode Asal:</span>
+                      <span className="font-bold text-slate-900">{oldAccountLabel}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-rose-700 font-semibold">Nominal Di-Void:</span>
+                      <span className="font-black text-rose-700">{formatIDR(oldPayAmount)}</span>
+                    </div>
                   </div>
-                </div>
 
-                {/* Custom Amount if partial */}
-                {!isFullSettlement && (
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700">Nominal Pembayaran (Rp)</label>
+                    <label className="text-xs font-bold text-slate-800">
+                      Alasan Pembatalan / Void <span className="text-rose-600">*</span>
+                    </label>
                     <input
-                      type="number"
-                      min={1}
-                      max={remainingBalance}
-                      value={paymentAmountInput || ''}
-                      onChange={e => setPaymentAmountInput(Math.min(remainingBalance, Math.max(0, Number(e.target.value))))}
-                      placeholder="Masukkan nominal..."
-                      className="w-full p-2.5 text-xs font-bold rounded-xl border border-blue-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      type="text"
+                      value={voidReasonInput}
+                      onChange={e => setVoidReasonInput(e.target.value)}
+                      placeholder="Contoh: Salah pilih rekening bank / cek ditolak..."
+                      className="w-full p-2.5 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-rose-200"
                     />
-                    <p className="text-[10px] text-blue-700 font-bold">
-                      Sisa tagihan setelah ini: {formatIDR(nextRemaining)}
+                    <p className="text-[10px] text-slate-500">
+                      Wajib diisi minimal 5 karakter untuk tercatat di Jurnal Buku Besar & Audit Trail.
                     </p>
                   </div>
-                )}
-
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#70706E]">Metode Pembayaran (Akun Kas/Bank COA)</label>
-                  <select
-                    value={paymentAccountId}
-                    onChange={e => {
-                      const accId = e.target.value
-                      setPaymentAccountId(accId)
-                      const matched = paymentAccounts.find(a => a.id === accId)
-                      if (matched) setPaymentMethod(matched.name)
-                    }}
-                    className="w-full p-2.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white focus:outline-none"
-                  >
-                    {paymentAccounts.length > 0 ? (
-                      paymentAccounts.map(acc => (
-                        <option key={acc.id} value={acc.id}>
-                          [{acc.code}] {acc.name}
-                        </option>
-                      ))
-                    ) : (
-                      <option value="">Bank Transfer (Default)</option>
-                    )}
-                  </select>
                 </div>
+              ) : (
+                <div className="space-y-3">
+                  {paymentModalMode === 'replace' && (
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-800">
+                        Alasan Penggantian Pembayaran <span className="text-rose-600">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={voidReasonInput}
+                        onChange={e => setVoidReasonInput(e.target.value)}
+                        placeholder="Contoh: Salah pilih rekening BCA, seharusnya Mandiri..."
+                        className="w-full p-2.5 text-xs rounded-xl border border-amber-300 bg-amber-50/30 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                      />
+                    </div>
+                  )}
 
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#70706E]">Tanggal Pembayaran</label>
-                  <input
-                    type="date"
-                    value={paymentDate}
-                    onChange={e => setPaymentDate(e.target.value)}
-                    className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                </div>
+                  {/* Settlement Type Toggle */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[#70706E]">Jenis Pembayaran</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsFullSettlement(true)
+                          setPaymentAmountInput(remainingBalance)
+                        }}
+                        className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${
+                          isFullSettlement
+                            ? 'bg-blue-50 text-[#1E40AF] border-blue-200 shadow-sm'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        Pelunasan Penuh
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsFullSettlement(false)
+                          if (paymentAmountInput >= remainingBalance) {
+                            setPaymentAmountInput(Math.round(remainingBalance / 2))
+                          }
+                        }}
+                        className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all ${
+                          !isFullSettlement
+                            ? 'bg-blue-50 text-[#1E40AF] border-blue-200 shadow-sm'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        Sebagian / DP
+                      </button>
+                    </div>
+                  </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-[#70706E]">Catatan / Keterangan (Opsional)</label>
-                  <input
-                    type="text"
-                    placeholder="Misal: DP 50%, Transfer via BCA..."
-                    value={paymentNotesInput}
-                    onChange={e => setPaymentNotesInput(e.target.value)}
-                    className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                </div>
+                  {/* Custom Amount if partial */}
+                  {!isFullSettlement && (
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-700">Nominal Pembayaran (Rp)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={remainingBalance}
+                        value={paymentAmountInput || ''}
+                        onChange={e => setPaymentAmountInput(Math.min(remainingBalance, Math.max(0, Number(e.target.value))))}
+                        placeholder="Masukkan nominal..."
+                        className="w-full p-2.5 text-xs font-bold rounded-xl border border-blue-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      />
+                      <p className="text-[10px] text-blue-700 font-bold">
+                        Sisa tagihan setelah ini: {formatIDR(nextRemaining)}
+                      </p>
+                    </div>
+                  )}
 
-                <div className="pt-2 flex justify-between text-xs font-bold border-t border-gray-150">
-                  <span className="text-[#70706E]">Nominal Dicatat</span>
-                  <span className="text-blue-700 font-extrabold">{formatIDR(effectiveAmount)}</span>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-[#70706E]">
+                      {paymentModalMode === 'replace'
+                        ? 'Akun Kas/Bank COA Pengganti (Baru)'
+                        : 'Metode Pembayaran (Akun Kas/Bank COA)'}
+                    </label>
+                    <select
+                      value={paymentAccountId}
+                      onChange={e => {
+                        const accId = e.target.value
+                        setPaymentAccountId(accId)
+                        const matched = paymentAccounts.find(a => a.id === accId)
+                        if (matched) setPaymentMethod(matched.name)
+                      }}
+                      className="w-full p-2.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white focus:outline-none"
+                    >
+                      {paymentAccounts.length > 0 ? (
+                        paymentAccounts.map(acc => (
+                          <option key={acc.id} value={acc.id}>
+                            [{acc.code}] {acc.name}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">Bank Transfer (Default)</option>
+                      )}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-[#70706E]">Tanggal Pembayaran</label>
+                    <input
+                      type="date"
+                      value={paymentDate}
+                      onChange={e => setPaymentDate(e.target.value)}
+                      className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-[#70706E]">Catatan / Keterangan (Opsional)</label>
+                    <input
+                      type="text"
+                      placeholder="Misal: DP 50%, Transfer via Mandiri..."
+                      value={paymentNotesInput}
+                      onChange={e => setPaymentNotesInput(e.target.value)}
+                      className="w-full p-2.5 text-xs rounded-xl border border-[#EBEBEA] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                  </div>
+
+                  <div className="pt-2 flex justify-between text-xs font-bold border-t border-gray-150">
+                    <span className="text-[#70706E]">Nominal Dicatat</span>
+                    <span className="text-blue-700 font-extrabold">{formatIDR(effectiveAmount)}</span>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="flex gap-2 pt-2 text-xs">
                 <button
                   type="button"
                   onClick={() => setShowPaymentModal(false)}
-                  className="flex-1 py-2 font-bold text-[#70706E] hover:text-[#1C1C1A] transition-colors"
+                  className="flex-1 py-2 font-bold text-[#70706E] hover:text-[#1C1C1A] transition-colors cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="button"
                   onClick={handleRecordPayment}
-                  disabled={submitting || effectiveAmount <= 0}
-                  className="flex-1 py-2 font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors disabled:opacity-50"
+                  disabled={
+                    submitting ||
+                    (paymentModalMode === 'void' && voidReasonInput.trim().length < 5) ||
+                    (paymentModalMode === 'replace' && (voidReasonInput.trim().length < 5 || effectiveAmount <= 0)) ||
+                    (paymentModalMode === 'record' && effectiveAmount <= 0)
+                  }
+                  className={`flex-1 py-2 font-bold text-white rounded-xl transition-colors disabled:opacity-50 cursor-pointer ${
+                    paymentModalMode === 'void'
+                      ? 'bg-rose-600 hover:bg-rose-700'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
                 >
-                  {submitting ? 'Proses...' : (isFullSettlement || effectiveAmount >= remainingBalance ? 'Catat Pelunasan' : 'Catat DP')}
+                  {submitting
+                    ? 'Memproses...'
+                    : paymentModalMode === 'void'
+                    ? 'Konfirmasi Void'
+                    : paymentModalMode === 'replace'
+                    ? 'Void & Simpan Pengganti'
+                    : isFullSettlement || effectiveAmount >= remainingBalance
+                    ? 'Catat Pelunasan'
+                    : 'Catat DP'}
                 </button>
               </div>
             </div>

@@ -538,6 +538,14 @@
       - `get_ledger_balances` (`p_basis = 'cash'`) wajib menerapkan *Date Predicate Pushdown* (`t.date >= p_start_date AND t.date <= p_end_date`) di setiap cabang `UNION ALL` dan indeks B-Tree pada `purchase_payments(transaction_id)`, `salary_payments(transaction_id)`, serta `transactions(business_id, order_id)`.
     - **Zero Retry-Storm pada RPC (`lib/supabase.ts` & `lib/supabaseServer.ts`):** Request ke `/rest/v1/rpc/` wajib diberikan batas waktu **25.000 ms** dengan `maxRetries = 0` agar tidak memutus laporan akuntansi di detik ke-6 (`AbortError: signal is aborted without reason`) dan tidak memicu badai retry paralel di PostgreSQL.
 
+33. **Invoice Payment Void & Replacement Standards (PSAK 225 / IAS 8, PSAK 109 / IFRS 9, & PSAK 115 / IFRS 15 — Skills `invoice-ledger` & `api-modules`):**
+    - **Pure Append-Only & Zero DELETE Policy:** Dilarang keras melakukan `DELETE` fisik pada tabel `order_payments` maupun `transactions` untuk pembayaran faktur yang sudah masuk ke Buku Besar (baik saat klik Void di halaman Detail Invoice maupun saat mengubah status/metode bayar di halaman Edit Invoice).
+    - **Same-Date Reversal Principle (PSAK 225 / IAS 8):** Saat sebuah baris pembayaran di-void via `voidOrderPayment()` (`lib/paymentLedger.ts`), jurnal pembalik (`Debit 103000 Piutang Usaha`, `Kredit Akun Kas/Bank COA asal`) **WAJIB** diposting menggunakan tanggal efektif pembayaran asal (`targetPay.date` / `targetPay.created_at`) agar rekonsiliasi buku bank dan Laporan Arus Kas pada tanggal terjadinya kesalahan langsung bersih (*net zero* tanpa distorsi *cut-off* lintas bulan), sementara waktu eksekusi riil dicatat pada `created_at` baris `payment_kind = 'void'` sebagai jejak audit IT.
+    - **Isolasi Dimensi Logistik vs Finansial (PSAK 115 vs PSAK 109):** Mencatat, me-void, atau mengganti pembayaran pada endpoint `POST /api/orders/invoices/[id]/payment` (`action: 'record' | 'void' | 'replace'`) **HANYA** memutasi dimensi keuangan (`payment_status`, `amount_paid`, `payment_method`), **DILARANG KERAS** memundurkan status operasional/logistik (`orders.status`) atau memicu mutasi ulang kartu stok gudang (`stock_moves`) dan jurnal HPP.
+    - **Anti-Double-Reversal Guard di `syncOrderToLedger()`:** Saat faktur dibatalkan penuh (`cancelled`), direfund (`refunded`), atau diretur (`returned`), `syncOrderToLedger()` wajib hanya membalik pembayaran yang masih aktif (`payment_kind === 'payment'` yang belum memiliki pasangan `void`/`refund` di `voided_payment_id`) agar pembayaran yang sudah pernah di-void tidak dibalik dua kali.
+    - **Mandatory Audit Reason & 1-Click Replace UX:** Setiap aksi Void atau Ganti Pembayaran wajib menyertakan alasan (`void_reason` minimal 5 karakter). Halaman Detail Invoice (`/orders/invoices/[id]`) menyediakan tombol `🔄 Ganti Pembayaran` (*1-Click Void Old + Record New*) dan `🚫 Void` pada setiap baris pembayaran aktif, serta menampilkan jejak audit pembayaran yang telah di-void (`payment_history`).
+
+
 
 
 

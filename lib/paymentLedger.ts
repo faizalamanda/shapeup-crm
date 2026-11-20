@@ -25,6 +25,8 @@ export interface VoidPaymentParams {
   businessId: string
   paymentId: string
   voidReason?: string | null
+  reversalDate?: string | null
+  sourceLabel?: string | null
   shiftId?: string | null
   cashierName?: string | null
   supabase: SupabaseClient
@@ -59,41 +61,62 @@ export interface PaymentActionResult {
 /**
  * Recalculates net paid amount for an order from order_payments table
  * Net Paid = SUM(payments) - SUM(voids) - SUM(refunds)
+ * Also synchronizes orders.payment_method with the latest active payment (or null if unpaid).
  */
 export async function recalculateOrderPaymentStatus(
   orderId: string,
   grandTotal: number,
   supabase: SupabaseClient
-): Promise<{ netPaid: number; paymentStatus: 'paid' | 'partial' | 'unpaid'; outstanding: number }> {
+): Promise<{ netPaid: number; paymentStatus: 'paid' | 'partial' | 'unpaid'; outstanding: number; latestPaymentMethod: string | null }> {
   const { data: allOrderPays } = await supabase
     .from('order_payments')
-    .select('amount, payment_kind')
+    .select('id, amount, payment_kind, payment_method, voided_payment_id, created_at')
     .eq('order_id', orderId)
+    .order('created_at', { ascending: true })
 
   let totalInflow = 0
   let totalOutflow = 0
+  const reversedIds = new Set<string>()
+
   if (allOrderPays) {
     for (const p of allOrderPays) {
       const amt = Number(p.amount) || 0
-      if (p.payment_kind === 'payment') totalInflow += amt
-      else if (p.payment_kind === 'refund' || p.payment_kind === 'void') totalOutflow += amt
+      if (p.payment_kind === 'payment') {
+        totalInflow += amt
+      } else if (p.payment_kind === 'refund' || p.payment_kind === 'void') {
+        totalOutflow += amt
+        if (p.voided_payment_id) reversedIds.add(p.voided_payment_id)
+      }
     }
   }
+
+  const activePays = (allOrderPays || []).filter(
+    (p: any) => p.payment_kind === 'payment' && !reversedIds.has(p.id)
+  )
+  const latestActivePay = activePays.length > 0 ? activePays[activePays.length - 1] : null
 
   const netPaid = Math.max(0, totalInflow - totalOutflow)
   const paymentStatus: 'paid' | 'partial' | 'unpaid' =
     netPaid >= grandTotal - 0.01 ? 'paid' : (netPaid > 0 ? 'partial' : 'unpaid')
   const outstanding = Math.max(0, grandTotal - netPaid)
+  const latestPaymentMethod = netPaid > 0 ? (latestActivePay?.payment_method || null) : null
+
+  const updateData: Record<string, any> = {
+    amount_paid: netPaid,
+    payment_status: paymentStatus
+  }
+  if (netPaid <= 0) {
+    updateData.payment_method = null
+  } else if (latestPaymentMethod) {
+    updateData.payment_method = latestPaymentMethod
+  }
 
   await supabase
     .from('orders')
-    .update({
-      amount_paid: netPaid,
-      payment_status: paymentStatus
-    })
+    .update(updateData)
     .eq('id', orderId)
 
-  return { netPaid, paymentStatus, outstanding }
+  return { netPaid, paymentStatus, outstanding, latestPaymentMethod }
 }
 
 /**
@@ -245,13 +268,18 @@ export async function recordOrderPayment(params: RecordPaymentParams): Promise<P
 }
 
 /**
- * Universal payment void engine (Append-Only Compensating Event)
+ * Universal payment void engine (Append-Only Compensating Event — PSAK 225 / IAS 8 & PSAK 109 / IFRS 9)
+ * - Preserves full audit trail (Zero DELETE on order_payments & transactions).
+ * - Posts reversal journal (Debit Piutang Usaha 103000, Credit Cash/Bank COA) on the original payment date
+ *   (or explicit reversalDate) to prevent cut-off period balance distortion in bank reconciliation.
  */
 export async function voidOrderPayment(params: VoidPaymentParams): Promise<PaymentActionResult> {
   const {
     businessId,
     paymentId,
-    voidReason = 'Koreksi Kasir',
+    voidReason = 'Koreksi Pembayaran',
+    reversalDate,
+    sourceLabel,
     shiftId,
     cashierName = 'Kasir',
     supabase
@@ -259,6 +287,11 @@ export async function voidOrderPayment(params: VoidPaymentParams): Promise<Payme
 
   if (!isUuid(paymentId)) {
     throw new Error('paymentId tidak valid')
+  }
+
+  const cleanReason = String(voidReason || 'Koreksi Pembayaran').trim()
+  if (cleanReason.length < 3) {
+    throw new Error('Alasan pembatalan (void) wajib diisi minimal 3 karakter.')
   }
 
   // 1. Fetch target payment
@@ -288,10 +321,44 @@ export async function voidOrderPayment(params: VoidPaymentParams): Promise<Payme
     throw new Error('Pembayaran ini sudah pernah dibatalkan (void) sebelumnya.')
   }
 
-  // 3. Resolve Accounts & Post Reversal Journal
-  const accountMap = await getOrCreateDefaultAccounts(businessId, supabase)
+  // Fetch associated order for order_number & grand_total context
+  const { data: orderData } = await supabase
+    .from('orders')
+    .select('id, order_number, grand_total, source_platform, raw_source_data')
+    .eq('id', targetPay.order_id)
+    .single()
+
+  const orderNumber = orderData?.order_number || String(targetPay.order_id).slice(0, 8)
+  const isInvoice =
+    orderData?.source_platform === 'Invoice' ||
+    Boolean(orderData?.raw_source_data?.is_invoice) ||
+    String(orderNumber).toUpperCase().startsWith('INV-')
+
+  const effectiveSourceLabel = sourceLabel || (isInvoice ? `Invoice #${orderNumber}` : `POS #${orderNumber}`)
+
+  // 3. Resolve Accounts dynamically from active COA & Post Reversal Journal
+  const [accountMap, activePaymentAccounts] = await Promise.all([
+    getOrCreateDefaultAccounts(businessId, supabase),
+    getActivePaymentAccounts(businessId, supabase)
+  ])
   const accPiutang = accountMap['103000']
-  const payAccId = targetPay.payment_method_account_id || (targetPay.payment_method === 'cash' ? accountMap['101000'] : accountMap['101200'])
+
+  let payAccId = isUuid(targetPay.payment_method_account_id) ? targetPay.payment_method_account_id : null
+  if (!payAccId) {
+    const matched = resolvePaymentAccountFromCOA(activePaymentAccounts, targetPay.payment_method, null)
+    const isCash = String(targetPay.payment_method || '').toLowerCase() === 'cash' || String(targetPay.payment_method || '').toLowerCase().includes('tunai')
+    payAccId = matched?.id || (isCash ? accountMap['101000'] : accountMap['101200'])
+  }
+
+  // PSAK 225 / IAS 8 Same-Date Reversal Principle:
+  // Default reversal journal date to the original payment date so bank reconciliation on that date nets to zero,
+  // while created_at records the exact real-time audit timestamp of when the void was executed.
+  const effectiveReversalIso = reversalDate
+    ? new Date(reversalDate).toISOString()
+    : (targetPay.created_at
+        ? new Date(targetPay.created_at).toISOString()
+        : (targetPay.date ? `${targetPay.date}T12:00:00.000Z` : new Date().toISOString()))
+  const effectiveReversalDateOnly = effectiveReversalIso.split('T')[0]
 
   let voidTxId: string | null = null
   if (payAccId && accPiutang) {
@@ -299,8 +366,8 @@ export async function voidOrderPayment(params: VoidPaymentParams): Promise<Payme
       const postRes = await postJournalTransaction(
         businessId,
         targetPay.order_id,
-        new Date().toISOString(),
-        `Void Pembayaran POS: ${voidReason} - ${cashierName}`,
+        effectiveReversalIso,
+        `Void Pembayaran ${effectiveSourceLabel} (Ref ${String(targetPay.id).slice(0, 8)}): ${cleanReason} - ${cashierName}`,
         [
           { account_id: accPiutang, debit: Number(targetPay.amount), credit: 0 },
           { account_id: payAccId, debit: 0, credit: Number(targetPay.amount) }
@@ -315,45 +382,43 @@ export async function voidOrderPayment(params: VoidPaymentParams): Promise<Payme
   }
 
   // 4. Insert Compensating Void Event (Append-Only)
-  const { error: insVoidErr } = await supabase
+  const { data: voidPaymentRow, error: insVoidErr } = await supabase
     .from('order_payments')
     .insert({
       business_id: businessId,
       order_id: targetPay.order_id,
       shift_id: isUuid(shiftId) ? shiftId : (targetPay.shift_id || null),
       transaction_id: voidTxId,
-      date: new Date().toISOString().split('T')[0],
+      date: effectiveReversalDateOnly,
       amount: targetPay.amount,
       payment_method: targetPay.payment_method,
       payment_method_account_id: payAccId,
       cash_received: 0,
       change_amount: 0,
       reference_number: targetPay.reference_number || null,
-      notes: voidReason ? `Void: ${voidReason}` : 'Pembatalan Pembayaran',
+      notes: `Void: ${cleanReason}`,
       payment_kind: 'void',
-      voided_payment_id: targetPay.id
+      voided_payment_id: targetPay.id,
+      created_at: new Date().toISOString()
     })
+    .select()
+    .single()
 
   if (insVoidErr) {
     throw new Error('Gagal mencatat event void: ' + insVoidErr.message)
   }
 
   // 5. Recalculate order paid amount & payment status
-  const { data: orderData } = await supabase
-    .from('orders')
-    .select('grand_total')
-    .eq('id', targetPay.order_id)
-    .single()
-
   const grandTotal = Number(orderData?.grand_total) || 0
   const { netPaid, paymentStatus, outstanding } = await recalculateOrderPaymentStatus(targetPay.order_id, grandTotal, supabase)
 
   return {
     success: true,
-    message: 'Pembayaran berhasil dibatalkan (void).',
+    message: 'Pembayaran berhasil dibatalkan (void) dan jurnal pembalik telah diposting ke Buku Besar.',
     amount_paid: netPaid,
     payment_status: paymentStatus,
-    outstanding
+    outstanding,
+    payment: voidPaymentRow
   }
 }
 
