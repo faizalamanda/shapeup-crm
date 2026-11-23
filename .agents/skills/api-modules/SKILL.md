@@ -555,6 +555,46 @@ Integrasi Accurate Online (`provider = 'accurate'`) menggunakan antrean asinkron
 
 ---
 
+### 17. `lib/fileExporter.ts` & `app/api/export/download/route.ts` — Universal APK/PWA File Download & Export Engine
+
+**DILARANG KERAS** memanggil `XLSX.writeFile(wb, fileName)` atau membuat `URL.createObjectURL(blob)` secara langsung di komponen halaman, karena **Android APK WebView (`DownloadManager`)** memblokir skema `blob:` dan hanya mendukung unduhan HTTP `GET` dengan header `Content-Disposition: attachment`.
+
+Seluruh fitur download template dan export laporan (`.xlsx` maupun `.csv`) **WAJIB** menggunakan modul terpusat `@/lib/fileExporter`:
+
+```typescript
+import {
+  downloadWorkbook,
+  downloadCsvFile,
+  exportJsonToFile,
+  shareOrDownloadWorkbook,
+  canUseNativeFileShare
+} from '@/lib/fileExporter'
+
+// 1. Pengganti langsung (Drop-in Replacement) untuk XLSX.writeFile(wb, fileName):
+downloadWorkbook(wb, 'Laporan_Stok_2026-11-23.xlsx')
+
+// 2. Pengganti langsung untuk unduhan CSV (otomatis menyertakan UTF-8 BOM \uFEFF):
+downloadCsvFile('Laporan_Analitik.csv', ['Tanggal', 'Omzet'], [['2026-11-23', 1500000]])
+
+// 3. Buat & unduh file Excel/CSV langsung dari array JSON (1 baris kode):
+exportJsonToFile({
+  fileName: 'Laporan_Data',
+  format: 'xlsx', // atau 'csv'
+  sheets: [{ sheetName: 'Rekap', rows: jsonArray }]
+})
+
+// 4. Bagikan file via Native OS Share Sheet (WhatsApp / Email / Drive) di HP:
+await shareOrDownloadWorkbook(wb, 'Laporan.xlsx')
+```
+
+**Mekanisme Kerja Otomatis:**
+- **Desktop Browser:** Mengunduh seketika (`0ms`) menggunakan Blob dengan MIME-type resmi dan auto-width kolom (`calculateAutoColumnWidths`).
+- **APK WebView & Mobile PWA (`isApkOrMobilePwaEnvironment()`):** Otomatis menjalankan **Two-Phase `POST` (prepare ticket) $\rightarrow$ `GET /api/export/download?ticket=...`** yang menghasilkan stream HTTP `GET` asli (`Content-Disposition: attachment`), sehingga `DownloadManager` bawaan Android dan iOS menyimpannya dengan tingkat keberhasilan 100% tanpa me-reload halaman SPA.
+- **Modal Ekspor Standar (`@/components/ui/UniversalExportModal.tsx`):** Gunakan komponen reusable berbasis `FullScreenModal` ini untuk halaman yang membutuhkan pilihan cakupan data (*Semua Data* vs *Halaman Ini*), pilihan format (`.xlsx` / `.csv`), dan tombol **📲 Bagikan** + **📥 Unduh**.
+- Untuk penjelasan arsitektur lengkap, baca [knowledge universal-apk-pwa-file-export](../../knowledge/universal-apk-pwa-file-export.md).
+
+---
+
 ## ⚡ Performance Rules
 
 1. **Auth:** `getApiContext()` uses JWT fast-path → ~0-5ms (no network call to Supabase Auth)

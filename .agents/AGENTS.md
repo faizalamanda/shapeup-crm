@@ -545,6 +545,13 @@
     - **Anti-Double-Reversal Guard di `syncOrderToLedger()`:** Saat faktur dibatalkan penuh (`cancelled`), direfund (`refunded`), atau diretur (`returned`), `syncOrderToLedger()` wajib hanya membalik pembayaran yang masih aktif (`payment_kind === 'payment'` yang belum memiliki pasangan `void`/`refund` di `voided_payment_id`) agar pembayaran yang sudah pernah di-void tidak dibalik dua kali.
     - **Mandatory Audit Reason & 1-Click Replace UX:** Setiap aksi Void atau Ganti Pembayaran wajib menyertakan alasan (`void_reason` minimal 5 karakter). Halaman Detail Invoice (`/orders/invoices/[id]`) menyediakan tombol `🔄 Ganti Pembayaran` (*1-Click Void Old + Record New*) dan `🚫 Void` pada setiap baris pembayaran aktif, serta menampilkan jejak audit pembayaran yang telah di-void (`payment_history`).
 
+34. **Universal APK / PWA File Download & Export Engine Standards (Zero Raw `XLSX.writeFile` / `blob:` Lockout):**
+    - **Larangan `XLSX.writeFile` & `blob:` Mentah:** Seluruh fitur unduh template dan ekspor laporan (`.xlsx` maupun `.csv`) di seluruh halaman aplikasi **DILARANG KERAS** memanggil `XLSX.writeFile(...)` atau `URL.createObjectURL(blob)` secara langsung di komponen halaman, karena Android APK WebView (`DownloadManager`) menolak skema memori `blob:` dan hanya mengeksekusi request HTTP `GET`.
+    - **Wajib Modul Terpusat (`@/lib/fileExporter.ts`):** Seluruh unduhan wajib menggunakan `downloadWorkbook()`, `downloadCsvFile()` (dengan UTF-8 BOM `\uFEFF`), `exportJsonToFile()`, atau `shareOrDownloadWorkbook()` dari `@/lib/fileExporter.ts`.
+    - **Two-Phase `POST` $\rightarrow$ `GET` HTTP Stream Relay (`/api/export/download`):** Saat berjalan di APK WebView atau Mobile PWA (`isApkOrMobilePwaEnvironment()`), `lib/fileExporter.ts` secara otomatis menyiapkan tiket unduhan melalui `POST /api/export/download` (`mode: 'prepare'`) lalu memicu unduhan HTTP `GET /api/export/download?ticket=...` yang mengalirkan binary file dengan header resmi `Content-Disposition: attachment` dan MIME-type standar RFC 5987.
+    - **Native Mobile Share Sheet (`navigator.share`):** Pada modal ekspor (`UniversalExportModal.tsx` & `OrderExportModal.tsx`), sediakan tombol **📲 Bagikan** di perangkat mobile yang mendukung `canUseNativeFileShare()` agar pengguna dapat langsung meneruskan file laporan Excel/CSV ke WhatsApp, Email, Telegram, atau Google Drive.
+
+
 
 
 

@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx'
 import { DEFAULT_TIMEZONE } from '@/lib/timeUtils'
+import { downloadWorkbook, shareOrDownloadWorkbook } from '@/lib/fileExporter'
 
 export interface OrderExportOptions {
   orders: any[]
@@ -7,6 +8,7 @@ export interface OrderExportOptions {
   layout: 'multisheet' | 'summary' | 'items'
   fileName: string
   timezone?: string
+  mode?: 'download' | 'share'
 }
 
 /**
@@ -336,12 +338,13 @@ function applyWorksheetStyles(ws: XLSX.WorkSheet) {
 /**
  * Executes the file generation and triggers the browser download.
  */
-export function exportOrdersToFile({
+export async function exportOrdersToFile({
   orders,
   format,
   layout,
   fileName,
   timezone = DEFAULT_TIMEZONE,
+  mode = 'download',
 }: OrderExportOptions) {
   if (!orders || orders.length === 0) {
     throw new Error('Tidak ada data pesanan untuk diekspor')
@@ -357,7 +360,12 @@ export function exportOrdersToFile({
 
     const ws = XLSX.utils.json_to_sheet(rows)
     XLSX.utils.book_append_sheet(wb, ws, 'Orders')
-    XLSX.writeFile(wb, fileName.endsWith('.csv') ? fileName : `${fileName}.csv`, { bookType: 'csv' })
+    const csvName = fileName.endsWith('.csv') ? fileName : `${fileName}.csv`
+    if (mode === 'share') {
+      await shareOrDownloadWorkbook(wb, csvName, { bookType: 'csv' })
+    } else {
+      downloadWorkbook(wb, csvName, { bookType: 'csv' })
+    }
     return
   }
 
@@ -395,6 +403,11 @@ export function exportOrdersToFile({
     XLSX.utils.book_append_sheet(wb, wsSummary, 'Ringkasan Pesanan')
   }
 
-  XLSX.writeFile(wb, fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`, { bookType: 'xlsx' })
+  const xlsxName = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`
+  if (mode === 'share') {
+    await shareOrDownloadWorkbook(wb, xlsxName, { bookType: 'xlsx', autoWidth: false })
+  } else {
+    downloadWorkbook(wb, xlsxName, { bookType: 'xlsx', autoWidth: false })
+  }
 }
 

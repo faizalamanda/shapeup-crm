@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx'
+import { downloadWorkbook } from '@/lib/fileExporter'
 
 export interface OrderFieldDefinition {
   key: string
@@ -675,5 +676,5 @@ export function downloadPresetSampleExcel(presetId: string) {
   XLSX.utils.book_append_sheet(wb, ws, 'Template Import')
   
   const cleanId = preset.id.replace(/[^a-zA-Z0-9_-]/g, '_')
-  XLSX.writeFile(wb, `Template_Import_Order_${cleanId}.xlsx`)
+  downloadWorkbook(wb, `Template_Import_Order_${cleanId}.xlsx`)
 }

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import * as XLSX from 'xlsx'
+import { downloadWorkbook } from '@/lib/fileExporter'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -619,7 +620,7 @@ export default function ProductImportPage() {
 
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Template Produk')
-    XLSX.writeFile(wb, 'template_import_produk_shapeup.xlsx')
+    downloadWorkbook(wb, 'template_import_produk_shapeup.xlsx')
   }
 
   // Detect whether the uploaded file has Moka POS headers or Modifier Set columns
@@ -1024,7 +1025,7 @@ export default function ProductImportPage() {
     ]
 
     const cleanBaseName = fileName ? fileName.replace(/\.[^/.]+$/, '') : 'produk'
-    XLSX.writeFile(wb, `gagal_import_${cleanBaseName}_${new Date().toISOString().slice(0, 10)}.xlsx`)
+    downloadWorkbook(wb, `gagal_import_${cleanBaseName}_${new Date().toISOString().slice(0, 10)}.xlsx`)
   }
 
   // Streaming Batch Import (Zero-Timeout Engine) with Resilient Failure Isolation

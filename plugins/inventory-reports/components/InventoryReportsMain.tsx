@@ -1,14 +1,18 @@
 "use client"
-import React, { useState, useEffect, useCallback, useRef } from 'react'
-import * as XLSX from 'xlsx'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   StockReportItem,
   LocationReportSummary,
   StockMove,
   InventoryReportMetrics,
   PaginationMeta,
+  QuarantineReturnItem,
 } from '../types'
+import { buildMoveAnalysisPivot, calculateValuation } from '../inventoryHelper'
 import { useUserContext } from '@/components/UserContext'
+import { UniversalExportModal, ExportScopeOption } from '@/components/ui/UniversalExportModal'
+import { ExportSheetConfig } from '@/lib/fileExporter'
+import { formatDisplayDate } from '@/lib/timeUtils'
 
 import StockReportTab, { SortField } from './StockReportTab'
 import LocationReportTab from './LocationReportTab'
@@ -304,23 +308,309 @@ export default function InventoryReportsMain() {
     }
   }
 
-  // Export Excel Handler
-  const handleExportExcel = () => {
-    const fileName = `Laporan_Inventory_${activeTab}_${new Date().toISOString().slice(0, 10)}.xlsx`
-    const exportData = stockReportItems.map(item => ({
-      SKU: item.sku || '-',
-      'Nama Produk': item.productName,
-      Kategori: item.categoryName,
-      'Stok Fisik (On Hand)': item.onHandQty,
-      'Harga Unit (Cost)': item.unitCost,
-      'Total Nilai Persediaan': item.totalValue,
-    }))
+  // Universal Export Modal State
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false)
 
-    const worksheet = XLSX.utils.json_to_sheet(exportData)
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Report')
-    XLSX.writeFile(workbook, fileName)
-  }
+  // Unfold StockReportItem[] into discrete physical SKUs (compliant with inventory-ledger §7.3)
+  const formatDiscreteStockRows = useCallback((items: StockReportItem[]) => {
+    const rows: Record<string, any>[] = []
+    for (const item of items) {
+      if (Array.isArray(item.variants) && item.variants.length > 0) {
+        for (const v of item.variants) {
+          const qty = Number(v.stockQuantity || 0)
+          const cost = Number(v.costPrice || item.unitCost || 0)
+          rows.push({
+            SKU: v.sku || item.sku || '-',
+            'Nama Produk & Varian': `${item.productName} - ${v.name}`,
+            'Tipe SKU': 'Varian',
+            Kategori: item.categoryName || 'Tanpa Kategori',
+            Satuan: item.unit || 'Pcs',
+            'Stok Fisik (On Hand)': qty,
+            'Harga Modal (HPP)': Math.round(cost),
+            'Total Nilai Persediaan': Math.round(qty * cost),
+          })
+        }
+      } else {
+        const qty = Number(item.onHandQty || 0)
+        const cost = Number(item.unitCost || 0)
+        rows.push({
+          SKU: item.sku || '-',
+          'Nama Produk & Varian': item.productName,
+          'Tipe SKU': 'Produk Tunggal',
+          Kategori: item.categoryName || 'Tanpa Kategori',
+          Satuan: item.unit || 'Pcs',
+          'Stok Fisik (On Hand)': qty,
+          'Harga Modal (HPP)': Math.round(cost),
+          'Total Nilai Persediaan': Math.round(item.totalValue ?? qty * cost),
+        })
+      }
+    }
+    return rows
+  }, [])
+
+  const exportModalConfig = useMemo(() => {
+    const dateStr = new Date().toISOString().slice(0, 10)
+    const cleanBiz = (activeBizName || 'ShapeUp').replace(/[^a-zA-Z0-9_-]/g, '_')
+
+    if (activeTab === 'stock') {
+      const filterDesc = [
+        searchQuery ? `Pencarian: "${searchQuery}"` : '',
+        selectedCategory ? `Kategori: "${selectedCategory}"` : '',
+      ].filter(Boolean).join(', ')
+
+      const scopes: ExportScopeOption[] = [
+        {
+          key: 'all_filtered',
+          label: filterDesc ? 'Semua Produk Sesuai Filter Aktif' : 'Seluruh Katalog Stok Produk & Varian',
+          description: filterDesc
+            ? `Mengekspor seluruh produk & varian diskret yang cocok dengan filter (${filterDesc}).`
+            : 'Mengekspor seluruh daftar stok produk beserta rincian varian SKU fisik bisnis Anda.',
+          badge: `${pagination.totalItems.toLocaleString('id-ID')} Produk`,
+        },
+        {
+          key: 'current_page',
+          label: 'Halaman Aktif Saja',
+          description: `Ekspor instan khusus baris produk yang sedang tampil di halaman ${pagination.page}.`,
+          badge: `${stockReportItems.length} Produk`,
+        },
+      ]
+      return {
+        title: 'Ekspor Laporan Stok Persediaan',
+        subtitle: 'Unduh daftar stok fisik (On-Hand), HPP modal, dan nilai valuasi per SKU & varian.',
+        fileName: `Laporan_Stok_Inventory_${cleanBiz}_${dateStr}`,
+        scopes,
+        defaultScope: 'all_filtered',
+      }
+    }
+
+    if (activeTab === 'location') {
+      return {
+        title: 'Ekspor Laporan Distribusi Lokasi & Gudang',
+        subtitle: 'Unduh ringkasan jumlah SKU, stok fisik, stok tersedia, dan nilai persediaan per gudang.',
+        fileName: `Laporan_Lokasi_Gudang_${cleanBiz}_${dateStr}`,
+        scopes: [] as ExportScopeOption[],
+        defaultScope: 'all',
+      }
+    }
+
+    if (activeTab === 'analysis') {
+      return {
+        title: 'Ekspor Analisis Pergerakan Stok (Move Analysis)',
+        subtitle: 'Unduh tabel pivot frekuensi mutasi masuk/keluar serta riwayat pergerakan barang.',
+        fileName: `Laporan_Analisis_Mutasi_Stok_${cleanBiz}_${dateStr}`,
+        scopes: [] as ExportScopeOption[],
+        defaultScope: 'all',
+      }
+    }
+
+    if (activeTab === 'valuation') {
+      return {
+        title: 'Ekspor Penilaian Valuasi Persediaan (FIFO / LIFO / AVCO)',
+        subtitle: 'Unduh perbandingan nilai finansial persediaan beserta rincian valuasi per SKU.',
+        fileName: `Laporan_Valuasi_Inventory_${cleanBiz}_${dateStr}`,
+        scopes: [
+          {
+            key: 'all_filtered',
+            label: 'Seluruh Katalog Produk Bisnis',
+            description: 'Menghitung dan mengekspor valuasi untuk seluruh produk di database.',
+            badge: `${pagination.totalItems.toLocaleString('id-ID')} Produk`,
+          },
+          {
+            key: 'current_page',
+            label: 'Halaman Aktif Saja',
+            description: 'Mengekspor valuasi untuk produk yang sedang dimuat di halaman saat ini.',
+            badge: `${stockReportItems.length} Produk`,
+          },
+        ] as ExportScopeOption[],
+        defaultScope: 'all_filtered',
+      }
+    }
+
+    // activeTab === 'returns'
+    return {
+      title: 'Ekspor Daftar Retur & Karantina',
+      subtitle: 'Unduh jejak audit barang retur pesanan/batal beserta status verifikasi gudang.',
+      fileName: `Laporan_Karantina_Retur_${cleanBiz}_${dateStr}`,
+      scopes: [] as ExportScopeOption[],
+      defaultScope: 'all',
+    }
+  }, [activeTab, activeBizName, searchQuery, selectedCategory, pagination.totalItems, pagination.page, stockReportItems.length])
+
+  const handleBuildInventoryExport = useCallback(
+    async ({
+      scope,
+      setProgress,
+    }: {
+      scope: string
+      format: 'xlsx' | 'csv'
+      setProgress: (percent: number, text: string) => void
+    }): Promise<ExportSheetConfig[]> => {
+      // 1. TAB: STOCK REPORT
+      if (activeTab === 'stock') {
+        let itemsToFormat = stockReportItems
+        if (scope === 'all_filtered') {
+          setProgress(25, 'Mengambil seluruh data stok produk & varian dari server...')
+          const params = new URLSearchParams({
+            action: 'export_stock',
+            search: searchQuery,
+            category: selectedCategory,
+            sortField,
+            sortOrder,
+          })
+          const res = await fetch(`/api/inventory/reports?${params.toString()}`)
+          const json = await res.json().catch(() => null)
+          if (!res.ok || !json?.success) {
+            throw new Error(json?.error || 'Gagal mengambil seluruh data stok untuk ekspor.')
+          }
+          itemsToFormat = json.stockReportItems || []
+        }
+
+        setProgress(70, `Menyusun ${itemsToFormat.length} produk beserta varian diskret...`)
+        const rows = formatDiscreteStockRows(itemsToFormat)
+        return [
+          {
+            sheetName: 'Stok Persediaan SKU',
+            rows,
+          },
+        ]
+      }
+
+      // 2. TAB: LOCATION REPORT
+      if (activeTab === 'location') {
+        let locs = locationReportSummaries
+        if (locs.length === 0) {
+          setProgress(30, 'Memuat data distribusi lokasi gudang...')
+          const res = await fetch('/api/inventory/reports?action=location_report')
+          const json = await res.json().catch(() => null)
+          locs = json?.locationReportSummaries || []
+        }
+        setProgress(75, 'Menyusun tabel distribusi lokasi...')
+        const rows = locs.map(l => ({
+          'Kode Lokasi': l.locationCode,
+          'Nama Lokasi / Gudang': l.locationName,
+          'Tipe Lokasi':
+            l.locationType === 'internal'
+              ? 'Internal Gudang'
+              : l.locationType === 'vendor'
+              ? 'Vendor / Pemasok'
+              : l.locationType === 'customer'
+              ? 'Transit Pelanggan'
+              : 'Lainnya',
+          'Jumlah SKU': l.totalProductsCount,
+          'Stok Fisik (On Hand)': l.totalQty,
+          'Stok Terpesan (Reserved)': l.reservedQty,
+          'Stok Tersedia (Available)': l.availableQty,
+          'Total Nilai Finansial (IDR)': Math.round(l.totalValue || 0),
+        }))
+        return [{ sheetName: 'Distribusi Lokasi', rows }]
+      }
+
+      // 3. TAB: MOVE ANALYSIS
+      if (activeTab === 'analysis') {
+        let activeMoves = moves
+        if (activeMoves.length === 0) {
+          setProgress(30, 'Memuat riwayat mutasi stok...')
+          const res = await fetch('/api/inventory/reports?action=global_moves&limit=500')
+          const json = await res.json().catch(() => null)
+          activeMoves = json?.moves || []
+        }
+        setProgress(70, 'Menyusun analisis pergerakan stok...')
+        const pivotByProduct = buildMoveAnalysisPivot(activeMoves, 'product').map(p => ({
+          'Produk / Grup': p.groupLabel,
+          'Jumlah Transaksi Mutasi': p.moveCount,
+          'Stok Masuk (+Qty In)': p.totalQtyIn,
+          'Stok Keluar (-Qty Out)': p.totalQtyOut,
+          'Pergerakan Bersih (Net)': p.netMovement,
+          'Total Perputaran Finansial (IDR)': Math.round(p.totalValue || 0),
+        }))
+        const detailMoveRows = activeMoves.map(m => ({
+          Waktu: formatDisplayDate(m.created_at, 'datetime', activeBusiness?.timezone),
+          Referensi: m.reference || '-',
+          SKU: m.product_sku || '-',
+          'Nama Produk': m.product_name || '-',
+          'Tipe Mutasi': m.type,
+          Wadah: m.bucket_label || m.bucket || 'Gudang Utama',
+          'Lokasi Asal': m.origin_location_name || '-',
+          'Lokasi Tujuan': m.destination_location_name || '-',
+          'Qty Mutasi': m.qty,
+          'Saldo Sistem (On-Hand)': m.system_stock ?? '-',
+          'Harga Modal Unit (IDR)': Math.round(m.unit_cost || 0),
+        }))
+        return [
+          { sheetName: 'Pivot Analisis Produk', rows: pivotByProduct },
+          { sheetName: 'Riwayat Mutasi Stok', rows: detailMoveRows },
+        ]
+      }
+
+      // 4. TAB: VALUATION
+      if (activeTab === 'valuation') {
+        let itemsForValuation = stockReportItems
+        if (scope === 'all_filtered') {
+          setProgress(30, 'Mengambil seluruh katalog untuk perhitungan valuasi...')
+          const res = await fetch('/api/inventory/reports?action=export_stock')
+          const json = await res.json().catch(() => null)
+          if (res.ok && json?.stockReportItems) {
+            itemsForValuation = json.stockReportItems
+          }
+        }
+        setProgress(70, 'Menghitung valuasi FIFO, LIFO, AVCO, dan Standard...')
+        const fifo = calculateValuation('FIFO', itemsForValuation, moves)
+        const avco = calculateValuation('AVCO', itemsForValuation, moves)
+        const lifo = calculateValuation('LIFO', itemsForValuation, moves)
+        const standard = calculateValuation('STANDARD', itemsForValuation, moves)
+
+        const breakdownRows = fifo.itemBreakdown.map((item, idx) => ({
+          SKU: item.sku || '-',
+          'Nama Produk': item.productName,
+          'Stok Fisik (Qty)': item.qtyOnHand,
+          'Harga Modal Standar (IDR)': Math.round(item.standardCost || 0),
+          'Unit Cost FIFO (IDR)': Math.round(item.unitCostCalculated || 0),
+          'Total Nilai FIFO (IDR)': Math.round(item.totalValueCalculated || 0),
+          'Total Nilai AVCO (IDR)': Math.round(avco.itemBreakdown[idx]?.totalValueCalculated || 0),
+          'Total Nilai LIFO (IDR)': Math.round(lifo.itemBreakdown[idx]?.totalValueCalculated || 0),
+          'Total Nilai Standard (IDR)': Math.round(standard.itemBreakdown[idx]?.totalValueCalculated || 0),
+          'Selisih FIFO vs Standar (IDR)': Math.round(item.varianceVsStandard || 0),
+        }))
+
+        return [{ sheetName: 'Valuasi Persediaan', rows: breakdownRows }]
+      }
+
+      // 5. TAB: KARANTINA RETUR
+      setProgress(30, 'Mengambil daftar karantina retur...')
+      const res = await fetch('/api/inventory/returns')
+      const json = await res.json().catch(() => null)
+      const returnMoves: QuarantineReturnItem[] = Array.isArray(json) ? json : []
+
+      setProgress(75, 'Menyusun laporan karantina retur...')
+      const rows = returnMoves.map(m => ({
+        'Tanggal Retur': formatDisplayDate(m.return_date, 'datetime', activeBusiness?.timezone),
+        'No. Referensi': m.reference || '-',
+        SKU: m.product_sku || '-',
+        'Nama Produk': m.product_name || '-',
+        'Qty Retur': m.return_qty,
+        Satuan: m.product_unit || 'Pcs',
+        Status: m.status_label || m.status,
+        'Waktu Penyelesaian': m.resolved_at
+          ? formatDisplayDate(m.resolved_at, 'datetime', activeBusiness?.timezone)
+          : '-',
+        'Referensi Penyelesaian': m.resolution_reference || '-',
+      }))
+
+      return [{ sheetName: 'Karantina Retur', rows }]
+    },
+    [
+      activeTab,
+      stockReportItems,
+      searchQuery,
+      selectedCategory,
+      sortField,
+      sortOrder,
+      formatDiscreteStockRows,
+      locationReportSummaries,
+      moves,
+      activeBusiness?.timezone,
+    ]
+  )
 
   return (
     <div className="space-y-6">
@@ -399,7 +689,7 @@ export default function InventoryReportsMain() {
           </button>
 
           <button
-            onClick={handleExportExcel}
+            onClick={() => setIsExportModalOpen(true)}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -512,6 +802,18 @@ export default function InventoryReportsMain() {
 
         {activeTab === 'returns' && <PendingReturnsTab />}
       </div>
+
+      {/* ─── Universal APK/PWA Export Modal ─────────────────────────────────── */}
+      <UniversalExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        title={exportModalConfig.title}
+        subtitle={exportModalConfig.subtitle}
+        defaultFileName={exportModalConfig.fileName}
+        scopeOptions={exportModalConfig.scopes}
+        defaultScope={exportModalConfig.defaultScope}
+        onBuildExportData={handleBuildInventoryExport}
+      />
 
       {/* ─── Backfill Confirmation Modal ─────────────────────────────────────── */}
       {showBackfillModal && (

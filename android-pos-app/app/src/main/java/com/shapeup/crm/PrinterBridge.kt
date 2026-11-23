@@ -194,6 +194,31 @@ class PrinterBridge(private val activity: MainActivity) {
         closeConnection()
     }
 
+    /**
+     * Menyimpan file Base64 (Excel .xlsx / CSV .csv / PDF) langsung ke folder Downloads Android
+     * dan menampilkan dialog Buka Berkas / Bagikan ke WhatsApp.
+     */
+    @JavascriptInterface
+    fun downloadBase64File(base64Data: String, fileName: String, mimeType: String) {
+        activity.saveBase64ToDownloads(base64Data, fileName, mimeType)
+    }
+
+    /**
+     * Membagikan file Base64 (Excel .xlsx / CSV .csv / PDF) langsung melalui Native Android Share Sheet.
+     */
+    @JavascriptInterface
+    fun shareBase64File(base64Data: String, fileName: String, mimeType: String) {
+        activity.shareBase64FileNative(base64Data, fileName, mimeType)
+    }
+
+    /**
+     * Membuka URL di browser Chrome / eksternal perangkat Android.
+     */
+    @JavascriptInterface
+    fun openExternalBrowser(url: String) {
+        activity.openUrlInExternalBrowser(url)
+    }
+
     private fun closeConnection() {
         try {
             activeOutputStream?.close()

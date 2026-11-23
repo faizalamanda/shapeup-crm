@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import * as XLSX from 'xlsx'
+import { downloadWorkbook } from '@/lib/fileExporter'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -568,7 +569,7 @@ export default function OrderImportPage() {
 
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Baris Gagal')
-    XLSX.writeFile(wb, `Laporan_Gagal_Import_Pesanan_${new Date().toISOString().slice(0, 10)}.xlsx`)
+    downloadWorkbook(wb, `Laporan_Gagal_Import_Pesanan_${new Date().toISOString().slice(0, 10)}.xlsx`)
   }
 
   // Helper time formatter

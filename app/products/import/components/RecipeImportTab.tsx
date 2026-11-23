@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import * as XLSX from 'xlsx'
+import { downloadWorkbook } from '@/lib/fileExporter'
 
 interface RecipeImportTabProps {
   activeBizId: string | null
@@ -126,7 +127,7 @@ export default function RecipeImportTab({ activeBizId }: RecipeImportTabProps) {
     const ws = XLSX.utils.json_to_sheet(sampleRows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Resep_BOM')
-    XLSX.writeFile(wb, 'Template_Import_Resep_ShapeUp.xlsx')
+    downloadWorkbook(wb, 'Template_Import_Resep_ShapeUp.xlsx')
   }
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -276,7 +277,7 @@ export default function RecipeImportTab({ activeBizId }: RecipeImportTabProps) {
     const ws = XLSX.utils.json_to_sheet(exportRows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Resep_Gagal')
-    XLSX.writeFile(wb, `Resep_Gagal_${new Date().toISOString().slice(0, 10)}.xlsx`)
+    downloadWorkbook(wb, `Resep_Gagal_${new Date().toISOString().slice(0, 10)}.xlsx`)
   }
 
   const resetWizard = () => {

@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import * as XLSX from 'xlsx'
+import { downloadWorkbook } from '@/lib/fileExporter'
 import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
 import { usePageBackNavigation } from '@/hooks/usePageBackNavigation'
@@ -1126,7 +1127,7 @@ export default function RevenueReportPage() {
     const ws = XLSX.utils.json_to_sheet(exportData)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Revenue Breakdown')
-    XLSX.writeFile(wb, `Revenue_Breakdown_${temporalFilter.startDate || 'ALL'}_to_${temporalFilter.endDate || 'ALL'}.xlsx`)
+    downloadWorkbook(wb, `Revenue_Breakdown_${temporalFilter.startDate || 'ALL'}_to_${temporalFilter.endDate || 'ALL'}.xlsx`)
   }
 
   const handleExportGrouped = (rows: GroupedRow[], dimName: string) => {
@@ -1141,7 +1142,7 @@ export default function RevenueReportPage() {
     const ws = XLSX.utils.json_to_sheet(exportData)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Grouped Revenue')
-    XLSX.writeFile(wb, `Revenue_Grouped_${dimName}_${temporalFilter.startDate || 'ALL'}.xlsx`)
+    downloadWorkbook(wb, `Revenue_Grouped_${dimName}_${temporalFilter.startDate || 'ALL'}.xlsx`)
   }
 
   const renderGrowthPill = (pct: number, reverse = false) => {

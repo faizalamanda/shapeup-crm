@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import * as XLSX from 'xlsx'
+import { downloadWorkbook } from '@/lib/fileExporter'
 import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
 import { usePageBackNavigation } from '@/hooks/usePageBackNavigation'
@@ -442,7 +443,7 @@ export default function CustomersReportPage() {
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Laporan Pelanggan')
-    XLSX.writeFile(wb, `laporan-pelanggan-${temporalFilter.startDate}-sd-${temporalFilter.endDate}.xlsx`)
+    downloadWorkbook(wb, `laporan-pelanggan-${temporalFilter.startDate}-sd-${temporalFilter.endDate}.xlsx`)
   }
 
   const granularityTitle =

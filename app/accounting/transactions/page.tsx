@@ -7,6 +7,7 @@ import { formatCurrencyIDR, getDateRangeLimits, DateRangeKey } from '../utils'
 import { useUserContext } from '@/components/UserContext'
 import { sortTransactionsNewestFirst, formatDisplayDate } from '@/lib/timeUtils'
 import * as XLSX from 'xlsx'
+import { downloadWorkbook } from '@/lib/fileExporter'
 
 type Account = {
   id: string
@@ -1096,7 +1097,7 @@ export default function TransactionsPage() {
     const worksheet = XLSX.utils.json_to_sheet(exportRows)
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Daftar Jurnal & Transaksi')
-    XLSX.writeFile(workbook, `Transaksi_Akuntansi_${dateLimits.start}_s.d_${dateLimits.end}.xlsx`)
+    downloadWorkbook(workbook, `Transaksi_Akuntansi_${dateLimits.start}_s.d_${dateLimits.end}.xlsx`)
   }
 
   return (

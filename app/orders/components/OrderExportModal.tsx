@@ -1,9 +1,10 @@
 "use client"
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { exportOrdersToFile } from '../services/orderExportService'
 import { DEFAULT_TIMEZONE } from '@/lib/timeUtils'
+import { canUseNativeFileShare } from '@/lib/fileExporter'
 
 interface OrderExportModalProps {
   isOpen: boolean
@@ -39,6 +40,11 @@ export function OrderExportModal({
   const [progressPercent, setProgressPercent] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const [supportsNativeShare, setSupportsNativeShare] = useState(false)
+
+  useEffect(() => {
+    setSupportsNativeShare(canUseNativeFileShare())
+  }, [])
 
   // Auto-adjust layout if user switches to CSV (CSV does not support multi-sheet)
   const handleFormatChange = (newFormat: ExportFormat) => {
@@ -48,7 +54,7 @@ export function OrderExportModal({
     }
   }
 
-  const handleStartExport = async () => {
+  const handleStartExport = async (mode: 'download' | 'share' = 'download') => {
     setIsExporting(true)
     setErrorMsg(null)
     setSuccessMsg(null)
@@ -129,12 +135,13 @@ export function OrderExportModal({
       // Allow UI to paint progress update before heavy XLSX CPU serialization
       await new Promise(r => setTimeout(r, 60))
 
-      exportOrdersToFile({
+      await exportOrdersToFile({
         orders: ordersToExport,
         format,
         layout: format === 'csv' && layout === 'multisheet' ? 'summary' : layout,
         fileName,
         timezone: businessTimezone,
+        mode,
       })
 
       setProgressPercent(100)
@@ -179,7 +186,7 @@ export function OrderExportModal({
         </div>
       }
       footer={
-        <div className="flex items-center justify-between w-full gap-3">
+        <div className="flex flex-wrap items-center justify-between w-full gap-2.5">
           <button
             type="button"
             disabled={isExporting}
@@ -189,28 +196,43 @@ export function OrderExportModal({
             Tutup
           </button>
 
-          <button
-            type="button"
-            disabled={isExporting}
-            onClick={handleStartExport}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {isExporting ? (
-              <>
-                <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                <span>Memproses Ekspor...</span>
-              </>
-            ) : (
-              <>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                <span>Unduh Berkas Sekarang</span>
-              </>
+          <div className="flex items-center gap-2 flex-1 sm:flex-initial justify-end">
+            {supportsNativeShare && (
+              <button
+                type="button"
+                disabled={isExporting}
+                onClick={() => handleStartExport('share')}
+                className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                title="Bagikan langsung ke WhatsApp, Email, Telegram, atau Simpan ke File HP"
+              >
+                <span>📲</span>
+                <span>Bagikan</span>
+              </button>
             )}
-          </button>
+
+            <button
+              type="button"
+              disabled={isExporting}
+              onClick={() => handleStartExport('download')}
+              className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed flex-1 sm:flex-initial"
+            >
+              {isExporting ? (
+                <>
+                  <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                  <span>Memproses Ekspor...</span>
+                </>
+              ) : (
+                <>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  <span>Unduh Berkas Sekarang</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       }
     >

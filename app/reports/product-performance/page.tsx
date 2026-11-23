@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import * as XLSX from 'xlsx'
+import { downloadWorkbook } from '@/lib/fileExporter'
 import { supabase } from '@/lib/supabase'
 import { useUserContext } from '@/components/UserContext'
 import { usePageBackNavigation } from '@/hooks/usePageBackNavigation'
@@ -1917,7 +1918,7 @@ export default function ProductPerformancePage() {
     const ws = XLSX.utils.json_to_sheet(exportData)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Product_Performance_BCG')
-    XLSX.writeFile(
+    downloadWorkbook(
       wb,
       `Product_Performance_BCG_${temporalFilter.startDate || 'all'}_to_${temporalFilter.endDate || 'all'}.xlsx`
     )

@@ -356,5 +356,11 @@ Di sistem ritel kelas dunia (Shopify Admin & Odoo ERP), pelaporan stok dan stok 
      ```
    - Menjamin bahwa staf kasir atau staf gudang tidak pernah mengalami kegagalan izin (403 atau data kosong) saat menginput opname atau memutasi stok.
 
+5. **Context-Aware Multi-Tab & Full-Catalog Discrete SKU Export (`/inventory/reports`):**
+   - Ekspor pada halaman Laporan Inventory (`InventoryReportsMain.tsx`) **WAJIB** menggunakan `UniversalExportModal` dan `lib/fileExporter.ts` agar 100% berfungsi di APK WebView, PWA Standalone, dan Desktop.
+   - Pada tab **Stock Report**, opsi *"Seluruh Katalog Stok Produk & Varian"* memanggil `/api/inventory/reports?action=export_stock` (yang melakukan *chunked fetching* melewati batas 1.000 baris PostgREST) dan meratakan (*unfold*) seluruh varian menjadi baris SKU fisik diskret (`${productName} - ${variant.name}`).
+   - Tombol Export wajib menyesuaikan isi laporan dengan tab aktif (`stock`, `location`, `analysis` [2-sheet pivot + mutasi], `valuation` [FIFO/AVCO/LIFO/Standard], dan `returns` [karantina retur]).
+
+
 
 

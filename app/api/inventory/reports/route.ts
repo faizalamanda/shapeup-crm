@@ -637,17 +637,18 @@ export async function GET(req: Request) {
     }
 
     const requiresJsSort = sortField === 'totalValue' || sortField === 'categoryName'
-    if (!requiresJsSort) {
-      prodsQuery = prodsQuery.range(offset, offset + limit - 1)
-    }
+    const isExportAll = action === 'export_stock'
 
+    // If exporting all or requiring JS sort, fetch all matching rows in chunks of 1000 (Bypass PostgREST 1,000-row cap)
     let [metrics, prodsRes] = await Promise.all([
-      metricsPromise,
-      prodsQuery
+      isExportAll ? Promise.resolve(null) : metricsPromise,
+      (!requiresJsSort && !isExportAll) ? prodsQuery.range(offset, offset + limit - 1) : prodsQuery.range(0, 999)
     ])
 
     // Fallback if nested product_variants query fails due to schema cache
+    let usedFallbackSelect = false
     if (prodsRes.error && prodsRes.error.message?.includes('product_variants')) {
+      usedFallbackSelect = true
       let fallbackProdsQuery = supabase
         .from('products')
         .select('id, name, sku, unit, cost_price, price, description, hpp_type, stock_quantity, category_id, categories(id, name)', { count: 'exact' })
@@ -661,13 +662,39 @@ export async function GET(req: Request) {
       else if (sortField === 'unitCost') fallbackProdsQuery = fallbackProdsQuery.order('cost_price', { ascending: isAsc })
       else fallbackProdsQuery = fallbackProdsQuery.order('created_at', { ascending: false })
 
-      if (!requiresJsSort) fallbackProdsQuery = fallbackProdsQuery.range(offset, offset + limit - 1)
+      if (!requiresJsSort && !isExportAll) fallbackProdsQuery = fallbackProdsQuery.range(offset, offset + limit - 1)
+      else fallbackProdsQuery = fallbackProdsQuery.range(0, 999)
       prodsRes = await fallbackProdsQuery as any
     }
 
     const totalItems = prodsRes.count || 0
     const totalPages = Math.ceil(totalItems / limit) || 1
     let paginatedProducts = prodsRes.data || []
+
+    // Fetch remaining chunks if exporting all or sorting in JS and totalItems > 1000
+    if ((isExportAll || requiresJsSort) && totalItems > 1000 && paginatedProducts.length === 1000) {
+      const selectStr = usedFallbackSelect
+        ? 'id, name, sku, unit, cost_price, price, description, hpp_type, stock_quantity, category_id, categories(id, name)'
+        : 'id, name, sku, unit, cost_price, price, description, hpp_type, stock_quantity, category_id, categories(id, name), product_variants(*)'
+
+      for (let from = 1000; from < totalItems; from += 1000) {
+        let chunkQuery = supabase
+          .from('products')
+          .select(selectStr)
+          .eq('business_id', businessId)
+        if (search) chunkQuery = chunkQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%`)
+        chunkQuery = applyCategoryFilter(chunkQuery)
+        if (sortField === 'productName') chunkQuery = chunkQuery.order('name', { ascending: isAsc })
+        else if (sortField === 'onHandQty') chunkQuery = chunkQuery.order('stock_quantity', { ascending: isAsc })
+        else if (sortField === 'unitCost') chunkQuery = chunkQuery.order('cost_price', { ascending: isAsc })
+        else chunkQuery = chunkQuery.order('created_at', { ascending: false })
+
+        const { data: nextChunk } = await chunkQuery.range(from, from + 999)
+        if (!nextChunk || nextChunk.length === 0) break
+        paginatedProducts = paginatedProducts.concat(nextChunk as any)
+        if (nextChunk.length < 1000) break
+      }
+    }
 
     // Ensure variants are populated for each product
     const needVariantFetchIds = paginatedProducts.filter((p: any) => !p.product_variants || !Array.isArray(p.product_variants)).map((p: any) => p.id)
@@ -709,7 +736,9 @@ export async function GET(req: Request) {
         }
         return 0
       })
-      paginatedProducts = paginatedProducts.slice(offset, offset + limit)
+      if (!isExportAll) {
+        paginatedProducts = paginatedProducts.slice(offset, offset + limit)
+      }
     }
 
     const categoryNames = allCategories.map(c => c.name).filter(Boolean)
