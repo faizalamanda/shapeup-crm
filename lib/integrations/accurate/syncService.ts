@@ -1,6 +1,7 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import crypto from 'crypto'
 import { invalidateCustomerCache } from '@/lib/customerHelper'
+import { invalidateOrderProductCache } from '@/lib/inventoryHelper'
 
 // Helper to delay execution (rate limiting)
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -441,20 +442,45 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
 
         if (order.detailItem) {
           for (const item of order.detailItem) {
-            uniqueItemsMap.set(item.itemNo, item)
-            
+            const itemSku = (item.itemNo || item.item?.no || item.item?.upcNo || '').toString().trim() || null
+            const itemName = (item.detailName || item.item?.name || itemSku || 'Produk Accurate').toString().trim()
             const itemTotal = toNum(item.totalPrice || 0)
             const itemQty = toNum(item.quantity || 0)
+            const unitPrice = toNum(item.unitPrice || item.item?.unitPrice || 0)
+
+            // Accurate stores item cost/purchase price in item.cost, item.defStandardCost, or item.vendorPrice
+            const rawVendorCost =
+              toNum(item.costPrice) ||
+              toNum(item.item?.cost) ||
+              toNum(item.item?.defStandardCost) ||
+              toNum(item.item?.vendorPrice) ||
+              0
+            const ratioVendor = toNum(item.item?.ratioVendorUnit) > 0 ? toNum(item.item.ratioVendorUnit) : 1
+            const unitRatio = toNum(item.unitRatio) > 0 ? toNum(item.unitRatio) : 1
+            const extractedCost = rawVendorCost > 0 ? (rawVendorCost / ratioVendor) * unitRatio : 0
+
+            const mapKey = itemSku || `NAME:${itemName.toLowerCase()}`
+            const prevMapped = uniqueItemsMap.get(mapKey)
+            if (!prevMapped || (extractedCost > 0 && toNum(prevMapped._extractedCost) <= 0)) {
+              uniqueItemsMap.set(mapKey, {
+                ...item,
+                _resolvedSku: itemSku,
+                _resolvedName: itemName,
+                _resolvedUnitPrice: unitPrice,
+                _extractedCost: extractedCost
+              })
+            }
             
             calculatedSubtotal += itemTotal
             totalQty += itemQty
             
             itemsJson.push({
-              name: item.detailName || item.itemNo,
+              name: itemName,
               quantity: itemQty,
               subtotal: itemTotal,
-              sku: item.itemNo,
-              price: toNum(item.unitPrice || 0)
+              sku: itemSku,
+              price: unitPrice,
+              ...(extractedCost > 0 ? { cost_price: extractedCost } : {})
             })
           }
         }
@@ -511,16 +537,28 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
       invalidateCustomerCache(businessId)
     }
 
-    // 2. UPSERT PRODUCTS
+    // 2. UPSERT & ENRICH PRODUCTS (SKU + Cost Price / HPP)
     if (uniqueItemsMap.size > 0) {
-      const uniqueSkus = Array.from(uniqueItemsMap.keys())
-      const { data: existingProducts } = await supabaseAdmin
-        .from('products')
-        .select('sku')
-        .eq('business_id', businessId)
-        .in('sku', uniqueSkus)
+      const mappedItems = Array.from(uniqueItemsMap.values())
+      const uniqueSkus = mappedItems.map((i: any) => i._resolvedSku).filter(Boolean) as string[]
+      const uniqueNames = mappedItems.map((i: any) => i._resolvedName).filter(Boolean) as string[]
 
-      const existingSkus = new Set(existingProducts?.map(p => p.sku) || [])
+      const [skuProdsRes, nameProdsRes] = await Promise.all([
+        uniqueSkus.length > 0
+          ? supabaseAdmin.from('products').select('id, name, sku, cost_price, price').eq('business_id', businessId).in('sku', uniqueSkus)
+          : Promise.resolve({ data: [] as any[] }),
+        uniqueNames.length > 0
+          ? supabaseAdmin.from('products').select('id, name, sku, cost_price, price').eq('business_id', businessId).in('name', uniqueNames)
+          : Promise.resolve({ data: [] as any[] })
+      ])
+
+      const existingBySku = new Map<string, any>()
+      const existingByName = new Map<string, any>()
+
+      for (const p of [...(skuProdsRes.data || []), ...(nameProdsRes.data || [])]) {
+        if (p.sku) existingBySku.set(String(p.sku).trim(), p)
+        if (p.name) existingByName.set(String(p.name).trim().toLowerCase(), p)
+      }
 
       let defaultHppPct = 0
       try {
@@ -535,23 +573,49 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
         }
       } catch (_) {}
 
-      const productsToInsert = []
-      for (const item of uniqueItemsMap.values()) {
-        if (item.itemNo && !existingSkus.has(item.itemNo)) {
-          const detailName = item.detailName || item.itemNo
-          const unitPrice = item.unitPrice || 0
-          const hpp = item.costPrice || (unitPrice * (defaultHppPct / 100))
-          
+      const productsToInsert: any[] = []
+      const productsToUpdate: Array<{ id: string; payload: Record<string, any> }> = []
+
+      for (const item of mappedItems) {
+        const itemSku = item._resolvedSku || null
+        const detailName = item._resolvedName || itemSku || 'Produk Accurate'
+        const unitPrice = toNum(item._resolvedUnitPrice || item.unitPrice || 0)
+        const hpp = toNum(item._extractedCost) > 0
+          ? toNum(item._extractedCost)
+          : (unitPrice * (defaultHppPct / 100))
+
+        const matchedProd =
+          (itemSku && existingBySku.get(itemSku)) ||
+          existingByName.get(detailName.toLowerCase()) ||
+          null
+
+        if (!matchedProd) {
           productsToInsert.push({
             business_id: businessId,
             name: detailName,
-            sku: item.itemNo,
+            sku: itemSku,
             price: unitPrice,
             cost_price: hpp,
             type: 'physical',
             stock_type: 'tracked',
             stock_quantity: 0
           })
+        } else {
+          // Backfill missing SKU or missing cost_price on existing products previously created with null SKU / 0 cost_price
+          const updateFields: Record<string, any> = {}
+          if (!matchedProd.sku && itemSku && !existingBySku.has(itemSku)) {
+            updateFields.sku = itemSku
+            existingBySku.set(itemSku, matchedProd)
+          }
+          if (toNum(matchedProd.cost_price) <= 0 && hpp > 0) {
+            updateFields.cost_price = hpp
+          }
+          if (toNum(matchedProd.price) <= 0 && unitPrice > 0) {
+            updateFields.price = unitPrice
+          }
+          if (Object.keys(updateFields).length > 0) {
+            productsToUpdate.push({ id: matchedProd.id, payload: updateFields })
+          }
         }
       }
 
@@ -562,6 +626,17 @@ export async function executeAccurateSync(businessId: string, page = 1, specific
         } else {
           newProducts = productsToInsert.length
         }
+      }
+
+      if (productsToUpdate.length > 0) {
+        await Promise.all(
+          productsToUpdate.map(u =>
+            supabaseAdmin.from('products').update(u.payload).eq('id', u.id).eq('business_id', businessId)
+          )
+        )
+      }
+      if (productsToInsert.length > 0 || productsToUpdate.length > 0) {
+        invalidateOrderProductCache(businessId)
       }
     }
 

@@ -6,6 +6,18 @@ const productCacheBySku: Record<string, Record<string, any>> = {}
 const productCacheByName: Record<string, Record<string, any>> = {}
 const productCacheById: Record<string, Record<string, any>> = {}
 
+export function invalidateOrderProductCache(businessId?: string) {
+  if (businessId) {
+    delete productCacheBySku[businessId]
+    delete productCacheByName[businessId]
+    delete productCacheById[businessId]
+  } else {
+    for (const k of Object.keys(productCacheBySku)) delete productCacheBySku[k]
+    for (const k of Object.keys(productCacheByName)) delete productCacheByName[k]
+    for (const k of Object.keys(productCacheById)) delete productCacheById[k]
+  }
+}
+
 const isUuid = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val)
 
 export async function resolveOrderProducts(
@@ -105,8 +117,8 @@ export async function resolveOrderProducts(
                  (sku && productCacheBySku[businessId]?.[sku]) ||
                  (name && productCacheByName[businessId]?.[name.toLowerCase()]) || null
 
-    let extractedCostPrice = 0
-    if (item.cost_of_goods_sold && typeof item.cost_of_goods_sold === 'object') {
+    let extractedCostPrice = Number(item.cost_price || item.costPrice || 0) || 0
+    if (extractedCostPrice <= 0 && item.cost_of_goods_sold && typeof item.cost_of_goods_sold === 'object') {
       const val = parseFloat(item.cost_of_goods_sold.value)
       if (!isNaN(val) && val > 0) extractedCostPrice = val
     }
@@ -160,6 +172,24 @@ export async function resolveOrderProducts(
     }
 
     if (dbProd) {
+      // Auto-enrich existing DB product if its cost_price is 0 or SKU is empty while the incoming item carries valid cost_price / SKU
+      const enrichPayload: Record<string, any> = {}
+      if (Number(dbProd.cost_price || 0) <= 0 && extractedCostPrice > 0 && dbProd.hpp_type !== 'variable') {
+        enrichPayload.cost_price = extractedCostPrice
+        dbProd.cost_price = extractedCostPrice
+      }
+      if (!dbProd.sku && sku && !productCacheBySku[businessId]?.[sku]) {
+        enrichPayload.sku = sku
+        dbProd.sku = sku
+      }
+      if (Object.keys(enrichPayload).length > 0) {
+        await supabase
+          .from('products')
+          .update(enrichPayload)
+          .eq('id', dbProd.id)
+          .eq('business_id', businessId)
+      }
+
       if (dbProd.sku) productCacheBySku[businessId][dbProd.sku] = dbProd
       if (dbProd.name) productCacheByName[businessId][dbProd.name.toLowerCase()] = dbProd
       productCacheById[businessId][dbProd.id] = dbProd
