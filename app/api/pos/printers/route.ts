@@ -1,5 +1,6 @@
 // API Route: /api/pos/printers - Manage POS Printer Devices & Station Mapping
 import { getApiContext } from '@/lib/apiContext'
+import { sanitizePaperSize } from '@/lib/pos/printerAdapter'
 import { NextResponse } from 'next/server'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -149,7 +150,7 @@ export async function POST(req: Request) {
         const connType = ['bluetooth', 'lan', 'system', 'pdf'].includes(item.connection_type)
           ? item.connection_type
           : 'system'
-        const paperSize = ['58mm', '80mm', 'A4'].includes(item.paper_size) ? item.paper_size : '58mm'
+        const paperSize = sanitizePaperSize(item.paper_size)
 
         if (cleanName && !existingSet.has(`${cleanName.toLowerCase()}:::${connType}`)) {
           toInsert.push({
@@ -196,7 +197,7 @@ export async function POST(req: Request) {
     const connType = ['bluetooth', 'lan', 'system', 'pdf'].includes(connection_type)
       ? connection_type
       : 'system'
-    const paperSize = ['58mm', '80mm', 'A4'].includes(paper_size) ? paper_size : '58mm'
+    const paperSize = sanitizePaperSize(paper_size)
     const printerId = isUuid(rawId) ? rawId : undefined
 
     let savedPrinter: any = null

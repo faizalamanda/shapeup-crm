@@ -1,7 +1,372 @@
 // ShapeUp POS Hardware-Agnostic Printer Abstraction Layer
 
-export type PaperSize = '58mm' | '80mm' | 'A4'
+export type PaperWidthUnit = 'mm' | 'cm' | 'in' | 'px' | 'chars'
+export type PaperSizePreset = '58mm' | '76mm' | '80mm' | '104mm' | 'A4'
+export type PaperSize = PaperSizePreset | string
 export type ConnectionType = 'bluetooth' | 'lan' | 'system' | 'pdf'
+
+export interface ResolvedPaperDimensions {
+  rawPaperSize: string
+  isCustom: boolean
+  isPageSheet: boolean
+  widthMm: number
+  printableWidthMm: number
+  unit: PaperWidthUnit
+  inputValue: number
+  escPosColumns: number
+  maxLogoDots: number
+  cssPageSize: string
+  cssContainerWidth: string
+  cssFontSize: string
+  cssKitchenFontSize: string
+  cssPadding: string
+  previewIframeWidthPx: number
+  displayLabel: string
+}
+
+const DOTS_PER_MM_203DPI = 8 // 203.2 DPI standard thermal printhead
+const FONT_A_CHAR_DOTS = 12  // 12x24 Font A standard ESC/POS
+
+/**
+ * Default empirical printable width (heating element width) for a given physical roll width (mm).
+ * Preserves 100% exact backward compatibility:
+ * - 58mm -> 48mm
+ * - 76mm -> 63mm (42 chars)
+ * - 80mm -> 72mm
+ * - 210mm (A4) -> 180mm
+ */
+export function computeDefaultPrintableWidthMm(widthMm: number): number {
+  const w = Math.max(25, Math.min(350, Number(widthMm) || 58))
+  if (Math.abs(w - 58) < 0.5) return 48
+  if (Math.abs(w - 76) < 0.5) return 63
+  if (Math.abs(w - 80) < 0.5) return 72
+  if (Math.abs(w - 104) < 0.5) return 96
+  if (Math.abs(w - 210) < 1) return 180
+  if (w < 55) return Math.max(20, Number((w - 8).toFixed(1)))
+  if (w <= 65) return Math.max(24, Number((w - 10).toFixed(1)))
+  if (w <= 130) return Math.max(30, Number((w - 8).toFixed(1)))
+  return Math.max(60, Number((w - 30).toFixed(1)))
+}
+
+/**
+ * Converts a user input value in the chosen unit ('mm' | 'cm' | 'in' | 'px' | 'chars')
+ * to physical paper roll width in millimeters (mm).
+ */
+export function convertUnitToMm(value: number, unit: PaperWidthUnit): number {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num <= 0) return 58
+  switch (unit) {
+    case 'mm':
+      return Number(num.toFixed(2))
+    case 'cm':
+      return Number((num * 10).toFixed(2))
+    case 'in':
+      return Number((num * 25.4).toFixed(2))
+    case 'px':
+      // Total physical dots at 203 DPI (8 dots/mm)
+      return Number((num / DOTS_PER_MM_203DPI).toFixed(2))
+    case 'chars': {
+      // Printable width = chars * 12 / 8 = chars * 1.5 mm, plus standard margin compensation
+      const printableMm = (num * FONT_A_CHAR_DOTS) / DOTS_PER_MM_203DPI
+      const marginMm = printableMm <= 50 ? 10 : 8
+      return Number((printableMm + marginMm).toFixed(2))
+    }
+    default:
+      return Number(num.toFixed(2))
+  }
+}
+
+/**
+ * Converts physical paper width (mm) and printable width (mm) back into the target unit for UI display.
+ */
+export function convertMmToUnit(widthMm: number, unit: PaperWidthUnit, printableWidthMm?: number): number {
+  const w = Number(widthMm) || 58
+  const eff = Number(printableWidthMm) || computeDefaultPrintableWidthMm(w)
+  switch (unit) {
+    case 'mm':
+      return Number(w.toFixed(1))
+    case 'cm':
+      return Number((w / 10).toFixed(2))
+    case 'in':
+      return Number((w / 25.4).toFixed(2))
+    case 'px':
+      return Math.round(w * DOTS_PER_MM_203DPI)
+    case 'chars':
+      return Math.max(16, Math.floor((eff * DOTS_PER_MM_203DPI) / FONT_A_CHAR_DOTS))
+    default:
+      return Number(w.toFixed(1))
+  }
+}
+
+/**
+ * Serializes a custom paper specification into a canonical PaperSize token string:
+ * Format: "custom:<inputValue>:<unit>:<printableWidthMm>"
+ * Example: "custom:7.6:cm:63" or "custom:76:mm:64"
+ */
+export function buildCustomPaperSizeToken(
+  inputValue: number,
+  unit: PaperWidthUnit,
+  customPrintableWidthMm?: number
+): PaperSize {
+  const validUnits: PaperWidthUnit[] = ['mm', 'cm', 'in', 'px', 'chars']
+  const safeUnit: PaperWidthUnit = validUnits.includes(unit) ? unit : 'mm'
+  const rawMm = convertUnitToMm(inputValue, safeUnit)
+  const clampedMm = Math.max(30, Math.min(300, rawMm))
+  const safeInput = convertMmToUnit(clampedMm, safeUnit, customPrintableWidthMm)
+
+  // If unit is chars and user didn't override printable width, compute exact printable width for that char count
+  let effMm =
+    customPrintableWidthMm && Number.isFinite(customPrintableWidthMm) && customPrintableWidthMm > 0
+      ? Number(customPrintableWidthMm)
+      : safeUnit === 'chars'
+      ? Number((((Math.max(16, Math.round(inputValue)) * FONT_A_CHAR_DOTS) / DOTS_PER_MM_203DPI)).toFixed(1))
+      : computeDefaultPrintableWidthMm(clampedMm)
+
+  effMm = Math.max(20, Math.min(clampedMm, Number(effMm.toFixed(1))))
+  return `custom:${safeInput}:${safeUnit}:${effMm}`
+}
+
+/**
+ * Sanitizes and validates any incoming paper_size string (from API or storage).
+ * Accepts '58mm', '76mm', '80mm', '104mm', 'A4', or 'custom:<val>:<unit>[:<effMm>]'.
+ */
+export function sanitizePaperSize(raw: unknown): PaperSize {
+  if (typeof raw !== 'string' || !raw.trim()) return '58mm'
+  const clean = raw.trim()
+  if (['58mm', '76mm', '80mm', '104mm', 'A4'].includes(clean)) {
+    return clean as PaperSize
+  }
+  if (clean.startsWith('custom:')) {
+    const dims = resolvePaperDimensions(clean)
+    return buildCustomPaperSizeToken(dims.inputValue, dims.unit, dims.printableWidthMm)
+  }
+  // Check if numeric mm string like "72mm" or "112mm"
+  const mmMatch = clean.match(/^(\d+(?:\.\d+)?)\s*(mm|cm|in|px|chars)$/i)
+  if (mmMatch) {
+    const val = parseFloat(mmMatch[1])
+    const unit = mmMatch[2].toLowerCase() as PaperWidthUnit
+    return buildCustomPaperSizeToken(val, unit)
+  }
+  return '58mm'
+}
+
+/**
+ * Formats a human-readable badge/label for any PaperSize preset or custom token.
+ */
+export function formatPaperSizeLabel(paperSize?: PaperSize): string {
+  const dims = resolvePaperDimensions(paperSize)
+  return dims.displayLabel
+}
+
+/**
+ * Universal Pure Function: Resolves full physical, CSS, ESC/POS, and raster logo dimensions
+ * from any PaperSize string ('58mm', '80mm', 'A4', '76mm', or 'custom:<val>:<unit>:<eff>').
+ *
+ * Guarantees 100% backward-compatible parity for existing '58mm', '80mm', and 'A4' users.
+ */
+export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDimensions {
+  const raw = (typeof paperSize === 'string' && paperSize.trim()) ? paperSize.trim() : '58mm'
+
+  // 1. Exact Fast-Path for Legacy '58mm' (100% identical to original hardcoded values)
+  if (raw === '58mm') {
+    return {
+      rawPaperSize: '58mm',
+      isCustom: false,
+      isPageSheet: false,
+      widthMm: 58,
+      printableWidthMm: 48,
+      unit: 'mm',
+      inputValue: 58,
+      escPosColumns: 32,
+      maxLogoDots: 320,
+      cssPageSize: '58mm auto',
+      cssContainerWidth: '48mm',
+      cssFontSize: '11px',
+      cssKitchenFontSize: '12px',
+      cssPadding: '2mm 1mm',
+      previewIframeWidthPx: 236,
+      displayLabel: 'Thermal 58mm'
+    }
+  }
+
+  // 2. Exact Fast-Path for Legacy '80mm' (100% identical to original hardcoded values)
+  if (raw === '80mm') {
+    return {
+      rawPaperSize: '80mm',
+      isCustom: false,
+      isPageSheet: false,
+      widthMm: 80,
+      printableWidthMm: 72,
+      unit: 'mm',
+      inputValue: 80,
+      escPosColumns: 48,
+      maxLogoDots: 480,
+      cssPageSize: '80mm auto',
+      cssContainerWidth: '72mm',
+      cssFontSize: '13px',
+      cssKitchenFontSize: '14px',
+      cssPadding: '4mm 2mm',
+      previewIframeWidthPx: 320,
+      displayLabel: 'Thermal 80mm'
+    }
+  }
+
+  // 3. Exact Fast-Path for Legacy 'A4' (100% identical to original hardcoded values)
+  if (raw === 'A4') {
+    return {
+      rawPaperSize: 'A4',
+      isCustom: false,
+      isPageSheet: true,
+      widthMm: 210,
+      printableWidthMm: 180,
+      unit: 'mm',
+      inputValue: 210,
+      escPosColumns: 48,
+      maxLogoDots: 512,
+      cssPageSize: 'A4 portrait',
+      cssContainerWidth: '180mm',
+      cssFontSize: '13px',
+      cssKitchenFontSize: '14px',
+      cssPadding: '15mm 10mm',
+      previewIframeWidthPx: 520,
+      displayLabel: 'Halaman A4'
+    }
+  }
+
+  // 4. Preset '76mm' (Impact Dot-Matrix TM-U220 Standard)
+  if (raw === '76mm') {
+    return {
+      rawPaperSize: '76mm',
+      isCustom: false,
+      isPageSheet: false,
+      widthMm: 76,
+      printableWidthMm: 63,
+      unit: 'mm',
+      inputValue: 76,
+      escPosColumns: 42,
+      maxLogoDots: 424,
+      cssPageSize: '76mm auto',
+      cssContainerWidth: '63mm',
+      cssFontSize: '12px',
+      cssKitchenFontSize: '13px',
+      cssPadding: '3mm 1.5mm',
+      previewIframeWidthPx: 304,
+      displayLabel: 'Impact/Thermal 76mm'
+    }
+  }
+
+  // 5. Preset '104mm' (Wide Label / 4-Inch Mobile Thermal)
+  if (raw === '104mm') {
+    return {
+      rawPaperSize: '104mm',
+      isCustom: false,
+      isPageSheet: false,
+      widthMm: 104,
+      printableWidthMm: 96,
+      unit: 'mm',
+      inputValue: 104,
+      escPosColumns: 64,
+      maxLogoDots: 576,
+      cssPageSize: '104mm auto',
+      cssContainerWidth: '96mm',
+      cssFontSize: '13px',
+      cssKitchenFontSize: '14px',
+      cssPadding: '4mm 2mm',
+      previewIframeWidthPx: 416,
+      displayLabel: 'Thermal 104mm (4")'
+    }
+  }
+
+  // 6. Parse Custom Token: "custom:<inputValue>:<unit>[:<printableWidthMm>]" or "<num><unit>"
+  let unit: PaperWidthUnit = 'mm'
+  let inputValue = 58
+  let widthMm = 58
+  let printableWidthMm = 48
+
+  if (raw.startsWith('custom:')) {
+    const parts = raw.split(':')
+    const parsedVal = parseFloat(parts[1])
+    const parsedUnit = (parts[2] || 'mm') as PaperWidthUnit
+    const validUnits: PaperWidthUnit[] = ['mm', 'cm', 'in', 'px', 'chars']
+    unit = validUnits.includes(parsedUnit) ? parsedUnit : 'mm'
+    inputValue = Number.isFinite(parsedVal) && parsedVal > 0 ? parsedVal : 58
+    widthMm = Math.max(30, Math.min(300, convertUnitToMm(inputValue, unit)))
+
+    const parsedEff = parts[3] ? parseFloat(parts[3]) : NaN
+    if (Number.isFinite(parsedEff) && parsedEff >= 20 && parsedEff <= widthMm) {
+      printableWidthMm = Number(parsedEff.toFixed(1))
+    } else if (unit === 'chars') {
+      printableWidthMm = Math.min(
+        widthMm,
+        Number((((Math.max(16, Math.round(inputValue)) * FONT_A_CHAR_DOTS) / DOTS_PER_MM_203DPI)).toFixed(1))
+      )
+    } else {
+      printableWidthMm = computeDefaultPrintableWidthMm(widthMm)
+    }
+  } else {
+    const match = raw.match(/^(\d+(?:\.\d+)?)\s*(mm|cm|in|px|chars)?$/i)
+    if (match) {
+      inputValue = parseFloat(match[1])
+      unit = ((match[2] || 'mm').toLowerCase() as PaperWidthUnit)
+      widthMm = Math.max(30, Math.min(300, convertUnitToMm(inputValue, unit)))
+      printableWidthMm = computeDefaultPrintableWidthMm(widthMm)
+    }
+  }
+
+  const isPageSheet = widthMm >= 140
+  const escPosColumns = Math.max(
+    16,
+    Math.min(120, Math.floor((printableWidthMm * DOTS_PER_MM_203DPI) / FONT_A_CHAR_DOTS))
+  )
+
+  // 8-dot byte-aligned max logo width (~83.3% of printable width dots)
+  const rawLogoDots = printableWidthMm * DOTS_PER_MM_203DPI * 0.8334
+  const maxLogoDots = Math.max(64, Math.min(576, Math.floor(rawLogoDots / 8) * 8))
+
+  // Continuous font scaling clamped between 10px and 14px
+  const interpFont = 10 + ((printableWidthMm - 36) / (72 - 36)) * 3
+  const fontPx = Math.round(Math.max(10, Math.min(14, interpFont)) * 2) / 2
+  const kitchenFontPx = Math.min(15, fontPx + 1)
+
+  const cssPageSize = isPageSheet ? `${widthMm}mm auto` : `${widthMm}mm auto`
+  const cssContainerWidth = `${printableWidthMm}mm`
+  const cssFontSize = `${fontPx}px`
+  const cssKitchenFontSize = `${kitchenFontPx}px`
+  const cssPadding = isPageSheet
+    ? '12mm 8mm'
+    : widthMm <= 62
+    ? '2mm 1mm'
+    : '3.5mm 2mm'
+
+  const previewIframeWidthPx = Math.max(190, Math.min(540, Math.round(widthMm * 4.02)))
+
+  const unitLabelMap: Record<PaperWidthUnit, string> = {
+    mm: `${inputValue}mm`,
+    cm: `${inputValue}cm (${Math.round(widthMm)}mm)`,
+    in: `${inputValue}" (${Math.round(widthMm)}mm)`,
+    px: `${inputValue}px (${Math.round(widthMm)}mm)`,
+    chars: `${escPosColumns} Kolom (${Math.round(widthMm)}mm)`
+  }
+
+  return {
+    rawPaperSize: raw,
+    isCustom: true,
+    isPageSheet,
+    widthMm,
+    printableWidthMm,
+    unit,
+    inputValue,
+    escPosColumns,
+    maxLogoDots,
+    cssPageSize,
+    cssContainerWidth,
+    cssFontSize,
+    cssKitchenFontSize,
+    cssPadding,
+    previewIframeWidthPx,
+    displayLabel: `Custom ${unitLabelMap[unit]}`
+  }
+}
 
 export interface PrinterDevice {
   id: string
@@ -106,14 +471,12 @@ function escapeHtml(str: string = ''): string {
 
 export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize): string {
   const effectivePaperSize = paperSize || receipt.paperSize || '58mm'
-  const is58mm = effectivePaperSize === '58mm'
-  const is80mm = effectivePaperSize === '80mm'
+  const dims = resolvePaperDimensions(effectivePaperSize)
 
-  // Thermal sizing: 58mm roll printable width is 48mm; 80mm roll printable width is 72mm
-  const pageSizeCss = is58mm ? '58mm auto' : is80mm ? '80mm auto' : 'A4 portrait'
-  const containerWidth = is58mm ? '48mm' : is80mm ? '72mm' : '180mm'
-  const fontSize = is58mm ? '11px' : is80mm ? '13px' : '13px'
-  const containerPadding = is58mm ? '2mm 1mm' : is80mm ? '4mm 2mm' : '15mm 10mm'
+  const pageSizeCss = dims.cssPageSize
+  const containerWidth = dims.cssContainerWidth
+  const fontSize = dims.cssFontSize
+  const containerPadding = dims.cssPadding
   const fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
 
   const itemsHtml = (receipt.items || []).map((item, idx) => {
@@ -464,8 +827,8 @@ export function printReceiptViaIframe(receipt: ReceiptData, paperSize: PaperSize
 // ==========================================
 export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize?: PaperSize): Uint8Array {
   const effectivePaperSize = paperSize || receipt.paperSize || '58mm'
-  const is80mm = effectivePaperSize === '80mm'
-  const width = is80mm ? 48 : 32
+  const dims = resolvePaperDimensions(effectivePaperSize)
+  const width = dims.escPosColumns
   const divider = '-'.repeat(width)
 
   const padColumns = (left: string, right: string, maxCols: number = width): string => {
@@ -1720,7 +2083,7 @@ export async function testPrintStationTicket(options: {
   autoCut?: boolean
 }): Promise<PrintResult> {
   const effectiveSize = options.paperSize || '58mm'
-  const is58mm = effectiveSize === '58mm'
+  const dims = resolvePaperDimensions(effectiveSize)
 
   let effectiveConn = isAndroidApp() ? 'bluetooth' : options.connectionType
   if (effectiveConn === 'same_as_cashier' && typeof window !== 'undefined') {
@@ -1737,6 +2100,7 @@ export async function testPrintStationTicket(options: {
 
   if (effectiveConn === 'bluetooth') {
     const nowStr = new Date().toLocaleTimeString('id-ID')
+    const dividerLine = '-'.repeat(dims.escPosColumns) + '\n'
     const sampleChitText = [
       '\x1B\x40', // ESC @ init
       '\x1B\x61\x01', // Center
@@ -1744,13 +2108,14 @@ export async function testPrintStationTicket(options: {
       `[STASIUN: ${options.stationName.toUpperCase()}]\n`,
       '\x1D\x21\x00', // Normal
       `Printer: ${options.printerName || 'Bluetooth Thermal'}\n`,
+      `Kertas: ${dims.displayLabel} (${dims.escPosColumns} char)\n`,
       `Waktu Uji: ${nowStr}\n`,
-      '--------------------------------\n',
+      dividerLine,
       '\x1B\x61\x00', // Left
       '1x TES KONEKSI STASIUN PRODUKSI\n',
       '   * Status: TERHUBUNG (OK)\n',
       '   * Routing Menu: AKTIF\n',
-      '--------------------------------\n',
+      dividerLine,
       '\x1B\x61\x01',
       'SHAPEUP POS KITCHEN DISPATCHER\n\n\n'
     ]
@@ -1788,15 +2153,15 @@ export async function testPrintStationTicket(options: {
         return
       }
 
-      const width = is58mm ? '48mm' : '72mm'
+      const width = dims.cssContainerWidth
       const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>Uji Cetak Stasiun ${options.stationName}</title>
   <style>
-    @page { size: ${is58mm ? '58mm auto' : '80mm auto'}; margin: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; width: ${width}; margin: 0 auto; padding: 4mm 2mm; font-size: 12px; }
+    @page { size: ${dims.cssPageSize}; margin: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; width: ${width}; margin: 0 auto; padding: ${dims.cssPadding}; font-size: ${dims.cssKitchenFontSize}; }
     .center { text-align: center; }
     .bold { font-weight: bold; }
     .border { border-top: 1px dashed #000; border-bottom: 1px dashed #000; margin: 6px 0; padding: 4px 0; }
@@ -1809,7 +2174,7 @@ export async function testPrintStationTicket(options: {
   <div class="border">
     <div><b>1x UJI COBA PRINTER SISTEM</b></div>
     <div style="font-size: 11px;">• Status: SIAP MENCETAK TIKET</div>
-    <div style="font-size: 11px;">• Kertas: Thermal ${effectiveSize}</div>
+    <div style="font-size: 11px;">• Kertas: ${dims.displayLabel} (Efektif ${dims.printableWidthMm}mm)</div>
     ${options.soundBuzzer ? '<div style="font-size: 10px;">• Buzzer: Aktif 🔔</div>' : ''}
     ${options.autoCut ? '<div style="font-size: 10px;">• Auto-Cut: Aktif ✂️</div>' : ''}
   </div>

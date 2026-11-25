@@ -1,5 +1,5 @@
 // ShapeUp POS Receipt Settings Helper & Storage
-import { PaperSize, ConnectionType } from './printerAdapter'
+import { PaperSize, PaperWidthUnit, ConnectionType } from './printerAdapter'
 
 export interface ReceiptSettings {
   storeName: string
@@ -7,6 +7,9 @@ export interface ReceiptSettings {
   phone: string
   footerNote: string
   paperSize: PaperSize
+  customPaperWidth?: number
+  customPaperUnit?: PaperWidthUnit
+  customPrintableWidthMm?: number
   connectionType: ConnectionType
   autoPrintAfterPayment: boolean
   showItemNumbering: boolean
@@ -64,6 +67,9 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
         phone: parsed.phone || '',
         footerNote: parsed.footerNote || DEFAULT_RECEIPT_FOOTER,
         paperSize: parsed.paperSize || '58mm',
+        customPaperWidth: parsed.customPaperWidth ? Number(parsed.customPaperWidth) : undefined,
+        customPaperUnit: parsed.customPaperUnit || undefined,
+        customPrintableWidthMm: parsed.customPrintableWidthMm ? Number(parsed.customPrintableWidthMm) : undefined,
         connectionType: resolvedConn,
         autoPrintAfterPayment: Boolean(parsed.autoPrintAfterPayment),
         showItemNumbering: parsed.showItemNumbering !== undefined ? Boolean(parsed.showItemNumbering) : true,

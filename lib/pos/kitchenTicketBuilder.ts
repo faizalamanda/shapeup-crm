@@ -1,5 +1,5 @@
 // ShapeUp POS Kitchen Production Ticket Builder & Multi-Station Dispatcher
-import { PaperSize } from './printerAdapter'
+import { PaperSize, resolvePaperDimensions } from './printerAdapter'
 import {
   KitchenStationId,
   KitchenSettings,
@@ -350,11 +350,11 @@ function escapeHtml(str: string = ''): string {
  * Maximum font weight on items, notes, table numbers, and queue numbers.
  */
 export function generateKitchenTicketHtml(ticket: KitchenTicketData): string {
-  const is58mm = ticket.paperSize === '58mm'
-  const pageSizeCss = is58mm ? '58mm auto' : '80mm auto'
-  const containerWidth = is58mm ? '48mm' : '72mm'
-  const fontSize = is58mm ? '12px' : '14px'
-  const containerPadding = is58mm ? '2mm 1mm' : '4mm 2mm'
+  const dims = resolvePaperDimensions(ticket.paperSize || '58mm')
+  const pageSizeCss = dims.cssPageSize
+  const containerWidth = dims.cssContainerWidth
+  const fontSize = dims.cssKitchenFontSize
+  const containerPadding = dims.cssPadding
 
   const itemsHtml = ticket.items.map((item, idx) => {
     const numPrefix = `${idx + 1}. `
@@ -543,8 +543,8 @@ export function encodeKitchenTicketToEscPos(
   ticket: KitchenTicketData,
   options: { soundBuzzer?: boolean; autoCut?: boolean } = {}
 ): Uint8Array {
-  const is80mm = ticket.paperSize === '80mm'
-  const width = is80mm ? 48 : 32
+  const dims = resolvePaperDimensions(ticket.paperSize || '58mm')
+  const width = dims.escPosColumns
   const divider = '-'.repeat(width)
   const solidDivider = '='.repeat(width)
 

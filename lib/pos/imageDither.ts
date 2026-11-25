@@ -1,6 +1,6 @@
 // ShapeUp POS Monochrome Dithering & ESC/POS Raster Converter
 // Converts images into 1-bit monochrome bitmaps using Floyd-Steinberg Dithering.
-import { PaperSize } from './printerAdapter'
+import { PaperSize, resolvePaperDimensions } from './printerAdapter'
 
 export interface ProcessedLogoResult {
   dataUrl: string // 1-bit monochrome PNG Data URL for browser preview & HTML printing
@@ -64,9 +64,9 @@ export function processLogoForThermal(
   targetPaperSize: PaperSize = '58mm',
   maxHeight: number = 140
 ): ProcessedLogoResult {
-  // 58mm printable width is 384 dots (we target max ~320-360 for pleasant margins)
-  // 80mm printable width is 576 dots (target max ~480-512)
-  const maxAvailableWidth = targetPaperSize === '80mm' ? 480 : targetPaperSize === 'A4' ? 512 : 320
+  // Dynamically resolve 8-dot byte-aligned max available logo width for any preset or custom paper size
+  const dims = resolvePaperDimensions(targetPaperSize)
+  const maxAvailableWidth = dims.maxLogoDots
 
   let width = img.naturalWidth || img.width
   let height = img.naturalHeight || img.height

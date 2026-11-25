@@ -8,6 +8,7 @@ import {
   PaperSize,
   ConnectionType,
   generateReceiptHtml,
+  resolvePaperDimensions,
   requestAndConnectBluetoothPrinter,
   ensureBluetoothPrinterConnection,
   hasPairedBluetoothPrinter,
@@ -122,6 +123,8 @@ export default function PaymentSuccessView({
     if (!receipt) return ''
     return generateReceiptHtml(receipt, paperSize)
   }, [receipt, paperSize])
+
+  const paperDims = useMemo(() => resolvePaperDimensions(paperSize), [paperSize])
 
   // Handle Print Action (0ms optimistic click: queues seamlessly if order_number is still syncing)
   const handlePrint = useCallback(
@@ -555,8 +558,13 @@ export default function PaymentSuccessView({
                     className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 text-xs outline-none cursor-pointer"
                   >
                     <option value="58mm">Thermal 58mm</option>
+                    <option value="76mm">Impact 76mm</option>
                     <option value="80mm">Thermal 80mm</option>
+                    <option value="104mm">Thermal 104mm</option>
                     <option value="A4">A4</option>
+                    {paperDims.isCustom && (
+                      <option value={paperSize}>{paperDims.displayLabel}</option>
+                    )}
                   </select>
                 </div>
               </div>
@@ -564,9 +572,8 @@ export default function PaymentSuccessView({
                 <iframe
                   title="Pratinjau Struk Kasir"
                   srcDoc={receiptHtml}
-                  className={`bg-white rounded-lg shadow-xs border border-slate-300 ${
-                    paperSize === '58mm' ? 'w-[236px]' : paperSize === '80mm' ? 'w-[320px]' : 'w-full'
-                  } h-[420px]`}
+                  style={{ width: `${paperDims.previewIframeWidthPx}px`, maxWidth: '100%' }}
+                  className="bg-white rounded-lg shadow-xs border border-slate-300 h-[420px]"
                 />
               </div>
             </div>

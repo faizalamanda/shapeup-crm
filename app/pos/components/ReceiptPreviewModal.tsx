@@ -8,6 +8,7 @@ import {
   PaperSize, 
   ConnectionType, 
   generateReceiptHtml,
+  resolvePaperDimensions,
   isAndroidApp
 } from '@/lib/pos/printerAdapter'
 import { getStoredReceiptSettings, saveStoredReceiptSettings } from '@/lib/pos/receiptSettings'
@@ -56,6 +57,8 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
     if (!receipt) return ''
     return generateReceiptHtml(receipt, paperSize)
   }, [receipt, paperSize])
+
+  const paperDims = useMemo(() => resolvePaperDimensions(paperSize), [paperSize])
 
   if (!isOpen || !receipt || !mounted) return null
 
@@ -110,8 +113,13 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
               className="text-xs bg-white border border-gray-200 rounded-lg px-2 py-1 font-medium text-gray-700 outline-none"
             >
               <option value="58mm">Thermal 58mm</option>
+              <option value="76mm">Impact 76mm</option>
               <option value="80mm">Thermal 80mm</option>
+              <option value="104mm">Thermal 104mm</option>
               <option value="A4">Halaman A4</option>
+              {paperDims.isCustom && (
+                <option value={paperSize}>{paperDims.displayLabel}</option>
+              )}
             </select>
             <button
               onClick={onClose}
@@ -127,9 +135,8 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
           <iframe
             title="Pratinjau Struk Kasir"
             srcDoc={receiptHtml}
-            className={`bg-white rounded-xl shadow-md border border-gray-300 transition-all ${
-              paperSize === '58mm' ? 'w-[236px]' : paperSize === '80mm' ? 'w-[320px]' : 'w-full max-w-xl'
-            } h-[580px]`}
+            style={{ width: `${paperDims.previewIframeWidthPx}px`, maxWidth: '100%' }}
+            className="bg-white rounded-xl shadow-md border border-gray-300 transition-all h-[580px]"
           />
         </div>
 

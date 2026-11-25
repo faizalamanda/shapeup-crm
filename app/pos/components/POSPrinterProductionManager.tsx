@@ -5,7 +5,13 @@ import { ProductionStation } from '@/lib/pos/productionRoutingService'
 import { PosMode } from '@/lib/pos/posMode'
 import { 
   PaperSize, 
+  PaperWidthUnit,
   ConnectionType, 
+  resolvePaperDimensions,
+  convertUnitToMm,
+  convertMmToUnit,
+  buildCustomPaperSizeToken,
+  formatPaperSizeLabel,
   getSystemPrinters, 
   isWebBluetoothSupported, 
   isAndroidApp,
@@ -77,6 +83,9 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
   const [stationCode, setStationCode] = useState('')
   const [stationIcon, setStationIcon] = useState('🍳')
   const [stationPaperSize, setStationPaperSize] = useState<PaperSize>('58mm')
+  const [stationIsCustomPaper, setStationIsCustomPaper] = useState(false)
+  const [stationCustomWidth, setStationCustomWidth] = useState('58')
+  const [stationCustomUnit, setStationCustomUnit] = useState<PaperWidthUnit>('mm')
   const [stationPrinterConn, setStationPrinterConn] = useState<'same_as_cashier' | 'system' | 'bluetooth' | 'lan'>('same_as_cashier')
   const [stationPrinterDeviceId, setStationPrinterDeviceId] = useState<string | null>(null)
   const [stationPrinterName, setStationPrinterName] = useState('')
@@ -184,6 +193,9 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
     setStationCode('')
     setStationIcon('🍳')
     setStationPaperSize('58mm')
+    setStationIsCustomPaper(false)
+    setStationCustomWidth('58')
+    setStationCustomUnit('mm')
     setStationPrinterConn('same_as_cashier')
     setStationPrinterDeviceId(null)
     setStationPrinterName('')
@@ -198,7 +210,18 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
     setStationName(st.name)
     setStationCode(st.code || '')
     setStationIcon(st.icon || '🍳')
-    setStationPaperSize(st.paper_size || '58mm')
+    const rawSize = st.paper_size || '58mm'
+    setStationPaperSize(rawSize)
+    const dims = resolvePaperDimensions(rawSize)
+    if (dims.isCustom) {
+      setStationIsCustomPaper(true)
+      setStationCustomUnit(dims.unit)
+      setStationCustomWidth(String(dims.inputValue))
+    } else {
+      setStationIsCustomPaper(false)
+      setStationCustomUnit('mm')
+      setStationCustomWidth(String(dims.widthMm))
+    }
     setStationPrinterConn(st.printer_connection_type || 'same_as_cashier')
     setStationPrinterDeviceId(st.printer_device_id || null)
     setStationPrinterName(st.printer_name || '')
@@ -211,6 +234,10 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
     setSelectedCategoryIds(mappedIds)
     setIsEditingStation(true)
   }
+
+  const effectiveStationPaperSize: PaperSize = stationIsCustomPaper
+    ? buildCustomPaperSizeToken(parseFloat(stationCustomWidth) || 58, stationCustomUnit)
+    : stationPaperSize
 
   const handleSaveStation = async () => {
     if (!stationName.trim()) {
@@ -229,7 +256,7 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
           name: stationName.trim(),
           code: stationCode.trim().toUpperCase() || undefined,
           icon: stationIcon,
-          paper_size: stationPaperSize,
+          paper_size: effectiveStationPaperSize,
           printer_connection_type: stationPrinterConn,
           printer_device_id: stationPrinterDeviceId || undefined,
           printer_name: stationPrinterName.trim() || undefined,
@@ -667,7 +694,7 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
                               <div>
                                 <span className="font-bold text-slate-900 text-sm block leading-tight">{st.name}</span>
                                 <span className="text-[10px] font-mono text-slate-400">
-                                  {st.code ? `[${st.code}]` : 'STASIUN'} &bull; Thermal {st.paper_size || '58mm'}
+                                  {st.code ? `[${st.code}]` : 'STASIUN'} &bull; {formatPaperSizeLabel(st.paper_size || '58mm')}
                                 </span>
                               </div>
                             </div>
@@ -848,7 +875,7 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
                                 )}
                               </td>
                               <td className="px-3 py-3 font-mono font-semibold">
-                                {p.paper_size || '58mm'}
+                                {formatPaperSizeLabel(p.paper_size || '58mm')}
                               </td>
                               <td className="px-4 py-3">
                                 {mappedSts.length === 0 ? (
@@ -970,15 +997,72 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
                     Ukuran Kertas Thermal
                   </label>
                   <select
-                    value={stationPaperSize}
-                    onChange={e => setStationPaperSize(e.target.value as PaperSize)}
+                    value={stationIsCustomPaper ? 'custom' : stationPaperSize}
+                    onChange={e => {
+                      const val = e.target.value
+                      if (val === 'custom') {
+                        setStationIsCustomPaper(true)
+                        const curDims = resolvePaperDimensions(stationPaperSize)
+                        setStationCustomWidth(String(convertMmToUnit(curDims.widthMm, stationCustomUnit)))
+                      } else {
+                        setStationIsCustomPaper(false)
+                        setStationPaperSize(val as PaperSize)
+                      }
+                    }}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white font-medium focus:ring-2 focus:ring-slate-900 outline-none"
                   >
-                    <option value="58mm">58mm (Kecil)</option>
-                    <option value="80mm">80mm (Standar Resto)</option>
+                    <option value="58mm">58mm (Kecil — 32 Kolom)</option>
+                    <option value="76mm">76mm (Dot Matrix — 42 Kolom)</option>
+                    <option value="80mm">80mm (Standar Resto — 48 Kolom)</option>
+                    <option value="104mm">104mm / 4" (Lebar — 64 Kolom)</option>
+                    <option value="custom">⚙️ Custom (Pilih Satuan)...</option>
                   </select>
                 </div>
               </div>
+
+              {stationIsCustomPaper && (
+                <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-indigo-950 text-[11px]">📐 Lebar Kertas Stasiun Custom:</span>
+                    <div className="flex items-center bg-white p-0.5 rounded-lg border border-indigo-200">
+                      {(['mm', 'cm', 'in', 'px', 'chars'] as PaperWidthUnit[]).map(u => (
+                        <button
+                          key={u}
+                          type="button"
+                          onClick={() => {
+                            const curNum = parseFloat(stationCustomWidth) || 58
+                            const curMm = convertUnitToMm(curNum, stationCustomUnit)
+                            setStationCustomUnit(u)
+                            setStationCustomWidth(String(convertMmToUnit(curMm, u)))
+                          }}
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition cursor-pointer ${
+                            stationCustomUnit === u ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-indigo-50'
+                          }`}
+                        >
+                          {u}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type="number"
+                        step={stationCustomUnit === 'cm' || stationCustomUnit === 'in' ? '0.1' : '1'}
+                        value={stationCustomWidth}
+                        onChange={e => setStationCustomWidth(e.target.value)}
+                        className="w-full px-3 py-1.5 pr-12 border border-indigo-300 rounded-lg bg-white font-bold text-xs outline-none"
+                      />
+                      <span className="absolute right-2.5 top-1.5 text-[10px] font-bold text-indigo-600">
+                        {stationCustomUnit}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono text-indigo-900 bg-white px-2.5 py-1.5 rounded-lg border border-indigo-200">
+                      {resolvePaperDimensions(effectiveStationPaperSize).widthMm}mm &bull; {resolvePaperDimensions(effectiveStationPaperSize).escPosColumns} Kolom
+                    </span>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block font-bold text-slate-700 uppercase tracking-wide mb-1">
@@ -1431,8 +1515,11 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
                       onChange={e => setNewSystemPaperSize(e.target.value as PaperSize)}
                       className="w-full px-2.5 py-2 border border-slate-200 rounded-xl bg-white font-medium outline-none"
                     >
-                      <option value="58mm">58mm (Kecil)</option>
-                      <option value="80mm">80mm (Standar)</option>
+                      <option value="58mm">58mm (Kecil — 32 Kolom)</option>
+                      <option value="76mm">76mm (Dot Matrix — 42 Kolom)</option>
+                      <option value="80mm">80mm (Standar — 48 Kolom)</option>
+                      <option value="104mm">104mm / 4" (Lebar — 64 Kolom)</option>
+                      <option value="A4">Halaman A4 (210mm)</option>
                     </select>
                   </div>
 
@@ -1545,8 +1632,10 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
                     onChange={e => setBtPaperSize(e.target.value as PaperSize)}
                     className="w-full px-2.5 py-2 border border-slate-200 rounded-xl bg-white font-medium outline-none"
                   >
-                    <option value="58mm">58mm (Kasir Mini)</option>
-                    <option value="80mm">80mm (Resto Besar)</option>
+                    <option value="58mm">58mm (Kasir Mini — 32 Kolom)</option>
+                    <option value="76mm">76mm (Impact — 42 Kolom)</option>
+                    <option value="80mm">80mm (Resto Besar — 48 Kolom)</option>
+                    <option value="104mm">104mm / 4" (Lebar — 64 Kolom)</option>
                   </select>
                 </div>
 

@@ -1,5 +1,6 @@
 // API Route: /api/pos/stations - Manage Custom Production Stations & POS Mode
 import { getApiContext } from '@/lib/apiContext'
+import { sanitizePaperSize } from '@/lib/pos/printerAdapter'
 import { NextResponse } from 'next/server'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -180,11 +181,13 @@ export async function POST(req: Request) {
     const cleanPrinterId = isUuid(printer_device_id) ? printer_device_id : null
     let savedStation: any = null
 
+    const safePaperSize = sanitizePaperSize(paper_size)
+
     const stationPayload: Record<string, any> = {
       name: cleanName,
       code: code ? String(code).trim().toUpperCase() : null,
       icon: String(icon || '🍳'),
-      paper_size: paper_size === '80mm' ? '80mm' : '58mm',
+      paper_size: safePaperSize,
       printer_device_id: cleanPrinterId,
       printer_connection_type: ['same_as_cashier', 'system', 'bluetooth', 'lan'].includes(printer_connection_type) 
         ? printer_connection_type 
@@ -216,7 +219,7 @@ export async function POST(req: Request) {
             name: cleanName,
             code: code ? String(code).trim().toUpperCase() : null,
             icon: String(icon || '🍳'),
-            paper_size: paper_size === '80mm' ? '80mm' : '58mm',
+            paper_size: safePaperSize,
             printer_device_id: cleanPrinterId,
             is_active: Boolean(is_active),
             updated_at: new Date().toISOString()
@@ -253,7 +256,7 @@ export async function POST(req: Request) {
             name: cleanName,
             code: code ? String(code).trim().toUpperCase() : null,
             icon: String(icon || '🍳'),
-            paper_size: paper_size === '80mm' ? '80mm' : '58mm',
+            paper_size: safePaperSize,
             printer_device_id: cleanPrinterId,
             is_active: Boolean(is_active)
           })

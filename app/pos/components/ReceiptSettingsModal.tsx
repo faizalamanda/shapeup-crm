@@ -1,11 +1,17 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { 
   PaperSize, 
+  PaperWidthUnit,
   ConnectionType, 
   generateReceiptHtml,
+  resolvePaperDimensions,
+  convertUnitToMm,
+  convertMmToUnit,
+  computeDefaultPrintableWidthMm,
+  buildCustomPaperSizeToken,
   isWebBluetoothSupported, 
   isAndroidApp,
   getAndroidPairedPrinters,
@@ -76,6 +82,12 @@ export default function ReceiptSettingsModal({
   const [phone, setPhone] = useState('')
   const [footerNote, setFooterNote] = useState('Terima kasih atas kunjungan Anda!')
   const [paperSize, setPaperSize] = useState<PaperSize>('58mm')
+  const [isCustomPaperMode, setIsCustomPaperMode] = useState(false)
+  const [customWidthInput, setCustomWidthInput] = useState<string>('58')
+  const [customUnit, setCustomUnit] = useState<PaperWidthUnit>('mm')
+  const [useCustomPrintableMargin, setUseCustomPrintableMargin] = useState(false)
+  const [customPrintableInputMm, setCustomPrintableInputMm] = useState<string>('48')
+  const prevIsOpenRef = useRef(false)
   const [connectionType, setConnectionType] = useState<ConnectionType>('system')
   const [btDeviceName, setBtDeviceName] = useState<string | null>(null)
   const [btDeviceId, setBtDeviceId] = useState<string | null>(null)
@@ -194,13 +206,31 @@ export default function ReceiptSettingsModal({
   }, [isOpen, loadModularStationsAndCategories])
 
   useEffect(() => {
-    if (isOpen) {
+    const isTransitionToOpen = isOpen && !prevIsOpenRef.current
+    prevIsOpenRef.current = isOpen
+
+    if (isTransitionToOpen) {
       const s = getStoredReceiptSettings(defaultBusinessName)
       setStoreName(s.storeName)
       setAddress(s.address)
       setPhone(s.phone)
       setFooterNote(s.footerNote)
       setPaperSize(s.paperSize)
+      const dims = resolvePaperDimensions(s.paperSize)
+      if (dims.isCustom) {
+        setIsCustomPaperMode(true)
+        setCustomUnit(dims.unit)
+        setCustomWidthInput(String(dims.inputValue))
+        setCustomPrintableInputMm(String(dims.printableWidthMm))
+        const defaultEff = computeDefaultPrintableWidthMm(dims.widthMm)
+        setUseCustomPrintableMargin(Math.abs(dims.printableWidthMm - defaultEff) >= 0.5)
+      } else {
+        setIsCustomPaperMode(false)
+        setCustomUnit(s.customPaperUnit || 'mm')
+        setCustomWidthInput(String(s.customPaperWidth || dims.widthMm))
+        setCustomPrintableInputMm(String(s.customPrintableWidthMm || dims.printableWidthMm))
+        setUseCustomPrintableMargin(false)
+      }
       const nativeApp = isAndroidApp()
       setIsNativeAndroid(nativeApp)
       if (nativeApp) {
@@ -377,7 +407,7 @@ export default function ReceiptSettingsModal({
 
       // 2. Dither & rasterize untuk ukuran kertas aktif
       const img = await loadImage(dataUri)
-      const processed = processLogoForThermal(img, paperSize)
+      const processed = processLogoForThermal(img, effectivePaperSize)
 
       setLogoBase64(processed.dataUrl)
       setLogoEscPosData(processed.escPosBase64)
@@ -427,13 +457,64 @@ export default function ReceiptSettingsModal({
     }
   }
 
+  // Compute effective PaperSize dynamically (Preset vs Custom Multi-Unit)
+  const effectivePaperSize = useMemo<PaperSize>(() => {
+    if (!isCustomPaperMode) return paperSize
+    const numVal = parseFloat(customWidthInput)
+    const validVal = Number.isFinite(numVal) && numVal > 0 ? numVal : 58
+    const customEff = useCustomPrintableMargin ? parseFloat(customPrintableInputMm) : undefined
+    return buildCustomPaperSizeToken(
+      validVal,
+      customUnit,
+      customEff && Number.isFinite(customEff) && customEff > 0 ? customEff : undefined
+    )
+  }, [isCustomPaperMode, paperSize, customWidthInput, customUnit, useCustomPrintableMargin, customPrintableInputMm])
+
+  const resolvedPaperDims = useMemo(() => {
+    return resolvePaperDimensions(effectivePaperSize)
+  }, [effectivePaperSize])
+
+  // Switch unit seamlessly by converting current canonical widthMm to the newly selected unit
+  const handleSwitchCustomUnit = (nextUnit: PaperWidthUnit) => {
+    const currentNum = parseFloat(customWidthInput)
+    const currentMm =
+      Number.isFinite(currentNum) && currentNum > 0
+        ? convertUnitToMm(currentNum, customUnit)
+        : resolvedPaperDims.widthMm
+    const convertedVal = convertMmToUnit(currentMm, nextUnit, resolvedPaperDims.printableWidthMm)
+    setCustomUnit(nextUnit)
+    setCustomWidthInput(String(convertedVal))
+  }
+
+  // Re-dither existing logo automatically when effective maxLogoDots changes
+  const prevLogoDotsRef = useRef<number>(resolvedPaperDims.maxLogoDots)
+  useEffect(() => {
+    if (!isOpen || !showLogo) return
+    if (prevLogoDotsRef.current === resolvedPaperDims.maxLogoDots) return
+    prevLogoDotsRef.current = resolvedPaperDims.maxLogoDots
+
+    const sourceImg = logoUrl || logoBase64
+    if (!sourceImg) return
+    loadImage(sourceImg)
+      .then((img) => {
+        const processed = processLogoForThermal(img, effectivePaperSize)
+        setLogoBase64(processed.dataUrl)
+        setLogoEscPosData(processed.escPosBase64)
+      })
+      .catch(() => {})
+  }, [isOpen, showLogo, resolvedPaperDims.maxLogoDots, effectivePaperSize, logoUrl, logoBase64])
+
   const handleSave = () => {
+    const numVal = parseFloat(customWidthInput)
     const settings: ReceiptSettings = {
       storeName: storeName.trim() || defaultBusinessName,
       address: address.trim(),
       phone: phone.trim(),
       footerNote: footerNote.trim(),
-      paperSize,
+      paperSize: effectivePaperSize,
+      customPaperWidth: isCustomPaperMode && Number.isFinite(numVal) ? numVal : undefined,
+      customPaperUnit: isCustomPaperMode ? customUnit : undefined,
+      customPrintableWidthMm: isCustomPaperMode ? resolvedPaperDims.printableWidthMm : undefined,
       connectionType,
       autoPrintAfterPayment,
       showItemNumbering,
@@ -450,7 +531,7 @@ export default function ReceiptSettingsModal({
       autoPrintOnPayment: kitchenAutoPrintPay,
       autoPrintOnHold: kitchenAutoPrintHold,
       separateStations: kitchenSeparateStations,
-      paperSize,
+      paperSize: effectivePaperSize,
       categoryStationMap,
       soundBuzzer: kitchenSoundBuzzer,
       autoCutPaper: kitchenAutoCut,
@@ -477,7 +558,7 @@ export default function ReceiptSettingsModal({
       address: address.trim(),
       phone: phone.trim(),
       footerNote: footerNote.trim(),
-      paperSize,
+      paperSize: effectivePaperSize,
       connectionType,
       autoPrintAfterPayment,
       showItemNumbering,
@@ -494,7 +575,7 @@ export default function ReceiptSettingsModal({
     address,
     phone,
     footerNote,
-    paperSize,
+    effectivePaperSize,
     connectionType,
     autoPrintAfterPayment,
     showItemNumbering,
@@ -508,8 +589,8 @@ export default function ReceiptSettingsModal({
   ])
 
   const sampleReceiptHtml = useMemo(() => {
-    return generateReceiptHtml(sampleReceipt, paperSize)
-  }, [sampleReceipt, paperSize])
+    return generateReceiptHtml(sampleReceipt, effectivePaperSize)
+  }, [sampleReceipt, effectivePaperSize])
 
   const sampleKitchenTicket = useMemo<KitchenTicketData>(() => {
     return {
@@ -540,10 +621,10 @@ export default function ReceiptSettingsModal({
           station: 'kitchen'
         }
       ],
-      paperSize: paperSize || '58mm',
+      paperSize: effectivePaperSize || '58mm',
       ticketKind: 'NEW'
     }
-  }, [storeName, defaultBusinessName, paperSize])
+  }, [storeName, defaultBusinessName, effectivePaperSize])
 
   const sampleKitchenTicketHtml = useMemo(() => {
     return generateKitchenTicketHtml(sampleKitchenTicket)
@@ -914,19 +995,211 @@ export default function ReceiptSettingsModal({
               </div>
             )}
 
-            <div>
+            <div className="space-y-2.5">
               <label className="block font-bold text-slate-700 uppercase tracking-wide mb-1">
                 Ukuran Kertas Printer Kasir
               </label>
               <select
-                value={paperSize}
-                onChange={(e) => setPaperSize(e.target.value as PaperSize)}
+                value={isCustomPaperMode ? 'custom' : paperSize}
+                onChange={(e) => {
+                  const val = e.target.value
+                  if (val === 'custom') {
+                    setIsCustomPaperMode(true)
+                    const curDims = resolvePaperDimensions(paperSize)
+                    const converted = convertMmToUnit(curDims.widthMm, customUnit, curDims.printableWidthMm)
+                    setCustomWidthInput(String(converted))
+                    setCustomPrintableInputMm(String(curDims.printableWidthMm))
+                  } else {
+                    setIsCustomPaperMode(false)
+                    setPaperSize(val as PaperSize)
+                  }
+                }}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 font-medium bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
               >
-                <option value="58mm">Thermal 58mm (Ukuran Standar Kasir Mini)</option>
-                <option value="80mm">Thermal 80mm (Ukuran Standar Resto / Supermarket)</option>
-                <option value="A4">Kertas Halaman A4 / Invoice</option>
+                <option value="58mm">Thermal 58mm (Ukuran Standar Kasir Mini — 32 Kolom)</option>
+                <option value="76mm">Impact / Thermal 76mm (Printer Dot-Matrix — 42 Kolom)</option>
+                <option value="80mm">Thermal 80mm (Ukuran Standar Resto / Supermarket — 48 Kolom)</option>
+                <option value="104mm">Thermal Lebar 104mm / 4 Inci (64 Kolom)</option>
+                <option value="A4">Kertas Halaman A4 / Invoice (210mm)</option>
+                <option value="custom">⚙️ Custom Lebar Kertas (Pilih Satuan: mm, cm, in, px, karakter)</option>
               </select>
+
+              {/* Panel Custom Lebar Kertas Multi-Satuan */}
+              {isCustomPaperMode && (
+                <div className="p-3.5 bg-indigo-50/60 border border-indigo-200 rounded-2xl space-y-3 animate-in fade-in duration-150">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <span className="font-bold text-indigo-950 text-xs flex items-center gap-1.5">
+                        <span>📐</span>
+                        <span>Konfigurasi Lebar Kertas Custom</span>
+                      </span>
+                      <span className="text-[10px] text-indigo-700 block">
+                        Pilih jenis satuan ukuran sesuai penggaris atau spesifikasi printer Anda
+                      </span>
+                    </div>
+
+                    {/* Pemilih Jenis Satuan (Unit Selector) */}
+                    <div className="flex items-center bg-white p-0.5 rounded-xl border border-indigo-200 shadow-2xs self-start">
+                      {([
+                        { id: 'mm', label: 'mm' },
+                        { id: 'cm', label: 'cm' },
+                        { id: 'in', label: 'inch' },
+                        { id: 'px', label: 'px/dots' },
+                        { id: 'chars', label: 'karakter' }
+                      ] as Array<{ id: PaperWidthUnit; label: string }>).map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => handleSwitchCustomUnit(u.id)}
+                          className={`px-2 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                            customUnit === u.id
+                              ? 'bg-indigo-600 text-white shadow-2xs'
+                              : 'text-slate-600 hover:text-indigo-700 hover:bg-indigo-50'
+                          }`}
+                        >
+                          {u.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Input Nilai Lebar & Pintasan Cepat */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                        {customUnit === 'chars'
+                          ? 'Jumlah Karakter per Baris (Font A)'
+                          : customUnit === 'px'
+                          ? 'Lebar Total Dots / Piksel (203 DPI)'
+                          : `Lebar Kertas Roll (${customUnit.toUpperCase()})`}
+                      </label>
+                      <div className="relative flex items-center">
+                        <input
+                          type="number"
+                          step={customUnit === 'cm' || customUnit === 'in' ? '0.1' : '1'}
+                          min={customUnit === 'in' ? '1.2' : customUnit === 'cm' ? '3' : customUnit === 'chars' ? '16' : '30'}
+                          max={customUnit === 'in' ? '12' : customUnit === 'cm' ? '30' : customUnit === 'px' ? '2400' : '300'}
+                          value={customWidthInput}
+                          onChange={(e) => {
+                            setCustomWidthInput(e.target.value)
+                            if (!useCustomPrintableMargin) {
+                              const num = parseFloat(e.target.value)
+                              if (Number.isFinite(num) && num > 0) {
+                                const mm = convertUnitToMm(num, customUnit)
+                                setCustomPrintableInputMm(String(computeDefaultPrintableWidthMm(mm)))
+                              }
+                            }
+                          }}
+                          className="w-full px-3 py-2 pr-14 rounded-xl border border-indigo-300 bg-white font-black text-slate-900 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                        />
+                        <span className="absolute right-3 text-xs font-bold text-indigo-600 select-none">
+                          {customUnit}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Pintasan Ukuran Kertas Non-Standar */}
+                    <div>
+                      <span className="block text-[11px] font-bold text-slate-700 mb-1">
+                        Pintasan Lebar Kertas:
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { label: '44mm', mm: 44, eff: 36 },
+                          { label: '58mm', mm: 58, eff: 48 },
+                          { label: '76mm', mm: 76, eff: 63 },
+                          { label: '80mm', mm: 80, eff: 72 },
+                          { label: '104mm (4")', mm: 104, eff: 96 },
+                          { label: '112mm', mm: 112, eff: 104 }
+                        ].map((preset) => (
+                          <button
+                            key={preset.label}
+                            type="button"
+                            onClick={() => {
+                              const converted = convertMmToUnit(preset.mm, customUnit, preset.eff)
+                              setCustomWidthInput(String(converted))
+                              setCustomPrintableInputMm(String(preset.eff))
+                            }}
+                            className="px-2 py-1 bg-white hover:bg-indigo-100 border border-indigo-200 text-indigo-800 rounded-lg text-[10px] font-bold transition cursor-pointer"
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Opsi Lanjutan: Kompensasi Area Cetak Efektif (Anti-Clipping Margin) */}
+                  <div className="pt-2 border-t border-indigo-200/70 space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={useCustomPrintableMargin}
+                        onChange={(e) => {
+                          const checked = e.target.checked
+                          setUseCustomPrintableMargin(checked)
+                          if (checked) {
+                            setCustomPrintableInputMm(String(resolvedPaperDims.printableWidthMm))
+                          }
+                        }}
+                        className="w-3.5 h-3.5 text-indigo-600 rounded border-indigo-300 focus:ring-indigo-500 cursor-pointer"
+                      />
+                      <span className="text-[11px] font-bold text-indigo-950">
+                        Atur Area Cetak Efektif / Margin Tepi Manual (Atasi Teks Terpotong di Kanan)
+                      </span>
+                    </label>
+
+                    {useCustomPrintableMargin && (
+                      <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-indigo-200">
+                        <div className="flex-1">
+                          <span className="text-[11px] font-bold text-slate-800 block">
+                            Lebar Area Cetak Efektif (mm)
+                          </span>
+                          <span className="text-[10px] text-slate-500 block">
+                            Jika digit kanan harga terpotong, kurangi 2–4 mm dari lebar kertas fisik ({resolvedPaperDims.widthMm} mm).
+                          </span>
+                        </div>
+                        <div className="relative w-28 shrink-0">
+                          <input
+                            type="number"
+                            step="0.5"
+                            min="20"
+                            max={resolvedPaperDims.widthMm}
+                            value={customPrintableInputMm}
+                            onChange={(e) => setCustomPrintableInputMm(e.target.value)}
+                            className="w-full px-2.5 py-1.5 pr-9 border border-indigo-300 rounded-lg font-black text-slate-900 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                          <span className="absolute right-2.5 top-1.5 text-[11px] font-bold text-slate-400">
+                            mm
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Ringkasan Telemetri Geometri Hardware */}
+                  <div className="p-2.5 bg-white/90 border border-indigo-200/80 rounded-xl flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-600 font-mono">
+                    <div>
+                      <span>Kertas: </span>
+                      <strong className="text-slate-900">{resolvedPaperDims.widthMm} mm</strong>
+                      <span> ({(resolvedPaperDims.widthMm / 10).toFixed(2)} cm / {(resolvedPaperDims.widthMm / 25.4).toFixed(2)}")</span>
+                    </div>
+                    <div>
+                      <span>Area Cetak: </span>
+                      <strong className="text-indigo-700">{resolvedPaperDims.printableWidthMm} mm</strong>
+                      <span> ({Math.round(resolvedPaperDims.printableWidthMm * 8)} dots)</span>
+                    </div>
+                    <div>
+                      <span>ESC/POS: </span>
+                      <strong className="text-emerald-700">{resolvedPaperDims.escPosColumns} karakter/baris</strong>
+                    </div>
+                    <div>
+                      <span>Logo: </span>
+                      <strong className="text-slate-900">{resolvedPaperDims.maxLogoDots} px</strong>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div>
@@ -1264,16 +1537,20 @@ export default function ReceiptSettingsModal({
         )}
 
         {/* Kolom Kanan: Pratinjau Struk / Tiket Dapur Live */}
-        <div className="bg-slate-100 p-4 rounded-2xl border border-slate-200 flex flex-col items-center">
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2.5">
-            {mainTab === 'receipt' ? '👁️ Pratinjau Struk Kasir (Pelanggan)' : '👁️ Pratinjau Nota Dapur (Zero Price & Modifiers)'}
-          </span>
+        <div className="bg-slate-100 p-4 rounded-2xl border border-slate-200 flex flex-col items-center overflow-x-auto">
+          <div className="flex items-center gap-2 mb-2.5">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+              {mainTab === 'receipt' ? '👁️ Pratinjau Struk Kasir (Pelanggan)' : '👁️ Pratinjau Nota Dapur (Zero Price & Modifiers)'}
+            </span>
+            <span className="text-[10px] font-mono font-bold px-2 py-0.5 bg-white border border-slate-200 rounded-full text-indigo-700">
+              {resolvedPaperDims.displayLabel} &bull; {resolvedPaperDims.escPosColumns} char
+            </span>
+          </div>
           <iframe 
             title={mainTab === 'receipt' ? 'Pratinjau Struk Kasir' : 'Pratinjau Nota Dapur'}
             srcDoc={mainTab === 'receipt' ? sampleReceiptHtml : sampleKitchenTicketHtml}
-            className={`bg-white rounded-xl shadow-md border border-slate-300 transition-all ${
-              paperSize === '58mm' ? 'w-[236px]' : paperSize === '80mm' ? 'w-[320px]' : 'w-full max-w-sm'
-            } h-[580px]`}
+            style={{ width: `${resolvedPaperDims.previewIframeWidthPx}px`, maxWidth: '100%' }}
+            className="bg-white rounded-xl shadow-md border border-slate-300 transition-all h-[580px]"
           />
         </div>
       </div>
