@@ -228,6 +228,34 @@ Sistem mengimplementasikan modul binarisasi terisolasi di `@/lib/pos/imageDither
 - **Zero Network Delay:** Saat kasir mencetak struk, data logo diambil seketika dari memori/localStorage tanpa menunggu unduhan jaringan, menjamin cetak instan (0ms) bahkan jika koneksi internet terputus.
 - **Auto-Dither On Mount:** Jika perangkat kasir baru memuat `logo_url` dari cloud tanpa cache biner lokal, modal secara otomatis mendownload dan merasterisasi logo di latar belakang (*background lazy dither*).
 
+---
+
+## 9. Multi-Unit Parametric Paper Width Engine, Epson LX-310 Anti-Dither & Adaptive Dual-Speed BLE Pacing
+
+### 9.1 Mesin Resolusi Dimensi Kertas Multi-Satuan (`resolvePaperDimensions`)
+Sistem pencetakan POS mendukung ukuran preset maupun ukuran kustom dengan 5 pilihan satuan (`PaperWidthUnit = 'mm' | 'cm' | 'in' | 'px' | 'chars'`):
+- **Basis Kanonik (`mm`):** Seluruh input dikonversi melalui `convertUnitToMm(value, unit)` ke milimeter ($1\text{ cm} = 10\text{ mm}$, $1\text{ in} = 25.4\text{ mm}$, $8\text{ px/dots} = 1\text{ mm}$ pada $203.2\text{ DPI}$, dan $1\text{ char Font A} = 12\text{ dots} = 1.5\text{ mm}$ area cetak).
+- **Token Serialisasi Kanonik (`custom:<val>:<unit>:<printableWidthMm>`):** Disimpan langsung di kolom `TEXT` database (`pos_printer_devices.paper_size`, `pos_production_stations.paper_size`) dan `localStorage` tanpa perlu migrasi DDL.
+- **100% Backward Compatibility:** Nilai `'58mm'`, `'80mm'`, dan `'A4'` milik user lama diproses melalui *Exact Fast-Path* sehingga user lama tidak perlu mengatur ulang settingan printer.
+- **Kompensasi Margin Tepi Manual (*Anti-Clipping*):** Pengguna dapat menyesuaikan `printableWidthMm` secara independen jika printer memotong 1–3 digit di tepi kanan kertas.
+
+### 9.2 Preset, Standar Posisi Kertas di Samping (`Left-Origin`) & Optimasi *Anti-Dither Pure Black* Khusus Epson LX-310 (Continuous Form NCR)
+- **`120mm` (`LX-310 NCR 4.75" / 12cm Bagi 2 Vertikal Posisi Samping`):** Lebar `120.7 mm` dengan area cetak efektif `100 mm` (`42 kolom`), dipasang di traktor samping kiri.
+- **`140mm` (`LX-310 Setengah 5.5" / 14cm Posisi Samping`):** Untuk kertas ukuran setengah halaman (`5.5" × 8.5"` atau `9.5" × 5.5"` / A5) yang dipasang berdiri/menyamping di sisi printer, lebar `139.7 mm` dengan area cetak efektif `120 mm` (`52 kolom`).
+- **`241mm` (`LX-310 Faktur Setengah 9.5" × 5.5"`):** Lebar total `241.3 mm` (`9.5 inch` dengan lubang *sprocket* kiri-kanan), area cetak efektif `203 mm` (`80 kolom`), padding vertikal ringkas (`4mm 5mm`) untuk mendukung kertas faktur setengah halaman (`9.5" × 5.5"`).
+- **Standar Industri SaaS Posisi Kertas di Samping (`resolveEffectivePaperAlignment` & Windows GDI Anti-Centering):**
+  - Karena sensor kertas (*Paper-Out Sensor*) dan titik `0` mistar Epson LX-310 berada di samping kiri, mode default `'auto'` secara otomatis menerapkan **Rata Samping Kiri (`margin: 0 auto 0 ${offsetMm}mm`)** untuk seluruh ukuran LX-310 (`120mm`, `140mm`, `241mm`), dan tetap mempertahankan **Rata Tengah (`margin: 0 auto`)** untuk printer roll thermal (`58mm`, `76mm`, `80mm`, `104mm`).
+  - Saat mencetak pada kertas LX-310 dengan posisi samping (`'left'` atau `'right'`), aturan `@page` menggunakan `size: auto; margin: 0;` sementara `.receipt-container` mengunci lebar (`100mm` / `120mm` / `203mm`). Hal ini mencegah Windows GDI / Chromium menaruh halaman virtual sempit di tengah-tengah kereta cetak `9.5"` ketika driver Windows masih disetel pada ukuran default `Letter / A4 / Fanfold`.
+  - Dilengkapi kontrol override manual (`auto | left | center | right`) dan `paperOffsetMm` (geser margin samping dalam `mm`), serta format baris barang **1-Baris Tabel Kompak** (`ITEM / BARANG | QTY x HARGA | SUBTOTAL`) agar 1 lembar setengah halaman (`5.5"`) dapat memuat 12–18 item belanjaan.
+- **Mode Anti-Dither 9-Pin (`isAntiDither`) & Isolasi Roll `76mm`:** Pada ukuran Dot-Matrix (`76mm`, `120mm`, `140mm`, `241mm`), `generateReceiptHtml()` memaksa warna teks sekunder menjadi Hitam Pekat (`#000000`) dan latar belakang kotak catatan menjadi Putih Bersih (`#ffffff`), mencegah jarum 9-pin melakukan *raster shading* yang lambat. Flag `isDotMatrixContinuous` dikhususkan murni untuk kertas traktor LX-310 (`120.7mm`, `139.7mm`, `241.3mm`) dan tidak diterapkan pada roll `76mm` (custom maupun preset) agar printer roll `76mm` tetap mempertahankan **42 kolom** di jalur Bluetooth.
+
+### 9.3 Adaptive Dual-Speed BLE Pacing (Cepat untuk Struk Normal + Anti-Potong Struk Panjang)
+- **Full Thermal Roll Support di Bluetooth (`resolveBluetoothEscPosColumns`):** Mendukung ukuran roll thermal `44mm` (`24 kolom`), `58mm` (`32 kolom`), `76mm` (`42 kolom`), `80mm` (`48 kolom`), hingga `104mm/112mm` (`64–69 kolom`). Hanya kertas lembaran komputer (`A4`, `241mm`, `140mm`, `120mm`, $> 115\text{mm}$) yang di-*fallback* ke `32 kolom` agar payload Bluetooth tidak membengkak.
+- **Dual-Speed Flow Control (`sendBleSegmentFlowControlled`):**
+  1. **Fast Burst ($\le 1.280\text{ bytes}$ tanpa Logo):** Dikirim dengan jeda `10ms` per `64 bytes` di PWA BLE (dan `0ms` *single-shot* 1KB di APK Android) karena seluruh struk muat di dalam RAM Buffer `4 KB` printer.
+  2. **Motor-Matched Anti-Clip ($> 1.280\text{ bytes}$ atau Setelah Bitmap Logo):** Menunggu `400ms–450ms` setelah logo, lalu mengirim dengan ritme motor `40ms` per `64 bytes` + jeda pengurasan buffer `220ms` setiap `1.024 bytes` (`140ms` di APK Android) agar struk panjang (15–100+ item) tidak pernah terpotong.
+
+
 
 
 

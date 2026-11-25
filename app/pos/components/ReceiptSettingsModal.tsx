@@ -5,9 +5,11 @@ import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { 
   PaperSize, 
   PaperWidthUnit,
+  PaperAlignment,
   ConnectionType, 
   generateReceiptHtml,
   resolvePaperDimensions,
+  resolveEffectivePaperAlignment,
   convertUnitToMm,
   convertMmToUnit,
   computeDefaultPrintableWidthMm,
@@ -82,6 +84,8 @@ export default function ReceiptSettingsModal({
   const [phone, setPhone] = useState('')
   const [footerNote, setFooterNote] = useState('Terima kasih atas kunjungan Anda!')
   const [paperSize, setPaperSize] = useState<PaperSize>('58mm')
+  const [paperAlignment, setPaperAlignment] = useState<PaperAlignment>('auto')
+  const [paperOffsetMm, setPaperOffsetMm] = useState<string>('0')
   const [isCustomPaperMode, setIsCustomPaperMode] = useState(false)
   const [customWidthInput, setCustomWidthInput] = useState<string>('58')
   const [customUnit, setCustomUnit] = useState<PaperWidthUnit>('mm')
@@ -216,6 +220,8 @@ export default function ReceiptSettingsModal({
       setPhone(s.phone)
       setFooterNote(s.footerNote)
       setPaperSize(s.paperSize)
+      setPaperAlignment(s.paperAlignment || 'auto')
+      setPaperOffsetMm(String(s.paperOffsetMm ?? 0))
       const dims = resolvePaperDimensions(s.paperSize)
       if (dims.isCustom) {
         setIsCustomPaperMode(true)
@@ -474,6 +480,15 @@ export default function ReceiptSettingsModal({
     return resolvePaperDimensions(effectivePaperSize)
   }, [effectivePaperSize])
 
+  const parsedOffsetMm = useMemo(() => {
+    const n = parseFloat(paperOffsetMm)
+    return Number.isFinite(n) && n >= 0 ? Math.min(80, Number(n.toFixed(1))) : 0
+  }, [paperOffsetMm])
+
+  const resolvedAlignmentSpec = useMemo(() => {
+    return resolveEffectivePaperAlignment(resolvedPaperDims, paperAlignment, parsedOffsetMm)
+  }, [resolvedPaperDims, paperAlignment, parsedOffsetMm])
+
   // Switch unit seamlessly by converting current canonical widthMm to the newly selected unit
   const handleSwitchCustomUnit = (nextUnit: PaperWidthUnit) => {
     const currentNum = parseFloat(customWidthInput)
@@ -520,6 +535,8 @@ export default function ReceiptSettingsModal({
       phone: phone.trim(),
       footerNote: footerNote.trim(),
       paperSize: effectivePaperSize,
+      paperAlignment,
+      paperOffsetMm: parsedOffsetMm,
       customPaperWidth: isCustomPaperMode && Number.isFinite(numVal) ? numVal : undefined,
       customPaperUnit: isCustomPaperMode ? customUnit : undefined,
       customPrintableWidthMm: isCustomPaperMode ? resolvedPaperDims.printableWidthMm : undefined,
@@ -567,6 +584,8 @@ export default function ReceiptSettingsModal({
       phone: phone.trim(),
       footerNote: footerNote.trim(),
       paperSize: effectivePaperSize,
+      paperAlignment,
+      paperOffsetMm: parsedOffsetMm,
       connectionType,
       autoPrintAfterPayment,
       showItemNumbering,
@@ -584,6 +603,8 @@ export default function ReceiptSettingsModal({
     phone,
     footerNote,
     effectivePaperSize,
+    paperAlignment,
+    parsedOffsetMm,
     connectionType,
     autoPrintAfterPayment,
     showItemNumbering,
@@ -1028,8 +1049,9 @@ export default function ReceiptSettingsModal({
                 <option value="76mm">Impact / Thermal 76mm (Printer Dot-Matrix — 42 Kolom)</option>
                 <option value="80mm">Thermal 80mm (Ukuran Standar Resto / Supermarket — 48 Kolom)</option>
                 <option value="104mm">Thermal Lebar 104mm / 4 Inci (64 Kolom)</option>
-                <option value="120mm">Epson LX-310 NCR 4.75" / 12cm (Continuous Bagi 2 — Efektif 100mm)</option>
-                <option value="241mm">Epson LX-310 Continuous 9.5" / 241mm (Faktur NCR Utuh — Efektif 203mm)</option>
+                <option value="120mm">Epson LX-310 NCR 4.75" / 12cm (Continuous Bagi 2 Posisi Samping — Efektif 100mm)</option>
+                <option value="140mm">Epson LX-310 Setengah 5.5" / 14cm (Kertas Setengah Posisi Samping — Efektif 120mm)</option>
+                <option value="241mm">Epson LX-310 Faktur Setengah 9.5" × 5.5" / 241mm (NCR Lebar — Efektif 203mm)</option>
                 <option value="A4">Kertas Halaman A4 / Invoice (210mm)</option>
                 <option value="custom">⚙️ Custom Lebar Kertas (Pilih Satuan: mm, cm, in, px, karakter)</option>
               </select>
@@ -1120,8 +1142,9 @@ export default function ReceiptSettingsModal({
                           { label: '76mm', mm: 76, eff: 63 },
                           { label: '80mm', mm: 80, eff: 72 },
                           { label: '104mm (4")', mm: 104, eff: 96 },
-                          { label: 'LX-310 4.75" (12cm)', mm: 120.7, eff: 100 },
-                          { label: 'LX-310 9.5" (24.1cm)', mm: 241.3, eff: 203 }
+                          { label: 'LX-310 4.75" (12cm Samping)', mm: 120.7, eff: 100 },
+                          { label: 'LX-310 5.5" (14cm Samping)', mm: 139.7, eff: 120 },
+                          { label: 'LX-310 9.5"×5.5" (24.1cm)', mm: 241.3, eff: 203 }
                         ].map((preset) => (
                           <button
                             key={preset.label}
@@ -1211,6 +1234,74 @@ export default function ReceiptSettingsModal({
                   </div>
                 </div>
               )}
+
+              {/* Panel Posisi Kertas di Printer (Standar Industri SaaS: LX-310 Samping Kiri vs Thermal Tengah) */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                      <span>↔️</span>
+                      <span>Posisi Kertas di Printer (Alignment &amp; Margin Samping)</span>
+                    </span>
+                    <span className="text-[11px] text-slate-500 block mt-0.5">
+                      {resolvedAlignmentSpec.alignment === 'left'
+                        ? '⬅️ Aktif: Rata Samping Kiri (Standar SaaS untuk Epson LX-310 — mengikuti sensor kertas & titik 0 mistar kiri)'
+                        : resolvedAlignmentSpec.alignment === 'right'
+                        ? '➡️ Aktif: Rata Samping Kanan (Untuk kertas yang dipasang merapat ke traktor kanan)'
+                        : '↔️ Aktif: Rata Tengah (Standar printer roll thermal 58mm/80mm)'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end pt-1">
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Perataan Posisi Kertas Horizontal
+                    </label>
+                    <select
+                      value={paperAlignment}
+                      onChange={(e) => setPaperAlignment(e.target.value as PaperAlignment)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-semibold text-slate-800 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
+                    >
+                      <option value="auto">
+                        ⚡ Otomatis Standar SaaS (LX-310: Samping Kiri • Thermal: Tengah)
+                      </option>
+                      <option value="left">
+                        ⬅️ Rata Samping Kiri (Posisi Kertas di Samping Kiri / Mistar 0 LX-310)
+                      </option>
+                      <option value="center">
+                        ↔️ Rata Tengah (Standar Printer Roll Thermal)
+                      </option>
+                      <option value="right">
+                        ➡️ Rata Samping Kanan (Posisi Kertas di Traktor Samping Kanan)
+                      </option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Geser Margin Samping (mm)
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        max="80"
+                        value={paperOffsetMm}
+                        onChange={(e) => setPaperOffsetMm(e.target.value)}
+                        disabled={resolvedAlignmentSpec.alignment === 'center'}
+                        placeholder="0"
+                        title="Jarak geser dari tepi samping kertas (misal 5mm untuk melewati lubang traktor)"
+                        className="w-full px-3 py-2 pr-10 rounded-xl border border-slate-200 bg-white font-bold text-slate-800 text-xs focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                      />
+                      <span className="absolute right-3 text-[11px] font-bold text-slate-400 select-none">
+                        mm
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div>
@@ -1554,7 +1645,7 @@ export default function ReceiptSettingsModal({
               {mainTab === 'receipt' ? '👁️ Pratinjau Struk Kasir (Pelanggan)' : '👁️ Pratinjau Nota Dapur (Zero Price & Modifiers)'}
             </span>
             <span className="text-[10px] font-mono font-bold px-2 py-0.5 bg-white border border-slate-200 rounded-full text-indigo-700">
-              {resolvedPaperDims.displayLabel} &bull; {resolvedPaperDims.escPosColumns} char
+              {resolvedPaperDims.displayLabel} &bull; {resolvedPaperDims.escPosColumns} char &bull; {resolvedAlignmentSpec.alignment === 'left' ? '⬅️ Samping Kiri' : resolvedAlignmentSpec.alignment === 'right' ? '➡️ Samping Kanan' : '↔️ Tengah'}
             </span>
           </div>
           <iframe 

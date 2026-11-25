@@ -1,8 +1,9 @@
 // ShapeUp POS Hardware-Agnostic Printer Abstraction Layer
 
 export type PaperWidthUnit = 'mm' | 'cm' | 'in' | 'px' | 'chars'
-export type PaperSizePreset = '58mm' | '76mm' | '80mm' | '104mm' | '120mm' | '241mm' | 'A4'
+export type PaperSizePreset = '58mm' | '76mm' | '80mm' | '104mm' | '120mm' | '140mm' | '241mm' | 'A4'
 export type PaperSize = PaperSizePreset | string
+export type PaperAlignment = 'auto' | 'left' | 'center' | 'right'
 export type ConnectionType = 'bluetooth' | 'lan' | 'system' | 'pdf'
 
 export interface ResolvedPaperDimensions {
@@ -10,6 +11,8 @@ export interface ResolvedPaperDimensions {
   isCustom: boolean
   isPageSheet: boolean
   isDotMatrixContinuous?: boolean
+  defaultAlignment?: 'left' | 'center' | 'right'
+  heightMm?: number
   widthMm: number
   printableWidthMm: number
   unit: PaperWidthUnit
@@ -42,7 +45,8 @@ export function computeDefaultPrintableWidthMm(widthMm: number): number {
   if (Math.abs(w - 76) < 0.5) return 63
   if (Math.abs(w - 80) < 0.5) return 72
   if (Math.abs(w - 104) < 0.5) return 96
-  if (Math.abs(w - 120.65) < 1) return 100 // Continuous Form 4.75" (NCR Bagi 2 Vertikal)
+  if (Math.abs(w - 120.65) < 1) return 100 // Continuous Form 4.75" (NCR Bagi 2 Vertikal Posisi Samping)
+  if (Math.abs(w - 139.7) < 1.5 || Math.abs(w - 140) < 1.5) return 120 // Continuous Form / Half-Page 5.5" Posisi Samping
   if (Math.abs(w - 210) < 1) return 180
   if (Math.abs(w - 241.3) < 1.5) return 203 // Continuous Form 9.5" (Epson LX-310 Full NCR)
   if (w < 55) return Math.max(20, Number((w - 8).toFixed(1)))
@@ -136,7 +140,7 @@ export function buildCustomPaperSizeToken(
 export function sanitizePaperSize(raw: unknown): PaperSize {
   if (typeof raw !== 'string' || !raw.trim()) return '58mm'
   const clean = raw.trim()
-  if (['58mm', '76mm', '80mm', '104mm', '120mm', '241mm', 'A4'].includes(clean)) {
+  if (['58mm', '76mm', '80mm', '104mm', '120mm', '140mm', '241mm', 'A4'].includes(clean)) {
     return clean as PaperSize
   }
   if (clean.startsWith('custom:')) {
@@ -280,13 +284,15 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
     }
   }
 
-  // 5b. Preset '120mm' (Epson LX-310 Continuous Form 4.75" / NCR Belah 2 Vertikal)
+  // 5b. Preset '120mm' (Epson LX-310 Continuous Form 4.75" / NCR Belah 2 Vertikal Posisi Samping)
   if (raw === '120mm') {
     return {
       rawPaperSize: '120mm',
       isCustom: false,
       isPageSheet: false,
       isDotMatrixContinuous: true,
+      defaultAlignment: 'left',
+      heightMm: 139.7,
       widthMm: 120.7,
       printableWidthMm: 100,
       unit: 'in',
@@ -295,21 +301,48 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
       maxLogoDots: 480,
       cssPageSize: '120.7mm auto',
       cssContainerWidth: '100mm',
-      cssFontSize: '12.5px',
-      cssKitchenFontSize: '13.5px',
-      cssPadding: '3mm 2mm',
+      cssFontSize: '12px',
+      cssKitchenFontSize: '13px',
+      cssPadding: '2.5mm 2mm',
       previewIframeWidthPx: 430,
-      displayLabel: 'LX-310 NCR 4.75" (12cm)'
+      displayLabel: 'LX-310 NCR 4.75" (12cm Samping)'
     }
   }
 
-  // 5c. Preset '241mm' (Epson LX-310 Continuous Form 9.5" Full Width NCR)
+  // 5c. Preset '140mm' (Epson LX-310 Setengah Halaman 5.5" / 14cm Posisi Samping Berdiri)
+  if (raw === '140mm') {
+    return {
+      rawPaperSize: '140mm',
+      isCustom: false,
+      isPageSheet: false,
+      isDotMatrixContinuous: true,
+      defaultAlignment: 'left',
+      heightMm: 215.9,
+      widthMm: 139.7,
+      printableWidthMm: 120,
+      unit: 'in',
+      inputValue: 5.5,
+      escPosColumns: 52,
+      maxLogoDots: 480,
+      cssPageSize: '139.7mm auto',
+      cssContainerWidth: '120mm',
+      cssFontSize: '12.5px',
+      cssKitchenFontSize: '13.5px',
+      cssPadding: '3mm 2.5mm',
+      previewIframeWidthPx: 465,
+      displayLabel: 'LX-310 Setengah 5.5" (14cm Samping)'
+    }
+  }
+
+  // 5d. Preset '241mm' (Epson LX-310 Continuous Form 9.5" x 5.5" Half-Page Faktur NCR)
   if (raw === '241mm') {
     return {
       rawPaperSize: '241mm',
       isCustom: false,
       isPageSheet: true,
       isDotMatrixContinuous: true,
+      defaultAlignment: 'left',
+      heightMm: 139.7,
       widthMm: 241.3,
       printableWidthMm: 203,
       unit: 'in',
@@ -318,11 +351,11 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
       maxLogoDots: 512,
       cssPageSize: '241.3mm auto',
       cssContainerWidth: '203mm',
-      cssFontSize: '13px',
+      cssFontSize: '12.5px',
       cssKitchenFontSize: '14px',
-      cssPadding: '5mm 6mm',
+      cssPadding: '4mm 5mm',
       previewIframeWidthPx: 540,
-      displayLabel: 'LX-310 Continuous 9.5"'
+      displayLabel: 'LX-310 Faktur 9.5"×5.5" (Setengah)'
     }
   }
 
@@ -362,11 +395,12 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
     }
   }
 
-  const isPageSheet = widthMm >= 140
+  const isPageSheet = widthMm >= 145
   const isDotMatrixContinuous =
-    Math.abs(widthMm - 76) < 1.5 ||
     Math.abs(widthMm - 120.7) < 2 ||
+    Math.abs(widthMm - 139.7) < 2.5 ||
     Math.abs(widthMm - 241.3) < 3
+  const defaultAlignment: 'left' | 'center' | 'right' = isDotMatrixContinuous ? 'left' : 'center'
 
   const escPosColumns = Math.max(
     16,
@@ -409,6 +443,7 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
     isCustom: true,
     isPageSheet,
     isDotMatrixContinuous,
+    defaultAlignment,
     widthMm,
     printableWidthMm,
     unit,
@@ -482,6 +517,8 @@ export interface ReceiptData {
   note?: string
   orderNote?: string
   paperSize?: PaperSize
+  paperAlignment?: PaperAlignment
+  paperOffsetMm?: number
   receiptTitle?: string
   queueNumber?: string | number
   showQueueNumber?: boolean
@@ -526,22 +563,107 @@ function escapeHtml(str: string = ''): string {
     .replace(/'/g, '&#39;')
 }
 
+/**
+ * Resolves the effective horizontal paper alignment ('left' | 'center' | 'right') and CSS margin
+ * based on SaaS industry standards:
+ * - Epson LX-310 Half-Size / Continuous Form ('120mm', '140mm', '241mm') -> Defaults to 'left' (0-Origin Samping Kiri)
+ *   because the LX-310 physical paper-out sensor and tractor 0-mark are located on the left side.
+ * - Thermal Roll ('58mm', '76mm', '80mm', '104mm') & 'A4' -> Defaults to 'center' ('margin: 0 auto').
+ */
+export function resolveEffectivePaperAlignment(
+  dims: ResolvedPaperDimensions,
+  requestedAlignment?: PaperAlignment,
+  requestedOffsetMm?: number
+): {
+  alignment: 'left' | 'center' | 'right'
+  offsetMm: number
+  cssMargin: string
+} {
+  let rawAlign: PaperAlignment | undefined = requestedAlignment
+  let rawOffset: number | undefined = requestedOffsetMm
+
+  if ((rawAlign === undefined || rawOffset === undefined) && typeof window !== 'undefined') {
+    try {
+      const storedRaw = localStorage.getItem('shapeup_pos_receipt_settings')
+      if (storedRaw) {
+        const parsed = JSON.parse(storedRaw)
+        if (rawAlign === undefined && parsed.paperAlignment) {
+          rawAlign = parsed.paperAlignment as PaperAlignment
+        }
+        if (rawOffset === undefined && parsed.paperOffsetMm !== undefined) {
+          rawOffset = Number(parsed.paperOffsetMm)
+        }
+      }
+    } catch {}
+  }
+
+  const autoDefault: 'left' | 'center' | 'right' =
+    dims.defaultAlignment ||
+    (dims.isDotMatrixContinuous && dims.rawPaperSize !== '76mm' ? 'left' : 'center')
+
+  const alignment: 'left' | 'center' | 'right' =
+    rawAlign === 'left' || rawAlign === 'center' || rawAlign === 'right'
+      ? rawAlign
+      : autoDefault
+
+  const offsetMm =
+    rawOffset !== undefined && Number.isFinite(Number(rawOffset)) && Number(rawOffset) >= 0
+      ? Math.min(80, Number(Number(rawOffset).toFixed(1)))
+      : 0
+
+  const cssMargin =
+    alignment === 'left'
+      ? `0 auto 0 ${offsetMm}mm`
+      : alignment === 'right'
+      ? `0 ${offsetMm}mm 0 auto`
+      : '0 auto'
+
+  return { alignment, offsetMm, cssMargin }
+}
+
 export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize): string {
   const effectivePaperSize = paperSize || receipt.paperSize || '58mm'
   const dims = resolvePaperDimensions(effectivePaperSize)
+  const alignSpec = resolveEffectivePaperAlignment(dims, receipt.paperAlignment, receipt.paperOffsetMm)
 
-  const pageSizeCss = dims.cssPageSize
+  // On Epson LX-310 tractor/sideways half-size paper (isDotMatrixContinuous) with side alignment ('left' / 'right'),
+  // use '@page { size: auto; margin: 0; }' so Windows GDI / Chromium does NOT center a narrow 120mm/140mm virtual page
+  // in the middle of the 8.5"/9.5" carriage when the Windows driver is set to default Letter/A4/Fanfold.
+  const pageSizeCss =
+    dims.isDotMatrixContinuous && alignSpec.alignment !== 'center'
+      ? 'auto'
+      : dims.cssPageSize
   const containerWidth = dims.cssContainerWidth
   const fontSize = dims.cssFontSize
   const containerPadding = dims.cssPadding
+  const containerMargin = alignSpec.cssMargin
   const fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
   // On 9-pin Impact Dot-Matrix printers (Epson LX-310 / TM-U220), gray colors (#444/#555) and #f7f7f7 shading
   // cause slow multi-pass pin dithering. Force 100% pure black (#000) & transparent background on dot-matrix sizes.
-  const isAntiDither = Boolean(dims.isDotMatrixContinuous || dims.rawPaperSize === '76mm')
+  const isAntiDither = Boolean(
+    dims.isDotMatrixContinuous ||
+    dims.rawPaperSize === '76mm' ||
+    Math.abs(dims.widthMm - 76) < 1.5
+  )
+  // SaaS Industry Standard (Accurate / Olsera / Jurnal) for LX-310 Half-Size Paper (>= 95mm printable width):
+  // Use compact 1-line tabular item rows and tighter vertical spacing so 12-18 items fit inside a 5.5" (14cm) half-sheet.
+  const isCompactHalfSheetLx310 = Boolean(dims.isDotMatrixContinuous && dims.printableWidthMm >= 95)
   const subTextColor = isAntiDither ? '#000000' : '#444444'
   const mutedTextColor = isAntiDither ? '#000000' : '#555555'
   const noteBoxBg = isAntiDither ? '#ffffff' : '#f7f7f7'
   const noteBoxBorder = isAntiDither ? '1px dashed #000000' : '1px dashed #777777'
+  const dividerMargin = isCompactHalfSheetLx310 ? '3px 0' : '5px 0'
+  const bodyLineHeight = isCompactHalfSheetLx310 ? '1.25' : '1.35'
+
+  const itemsHeaderHtml = isCompactHalfSheetLx310
+    ? `
+      <div style="display: flex; justify-content: space-between; align-items: baseline; font-size: 0.85em; border-bottom: 1px dashed #000000; padding-bottom: 2px; margin-bottom: 3px;">
+        <span style="flex: 1;">ITEM / BARANG</span>
+        <span style="width: 82px; text-align: right;">QTY x HARGA</span>
+        <span style="width: 68px; text-align: right;">SUBTOTAL</span>
+      </div>
+    `
+    : ''
 
   const itemsHtml = (receipt.items || []).map((item, idx) => {
     const itemNumberPrefix = receipt.showItemNumbering ? `${idx + 1}. ` : ''
@@ -555,6 +677,23 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
     const discountHtml = item.discount && item.discount > 0
       ? `<div style="display: flex; justify-content: space-between; font-size: 0.9em; color: ${mutedTextColor}; padding-left: ${detailPadding}; margin-top: 1px;"><span>Diskon:</span><span>-${item.discount.toLocaleString('id-ID')}</span></div>`
       : ''
+
+    if (isCompactHalfSheetLx310) {
+      const inlineTitle = item.variant
+        ? `${escapeHtml(item.name)} (${escapeHtml(item.variant)})`
+        : escapeHtml(item.name)
+      return `
+        <div style="margin-bottom: 2.5px;">
+          <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 6px;">
+            <span style="flex: 1; min-width: 0; word-break: break-word;">${itemNumberPrefix}${inlineTitle}</span>
+            <span style="white-space: nowrap; flex-shrink: 0; text-align: right;">${item.quantity} x ${item.price.toLocaleString('id-ID')}</span>
+            <span style="white-space: nowrap; flex-shrink: 0; min-width: 64px; text-align: right;">${item.subtotal.toLocaleString('id-ID')}</span>
+          </div>
+          ${noteHtml}
+          ${discountHtml}
+        </div>
+      `
+    }
 
     return `
       <div style="margin-bottom: 6px;">
@@ -695,19 +834,19 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
       color: #000000;
       font-family: ${fontFamily};
       font-size: ${fontSize};
-      line-height: 1.35;
+      line-height: ${bodyLineHeight};
       letter-spacing: -0.15px;
     }
     .receipt-container {
       width: ${containerWidth};
       max-width: ${containerWidth};
-      margin: 0 auto;
+      margin: ${containerMargin};
       padding: ${containerPadding};
       box-sizing: border-box;
     }
     .divider {
       border-top: 1px dashed #000000;
-      margin: 5px 0;
+      margin: ${dividerMargin};
       width: 100%;
     }
   </style>
@@ -783,7 +922,8 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
     <div class="divider"></div>
 
     <!-- Daftar Item -->
-    <div style="margin: 5px 0;">
+    <div style="margin: ${isCompactHalfSheetLx310 ? '3px 0' : '5px 0'};">
+      ${itemsHeaderHtml}
       ${itemsHtml}
     </div>
 
@@ -904,7 +1044,7 @@ export function resolveBluetoothEscPosColumns(paperSize?: PaperSize): number {
   if (raw === '76mm') return 42
   if (raw === '80mm') return 48
   if (raw === '104mm') return 64
-  if (raw === 'A4' || raw === '241mm' || raw === '120mm') return 32
+  if (raw === 'A4' || raw === '241mm' || raw === '140mm' || raw === '120mm') return 32
   const dims = resolvePaperDimensions(raw)
   if (dims.isPageSheet || dims.isDotMatrixContinuous || dims.widthMm > 115) {
     return 32
@@ -2254,6 +2394,7 @@ export async function testPrintStationTicket(options: {
       }
 
       const width = dims.cssContainerWidth
+      const alignSpec = resolveEffectivePaperAlignment(dims)
       const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -2261,7 +2402,7 @@ export async function testPrintStationTicket(options: {
   <title>Uji Cetak Stasiun ${options.stationName}</title>
   <style>
     @page { size: ${dims.cssPageSize}; margin: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; width: ${width}; margin: 0 auto; padding: ${dims.cssPadding}; font-size: ${dims.cssKitchenFontSize}; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; width: ${width}; margin: ${alignSpec.cssMargin}; padding: ${dims.cssPadding}; font-size: ${dims.cssKitchenFontSize}; }
     .center { text-align: center; }
     .bold { font-weight: bold; }
     .border { border-top: 1px dashed #000; border-bottom: 1px dashed #000; margin: 6px 0; padding: 4px 0; }

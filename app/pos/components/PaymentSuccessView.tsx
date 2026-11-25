@@ -562,8 +562,9 @@ export default function PaymentSuccessView({
                     <option value="76mm">Impact 76mm</option>
                     <option value="80mm">Thermal 80mm</option>
                     <option value="104mm">Thermal 104mm</option>
-                    <option value="120mm">LX-310 NCR 4.75"</option>
-                    <option value="241mm">LX-310 Continuous 9.5"</option>
+                    <option value="120mm">LX-310 NCR 4.75" (Samping)</option>
+                    <option value="140mm">LX-310 Setengah 5.5" (Samping)</option>
+                    <option value="241mm">LX-310 Faktur 9.5"×5.5"</option>
                     <option value="A4">A4</option>
                     {paperDims.isCustom && (
                       <option value={paperSize}>{paperDims.displayLabel}</option>

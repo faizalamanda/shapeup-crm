@@ -44,8 +44,9 @@ const STATION_ICONS = ['🍳', '☕', '🍹', '🥩', '🍕', '🍰', '🍜', '�
 const COMMON_PRINTER_MODELS = [
   { name: 'EPSON TM-T82 / TM-T88 (Thermal 80mm)', paper_size: '80mm' as PaperSize },
   { name: 'EPSON TM-U220 (Dot Matrix Roll 76mm)', paper_size: '76mm' as PaperSize },
-  { name: 'EPSON LX-310 / LQ-310 (Continuous Form 9.5")', paper_size: '241mm' as PaperSize },
-  { name: 'EPSON LX-310 / LQ-310 (NCR Bagi 2 Vertikal 4.75")', paper_size: '120mm' as PaperSize },
+  { name: 'EPSON LX-310 / LQ-310 (Setengah 5.5" / 14cm Posisi Samping)', paper_size: '140mm' as PaperSize },
+  { name: 'EPSON LX-310 / LQ-310 (NCR Bagi 2 Vertikal 4.75" Posisi Samping)', paper_size: '120mm' as PaperSize },
+  { name: 'EPSON LX-310 / LQ-310 (Faktur Setengah 9.5" × 5.5")', paper_size: '241mm' as PaperSize },
   { name: 'POS-58 Series (Thermal 58mm)', paper_size: '58mm' as PaperSize },
   { name: 'POS-80 Series (Thermal 80mm)', paper_size: '80mm' as PaperSize },
   { name: 'Xprinter XP-58 / XP-N160I', paper_size: '58mm' as PaperSize },
@@ -1017,8 +1018,9 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
                     <option value="76mm">76mm (Dot Matrix — 42 Kolom)</option>
                     <option value="80mm">80mm (Standar Resto — 48 Kolom)</option>
                     <option value="104mm">104mm / 4" (Lebar — 64 Kolom)</option>
-                    <option value="120mm">LX-310 NCR 4.75" (12cm — Bagi 2)</option>
-                    <option value="241mm">LX-310 Continuous 9.5" (24.1cm)</option>
+                    <option value="120mm">LX-310 NCR 4.75" (12cm — Bagi 2 Samping)</option>
+                    <option value="140mm">LX-310 Setengah 5.5" (14cm — Posisi Samping)</option>
+                    <option value="241mm">LX-310 Faktur 9.5"×5.5" (24.1cm)</option>
                     <option value="custom">⚙️ Custom (Pilih Satuan)...</option>
                   </select>
                 </div>
@@ -1523,8 +1525,9 @@ export default function POSPrinterProductionManager({ isModal = false, onClose, 
                       <option value="76mm">76mm (Dot Matrix — 42 Kolom)</option>
                       <option value="80mm">80mm (Standar — 48 Kolom)</option>
                       <option value="104mm">104mm / 4" (Lebar — 64 Kolom)</option>
-                      <option value="120mm">LX-310 NCR 4.75" (12cm)</option>
-                      <option value="241mm">LX-310 Continuous 9.5"</option>
+                      <option value="120mm">LX-310 NCR 4.75" (12cm Samping)</option>
+                      <option value="140mm">LX-310 Setengah 5.5" (14cm Samping)</option>
+                      <option value="241mm">LX-310 Faktur 9.5"×5.5"</option>
                       <option value="A4">Halaman A4 (210mm)</option>
                     </select>
                   </div>

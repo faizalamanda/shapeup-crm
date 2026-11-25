@@ -1,19 +1,22 @@
 {
-  "summary": "Isolated & Dual-Mode Thermal Receipt Printing Architecture: Clean receipt printing using dynamic hidden iframe isolation, direct Web Bluetooth ESC/POS engine, silent auto-reconnect via navigator.bluetooth.getDevices() (zero-prompt post-payment printing), effective roll width compensation (48mm for 58mm roll, 72mm for 80mm roll), Universal Normal Weight (Zero-Bold / Anti-Bleed) standard, WYSIWYG live preview alignment, Floyd-Steinberg monochrome logo dithering & ESC/POS GS v 0 raster encoding, and structured Item & Order Notes thermal formatting.",
+  "summary": "Isolated & Dual-Mode Thermal Receipt Printing Architecture: Clean receipt printing using dynamic hidden iframe isolation, direct Web Bluetooth ESC/POS engine, silent auto-reconnect via navigator.bluetooth.getDevices() (zero-prompt post-payment printing), Multi-Unit Parametric Paper Width Engine (mm, cm, in, px/dots, chars) with 100% backward compatibility, Epson LX-310 Continuous Form & Half-Size Sideways presets (9.5\"x5.5\", 5.5\"/140mm Sideways, 4.75\"/120mm NCR Split) with SaaS-Standard Left-Origin alignment, Windows GDI Anti-Centering (@page size: auto), 1-Line Compact Tabular layout & 9-pin Anti-Dither Pure Black mode, Adaptive Dual-Speed BLE Pacing (Fast Burst <=1.28KB & Motor-Matched Anti-Clip >1.28KB for 4KB buffer protection), Universal Normal Weight (Zero-Bold / Anti-Bleed) standard, WYSIWYG live preview alignment, Floyd-Steinberg monochrome logo dithering & ESC/POS GS v 0 raster encoding.",
   "timestamps": {
     "created": "2026-10-19T14:45:00Z",
-    "last_updated": "2026-11-09T13:22:00Z"
+    "last_updated": "2026-11-25T16:52:00Z"
   },
   "references": [
     "lib/pos/printerAdapter.ts",
     "lib/pos/imageDither.ts",
     "lib/pos/receiptSettings.ts",
     "lib/pos/receiptDataBuilder.ts",
+    "lib/pos/kitchenTicketBuilder.ts",
     "app/pos/components/PaymentSuccessView.tsx",
-    "app/pos/components/PaymentSuccessModal.tsx",
     "app/pos/components/ReceiptPreviewModal.tsx",
     "app/pos/components/ReceiptSettingsModal.tsx",
-    "app/settings/business/page.tsx",
+    "app/pos/components/POSPrinterProductionManager.tsx",
+    "app/api/pos/printers/route.ts",
+    "app/api/pos/stations/route.ts",
+    "app/api/pos/order/route.ts",
     ".agents/skills/pos-session-ledger/SKILL.md",
     ".agents/AGENTS.md"
   ]

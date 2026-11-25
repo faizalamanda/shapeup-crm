@@ -180,7 +180,9 @@ export function buildReceiptDataFromOrder(order: any, options: ReceiptBuildOptio
     paymentStatus: paymentStatus,
     note: settings.footerNote || undefined,
     orderNote: extractedNote || undefined,
-    paperSize: options.paperSize || settings.paperSize || '58mm'
+    paperSize: options.paperSize || settings.paperSize || '58mm',
+    paperAlignment: settings.paperAlignment || 'auto',
+    paperOffsetMm: settings.paperOffsetMm ?? 0
   }
 }
 
@@ -238,7 +240,9 @@ export function buildSampleReceiptData(settings: ReceiptSettings): ReceiptData {
     paymentStatus: 'paid',
     orderNote: 'Meja 04 - Bawa pulang, titip kasir diambil jam 17:00',
     note: settings.footerNote || 'Terima kasih atas kunjungan Anda!\nBarang yang sudah dibeli tidak dapat ditukar/dikembalikan.',
-    paperSize: settings.paperSize || '58mm'
+    paperSize: settings.paperSize || '58mm',
+    paperAlignment: settings.paperAlignment || 'auto',
+    paperOffsetMm: settings.paperOffsetMm ?? 0
   }
 }
 
@@ -334,7 +338,9 @@ export function buildReturnReceiptData(
     logoBase64: settings.logoBase64 || undefined,
     logoEscPosBytes: settings.logoEscPosData ? base64ToUint8Array(settings.logoEscPosData) : undefined,
     note: settings.footerNote || 'Nota bukti retur / penukaran barang resmi.',
-    paperSize: options.paperSize || settings.paperSize || '58mm'
+    paperSize: options.paperSize || settings.paperSize || '58mm',
+    paperAlignment: settings.paperAlignment || 'auto',
+    paperOffsetMm: settings.paperOffsetMm ?? 0
   }
 }
 
@@ -419,7 +425,9 @@ export function buildHoldOrderReceiptData(
     paymentStatus: 'unpaid',
     orderNote: heldOrder.note ? String(heldOrder.note).trim() : undefined,
     note: '* INI BUKAN BUKTI PEMBAYARAN SAH *\nSilakan bawa nota ini ke kasir untuk menyelesaikan pembayaran.',
-    paperSize: options.paperSize || settings.paperSize || '58mm'
+    paperSize: options.paperSize || settings.paperSize || '58mm',
+    paperAlignment: settings.paperAlignment || 'auto',
+    paperOffsetMm: settings.paperOffsetMm ?? 0
   }
 }
 
@@ -472,7 +480,9 @@ export function buildHeldOrdersSummaryReceiptData(
     paymentMethod: 'DRAFT / HOLD',
     paymentStatus: 'unpaid',
     note: 'Laporan audit internal kasir.\nHarap periksa dan selesaikan pesanan tertahan sebelum pergantian/penutupan shift.',
-    paperSize: options.paperSize || settings.paperSize || '58mm'
+    paperSize: options.paperSize || settings.paperSize || '58mm',
+    paperAlignment: settings.paperAlignment || 'auto',
+    paperOffsetMm: settings.paperOffsetMm ?? 0
   }
 }
 

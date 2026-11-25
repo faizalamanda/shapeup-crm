@@ -1,5 +1,5 @@
 // ShapeUp POS Kitchen Production Ticket Builder & Multi-Station Dispatcher
-import { PaperSize, resolvePaperDimensions, resolveBluetoothEscPosColumns } from './printerAdapter'
+import { PaperSize, resolvePaperDimensions, resolveEffectivePaperAlignment, resolveBluetoothEscPosColumns } from './printerAdapter'
 import {
   KitchenStationId,
   KitchenSettings,
@@ -351,10 +351,12 @@ function escapeHtml(str: string = ''): string {
  */
 export function generateKitchenTicketHtml(ticket: KitchenTicketData): string {
   const dims = resolvePaperDimensions(ticket.paperSize || '58mm')
+  const alignSpec = resolveEffectivePaperAlignment(dims)
   const pageSizeCss = dims.cssPageSize
   const containerWidth = dims.cssContainerWidth
   const fontSize = dims.cssKitchenFontSize
   const containerPadding = dims.cssPadding
+  const containerMargin = alignSpec.cssMargin
 
   const itemsHtml = ticket.items.map((item, idx) => {
     const numPrefix = `${idx + 1}. `
@@ -434,7 +436,7 @@ export function generateKitchenTicketHtml(ticket: KitchenTicketData): string {
     .ticket-container {
       width: ${containerWidth};
       max-width: ${containerWidth};
-      margin: 0 auto;
+      margin: ${containerMargin};
       padding: ${containerPadding};
       box-sizing: border-box;
     }
