@@ -116,6 +116,8 @@ export default function ReceiptPreviewModal({ isOpen, onClose, receipt }: Props)
               <option value="76mm">Impact 76mm</option>
               <option value="80mm">Thermal 80mm</option>
               <option value="104mm">Thermal 104mm</option>
+              <option value="120mm">LX-310 NCR 4.75"</option>
+              <option value="241mm">LX-310 Continuous 9.5"</option>
               <option value="A4">Halaman A4</option>
               {paperDims.isCustom && (
                 <option value={paperSize}>{paperDims.displayLabel}</option>

@@ -1020,6 +1020,8 @@ export default function ReceiptSettingsModal({
                 <option value="76mm">Impact / Thermal 76mm (Printer Dot-Matrix — 42 Kolom)</option>
                 <option value="80mm">Thermal 80mm (Ukuran Standar Resto / Supermarket — 48 Kolom)</option>
                 <option value="104mm">Thermal Lebar 104mm / 4 Inci (64 Kolom)</option>
+                <option value="120mm">Epson LX-310 NCR 4.75" / 12cm (Continuous Bagi 2 — Efektif 100mm)</option>
+                <option value="241mm">Epson LX-310 Continuous 9.5" / 241mm (Faktur NCR Utuh — Efektif 203mm)</option>
                 <option value="A4">Kertas Halaman A4 / Invoice (210mm)</option>
                 <option value="custom">⚙️ Custom Lebar Kertas (Pilih Satuan: mm, cm, in, px, karakter)</option>
               </select>
@@ -1110,7 +1112,8 @@ export default function ReceiptSettingsModal({
                           { label: '76mm', mm: 76, eff: 63 },
                           { label: '80mm', mm: 80, eff: 72 },
                           { label: '104mm (4")', mm: 104, eff: 96 },
-                          { label: '112mm', mm: 112, eff: 104 }
+                          { label: 'LX-310 4.75" (12cm)', mm: 120.7, eff: 100 },
+                          { label: 'LX-310 9.5" (24.1cm)', mm: 241.3, eff: 203 }
                         ].map((preset) => (
                           <button
                             key={preset.label}

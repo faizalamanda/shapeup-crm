@@ -1,7 +1,7 @@
 // ShapeUp POS Hardware-Agnostic Printer Abstraction Layer
 
 export type PaperWidthUnit = 'mm' | 'cm' | 'in' | 'px' | 'chars'
-export type PaperSizePreset = '58mm' | '76mm' | '80mm' | '104mm' | 'A4'
+export type PaperSizePreset = '58mm' | '76mm' | '80mm' | '104mm' | '120mm' | '241mm' | 'A4'
 export type PaperSize = PaperSizePreset | string
 export type ConnectionType = 'bluetooth' | 'lan' | 'system' | 'pdf'
 
@@ -9,6 +9,7 @@ export interface ResolvedPaperDimensions {
   rawPaperSize: string
   isCustom: boolean
   isPageSheet: boolean
+  isDotMatrixContinuous?: boolean
   widthMm: number
   printableWidthMm: number
   unit: PaperWidthUnit
@@ -41,7 +42,9 @@ export function computeDefaultPrintableWidthMm(widthMm: number): number {
   if (Math.abs(w - 76) < 0.5) return 63
   if (Math.abs(w - 80) < 0.5) return 72
   if (Math.abs(w - 104) < 0.5) return 96
+  if (Math.abs(w - 120.65) < 1) return 100 // Continuous Form 4.75" (NCR Bagi 2 Vertikal)
   if (Math.abs(w - 210) < 1) return 180
+  if (Math.abs(w - 241.3) < 1.5) return 203 // Continuous Form 9.5" (Epson LX-310 Full NCR)
   if (w < 55) return Math.max(20, Number((w - 8).toFixed(1)))
   if (w <= 65) return Math.max(24, Number((w - 10).toFixed(1)))
   if (w <= 130) return Math.max(30, Number((w - 8).toFixed(1)))
@@ -133,7 +136,7 @@ export function buildCustomPaperSizeToken(
 export function sanitizePaperSize(raw: unknown): PaperSize {
   if (typeof raw !== 'string' || !raw.trim()) return '58mm'
   const clean = raw.trim()
-  if (['58mm', '76mm', '80mm', '104mm', 'A4'].includes(clean)) {
+  if (['58mm', '76mm', '80mm', '104mm', '120mm', '241mm', 'A4'].includes(clean)) {
     return clean as PaperSize
   }
   if (clean.startsWith('custom:')) {
@@ -277,6 +280,52 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
     }
   }
 
+  // 5b. Preset '120mm' (Epson LX-310 Continuous Form 4.75" / NCR Belah 2 Vertikal)
+  if (raw === '120mm') {
+    return {
+      rawPaperSize: '120mm',
+      isCustom: false,
+      isPageSheet: false,
+      isDotMatrixContinuous: true,
+      widthMm: 120.7,
+      printableWidthMm: 100,
+      unit: 'in',
+      inputValue: 4.75,
+      escPosColumns: 42,
+      maxLogoDots: 480,
+      cssPageSize: '120.7mm auto',
+      cssContainerWidth: '100mm',
+      cssFontSize: '12.5px',
+      cssKitchenFontSize: '13.5px',
+      cssPadding: '3mm 2mm',
+      previewIframeWidthPx: 430,
+      displayLabel: 'LX-310 NCR 4.75" (12cm)'
+    }
+  }
+
+  // 5c. Preset '241mm' (Epson LX-310 Continuous Form 9.5" Full Width NCR)
+  if (raw === '241mm') {
+    return {
+      rawPaperSize: '241mm',
+      isCustom: false,
+      isPageSheet: true,
+      isDotMatrixContinuous: true,
+      widthMm: 241.3,
+      printableWidthMm: 203,
+      unit: 'in',
+      inputValue: 9.5,
+      escPosColumns: 80,
+      maxLogoDots: 512,
+      cssPageSize: '241.3mm auto',
+      cssContainerWidth: '203mm',
+      cssFontSize: '13px',
+      cssKitchenFontSize: '14px',
+      cssPadding: '5mm 6mm',
+      previewIframeWidthPx: 540,
+      displayLabel: 'LX-310 Continuous 9.5"'
+    }
+  }
+
   // 6. Parse Custom Token: "custom:<inputValue>:<unit>[:<printableWidthMm>]" or "<num><unit>"
   let unit: PaperWidthUnit = 'mm'
   let inputValue = 58
@@ -314,6 +363,11 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
   }
 
   const isPageSheet = widthMm >= 140
+  const isDotMatrixContinuous =
+    Math.abs(widthMm - 76) < 1.5 ||
+    Math.abs(widthMm - 120.7) < 2 ||
+    Math.abs(widthMm - 241.3) < 3
+
   const escPosColumns = Math.max(
     16,
     Math.min(120, Math.floor((printableWidthMm * DOTS_PER_MM_203DPI) / FONT_A_CHAR_DOTS))
@@ -332,7 +386,9 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
   const cssContainerWidth = `${printableWidthMm}mm`
   const cssFontSize = `${fontPx}px`
   const cssKitchenFontSize = `${kitchenFontPx}px`
-  const cssPadding = isPageSheet
+  const cssPadding = isDotMatrixContinuous
+    ? '4mm 4mm'
+    : isPageSheet
     ? '12mm 8mm'
     : widthMm <= 62
     ? '2mm 1mm'
@@ -352,6 +408,7 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
     rawPaperSize: raw,
     isCustom: true,
     isPageSheet,
+    isDotMatrixContinuous,
     widthMm,
     printableWidthMm,
     unit,
@@ -478,18 +535,25 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
   const fontSize = dims.cssFontSize
   const containerPadding = dims.cssPadding
   const fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+  // On 9-pin Impact Dot-Matrix printers (Epson LX-310 / TM-U220), gray colors (#444/#555) and #f7f7f7 shading
+  // cause slow multi-pass pin dithering. Force 100% pure black (#000) & transparent background on dot-matrix sizes.
+  const isAntiDither = Boolean(dims.isDotMatrixContinuous || dims.rawPaperSize === '76mm')
+  const subTextColor = isAntiDither ? '#000000' : '#444444'
+  const mutedTextColor = isAntiDither ? '#000000' : '#555555'
+  const noteBoxBg = isAntiDither ? '#ffffff' : '#f7f7f7'
+  const noteBoxBorder = isAntiDither ? '1px dashed #000000' : '1px dashed #777777'
 
   const itemsHtml = (receipt.items || []).map((item, idx) => {
     const itemNumberPrefix = receipt.showItemNumbering ? `${idx + 1}. ` : ''
     const detailPadding = receipt.showItemNumbering ? '12px' : '4px'
     const variantHtml = item.variant
-      ? `<div style="padding-left: ${detailPadding}; font-size: 0.9em; color: #444; margin-top: 1px;">• ${escapeHtml(item.variant)}</div>`
+      ? `<div style="padding-left: ${detailPadding}; font-size: 0.9em; color: ${subTextColor}; margin-top: 1px;">• ${escapeHtml(item.variant)}</div>`
       : ''
     const noteHtml = item.note
-      ? `<div style="padding-left: ${detailPadding}; font-size: 0.85em; font-style: italic; color: #555; margin-top: 1px;">• ${escapeHtml(item.note)}</div>`
+      ? `<div style="padding-left: ${detailPadding}; font-size: 0.85em; font-style: italic; color: ${mutedTextColor}; margin-top: 1px;">• ${escapeHtml(item.note)}</div>`
       : ''
     const discountHtml = item.discount && item.discount > 0
-      ? `<div style="display: flex; justify-content: space-between; font-size: 0.9em; color: #555; padding-left: ${detailPadding}; margin-top: 1px;"><span>Diskon:</span><span>-${item.discount.toLocaleString('id-ID')}</span></div>`
+      ? `<div style="display: flex; justify-content: space-between; font-size: 0.9em; color: ${mutedTextColor}; padding-left: ${detailPadding}; margin-top: 1px;"><span>Diskon:</span><span>-${item.discount.toLocaleString('id-ID')}</span></div>`
       : ''
 
     return `
@@ -569,8 +633,8 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
       <div class="divider"></div>
       <!-- Catatan Global Pesanan -->
       <div style="margin: 4px 0; font-size: 0.9em;">
-        <div style="font-size: 0.85em; text-transform: uppercase; margin-bottom: 2px; letter-spacing: 0.3px; color: #444;">Catatan Pesanan:</div>
-        <div style="padding: 4px 6px; background-color: #f7f7f7; border: 1px dashed #777; word-break: break-word;">
+        <div style="font-size: 0.85em; text-transform: uppercase; margin-bottom: 2px; letter-spacing: 0.3px; color: ${subTextColor};">Catatan Pesanan:</div>
+        <div style="padding: 4px 6px; background-color: ${noteBoxBg}; border: ${noteBoxBorder}; word-break: break-word;">
           ${escapeHtml(receipt.orderNote)}
         </div>
       </div>
@@ -758,9 +822,9 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
     <div class="divider"></div>
 
     <!-- Footer Catatan & Branding -->
-    <div style="text-align: center; margin-top: 8px; font-size: 0.9em; color: #222;">
+    <div style="text-align: center; margin-top: 8px; font-size: 0.9em; color: ${isAntiDither ? '#000000' : '#222222'};">
       <div>${footerNoteContent}</div>
-      <div style="font-size: 0.8em; color: #555; margin-top: 6px;">Powered by ShapeUp POS</div>
+      <div style="font-size: 0.8em; color: ${mutedTextColor}; margin-top: 6px;">Powered by ShapeUp POS</div>
     </div>
   </div>
 </body>
