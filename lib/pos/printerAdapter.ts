@@ -891,21 +891,25 @@ export function printReceiptViaIframe(receipt: ReceiptData, paperSize: PaperSize
 // ==========================================
 /**
  * Safely resolves the ESC/POS character column count for Bluetooth thermal printers.
- * Non-thermal desktop paper presets (LX-310 120mm/241mm, A4, or >85mm) are capped to standard
- * thermal printhead widths (32 cols for 58mm, 48 cols for 80mm) so Bluetooth byte payloads
- * never bloat with excess whitespace or trigger the 1KB BLE buffer drain delay.
+ * Supports the full range of thermal roll printers:
+ * - 44mm..58mm (24..32 cols)
+ * - 76mm (42 cols)
+ * - 80mm (48 cols)
+ * - 104mm..112mm 4-inch wide portable thermal (64..69 cols)
+ * Only desktop sheet/tractor papers (A4, LX-310 120mm/241mm, or >115mm) fall back to 32 cols.
  */
 export function resolveBluetoothEscPosColumns(paperSize?: PaperSize): number {
   const raw = typeof paperSize === 'string' && paperSize.trim() ? paperSize.trim() : '58mm'
   if (raw === '58mm') return 32
-  if (raw === '80mm') return 48
   if (raw === '76mm') return 42
+  if (raw === '80mm') return 48
+  if (raw === '104mm') return 64
   if (raw === 'A4' || raw === '241mm' || raw === '120mm') return 32
   const dims = resolvePaperDimensions(raw)
-  if (dims.isPageSheet || dims.isDotMatrixContinuous || dims.widthMm > 88) {
-    return dims.widthMm >= 78 && dims.widthMm <= 88 ? 48 : 32
+  if (dims.isPageSheet || dims.isDotMatrixContinuous || dims.widthMm > 115) {
+    return 32
   }
-  return Math.max(24, Math.min(48, dims.escPosColumns))
+  return Math.max(20, Math.min(69, dims.escPosColumns))
 }
 
 export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize?: PaperSize): Uint8Array {
@@ -2000,11 +2004,19 @@ async function writeBleChunkWithRetry(charToSend: any, chunk: Uint8Array, maxRet
   }
 }
 
-async function sendBleSegmentFlowControlled(charToSend: any, segment: Uint8Array): Promise<void> {
-  // Adaptive chunking: 128 bytes fits safely inside standard BLE GATT write limits & 4KB RX buffers
-  const hasAckFlowControl = Boolean(charToSend?.properties?.write)
-  const CHUNK_SIZE = hasAckFlowControl ? 128 : 96
+async function sendBleSegmentFlowControlled(
+  charToSend: any,
+  segment: Uint8Array,
+  isAfterDenseLogo = false
+): Promise<void> {
+  // 64-byte chunks guarantee 100% compatibility with all legacy/budget BLE thermal printer MTUs
+  const CHUNK_SIZE = 64
   const DRAIN_INTERVAL_BYTES = 1024
+  // If the entire segment is a short/standard receipt (<= 1.2KB) and not immediately after a dense logo,
+  // it fits completely inside the printer's 4KB RAM buffer -> use Fast Burst (10ms).
+  // Once a receipt exceeds 1KB (long receipt 15-100+ items) or follows a dense logo,
+  // switch strictly to Motor-Matched Pacing (40ms + 220ms breather per 1KB) so the 4KB buffer NEVER overflows or clips!
+  const isShortBurstSafe = !isAfterDenseLogo && segment.length <= 1280
   let bytesSinceLastDrain = 0
 
   for (let i = 0; i < segment.length; i += CHUNK_SIZE) {
@@ -2014,15 +2026,13 @@ async function sendBleSegmentFlowControlled(charToSend: any, segment: Uint8Array
 
     if (i + CHUNK_SIZE < segment.length) {
       if (bytesSinceLastDrain >= DRAIN_INTERVAL_BYTES) {
-        // Periodic breather every 1KB so the 4KB hardware buffer never overflows on 20-100+ item receipts
+        // Mandatory 220ms breather every 1KB so the physical paper motor drains the 4KB hardware buffer on long receipts
         bytesSinceLastDrain = 0
-        await new Promise((resolve) => setTimeout(resolve, hasAckFlowControl ? 90 : 160))
+        await new Promise((resolve) => setTimeout(resolve, 220))
       } else {
-        // When writeValueWithResponse is used, hardware GATT ACK already paces transmission (~15-25ms);
-        // only add a minimal 5-8ms yield instead of double-throttling 25-40ms.
-        const delayMs = hasAckFlowControl
-          ? (i < DRAIN_INTERVAL_BYTES ? 4 : 8)
-          : (i < DRAIN_INTERVAL_BYTES ? 16 : 26)
+        const delayMs = isShortBurstSafe
+          ? 10
+          : (i < DRAIN_INTERVAL_BYTES && !isAfterDenseLogo ? 18 : 40)
         await new Promise((resolve) => setTimeout(resolve, delayMs))
       }
     }
@@ -2036,7 +2046,7 @@ export async function sendBluetoothRawBytes(
 ): Promise<PrintResult> {
   const logoSplitOffset = findEscPosLogoSplitOffset(payload)
 
-  // 1. Android APK Native SPP Bridge (Fast Path, Flow-Controlled for 4KB Buffer, Anti Sleep)
+  // 1. Android APK Native SPP Bridge (Fast Path, Flow-Controlled for 4KB Buffer, Anti Sleep & Anti Clip)
   if (isAndroidApp()) {
     try {
       const isMacFormat = targetDeviceId && targetDeviceId.includes(':')
@@ -2068,12 +2078,14 @@ export async function sendBluetoothRawBytes(
         const textPart = payload.slice(logoSplitOffset)
         const logoRes = await sendAndroidSegment(logoPart, logoPart.length, 0)
         if (!logoRes.success) return logoRes
-        // Wait 250ms so thermal printhead finishes burning the bitmap logo & drains the 4KB hardware buffer
-        await new Promise((r) => setTimeout(r, 250))
-        const textRes = await sendAndroidSegment(textPart, 1024, 80)
+        // Wait 400ms so thermal printhead finishes burning the bitmap logo & drains the 4KB hardware buffer
+        await new Promise((r) => setTimeout(r, 400))
+        const textRes = await sendAndroidSegment(textPart, 1024, 140)
         if (!textRes.success) return textRes
       } else {
-        const res = await sendAndroidSegment(payload, 1024, 80)
+        // Short receipt (<= 1024 bytes) sends in 1 single instant call (0ms delay);
+        // Long receipt (> 1024 bytes) paces 140ms between 1KB blocks so 4KB buffer never clips
+        const res = await sendAndroidSegment(payload, 1024, 140)
         if (!res.success) return res
       }
 
@@ -2100,7 +2112,7 @@ export async function sendBluetoothRawBytes(
     let connRes = await ensureBluetoothPrinterConnection(false, targetDeviceId, targetDeviceName)
     if (!connRes.success) {
       // One quick retry for sleeping peripheral
-      await new Promise((r) => setTimeout(r, 250))
+      await new Promise((r) => setTimeout(r, 300))
       connRes = await ensureBluetoothPrinterConnection(false, targetDeviceId, targetDeviceName)
     }
 
@@ -2132,12 +2144,12 @@ export async function sendBluetoothRawBytes(
     if (logoSplitOffset > 0) {
       const logoPart = payload.slice(0, logoSplitOffset)
       const textPart = payload.slice(logoSplitOffset)
-      await sendBleSegmentFlowControlled(charToSend, logoPart)
-      // Wait 240ms after dense logo bitmap so the printhead finishes stepping and empties the 4KB buffer
-      await new Promise((resolve) => setTimeout(resolve, 240))
-      await sendBleSegmentFlowControlled(charToSend, textPart)
+      await sendBleSegmentFlowControlled(charToSend, logoPart, false)
+      // Wait 450ms after dense logo bitmap so the printhead finishes stepping and empties the 4KB buffer
+      await new Promise((resolve) => setTimeout(resolve, 450))
+      await sendBleSegmentFlowControlled(charToSend, textPart, true)
     } else {
-      await sendBleSegmentFlowControlled(charToSend, payload)
+      await sendBleSegmentFlowControlled(charToSend, payload, false)
     }
 
     if (activeSession) {

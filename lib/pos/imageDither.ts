@@ -68,8 +68,8 @@ export function processLogoForThermal(
   // For non-thermal desktop sheets (LX-310 120mm/241mm, A4, or >88mm), cap logo raster width to 320 dots (58mm safe)
   // so Bluetooth thermal printers never overflow or suffer slow multi-KB bitmap transmission.
   const dims = resolvePaperDimensions(targetPaperSize)
-  const isWideNonThermal = dims.isPageSheet || dims.isDotMatrixContinuous || dims.widthMm > 88
-  const maxAvailableWidth = isWideNonThermal ? 320 : Math.min(480, dims.maxLogoDots)
+  const isWideNonThermal = dims.isPageSheet || dims.isDotMatrixContinuous || dims.widthMm > 115
+  const maxAvailableWidth = isWideNonThermal ? 320 : Math.min(576, dims.maxLogoDots)
 
   let width = img.naturalWidth || img.width
   let height = img.naturalHeight || img.height

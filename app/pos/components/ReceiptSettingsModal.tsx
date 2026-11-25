@@ -486,13 +486,13 @@ export default function ReceiptSettingsModal({
     setCustomWidthInput(String(convertedVal))
   }
 
-  // Re-dither existing logo automatically ONLY when thermal logo width changes (320 vs 480 dots)
+  // Re-dither existing logo automatically ONLY when thermal logo width changes (320 / 480 / 576 dots)
   const effectiveThermalLogoDots = useMemo(() => {
     const isWideNonThermal =
       resolvedPaperDims.isPageSheet ||
       resolvedPaperDims.isDotMatrixContinuous ||
-      resolvedPaperDims.widthMm > 88
-    return isWideNonThermal ? 320 : Math.min(480, resolvedPaperDims.maxLogoDots)
+      resolvedPaperDims.widthMm > 115
+    return isWideNonThermal ? 320 : Math.min(576, resolvedPaperDims.maxLogoDots)
   }, [resolvedPaperDims])
 
   const prevLogoDotsRef = useRef<number>(effectiveThermalLogoDots)
