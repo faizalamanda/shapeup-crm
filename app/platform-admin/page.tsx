@@ -76,8 +76,14 @@ const formatCompactIDR = (val: number) => {
   return formatIDR(val)
 }
 
+const formatNumber = (val: number) => {
+  return new Intl.NumberFormat('id-ID', {
+    maximumFractionDigits: 0,
+  }).format(val || 0)
+}
+
 export default function PlatformAdminDashboard() {
-  const { userProfile, currentUserRole, bizLoading } = useUserContext()
+  const { userProfile, bizLoading } = useUserContext()
 
   const [timeframe, setTimeframe] = useState<'7' | '30' | '90' | 'all'>('30')
   const [data, setData] = useState<ApiResponse | null>(null)
@@ -94,12 +100,11 @@ export default function PlatformAdminDashboard() {
     setErrorMsg(null)
     try {
       const res = await fetch(`/api/platform/metrics?range=${range}`)
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}))
-        throw new Error(errJson.error || `HTTP ${res.status}: Gagal memuat data platform`)
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json) {
+        throw new Error(json?.error || `HTTP ${res.status}: Gagal memuat data platform`)
       }
-      const json: ApiResponse = await res.json()
-      setData(json)
+      setData(json as ApiResponse)
       if (json.summary?.totalBusinesses) {
         setSimTargetTenants(Math.max(json.summary.totalBusinesses * 2, 50))
       }
@@ -120,18 +125,18 @@ export default function PlatformAdminDashboard() {
   const simArr = simMrr * 12
   const simValuation = simArr * 5 // Standard B2B SaaS multiple (5x ARR)
 
-  // Filtered leaderboard
+  // Filtered leaderboard (null-safe per high-cardinality-data rule #3.4)
   const filteredTenants = useMemo(() => {
     if (!data?.topTenants) return []
     const q = searchTenant.toLowerCase().trim()
     if (!q) return data.topTenants
-    return data.topTenants.filter(t => t.name.toLowerCase().includes(q))
+    return data.topTenants.filter(t => (t.name || '').toLowerCase().includes(q))
   }, [data?.topTenants, searchTenant])
 
   // Maximum value for SVG chart scaling
   const maxDailyGmv = useMemo(() => {
     if (!data?.dailyTrend || data.dailyTrend.length === 0) return 1000000
-    const highest = Math.max(...data.dailyTrend.map(d => d.gmv))
+    const highest = Math.max(...data.dailyTrend.map(d => Number(d.gmv) || 0))
     return highest > 0 ? highest * 1.15 : 1000000
   }, [data?.dailyTrend])
 
@@ -180,21 +185,21 @@ export default function PlatformAdminDashboard() {
       title="Platform Intelligence & SaaS Analytics"
       description="Pusat komando pemilik platform untuk memantau Gross Merchandise Value (GMV), Monthly Active Users (MAU), dan Monthly Recurring Revenue (MRR) lintas ekosistem ShapeUp CRM."
       eyebrow={
-        <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+        <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
           <span>👑 Founder & Superadmin Console</span>
         </div>
       }
       width="full"
       actions={
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full flex-wrap items-center justify-between gap-2 sm:w-auto sm:justify-end">
           {/* Timeframe pill tabs */}
-          <div className="inline-flex rounded-xl border border-[var(--su-border)] bg-[var(--su-surface)] p-1 shadow-sm">
+          <div className="grid flex-1 grid-cols-4 rounded-xl border border-[var(--su-border)] bg-[var(--su-surface)] p-1 shadow-sm sm:inline-flex sm:flex-initial">
             {(['7', '30', '90', 'all'] as const).map(tf => (
               <button
                 key={tf}
                 type="button"
                 onClick={() => setTimeframe(tf)}
-                className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+                className={`rounded-lg px-2.5 py-1.5 text-center text-xs font-bold whitespace-nowrap transition-all sm:px-3 ${
                   timeframe === tf
                     ? 'bg-[#1C1C1A] text-white shadow-sm'
                     : 'text-[var(--su-text-muted)] hover:text-[var(--su-text)]'
@@ -209,16 +214,16 @@ export default function PlatformAdminDashboard() {
             type="button"
             onClick={() => fetchMetrics(timeframe)}
             disabled={loading}
-            className="inline-flex items-center gap-2 rounded-xl border border-[var(--su-border)] bg-[var(--su-card)] px-3.5 py-2 text-xs font-bold text-[var(--su-text)] shadow-sm transition hover:border-[var(--su-accent)] disabled:opacity-60"
+            className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-[var(--su-border)] bg-[var(--su-card)] px-3.5 py-2 text-xs font-bold text-[var(--su-text)] shadow-sm transition hover:border-[var(--su-accent)] disabled:opacity-60"
             title="Muat Ulang Data"
           >
             <span className={`size-3.5 ${loading ? 'animate-spin' : ''}`}>🔄</span>
-            {loading ? 'Memuat...' : 'Refresh'}
+            <span>{loading ? 'Memuat...' : 'Refresh'}</span>
           </button>
         </div>
       }
     >
-      <div className="space-y-8">
+      <div className="w-full max-w-full min-w-0 space-y-6">
         {/* Error notification if any */}
         {errorMsg && (
           <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-xs font-semibold text-red-800">
@@ -227,19 +232,19 @@ export default function PlatformAdminDashboard() {
         )}
 
         {/* ── 1. THE BIG 4 HERO KPI CARDS ─────────────────────────────────── */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 min-w-0">
           {/* CARD 1: MRR */}
-          <div className="relative overflow-hidden rounded-2xl border border-[var(--su-border)] bg-gradient-to-br from-white via-white to-amber-50/40 p-6 shadow-sm transition hover:shadow-md">
-            <div className="flex items-start justify-between">
-              <div>
+          <div className="relative min-w-0 overflow-hidden rounded-2xl border border-[var(--su-border)] bg-gradient-to-br from-white via-white to-amber-50/40 p-5 shadow-sm transition hover:shadow-md">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
                 <p className="text-xs font-bold uppercase tracking-wider text-[var(--su-text-muted)]">
                   Monthly Recurring Revenue (MRR)
                 </p>
-                <div className="mt-2 text-2xl font-black text-slate-900 lg:text-3xl">
+                <div className="mt-2 truncate text-2xl font-black text-slate-900 lg:text-3xl">
                   {formatCompactIDR(data?.summary?.projectedMrr || 0)}
                 </div>
               </div>
-              <div className="flex size-11 items-center justify-center rounded-xl bg-amber-500/10 text-xl text-amber-600">
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-xl text-amber-600">
                 💎
               </div>
             </div>
@@ -258,80 +263,80 @@ export default function PlatformAdminDashboard() {
           </div>
 
           {/* CARD 2: GMV */}
-          <div className="relative overflow-hidden rounded-2xl border border-[var(--su-border)] bg-gradient-to-br from-white via-white to-blue-50/40 p-6 shadow-sm transition hover:shadow-md">
-            <div className="flex items-start justify-between">
-              <div>
+          <div className="relative min-w-0 overflow-hidden rounded-2xl border border-[var(--su-border)] bg-gradient-to-br from-white via-white to-blue-50/40 p-5 shadow-sm transition hover:shadow-md">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
                 <p className="text-xs font-bold uppercase tracking-wider text-[var(--su-text-muted)]">
                   Platform GMV ({timeframe === 'all' ? 'All-Time' : `${timeframe} Hari`})
                 </p>
-                <div className="mt-2 text-2xl font-black text-slate-900 lg:text-3xl">
+                <div className="mt-2 truncate text-2xl font-black text-slate-900 lg:text-3xl">
                   {formatCompactIDR(data?.summary?.currentPeriodGmv || 0)}
                 </div>
               </div>
-              <div className="flex size-11 items-center justify-center rounded-xl bg-blue-500/10 text-xl text-blue-600">
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-xl text-blue-600">
                 🚀
               </div>
             </div>
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--su-border)]/60 pt-3 text-xs text-[var(--su-text-muted)]">
-              <div className="flex items-center gap-1 font-semibold text-emerald-600">
-                <span>▲</span>
-                <span>+{data?.summary?.gmvGrowthPct ?? 0}% vs periode lalu</span>
+              <div className={`flex items-center gap-1 font-semibold ${(data?.summary?.gmvGrowthPct ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                <span>{(data?.summary?.gmvGrowthPct ?? 0) >= 0 ? '▲' : '▼'}</span>
+                <span>{(data?.summary?.gmvGrowthPct ?? 0) >= 0 ? '+' : ''}{data?.summary?.gmvGrowthPct ?? 0}% vs periode lalu</span>
               </div>
               <div className="text-[11px] text-[var(--su-text-muted)]">
                 AOV: <span className="font-bold text-slate-900">{formatCompactIDR(data?.summary?.aov || 0)}</span>
               </div>
             </div>
             <div className="mt-1 text-[10px] text-[var(--su-text-muted)]">
-              Total Seluruh Waktu: <span className="font-semibold">{formatCompactIDR(data?.summary?.totalGmv || 0)}</span>
+              Total Seluruh Waktu: <span className="font-semibold">{formatCompactIDR(data?.summary?.totalGmv || 0)}</span> ({formatNumber(data?.summary?.totalOrders || 0)} pesanan)
             </div>
           </div>
 
           {/* CARD 3: MAU */}
-          <div className="relative overflow-hidden rounded-2xl border border-[var(--su-border)] bg-gradient-to-br from-white via-white to-indigo-50/40 p-6 shadow-sm transition hover:shadow-md">
-            <div className="flex items-start justify-between">
-              <div>
+          <div className="relative min-w-0 overflow-hidden rounded-2xl border border-[var(--su-border)] bg-gradient-to-br from-white via-white to-indigo-50/40 p-5 shadow-sm transition hover:shadow-md">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
                 <p className="text-xs font-bold uppercase tracking-wider text-[var(--su-text-muted)]">
                   Monthly Active Users (MAU)
                 </p>
-                <div className="mt-2 text-2xl font-black text-slate-900 lg:text-3xl">
-                  {data?.summary?.mau ?? 0}{' '}
+                <div className="mt-2 truncate text-2xl font-black text-slate-900 lg:text-3xl">
+                  {formatNumber(data?.summary?.mau ?? 0)}{' '}
                   <span className="text-sm font-semibold text-[var(--su-text-muted)]">pengguna</span>
                 </div>
               </div>
-              <div className="flex size-11 items-center justify-center rounded-xl bg-indigo-500/10 text-xl text-indigo-600">
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 text-xl text-indigo-600">
                 👥
               </div>
             </div>
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--su-border)]/60 pt-3 text-xs text-[var(--su-text-muted)]">
               <div>
-                DAU Est.: <span className="font-bold text-slate-900">{data?.summary?.dau ?? 0}</span>
+                DAU Est.: <span className="font-bold text-slate-900">{formatNumber(data?.summary?.dau ?? 0)}</span>
               </div>
               <div className="rounded-md bg-indigo-100/70 px-2 py-0.5 font-bold text-indigo-700">
                 Stickiness: {data?.summary?.stickinessRatio ?? 0}%
               </div>
             </div>
             <div className="mt-1 text-[10px] text-[var(--su-text-muted)]">
-              Total Terdaftar: <span className="font-semibold">{data?.summary?.totalUsers ?? 0} Profil</span>
+              Total Terdaftar: <span className="font-semibold">{formatNumber(data?.summary?.totalUsers ?? 0)} Profil</span>
             </div>
           </div>
 
           {/* CARD 4: ACTIVE TENANTS */}
-          <div className="relative overflow-hidden rounded-2xl border border-[var(--su-border)] bg-gradient-to-br from-white via-white to-emerald-50/40 p-6 shadow-sm transition hover:shadow-md">
-            <div className="flex items-start justify-between">
-              <div>
+          <div className="relative min-w-0 overflow-hidden rounded-2xl border border-[var(--su-border)] bg-gradient-to-br from-white via-white to-emerald-50/40 p-5 shadow-sm transition hover:shadow-md">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
                 <p className="text-xs font-bold uppercase tracking-wider text-[var(--su-text-muted)]">
                   Unit Bisnis (Tenants)
                 </p>
-                <div className="mt-2 text-2xl font-black text-slate-900 lg:text-3xl">
-                  {data?.summary?.activeBusinesses30d ?? 0}{' '}
+                <div className="mt-2 truncate text-2xl font-black text-slate-900 lg:text-3xl">
+                  {formatNumber(data?.summary?.activeBusinesses30d ?? 0)}{' '}
                   <span className="text-sm font-semibold text-[var(--su-text-muted)]">
-                    / {data?.summary?.totalBusinesses ?? 0} Toko
+                    / {formatNumber(data?.summary?.totalBusinesses ?? 0)} Toko
                   </span>
                 </div>
               </div>
-              <div className="flex size-11 items-center justify-center rounded-xl bg-emerald-500/10 text-xl text-emerald-600">
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-xl text-emerald-600">
                 🏢
               </div>
             </div>
@@ -348,17 +353,17 @@ export default function PlatformAdminDashboard() {
               </div>
             </div>
             <div className="mt-1 text-[10px] text-[var(--su-text-muted)]">
-              Volume: <span className="font-semibold">{data?.summary?.currentPeriodOrdersCount ?? 0} pesanan diproses</span>
+              Volume Periode: <span className="font-semibold">{formatNumber(data?.summary?.currentPeriodOrdersCount ?? 0)} pesanan diproses</span>
             </div>
           </div>
         </div>
 
         {/* ── 2. VISUAL CHARTS: GMV RUN-RATE & SUBSCRIPTION TIERS ────────── */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3 min-w-0">
           {/* Left Chart: Daily GMV Progression (2 cols) */}
-          <div className="rounded-2xl border border-[var(--su-border)] bg-[var(--su-card)] p-6 shadow-sm lg:col-span-2">
+          <div className="min-w-0 overflow-hidden rounded-2xl border border-[var(--su-border)] bg-[var(--su-card)] p-5 shadow-sm lg:col-span-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-base font-extrabold text-[var(--su-text)]">
                   Tren Laju Penjualan GMV Harian
                 </h3>
@@ -366,7 +371,7 @@ export default function PlatformAdminDashboard() {
                   Volume transaksi harian dari seluruh toko di ShapeUp CRM dalam 30 hari terakhir.
                 </p>
               </div>
-              <div className="inline-flex items-center gap-3 text-xs">
+              <div className="inline-flex shrink-0 items-center gap-3 text-xs">
                 <span className="flex items-center gap-1.5 font-semibold text-[var(--su-primary)]">
                   <span className="size-2.5 rounded-full bg-[var(--su-primary)]" />
                   GMV
@@ -375,10 +380,10 @@ export default function PlatformAdminDashboard() {
             </div>
 
             {/* SVG Area Chart */}
-            <div className="mt-6 h-64 w-full">
+            <div className="mt-6 h-56 sm:h-64 w-full min-w-0">
               {data?.dailyTrend && data.dailyTrend.length > 0 ? (
-                <div className="relative size-full">
-                  <svg className="size-full overflow-visible" viewBox="0 0 800 200" preserveAspectRatio="none">
+                <div className="relative size-full min-w-0">
+                  <svg className="size-full overflow-hidden" viewBox="0 0 800 200" preserveAspectRatio="none">
                     <defs>
                       <linearGradient id="gmvGradient" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#2563EB" stopOpacity="0.35" />
@@ -395,7 +400,7 @@ export default function PlatformAdminDashboard() {
                     {(() => {
                       const points = data.dailyTrend.map((d, idx) => {
                         const x = (idx / (data.dailyTrend.length - 1 || 1)) * 800
-                        const y = 200 - (d.gmv / maxDailyGmv) * 180 - 10
+                        const y = 200 - ((Number(d.gmv) || 0) / maxDailyGmv) * 180 - 10
                         return `${x},${y}`
                       })
                       const areaPoints = `0,200 ${points.join(' ')} 800,200`
@@ -431,9 +436,9 @@ export default function PlatformAdminDashboard() {
           </div>
 
           {/* Right Chart: SaaS Subscription Tiers Decomposition (1 col) */}
-          <div className="flex flex-col justify-between rounded-2xl border border-[var(--su-border)] bg-[var(--su-card)] p-6 shadow-sm">
+          <div className="flex min-w-0 flex-col justify-between overflow-hidden rounded-2xl border border-[var(--su-border)] bg-[var(--su-card)] p-5 shadow-sm">
             <div>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-base font-extrabold text-[var(--su-text)]">
                   Struktur Paket & MRR
                 </h3>
@@ -445,7 +450,7 @@ export default function PlatformAdminDashboard() {
                 Estimasi kontribusi pendapatan bulanan berulang berdasarkan skala bisnis tenant.
               </p>
 
-              <div className="mt-6 space-y-4">
+              <div className="mt-5 space-y-3.5">
                 {data?.tiers?.map(t => {
                   const sharePct =
                     data.summary.projectedMrr > 0
@@ -454,19 +459,19 @@ export default function PlatformAdminDashboard() {
 
                   return (
                     <div key={t.name} className="rounded-xl border border-[var(--su-border)] bg-[var(--su-bg)] p-3.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="size-3 rounded-full" style={{ backgroundColor: t.color }} />
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: t.color }} />
                           <span className="text-xs font-bold text-slate-800">{t.name}</span>
                           <span className="text-[10px] text-[var(--su-text-muted)]">
                             ({formatCompactIDR(t.price)}/bln)
                           </span>
                         </div>
-                        <span className="text-xs font-black text-slate-900">{formatCompactIDR(t.mrr)}</span>
+                        <span className="text-xs font-black text-slate-900 shrink-0">{formatCompactIDR(t.mrr)}</span>
                       </div>
 
                       <div className="mt-2 flex items-center justify-between text-[11px] text-[var(--su-text-muted)]">
-                        <span>{t.count} unit bisnis</span>
+                        <span>{formatNumber(t.count)} unit bisnis</span>
                         <span className="font-semibold text-slate-700">{sharePct}% dari MRR</span>
                       </div>
 
@@ -482,7 +487,7 @@ export default function PlatformAdminDashboard() {
               </div>
             </div>
 
-            <div className="mt-6 rounded-xl border border-amber-300 bg-amber-50/60 p-3 text-center">
+            <div className="mt-5 rounded-xl border border-amber-300 bg-amber-50/60 p-3 text-center">
               <div className="text-[11px] font-semibold text-amber-900">
                 Target Realtime Billing Integrations:
               </div>
@@ -494,14 +499,14 @@ export default function PlatformAdminDashboard() {
         </div>
 
         {/* ── 3. FOUNDER SANDBOX: INTERACTIVE TARGET MRR SIMULATOR ────────── */}
-        <div className="rounded-2xl border-2 border-dashed border-amber-400/60 bg-gradient-to-r from-amber-500/5 via-white to-amber-500/10 p-6 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
+        <div className="min-w-0 overflow-hidden rounded-2xl border-2 border-dashed border-amber-400/60 bg-gradient-to-r from-amber-500/5 via-white to-amber-500/10 p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
               <div className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-wider text-amber-700">
                 <span>⚡ Founder Sandbox</span>
                 <span className="rounded bg-amber-200/80 px-1.5 py-0.5 text-[10px]">Interaktif</span>
               </div>
-              <h3 className="mt-1 text-lg font-black text-slate-900">
+              <h3 className="mt-1 text-base font-black text-slate-900 sm:text-lg">
                 Simulasi Target Pertumbuhan MRR & Valuasi SaaS
               </h3>
               <p className="text-xs text-[var(--su-text-muted)]">
@@ -509,43 +514,43 @@ export default function PlatformAdminDashboard() {
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-6">
-              <div className="rounded-xl border border-amber-300/80 bg-white p-3 text-right shadow-sm">
+            <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-3 lg:w-auto lg:shrink-0">
+              <div className="rounded-xl border border-amber-300/80 bg-white p-3 sm:text-right shadow-sm">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--su-text-muted)]">
                   Proyeksi Target MRR
                 </div>
-                <div className="text-xl font-black text-amber-600 lg:text-2xl">
+                <div className="mt-0.5 text-xl font-black text-amber-600 lg:text-2xl">
                   {formatCompactIDR(simMrr)}
                   <span className="text-xs font-bold text-slate-600">/bln</span>
                 </div>
               </div>
 
-              <div className="rounded-xl border border-slate-300 bg-white p-3 text-right shadow-sm">
+              <div className="rounded-xl border border-slate-300 bg-white p-3 sm:text-right shadow-sm">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--su-text-muted)]">
                   Proyeksi Target ARR
                 </div>
-                <div className="text-xl font-black text-blue-600 lg:text-2xl">
+                <div className="mt-0.5 text-xl font-black text-blue-600 lg:text-2xl">
                   {formatCompactIDR(simArr)}
                   <span className="text-xs font-bold text-slate-600">/thn</span>
                 </div>
               </div>
 
-              <div className="rounded-xl border border-emerald-300 bg-white p-3 text-right shadow-sm">
+              <div className="rounded-xl border border-emerald-300 bg-white p-3 sm:text-right shadow-sm">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--su-text-muted)]">
                   Valuasi SaaS (5x ARR)
                 </div>
-                <div className="text-xl font-black text-emerald-600 lg:text-2xl">
+                <div className="mt-0.5 text-xl font-black text-emerald-600 lg:text-2xl">
                   {formatCompactIDR(simValuation)}
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="mt-6 grid grid-cols-1 gap-6 border-t border-amber-200/70 pt-6 md:grid-cols-2">
-            <div>
-              <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+          <div className="mt-5 grid grid-cols-1 gap-6 border-t border-amber-200/70 pt-5 md:grid-cols-2">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-800">
                 <span>Target Jumlah Toko Berlangganan (Tenants)</span>
-                <span className="rounded bg-slate-900 px-2 py-0.5 text-white">{simTargetTenants} Toko</span>
+                <span className="rounded bg-slate-900 px-2 py-0.5 text-white">{formatNumber(simTargetTenants)} Toko</span>
               </div>
               <input
                 type="range"
@@ -564,8 +569,8 @@ export default function PlatformAdminDashboard() {
               </div>
             </div>
 
-            <div>
-              <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-800">
                 <span>Rata-rata Harga Paket (ARPU Bulanan)</span>
                 <span className="rounded bg-amber-600 px-2 py-0.5 text-white">{formatIDR(simAvgPrice)}</span>
               </div>
@@ -588,9 +593,9 @@ export default function PlatformAdminDashboard() {
         </div>
 
         {/* ── 4. TOP POWER TENANTS LEADERBOARD TABLE ─────────────────────── */}
-        <div className="rounded-2xl border border-[var(--su-border)] bg-[var(--su-card)] p-6 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
+        <div className="min-w-0 overflow-hidden rounded-2xl border border-[var(--su-border)] bg-[var(--su-card)] p-5 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
               <h3 className="text-base font-extrabold text-[var(--su-text)]">
                 Leaderboard Toko Kontributor GMV Terbesar (Power Tenants)
               </h3>
@@ -599,7 +604,7 @@ export default function PlatformAdminDashboard() {
               </p>
             </div>
 
-            <div className="w-full sm:w-64">
+            <div className="w-full sm:w-64 sm:shrink-0">
               <input
                 type="text"
                 placeholder="Cari nama toko / tenant..."
@@ -611,7 +616,7 @@ export default function PlatformAdminDashboard() {
           </div>
 
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full min-w-[640px] text-left text-xs">
               <thead>
                 <tr className="border-b border-[var(--su-border)] text-[10px] font-extrabold uppercase tracking-wider text-[var(--su-text-faint)]">
                   <th className="py-3 pl-2">#</th>
@@ -650,7 +655,7 @@ export default function PlatformAdminDashboard() {
                         {formatIDR(tenant.gmv)}
                       </td>
                       <td className="py-3.5 text-center font-bold text-[var(--su-text)]">
-                        {tenant.ordersCount}
+                        {formatNumber(tenant.ordersCount)}
                       </td>
                       <td className="py-3.5 text-center">
                         {tenant.isActive30d ? (
@@ -689,9 +694,9 @@ export default function PlatformAdminDashboard() {
         </div>
 
         {/* ── 5. PLATFORM ROADMAP BANNER ─────────────────────────────────── */}
-        <div className="rounded-2xl border border-slate-800 bg-[#1C1C1A] p-6 text-white shadow-lg">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
+        <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-800 bg-[#1C1C1A] p-5 text-white shadow-lg">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
               <div className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/20 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-amber-400">
                 <span>🚀 Langkah Lanjutan: Fase 2 & 3</span>
               </div>
@@ -703,10 +708,10 @@ export default function PlatformAdminDashboard() {
               </p>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex shrink-0 items-center gap-3">
               <Link
                 href="/settings/business"
-                className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-white/20"
+                className="w-full sm:w-auto text-center rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-white/20"
               >
                 Kelola Unit Bisnis
               </Link>

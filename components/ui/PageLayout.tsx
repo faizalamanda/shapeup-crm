@@ -49,34 +49,36 @@ export function PageLayout({
   const goBack = usePageBackNavigation({ mobileFallback: mobileBackFallback })
 
   return (
-    <main className={`min-h-full bg-[var(--su-bg)] text-[var(--su-text)] ${className}`}>
-      <div className={`mx-auto w-full ${widthClasses[width]} px-4 py-5 sm:px-6 sm:py-8 lg:px-8`}>
-        <header className="sticky top-0 z-20 -mx-4 mb-6 border-b border-[var(--su-border)] bg-[color:var(--su-bg)]/95 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-sm sm:static sm:mx-0 sm:mb-8 sm:rounded-none sm:border-b sm:bg-transparent sm:px-0 sm:pt-0 sm:backdrop-blur-none">
-          <div className="flex min-w-0 items-start gap-3">
-            {showBackButton && (
-              <button
-                type="button"
-                onClick={goBack}
-                className="mt-0.5 inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-[var(--su-border)] bg-[var(--su-surface)] text-lg text-[var(--su-text-muted)] shadow-[var(--su-shadow-sm)] transition-colors hover:bg-white hover:text-[var(--su-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--su-primary)]"
-                aria-label={backLabel}
-              >
-                <span aria-hidden="true">‹</span>
-              </button>
-            )}
+    <div className={`min-h-full w-full max-w-full min-w-0 text-[var(--su-text)] ${className}`}>
+      <div className={`mx-auto w-full min-w-0 ${widthClasses[width]}`}>
+        <header className="mb-6 border-b border-[var(--su-border)] pb-4 sm:mb-8">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 flex-1 items-start gap-3">
+              {showBackButton && (
+                <button
+                  type="button"
+                  onClick={goBack}
+                  className="mt-0.5 inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-[var(--su-border)] bg-[var(--su-surface)] text-lg text-[var(--su-text-muted)] shadow-[var(--su-shadow-sm)] transition-colors hover:bg-white hover:text-[var(--su-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--su-primary)]"
+                  aria-label={backLabel}
+                >
+                  <span aria-hidden="true">‹</span>
+                </button>
+              )}
 
-            <div className="min-w-0 flex-1">
-              {eyebrow && <p className="su-label mb-1">{eyebrow}</p>}
-              <h1 className="truncate text-xl font-extrabold tracking-tight sm:text-2xl">{title}</h1>
-              {description && <p className="mt-1 max-w-3xl text-sm text-[var(--su-text-muted)]">{description}</p>}
+              <div className="min-w-0 flex-1">
+                {eyebrow && <div className="su-label mb-1">{eyebrow}</div>}
+                <h1 className="break-words text-xl font-extrabold tracking-tight sm:text-2xl">{title}</h1>
+                {description && <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[var(--su-text-muted)] sm:text-sm">{description}</p>}
+              </div>
             </div>
 
-            {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+            {actions && <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">{actions}</div>}
           </div>
         </header>
 
-        <div className={contentClassName}>{children}</div>
+        <div className={`min-w-0 ${contentClassName}`}>{children}</div>
         {footer && <footer className="mt-8 border-t border-[var(--su-border)] pt-5">{footer}</footer>}
       </div>
-    </main>
+    </div>
   )
 }

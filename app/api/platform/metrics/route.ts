@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
 import { isPlatformSuperadmin } from '@/lib/platformAuth'
+import { fetchAllSupabaseRows } from '@/lib/chunkedQueryHelper'
 
 export async function GET(req: Request) {
   try {
-    const ctx = await getApiContext()
+    const ctx = await getApiContext({ req })
     if (ctx.error) return ctx.error
 
     const { user, supabaseAdmin } = ctx
@@ -30,51 +31,94 @@ export async function GET(req: Request) {
     // 2. Extract timeframe from query params (default 30 days)
     const { searchParams } = new URL(req.url)
     const range = searchParams.get('range') || '30' // '7', '30', '90', '365', 'all'
-    const days = range === 'all' ? 3650 : Math.max(1, parseInt(range, 10) || 30)
+    const parsedDays = parseInt(range, 10)
+    const days = range === 'all' ? 3650 : (Number.isFinite(parsedDays) && parsedDays > 0 ? parsedDays : 30)
 
+    // 3. Fast-Path 1-RTT PostgreSQL RPC (`get_platform_analytics_metrics`)
+    //    Bypasses PostgREST 1,000-row ceiling (`db-max-rows = 1000`) and aggregates
+    //    all users (> 1,000 profiles), orders, and businesses directly inside PostgreSQL.
+    const { data: rpcPayload, error: rpcErr } = await supabaseAdmin.rpc(
+      'get_platform_analytics_metrics',
+      { p_days: days, p_top_limit: 100 }
+    )
+
+    if (!rpcErr && rpcPayload && typeof rpcPayload === 'object' && 'summary' in rpcPayload) {
+      return NextResponse.json(rpcPayload)
+    }
+
+    if (rpcErr) {
+      console.warn(
+        '[PlatformMetrics] RPC get_platform_analytics_metrics unavailable, using deterministic chunked fallback:',
+        rpcErr.message
+      )
+    }
+
+    // 4. Deterministic Chunked Fallback (if migration has not been applied yet)
+    //    Uses `fetchAllSupabaseRows` (.range(from, to) + tie-breaker `id ASC`)
+    //    so profiles, businesses, and orders NEVER truncate at 1,000 rows.
     const now = new Date()
     const startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
     const previousPeriodStart = new Date(startDate.getTime() - days * 24 * 60 * 60 * 1000)
 
-    // 3. Parallel fetch across tenant databases
-    const [businessesRes, ordersRes, profilesRes] = await Promise.all([
-      supabaseAdmin
-        .from('businesses')
-        .select('id, name, created_at, owner_id')
-        .order('created_at', { ascending: false }),
-      supabaseAdmin
-        .from('orders')
-        .select('id, grand_total, status, payment_status, order_date, order_date_utc, created_at, business_id')
-        .neq('status', 'cancelled')
-        .order('created_at', { ascending: false })
-        .limit(10000),
-      supabaseAdmin
-        .from('profiles')
-        .select('id, full_name, email, role, created_at, updated_at')
-        .order('created_at', { ascending: false })
+    const [businesses, orders, profiles] = await Promise.all([
+      fetchAllSupabaseRows<{ id: string; name: string; created_at: string; owner_id: string }>((from, to) =>
+        supabaseAdmin
+          .from('businesses')
+          .select('id, name, created_at, owner_id')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to)
+      ),
+      fetchAllSupabaseRows<{
+        id: string
+        grand_total: number | string | null
+        status: string | null
+        payment_status: string | null
+        order_date: string | null
+        order_date_utc: string | null
+        created_at: string | null
+        business_id: string | null
+      }>((from, to) =>
+        supabaseAdmin
+          .from('orders')
+          .select('id, grand_total, status, payment_status, order_date, order_date_utc, created_at, business_id')
+          .neq('status', 'cancelled')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to)
+      ),
+      fetchAllSupabaseRows<{
+        id: string
+        full_name: string | null
+        email: string | null
+        role: string | null
+        created_at: string | null
+        updated_at: string | null
+      }>((from, to) =>
+        supabaseAdmin
+          .from('profiles')
+          .select('id, full_name, email, role, created_at, updated_at')
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to)
+      )
     ])
-
-    const businesses = businessesRes.data || []
-    const orders = ordersRes.data || []
-    const profiles = profilesRes.data || []
 
     const businessMap = new Map<string, { id: string; name: string; created_at: string; owner_id: string }>()
     businesses.forEach(b => businessMap.set(b.id, b))
 
-    // 4. Calculate Platform GMV (Current vs Previous Period)
+    // 5. Calculate Platform GMV (Current vs Previous Period)
     let totalGmv = 0
     let currentPeriodGmv = 0
     let previousPeriodGmv = 0
     let currentPeriodOrdersCount = 0
     let previousPeriodOrdersCount = 0
 
-    // Tenant aggregation map
     const tenantGmvMap = new Map<string, { gmv: number; ordersCount: number; lastOrderDate: string | null }>()
     businesses.forEach(b => {
       tenantGmvMap.set(b.id, { gmv: 0, ordersCount: 0, lastOrderDate: null })
     })
 
-    // Daily GMV trend map (last N days)
     const dailyMap = new Map<string, { date: string; gmv: number; orders: number }>()
     const maxDaysForChart = Math.min(days, 30)
     for (let i = maxDaysForChart - 1; i >= 0; i--) {
@@ -84,7 +128,7 @@ export async function GET(req: Request) {
     }
 
     orders.forEach(o => {
-      const gmvVal = Number(o.grand_total) || 0
+      const gmvVal = Math.max(0, Number(o.grand_total) || 0)
       totalGmv += gmvVal
 
       const rawDateStr = o.order_date_utc || o.order_date || o.created_at
@@ -93,7 +137,6 @@ export async function GET(req: Request) {
       const orderTime = new Date(rawDateStr).getTime()
       const dateKey = new Date(rawDateStr).toISOString().split('T')[0]
 
-      // Current period stats
       if (orderTime >= startDate.getTime() && orderTime <= now.getTime()) {
         currentPeriodGmv += gmvVal
         currentPeriodOrdersCount++
@@ -108,7 +151,6 @@ export async function GET(req: Request) {
         previousPeriodOrdersCount++
       }
 
-      // Aggregate by tenant
       if (o.business_id && tenantGmvMap.has(o.business_id)) {
         const item = tenantGmvMap.get(o.business_id)!
         item.gmv += gmvVal
@@ -119,45 +161,44 @@ export async function GET(req: Request) {
       }
     })
 
-    // Percentage Growth of GMV
     const gmvGrowthPct = previousPeriodGmv > 0
       ? Number((((currentPeriodGmv - previousPeriodGmv) / previousPeriodGmv) * 100).toFixed(1))
       : (currentPeriodGmv > 0 ? 100 : 0)
 
-    // Average Order Value (AOV)
     const aov = currentPeriodOrdersCount > 0
       ? Math.round(currentPeriodGmv / currentPeriodOrdersCount)
       : 0
 
-    // 5. Calculate MAU & Tenant Engagement
+    // 6. Calculate MAU & Tenant Engagement
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-    
-    // Active users: Profiles updated/created in last 30d
+
+    const activeOwnerIds = new Set<string>()
+    let activeBusinesses30d = 0
+    tenantGmvMap.forEach((item, bizId) => {
+      if (item.lastOrderDate && new Date(item.lastOrderDate) >= thirtyDaysAgo) {
+        activeBusinesses30d++
+        const ownerId = businessMap.get(bizId)?.owner_id
+        if (ownerId) activeOwnerIds.add(ownerId)
+      }
+    })
+
     const activeProfilesCount = profiles.filter(p => {
       const updatedTime = p.updated_at ? new Date(p.updated_at).getTime() : 0
       const createdTime = p.created_at ? new Date(p.created_at).getTime() : 0
-      return updatedTime >= thirtyDaysAgo.getTime() || createdTime >= thirtyDaysAgo.getTime()
+      return (
+        updatedTime >= thirtyDaysAgo.getTime() ||
+        createdTime >= thirtyDaysAgo.getTime() ||
+        activeOwnerIds.has(p.id)
+      )
     }).length
-
-    // Active tenants: Businesses with at least 1 order in last 30d
-    let activeBusinesses30d = 0
-    tenantGmvMap.forEach(item => {
-      if (item.lastOrderDate && new Date(item.lastOrderDate) >= thirtyDaysAgo) {
-        activeBusinesses30d++
-      }
-    })
 
     const totalBusinesses = businesses.length
     const totalUsers = profiles.length
     const mau = Math.max(activeProfilesCount, activeBusinesses30d, 1)
-    const dau = Math.max(Math.round(mau * 0.42), 1) // Estimated DAU engagement (approx 42% standard B2B SaaS)
+    const dau = Math.max(Math.round(mau * 0.42), 1)
     const stickinessRatio = mau > 0 ? Number(((dau / mau) * 100).toFixed(1)) : 0
 
-    // 6. SaaS Subscription & MRR Modeling
-    // Model pricing tiers:
-    // - Starter: Rp 149.000 / month
-    // - Pro:     Rp 399.000 / month
-    // - Enterprise: Rp 899.000 / month
+    // 7. SaaS Subscription & MRR Modeling
     const PRICING = {
       starter: 149000,
       pro: 399000,
@@ -168,7 +209,6 @@ export async function GET(req: Request) {
     let proCount = 0
     let enterpriseCount = 0
 
-    // Classify existing businesses dynamically based on scale / activity
     businesses.forEach(b => {
       const stat = tenantGmvMap.get(b.id)
       const bGmv = stat?.gmv || 0
@@ -187,7 +227,7 @@ export async function GET(req: Request) {
     const projectedArr = projectedMrr * 12
     const arpu = totalBusinesses > 0 ? Math.round(projectedMrr / totalBusinesses) : 0
 
-    // 7. Top Power Tenants Leaderboard
+    // 8. Top Power Tenants Leaderboard
     const topTenants = Array.from(tenantGmvMap.entries())
       .map(([bizId, stat]) => {
         const b = businessMap.get(bizId)
@@ -207,9 +247,8 @@ export async function GET(req: Request) {
         }
       })
       .sort((a, b) => b.gmv - a.gmv)
-      .slice(0, 10)
+      .slice(0, 100)
 
-    // Return aggregated payload
     return NextResponse.json({
       summary: {
         totalGmv,
