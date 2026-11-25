@@ -1,5 +1,5 @@
 // ShapeUp POS Kitchen Production Ticket Builder & Multi-Station Dispatcher
-import { PaperSize, resolvePaperDimensions } from './printerAdapter'
+import { PaperSize, resolvePaperDimensions, resolveBluetoothEscPosColumns } from './printerAdapter'
 import {
   KitchenStationId,
   KitchenSettings,
@@ -543,8 +543,7 @@ export function encodeKitchenTicketToEscPos(
   ticket: KitchenTicketData,
   options: { soundBuzzer?: boolean; autoCut?: boolean } = {}
 ): Uint8Array {
-  const dims = resolvePaperDimensions(ticket.paperSize || '58mm')
-  const width = dims.escPosColumns
+  const width = resolveBluetoothEscPosColumns(ticket.paperSize || '58mm')
   const divider = '-'.repeat(width)
   const solidDivider = '='.repeat(width)
 

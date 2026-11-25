@@ -1714,6 +1714,8 @@ export default function POSWorkspace({
                 alert(`⚠️ ${check.reason}`)
                 return
               }
+              // Pre-warm Bluetooth GATT connection while cashier enters payment so print fires in 0ms
+              void warmUpBluetoothPrinter()
               setIsPaymentModalOpen(true)
             }}
             disabled={cart.length === 0}

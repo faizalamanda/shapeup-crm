@@ -486,12 +486,20 @@ export default function ReceiptSettingsModal({
     setCustomWidthInput(String(convertedVal))
   }
 
-  // Re-dither existing logo automatically when effective maxLogoDots changes
-  const prevLogoDotsRef = useRef<number>(resolvedPaperDims.maxLogoDots)
+  // Re-dither existing logo automatically ONLY when thermal logo width changes (320 vs 480 dots)
+  const effectiveThermalLogoDots = useMemo(() => {
+    const isWideNonThermal =
+      resolvedPaperDims.isPageSheet ||
+      resolvedPaperDims.isDotMatrixContinuous ||
+      resolvedPaperDims.widthMm > 88
+    return isWideNonThermal ? 320 : Math.min(480, resolvedPaperDims.maxLogoDots)
+  }, [resolvedPaperDims])
+
+  const prevLogoDotsRef = useRef<number>(effectiveThermalLogoDots)
   useEffect(() => {
     if (!isOpen || !showLogo) return
-    if (prevLogoDotsRef.current === resolvedPaperDims.maxLogoDots) return
-    prevLogoDotsRef.current = resolvedPaperDims.maxLogoDots
+    if (prevLogoDotsRef.current === effectiveThermalLogoDots) return
+    prevLogoDotsRef.current = effectiveThermalLogoDots
 
     const sourceImg = logoUrl || logoBase64
     if (!sourceImg) return
@@ -502,7 +510,7 @@ export default function ReceiptSettingsModal({
         setLogoEscPosData(processed.escPosBase64)
       })
       .catch(() => {})
-  }, [isOpen, showLogo, resolvedPaperDims.maxLogoDots, effectivePaperSize, logoUrl, logoBase64])
+  }, [isOpen, showLogo, effectiveThermalLogoDots, effectivePaperSize, logoUrl, logoBase64])
 
   const handleSave = () => {
     const numVal = parseFloat(customWidthInput)

@@ -118,11 +118,12 @@ export default function PaymentSuccessView({
     }
   }, [isOpen, receipt])
 
-  // Single Source of Truth HTML for WYSIWYG parity if preview is expanded
+  // Single Source of Truth HTML for WYSIWYG parity ONLY when preview drawer is expanded
+  // (avoids synchronous HTML string & regex generation on main thread during 0ms Bluetooth checkout)
   const receiptHtml = useMemo(() => {
-    if (!receipt) return ''
+    if (!receipt || !showThermalPreview) return ''
     return generateReceiptHtml(receipt, paperSize)
-  }, [receipt, paperSize])
+  }, [receipt, paperSize, showThermalPreview])
 
   const paperDims = useMemo(() => resolvePaperDimensions(paperSize), [paperSize])
 

@@ -889,10 +889,28 @@ export function printReceiptViaIframe(receipt: ReceiptData, paperSize: PaperSize
 // ==========================================
 // ESC/POS Command Encoder Helper
 // ==========================================
+/**
+ * Safely resolves the ESC/POS character column count for Bluetooth thermal printers.
+ * Non-thermal desktop paper presets (LX-310 120mm/241mm, A4, or >85mm) are capped to standard
+ * thermal printhead widths (32 cols for 58mm, 48 cols for 80mm) so Bluetooth byte payloads
+ * never bloat with excess whitespace or trigger the 1KB BLE buffer drain delay.
+ */
+export function resolveBluetoothEscPosColumns(paperSize?: PaperSize): number {
+  const raw = typeof paperSize === 'string' && paperSize.trim() ? paperSize.trim() : '58mm'
+  if (raw === '58mm') return 32
+  if (raw === '80mm') return 48
+  if (raw === '76mm') return 42
+  if (raw === 'A4' || raw === '241mm' || raw === '120mm') return 32
+  const dims = resolvePaperDimensions(raw)
+  if (dims.isPageSheet || dims.isDotMatrixContinuous || dims.widthMm > 88) {
+    return dims.widthMm >= 78 && dims.widthMm <= 88 ? 48 : 32
+  }
+  return Math.max(24, Math.min(48, dims.escPosColumns))
+}
+
 export function encodeReceiptToEscPos(receipt: ReceiptData, paperSize?: PaperSize): Uint8Array {
   const effectivePaperSize = paperSize || receipt.paperSize || '58mm'
-  const dims = resolvePaperDimensions(effectivePaperSize)
-  const width = dims.escPosColumns
+  const width = resolveBluetoothEscPosColumns(effectivePaperSize)
   const divider = '-'.repeat(width)
 
   const padColumns = (left: string, right: string, maxCols: number = width): string => {
@@ -1983,7 +2001,9 @@ async function writeBleChunkWithRetry(charToSend: any, chunk: Uint8Array, maxRet
 }
 
 async function sendBleSegmentFlowControlled(charToSend: any, segment: Uint8Array): Promise<void> {
-  const CHUNK_SIZE = 64
+  // Adaptive chunking: 128 bytes fits safely inside standard BLE GATT write limits & 4KB RX buffers
+  const hasAckFlowControl = Boolean(charToSend?.properties?.write)
+  const CHUNK_SIZE = hasAckFlowControl ? 128 : 96
   const DRAIN_INTERVAL_BYTES = 1024
   let bytesSinceLastDrain = 0
 
@@ -1994,12 +2014,15 @@ async function sendBleSegmentFlowControlled(charToSend: any, segment: Uint8Array
 
     if (i + CHUNK_SIZE < segment.length) {
       if (bytesSinceLastDrain >= DRAIN_INTERVAL_BYTES) {
-        // Periodic 220ms breather every 1KB so the 4KB hardware buffer never overflows on 20-100+ item receipts
+        // Periodic breather every 1KB so the 4KB hardware buffer never overflows on 20-100+ item receipts
         bytesSinceLastDrain = 0
-        await new Promise((resolve) => setTimeout(resolve, 220))
+        await new Promise((resolve) => setTimeout(resolve, hasAckFlowControl ? 90 : 160))
       } else {
-        // Fast pace (25ms) for the first 1KB, steady motor-matched pace (40ms) afterwards
-        const delayMs = i < DRAIN_INTERVAL_BYTES ? 25 : 40
+        // When writeValueWithResponse is used, hardware GATT ACK already paces transmission (~15-25ms);
+        // only add a minimal 5-8ms yield instead of double-throttling 25-40ms.
+        const delayMs = hasAckFlowControl
+          ? (i < DRAIN_INTERVAL_BYTES ? 4 : 8)
+          : (i < DRAIN_INTERVAL_BYTES ? 16 : 26)
         await new Promise((resolve) => setTimeout(resolve, delayMs))
       }
     }
@@ -2045,12 +2068,12 @@ export async function sendBluetoothRawBytes(
         const textPart = payload.slice(logoSplitOffset)
         const logoRes = await sendAndroidSegment(logoPart, logoPart.length, 0)
         if (!logoRes.success) return logoRes
-        // Wait 400ms so thermal printhead finishes burning the bitmap logo & drains the 4KB hardware buffer
-        await new Promise((r) => setTimeout(r, 400))
-        const textRes = await sendAndroidSegment(textPart, 1024, 140)
+        // Wait 250ms so thermal printhead finishes burning the bitmap logo & drains the 4KB hardware buffer
+        await new Promise((r) => setTimeout(r, 250))
+        const textRes = await sendAndroidSegment(textPart, 1024, 80)
         if (!textRes.success) return textRes
       } else {
-        const res = await sendAndroidSegment(payload, 1024, 140)
+        const res = await sendAndroidSegment(payload, 1024, 80)
         if (!res.success) return res
       }
 
@@ -2077,7 +2100,7 @@ export async function sendBluetoothRawBytes(
     let connRes = await ensureBluetoothPrinterConnection(false, targetDeviceId, targetDeviceName)
     if (!connRes.success) {
       // One quick retry for sleeping peripheral
-      await new Promise((r) => setTimeout(r, 350))
+      await new Promise((r) => setTimeout(r, 250))
       connRes = await ensureBluetoothPrinterConnection(false, targetDeviceId, targetDeviceName)
     }
 
@@ -2110,8 +2133,8 @@ export async function sendBluetoothRawBytes(
       const logoPart = payload.slice(0, logoSplitOffset)
       const textPart = payload.slice(logoSplitOffset)
       await sendBleSegmentFlowControlled(charToSend, logoPart)
-      // Wait 450ms after dense logo bitmap so the printhead finishes stepping and empties the 4KB buffer
-      await new Promise((resolve) => setTimeout(resolve, 450))
+      // Wait 240ms after dense logo bitmap so the printhead finishes stepping and empties the 4KB buffer
+      await new Promise((resolve) => setTimeout(resolve, 240))
       await sendBleSegmentFlowControlled(charToSend, textPart)
     } else {
       await sendBleSegmentFlowControlled(charToSend, payload)
@@ -2164,7 +2187,8 @@ export async function testPrintStationTicket(options: {
 
   if (effectiveConn === 'bluetooth') {
     const nowStr = new Date().toLocaleTimeString('id-ID')
-    const dividerLine = '-'.repeat(dims.escPosColumns) + '\n'
+    const btCols = resolveBluetoothEscPosColumns(effectiveSize)
+    const dividerLine = '-'.repeat(btCols) + '\n'
     const sampleChitText = [
       '\x1B\x40', // ESC @ init
       '\x1B\x61\x01', // Center
@@ -2172,7 +2196,7 @@ export async function testPrintStationTicket(options: {
       `[STASIUN: ${options.stationName.toUpperCase()}]\n`,
       '\x1D\x21\x00', // Normal
       `Printer: ${options.printerName || 'Bluetooth Thermal'}\n`,
-      `Kertas: ${dims.displayLabel} (${dims.escPosColumns} char)\n`,
+      `Kertas: ${dims.displayLabel} (${btCols} char)\n`,
       `Waktu Uji: ${nowStr}\n`,
       dividerLine,
       '\x1B\x61\x00', // Left

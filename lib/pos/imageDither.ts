@@ -64,9 +64,12 @@ export function processLogoForThermal(
   targetPaperSize: PaperSize = '58mm',
   maxHeight: number = 140
 ): ProcessedLogoResult {
-  // Dynamically resolve 8-dot byte-aligned max available logo width for any preset or custom paper size
+  // Dynamically resolve 8-dot byte-aligned max available logo width for thermal printers.
+  // For non-thermal desktop sheets (LX-310 120mm/241mm, A4, or >88mm), cap logo raster width to 320 dots (58mm safe)
+  // so Bluetooth thermal printers never overflow or suffer slow multi-KB bitmap transmission.
   const dims = resolvePaperDimensions(targetPaperSize)
-  const maxAvailableWidth = dims.maxLogoDots
+  const isWideNonThermal = dims.isPageSheet || dims.isDotMatrixContinuous || dims.widthMm > 88
+  const maxAvailableWidth = isWideNonThermal ? 320 : Math.min(480, dims.maxLogoDots)
 
   let width = img.naturalWidth || img.width
   let height = img.naturalHeight || img.height

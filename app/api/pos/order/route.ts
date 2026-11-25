@@ -115,26 +115,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // 2. POS Session Gating: Enforce Active Shift
-    const { data: activeShift, error: shiftErr } = await supabase
-      .from('pos_shifts')
-      .select('id, register_id, cashier_name')
-      .eq('business_id', businessId)
-      .eq('user_id', user.id)
-      .eq('status', 'open')
-      .order('opened_at', { ascending: false })
-      .maybeSingle()
-
-    if (shiftErr && !shiftErr.message?.includes('does not exist')) {
-      return NextResponse.json({ error: 'Gagal memverifikasi status shift kasir' }, { status: 500 })
-    }
-
-    if (!activeShift) {
-      return NextResponse.json({
-        error: 'Sesi kasir belum dibuka. Anda harus membuka shift kasir terlebih dahulu sebelum melayani transaksi.'
-      }, { status: 403 })
-    }
-
     const { 
       customer_id, 
       items, 
@@ -159,54 +139,90 @@ export async function POST(req: Request) {
     }
 
     const numGrandTotal = Number(grand_total) || 0
-
-    // 3. Validate products, stock & HPP Floor Guard
     const productIds = items.filter((i: any) => !String(i.id).startsWith('custom-')).map((i: any) => i.id)
-
-    const productMap = new Map<string, any>()
-    if (productIds.length > 0) {
-      let prodQuery = supabase
-        .from('products')
-        .select('id, name, type, price, cost_price, stock_type, stock_quantity, prevent_below_hpp, hpp_type')
-        .in('id', productIds)
-
-      let { data: dbProducts, error: prodErr } = await prodQuery
-
-      // Fallback if prevent_below_hpp column is not yet present
-      if (prodErr && prodErr.message?.includes('prevent_below_hpp')) {
-        const fallback = await supabase
-          .from('products')
-          .select('id, name, type, price, cost_price, stock_type, stock_quantity')
-          .in('id', productIds)
-        dbProducts = fallback.data as any
-        prodErr = fallback.error
-      }
-
-      if (prodErr || !dbProducts) {
-        return NextResponse.json({ error: 'Gagal mengambil data produk' }, { status: 500 })
-      }
-      dbProducts.forEach(p => productMap.set(p.id, p))
-    }
-
-    // Resolve variants for accurate HPP validation
     const variantIds = Array.from(new Set(
       items
         .map((i: any) => i.variantId || i.variant_id)
         .filter((vid: any) => isUuid(vid))
     ))
-    const variantMap = new Map<string, any>()
-    if (variantIds.length > 0) {
-      const { data: dbVariants } = await supabase
-        .from('product_variants')
-        .select('id, product_id, cost_price, price')
-        .in('id', variantIds)
-      if (Array.isArray(dbVariants)) {
-        dbVariants.forEach((v) => variantMap.set(v.id, v))
+    const needsGuestCustomer =
+      !customer_id || !isUuid(customer_id) || customer_id === 'guest' || customer_id === '0'
+
+    // 2 & 3 & 4. Parallel Pre-Checkout Queries (Shift + Products + Variants + PriceGuard + GuestCustomer + Timezone)
+    // Reduces 6 sequential network round-trips down to 1 parallel round-trip (~80-120ms total)
+    const [
+      shiftRes,
+      productsRes,
+      variantsRes,
+      priceGuardSettings,
+      guestCustomerId,
+      bizRes
+    ] = await Promise.all([
+      supabase
+        .from('pos_shifts')
+        .select('id, register_id, cashier_name')
+        .eq('business_id', businessId)
+        .eq('user_id', user.id)
+        .eq('status', 'open')
+        .order('opened_at', { ascending: false })
+        .maybeSingle(),
+      productIds.length > 0
+        ? (async () => {
+            let res = await supabase
+              .from('products')
+              .select('id, name, sku, type, price, cost_price, stock_type, stock_quantity, prevent_below_hpp, hpp_type')
+              .in('id', productIds)
+            if (res.error && res.error.message?.includes('prevent_below_hpp')) {
+              res = (await supabase
+                .from('products')
+                .select('id, name, sku, type, price, cost_price, stock_type, stock_quantity')
+                .in('id', productIds)) as any
+            }
+            return res
+          })()
+        : Promise.resolve({ data: [] as any[], error: null }),
+      variantIds.length > 0
+        ? supabase
+            .from('product_variants')
+            .select('id, product_id, cost_price, price')
+            .in('id', variantIds)
+        : Promise.resolve({ data: [] as any[], error: null }),
+      getPriceGuardSettings(businessId, ctx.supabaseAdmin),
+      needsGuestCustomer
+        ? resolveGuestCustomerId(businessId, ctx.supabaseAdmin)
+        : Promise.resolve(customer_id as string),
+      (supabaseAdmin || supabase)
+        .from('businesses')
+        .select('timezone')
+        .eq('id', businessId)
+        .maybeSingle()
+    ])
+
+    const { data: activeShift, error: shiftErr } = shiftRes
+    if (shiftErr && !shiftErr.message?.includes('does not exist')) {
+      return NextResponse.json({ error: 'Gagal memverifikasi status shift kasir' }, { status: 500 })
+    }
+
+    if (!activeShift) {
+      return NextResponse.json({
+        error: 'Sesi kasir belum dibuka. Anda harus membuka shift kasir terlebih dahulu sebelum melayani transaksi.'
+      }, { status: 403 })
+    }
+
+    const productMap = new Map<string, any>()
+    if (productIds.length > 0) {
+      if (productsRes.error || !productsRes.data) {
+        return NextResponse.json({ error: 'Gagal mengambil data produk' }, { status: 500 })
       }
+      productsRes.data.forEach((p: any) => productMap.set(p.id, p))
+    }
+
+    const variantMap = new Map<string, any>()
+    if (Array.isArray(variantsRes.data)) {
+      variantsRes.data.forEach((v: any) => variantMap.set(v.id, v))
     }
 
     // 3a. Enforce Price Guard Server-Side
-    const priceGuardSettings = await getPriceGuardSettings(businessId, ctx.supabaseAdmin)
     const lineItemsForGuard = items.map((item: any) => {
       const dbProd = productMap.get(item.id)
       const varId = item.variantId || item.variant_id
@@ -279,11 +295,8 @@ export async function POST(req: Request) {
       }
     }
 
-    // 4. Resolve Guest Customer — uses cached guest ID per business
-    let resolvedCustomerId = customer_id
-    if (!resolvedCustomerId || !isUuid(resolvedCustomerId) || resolvedCustomerId === 'guest' || resolvedCustomerId === '0') {
-      resolvedCustomerId = await resolveGuestCustomerId(businessId, ctx.supabaseAdmin)
-    }
+    // 4. Guest Customer resolved from parallel Promise.all above
+    const resolvedCustomerId = guestCustomerId
 
     // 5. Build Payments List & Calculate Status (Multi-Tender / Installment Support)
     const effectivePayments: Array<{
@@ -331,15 +344,7 @@ export async function POST(req: Request) {
         : (totalPaid > 0 ? 'partial' : 'unpaid')
 
     // 6. Generate Authoritative Atomic Sequential Order Number & Queue Number (Opsi A: Odoo/Square Dual-Identifier Standard)
-    //    Always assign gapless sequential order_number (`POS-YYYYMMDD-XXXX`) in the accounting ledger,
-    //    while recording any offline/slow-network receipt number (`POS-YYMMDD-OF<TAG>-<SEQ>`) in `raw_source_data`
-    //    for bi-directional search and audit transparency in POS Hub.
-    const { data: bizData } = await (supabaseAdmin || supabase)
-      .from('businesses')
-      .select('timezone')
-      .eq('id', businessId)
-      .maybeSingle()
-    const businessTimezone = getBusinessTimezone(bizData?.timezone)
+    const businessTimezone = getBusinessTimezone(bizRes?.data?.timezone)
 
     const isOfflineFallback = Boolean(body?.is_offline_fallback)
     const candidateOfflineNum =
