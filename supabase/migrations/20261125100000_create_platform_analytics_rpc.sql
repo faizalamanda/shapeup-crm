@@ -7,7 +7,9 @@
 --      all-time & period GMV, order counts, AOV, SaaS 3-tier classification
 --      (Starter / Pro / Enterprise), MRR/ARR/ARPU, 30-day daily GMV trend,
 --      and Power Tenants leaderboard in a single 1-RTT PostgreSQL call.
---   3. Enforces strict security guard (service_role or authenticated Superadmin).
+--   3. Uses schema-resilient `to_jsonb(p)` inspection on `public.profiles` so it
+--      never fails if optional timestamp columns (`updated_at`, `created_at`) do not exist.
+--   4. Enforces strict security guard (service_role or authenticated Superadmin).
 -- =============================================================================
 
 CREATE OR REPLACE FUNCTION public.get_platform_analytics_metrics(
@@ -49,6 +51,7 @@ BEGIN
     SELECT
       o.id,
       o.business_id,
+      o.user_id,
       GREATEST(0, COALESCE(o.grand_total, 0))::numeric AS gmv_val,
       COALESCE(o.order_date_utc, o.order_date, o.created_at) AS order_ts
     FROM public.orders o
@@ -98,28 +101,51 @@ BEGIN
       COUNT(*) FILTER (WHERE tc.tier = 'Enterprise')::bigint AS enterprise_count
     FROM tenant_classified tc
   ),
+  active_user_ids_30d AS (
+    -- Owners of businesses active in last 30d or created in last 30d
+    SELECT DISTINCT tc.owner_id AS uid
+    FROM tenant_classified tc
+    WHERE tc.owner_id IS NOT NULL
+      AND (tc.is_active_30d OR tc.created_at >= v_thirty_days_ago)
+    UNION
+    -- Staff assigned to businesses active in last 30d or staff added in last 30d
+    SELECT DISTINCT bs.profile_id AS uid
+    FROM public.business_staff bs
+    LEFT JOIN tenant_classified tc ON tc.id = bs.business_id
+    WHERE bs.profile_id IS NOT NULL
+      AND (COALESCE(tc.is_active_30d, false) OR bs.created_at >= v_thirty_days_ago)
+    UNION
+    -- Users who directly created orders in last 30d
+    SELECT DISTINCT vo.user_id AS uid
+    FROM valid_orders vo
+    WHERE vo.user_id IS NOT NULL
+      AND vo.order_ts >= v_thirty_days_ago
+  ),
+  profile_rows AS (
+    SELECT
+      p.id,
+      to_jsonb(p) AS p_json
+    FROM public.profiles p
+  ),
   profile_summary AS (
     SELECT
       COUNT(*)::bigint AS total_users,
       COUNT(*) FILTER (
-        WHERE COALESCE(p.updated_at, p.created_at) >= v_thirty_days_ago
-           OR COALESCE(p.created_at, p.updated_at) >= v_thirty_days_ago
-           OR EXISTS (
-             SELECT 1
-             FROM tenant_classified tc
-             WHERE tc.is_active_30d
-               AND (
-                 tc.owner_id = p.id
-                 OR EXISTS (
-                   SELECT 1
-                   FROM public.business_staff bs
-                   WHERE bs.business_id = tc.id
-                     AND bs.profile_id = p.id
-                 )
-               )
-           )
+        WHERE (
+          NULLIF(pr.p_json->>'updated_at', '') IS NOT NULL
+          AND (pr.p_json->>'updated_at')::timestamptz >= v_thirty_days_ago
+        )
+        OR (
+          NULLIF(pr.p_json->>'created_at', '') IS NOT NULL
+          AND (pr.p_json->>'created_at')::timestamptz >= v_thirty_days_ago
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM active_user_ids_30d au
+          WHERE au.uid = pr.id
+        )
       )::bigint AS active_profiles_30d
-    FROM public.profiles p
+    FROM profile_rows pr
   ),
   date_series AS (
     SELECT
@@ -275,4 +301,3 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.get_platform_analytics_metrics(integer, integer) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_platform_analytics_metrics(integer, integer) TO service_role;
-

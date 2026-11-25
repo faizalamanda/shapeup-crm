@@ -55,12 +55,13 @@ export async function GET(req: Request) {
 
     // 4. Deterministic Chunked Fallback (if migration has not been applied yet)
     //    Uses `fetchAllSupabaseRows` (.range(from, to) + tie-breaker `id ASC`)
-    //    so profiles, businesses, and orders NEVER truncate at 1,000 rows.
+    //    and selects `*` on `profiles` so it never crashes if `updated_at` or `created_at`
+    //    columns do not exist on `public.profiles`.
     const now = new Date()
     const startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
     const previousPeriodStart = new Date(startDate.getTime() - days * 24 * 60 * 60 * 1000)
 
-    const [businesses, orders, profiles] = await Promise.all([
+    const [businesses, orders, profiles, staffRows] = await Promise.all([
       fetchAllSupabaseRows<{ id: string; name: string; created_at: string; owner_id: string }>((from, to) =>
         supabaseAdmin
           .from('businesses')
@@ -71,6 +72,7 @@ export async function GET(req: Request) {
       ),
       fetchAllSupabaseRows<{
         id: string
+        user_id?: string | null
         grand_total: number | string | null
         status: string | null
         payment_status: string | null
@@ -81,27 +83,26 @@ export async function GET(req: Request) {
       }>((from, to) =>
         supabaseAdmin
           .from('orders')
-          .select('id, grand_total, status, payment_status, order_date, order_date_utc, created_at, business_id')
+          .select('id, user_id, grand_total, status, payment_status, order_date, order_date_utc, created_at, business_id')
           .neq('status', 'cancelled')
           .order('created_at', { ascending: false })
           .order('id', { ascending: true })
           .range(from, to)
       ),
-      fetchAllSupabaseRows<{
-        id: string
-        full_name: string | null
-        email: string | null
-        role: string | null
-        created_at: string | null
-        updated_at: string | null
-      }>((from, to) =>
+      fetchAllSupabaseRows<Record<string, any>>((from, to) =>
         supabaseAdmin
           .from('profiles')
-          .select('id, full_name, email, role, created_at, updated_at')
-          .order('created_at', { ascending: false })
+          .select('*')
           .order('id', { ascending: true })
           .range(from, to)
-      )
+      ),
+      fetchAllSupabaseRows<{ business_id: string; profile_id: string; created_at?: string | null }>((from, to) =>
+        supabaseAdmin
+          .from('business_staff')
+          .select('business_id, profile_id, created_at')
+          .order('id', { ascending: true })
+          .range(from, to)
+      ).catch(() => [])
     ])
 
     const businessMap = new Map<string, { id: string; name: string; created_at: string; owner_id: string }>()
@@ -114,9 +115,15 @@ export async function GET(req: Request) {
     let currentPeriodOrdersCount = 0
     let previousPeriodOrdersCount = 0
 
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+    const activeUserIds30d = new Set<string>()
+
     const tenantGmvMap = new Map<string, { gmv: number; ordersCount: number; lastOrderDate: string | null }>()
     businesses.forEach(b => {
       tenantGmvMap.set(b.id, { gmv: 0, ordersCount: 0, lastOrderDate: null })
+      if (b.created_at && new Date(b.created_at) >= thirtyDaysAgo && b.owner_id) {
+        activeUserIds30d.add(b.owner_id)
+      }
     })
 
     const dailyMap = new Map<string, { date: string; gmv: number; orders: number }>()
@@ -136,6 +143,10 @@ export async function GET(req: Request) {
 
       const orderTime = new Date(rawDateStr).getTime()
       const dateKey = new Date(rawDateStr).toISOString().split('T')[0]
+
+      if (orderTime >= thirtyDaysAgo.getTime() && o.user_id) {
+        activeUserIds30d.add(o.user_id)
+      }
 
       if (orderTime >= startDate.getTime() && orderTime <= now.getTime()) {
         currentPeriodGmv += gmvVal
@@ -170,15 +181,22 @@ export async function GET(req: Request) {
       : 0
 
     // 6. Calculate MAU & Tenant Engagement
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-
-    const activeOwnerIds = new Set<string>()
+    const activeBizIds30d = new Set<string>()
     let activeBusinesses30d = 0
     tenantGmvMap.forEach((item, bizId) => {
       if (item.lastOrderDate && new Date(item.lastOrderDate) >= thirtyDaysAgo) {
         activeBusinesses30d++
+        activeBizIds30d.add(bizId)
         const ownerId = businessMap.get(bizId)?.owner_id
-        if (ownerId) activeOwnerIds.add(ownerId)
+        if (ownerId) activeUserIds30d.add(ownerId)
+      }
+    })
+
+    staffRows.forEach(sr => {
+      if (!sr.profile_id) return
+      const isRecentStaff = sr.created_at ? new Date(sr.created_at) >= thirtyDaysAgo : false
+      if (activeBizIds30d.has(sr.business_id) || isRecentStaff) {
+        activeUserIds30d.add(sr.profile_id)
       }
     })
 
@@ -188,7 +206,7 @@ export async function GET(req: Request) {
       return (
         updatedTime >= thirtyDaysAgo.getTime() ||
         createdTime >= thirtyDaysAgo.getTime() ||
-        activeOwnerIds.has(p.id)
+        activeUserIds30d.has(p.id)
       )
     }).length
 
@@ -270,7 +288,7 @@ export async function GET(req: Request) {
       },
       tiers: [
         { name: 'Starter', price: PRICING.starter, count: starterCount, mrr: starterCount * PRICING.starter, color: '#3B82F6' },
-        { name: 'Pro', price: PRICING.pro, count: proCount, mrr: proCount * PRICING.pro, color: '#8B5CF6' },
+        { name: 'Pro', price: PRICING.pro, count: proCount, mrr: proCount * 399000, color: '#8B5CF6' },
         { name: 'Enterprise', price: PRICING.enterprise, count: enterpriseCount, mrr: enterpriseCount * PRICING.enterprise, color: '#F59E0B' },
       ],
       dailyTrend: Array.from(dailyMap.values()),
