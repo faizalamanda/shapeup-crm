@@ -1189,10 +1189,10 @@ export default function RevenueReportPage() {
     : 'gap-1.5 sm:gap-2.5 px-2'
 
   return (
-    <div className="space-y-5 text-slate-800 su-fade-in">
+    <div className="w-full max-w-full min-w-0 space-y-5 text-slate-800 su-fade-in">
       {/* ── TOP HEADER BAR (Metorik Style, Full Main Layout Width) ─────── */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap min-w-0">
           <button
             type="button"
             onClick={goBack}
@@ -1327,7 +1327,7 @@ export default function RevenueReportPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
 
         {/* LEFT: Revenue Bar / Line Chart Card (8 Cols) */}
-        <div className="lg:col-span-8 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between">
+        <div className="lg:col-span-8 min-w-0 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between">
           {/* Card Header */}
           <div className="px-5 py-3.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 flex-wrap">
@@ -1713,15 +1713,15 @@ export default function RevenueReportPage() {
         </div>
 
         {/* RIGHT: Metorik KPI Summary Grid Card (4 Cols) */}
-        <div className="lg:col-span-4 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between overflow-hidden divide-y divide-slate-100">
+        <div className="lg:col-span-4 min-w-0 bg-white border border-slate-200/90 rounded-xl shadow-2xs flex flex-col justify-between overflow-hidden divide-y divide-slate-100">
           {/* Top Primary Metric: Net Revenue */}
-          <div className="p-5 space-y-1.5">
+          <div className="p-5 space-y-1.5 min-w-0">
             <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600">
               <span>Net Revenue</span>
-              <span className="w-2 h-2 rounded-full bg-[#6C72EE] inline-block" />
+              <span className="w-2 h-2 rounded-full bg-[#6C72EE] inline-block shrink-0" />
             </div>
-            <div className="flex items-baseline gap-2.5 flex-wrap">
-              <span className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+            <div className="flex items-baseline gap-2.5 flex-wrap min-w-0">
+              <span className="text-xl sm:text-2xl 2xl:text-3xl font-extrabold text-slate-900 tracking-tight tabular-nums truncate" title={formatIDR(kpiSummary.curr.netRevenue)}>
                 {formatIDR(kpiSummary.curr.netRevenue)}
               </span>
               {renderGrowthPill(kpiSummary.growth.netRevenue)}
@@ -1730,23 +1730,23 @@ export default function RevenueReportPage() {
 
           {/* Row 2: Gross Sales | Refunds */}
           <div className="grid grid-cols-2 divide-x divide-slate-100">
-            <div className="p-4 space-y-1">
+            <div className="p-4 space-y-1 min-w-0">
               <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                <span>Gross Sales</span>
-                <span className="w-2 h-2 rounded-full bg-[#C7D2FE] border border-[#6C72EE] inline-block" />
+                <span className="truncate">Gross Sales</span>
+                <span className="w-2 h-2 rounded-full bg-[#C7D2FE] border border-[#6C72EE] inline-block shrink-0" />
               </div>
-              <div className="text-sm sm:text-base font-extrabold text-slate-900">
+              <div className="text-xs sm:text-sm xl:text-base font-extrabold text-slate-900 tabular-nums truncate" title={formatIDR(kpiSummary.curr.grossSales)}>
                 {formatIDR(kpiSummary.curr.grossSales)}
               </div>
               <div>{renderGrowthPill(kpiSummary.growth.grossSales)}</div>
             </div>
 
-            <div className="p-4 space-y-1">
+            <div className="p-4 space-y-1 min-w-0">
               <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                <span>Refunds</span>
-                <span className="w-2 h-2 rounded-full bg-rose-300 inline-block" />
+                <span className="truncate">Refunds</span>
+                <span className="w-2 h-2 rounded-full bg-rose-300 inline-block shrink-0" />
               </div>
-              <div className="text-sm sm:text-base font-extrabold text-slate-900">
+              <div className="text-xs sm:text-sm xl:text-base font-extrabold text-slate-900 tabular-nums truncate" title={formatIDR(kpiSummary.curr.refunds)}>
                 {formatIDR(kpiSummary.curr.refunds)}
               </div>
               <div>{renderGrowthPill(kpiSummary.growth.refunds, true)}</div>
@@ -1755,23 +1755,23 @@ export default function RevenueReportPage() {
 
           {/* Row 3: Taxes | Shipping */}
           <div className="grid grid-cols-2 divide-x divide-slate-100">
-            <div className="p-4 space-y-1">
+            <div className="p-4 space-y-1 min-w-0">
               <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                <span>Taxes</span>
-                <span className="w-2 h-2 rounded-full bg-slate-200 inline-block" />
+                <span className="truncate">Taxes</span>
+                <span className="w-2 h-2 rounded-full bg-slate-200 inline-block shrink-0" />
               </div>
-              <div className="text-sm sm:text-base font-extrabold text-slate-900">
+              <div className="text-xs sm:text-sm xl:text-base font-extrabold text-slate-900 tabular-nums truncate" title={formatIDR(kpiSummary.curr.taxes)}>
                 {formatIDR(kpiSummary.curr.taxes)}
               </div>
               <div>{renderGrowthPill(kpiSummary.growth.taxes)}</div>
             </div>
 
-            <div className="p-4 space-y-1">
+            <div className="p-4 space-y-1 min-w-0">
               <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                <span>Shipping</span>
-                <span className="w-2 h-2 rounded-full bg-slate-200 inline-block" />
+                <span className="truncate">Shipping</span>
+                <span className="w-2 h-2 rounded-full bg-slate-200 inline-block shrink-0" />
               </div>
-              <div className="text-sm sm:text-base font-extrabold text-slate-900">
+              <div className="text-xs sm:text-sm xl:text-base font-extrabold text-slate-900 tabular-nums truncate" title={formatIDR(kpiSummary.curr.shipping)}>
                 {formatIDR(kpiSummary.curr.shipping)}
               </div>
               <div>{renderGrowthPill(kpiSummary.growth.shipping)}</div>
@@ -1779,12 +1779,12 @@ export default function RevenueReportPage() {
           </div>
 
           {/* Row 4: Fees */}
-          <div className="p-4 space-y-1">
+          <div className="p-4 space-y-1 min-w-0">
             <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
               <span>Fees</span>
-              <span className="w-2 h-2 rounded-full bg-slate-200 inline-block" />
+              <span className="w-2 h-2 rounded-full bg-slate-200 inline-block shrink-0" />
             </div>
-            <div className="text-sm sm:text-base font-extrabold text-slate-900">
+            <div className="text-xs sm:text-sm xl:text-base font-extrabold text-slate-900 tabular-nums truncate" title={formatIDR(kpiSummary.curr.fees)}>
               {formatIDR(kpiSummary.curr.fees)}
             </div>
             <div>{renderGrowthPill(kpiSummary.growth.fees)}</div>
@@ -1792,20 +1792,20 @@ export default function RevenueReportPage() {
 
           {/* Row 5: Orders | Average order net */}
           <div className="grid grid-cols-2 divide-x divide-slate-100 bg-slate-50/40">
-            <div className="p-4 space-y-1">
-              <div className="text-[11px] font-bold text-slate-500">Orders</div>
+            <div className="p-4 space-y-1 min-w-0">
+              <div className="text-[11px] font-bold text-slate-500 truncate">Orders</div>
               <div className="flex items-baseline gap-2 flex-wrap">
-                <span className="text-base sm:text-lg font-extrabold text-slate-900">
+                <span className="text-sm sm:text-base xl:text-lg font-extrabold text-slate-900 tabular-nums">
                   {formatNumber(kpiSummary.curr.orders)}
                 </span>
                 {renderGrowthPill(kpiSummary.growth.orders)}
               </div>
             </div>
 
-            <div className="p-4 space-y-1">
-              <div className="text-[11px] font-bold text-slate-500">Average order net</div>
-              <div className="flex items-baseline gap-2 flex-wrap">
-                <span className="text-base sm:text-lg font-extrabold text-slate-900">
+            <div className="p-4 space-y-1 min-w-0">
+              <div className="text-[11px] font-bold text-slate-500 truncate">Average order net</div>
+              <div className="flex items-baseline gap-2 flex-wrap min-w-0">
+                <span className="text-xs sm:text-sm xl:text-base font-extrabold text-slate-900 tabular-nums truncate" title={formatIDR(kpiSummary.curr.avgOrderNet)}>
                   {formatIDR(kpiSummary.curr.avgOrderNet)}
                 </span>
                 {renderGrowthPill(kpiSummary.growth.avgOrderNet)}

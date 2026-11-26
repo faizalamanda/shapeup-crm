@@ -435,36 +435,36 @@ export default function CashFlowAnalyticsPage() {
       )}
 
       {/* ─── Section 1: 4 KPI Cards (Cash Real & Mutasi) ────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {/* KPI 1: Cash Real Akhir */}
-        <div className="bg-white border border-blue-200/80 rounded-xl p-4 shadow-2xs min-w-0">
+        <div className="bg-white border border-blue-200/80 rounded-xl p-4 shadow-2xs min-w-0 overflow-hidden">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600 truncate">
               Cash Real Akhir
             </span>
             {hasComparison && compData && (
               <DeltaBadge curr={data.ending_cash} prev={compData.ending_cash} />
             )}
           </div>
-          <div className="text-xl sm:text-2xl font-black text-slate-900 mt-1.5 truncate">
+          <div className="text-xl 2xl:text-2xl font-black text-slate-900 mt-1.5 tabular-nums truncate" title={loading ? undefined : formatCurrencyIDR(data.ending_cash)}>
             {loading ? '...' : formatCurrencyIDR(data.ending_cash)}
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">
+          <div className="text-[11px] text-slate-500 mt-1 truncate">
             Saldo Awal: <span className="font-semibold text-slate-700">{formatCurrencyIDR(data.starting_cash)}</span>
           </div>
         </div>
 
         {/* KPI 2: Total Kas Masuk */}
-        <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-2xs min-w-0">
+        <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-2xs min-w-0 overflow-hidden">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 truncate">
               Total Kas Masuk
             </span>
             {hasComparison && compData && (
               <DeltaBadge curr={data.total_inflow} prev={compData.total_inflow} />
             )}
           </div>
-          <div className="text-xl sm:text-2xl font-black text-emerald-700 mt-1.5 truncate">
+          <div className="text-xl 2xl:text-2xl font-black text-emerald-700 mt-1.5 tabular-nums truncate" title={loading ? undefined : formatCurrencyIDR(data.total_inflow)}>
             {loading ? '...' : formatCurrencyIDR(data.total_inflow)}
           </div>
           <div className="text-[11px] text-slate-500 mt-1">
@@ -473,16 +473,16 @@ export default function CashFlowAnalyticsPage() {
         </div>
 
         {/* KPI 3: Total Kas Keluar */}
-        <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-2xs min-w-0">
+        <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-2xs min-w-0 overflow-hidden">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 truncate">
               Total Kas Keluar
             </span>
             {hasComparison && compData && (
               <DeltaBadge curr={data.total_outflow} prev={compData.total_outflow} reversePolarity />
             )}
           </div>
-          <div className="text-xl sm:text-2xl font-black text-rose-600 mt-1.5 truncate">
+          <div className="text-xl 2xl:text-2xl font-black text-rose-600 mt-1.5 tabular-nums truncate" title={loading ? undefined : formatCurrencyIDR(data.total_outflow)}>
             {loading ? '...' : formatCurrencyIDR(data.total_outflow)}
           </div>
           <div className="text-[11px] text-slate-500 mt-1">
@@ -492,14 +492,14 @@ export default function CashFlowAnalyticsPage() {
 
         {/* KPI 4: Arus Kas Bersih */}
         <div
-          className={`border rounded-xl p-4 shadow-2xs min-w-0 ${
+          className={`border rounded-xl p-4 shadow-2xs min-w-0 overflow-hidden ${
             data.net_change >= 0
               ? 'bg-emerald-50/40 border-emerald-200/80'
               : 'bg-rose-50/40 border-rose-200/80'
           }`}
         >
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 truncate">
               Arus Kas Bersih (Net)
             </span>
             {hasComparison && compData && (
@@ -507,9 +507,10 @@ export default function CashFlowAnalyticsPage() {
             )}
           </div>
           <div
-            className={`text-xl sm:text-2xl font-black mt-1.5 truncate ${
+            className={`text-xl 2xl:text-2xl font-black mt-1.5 tabular-nums truncate ${
               data.net_change >= 0 ? 'text-emerald-700' : 'text-rose-700'
             }`}
+            title={loading ? undefined : `${data.net_change >= 0 ? '+' : ''}${formatCurrencyIDR(data.net_change)}`}
           >
             {loading ? '...' : `${data.net_change >= 0 ? '+' : ''}${formatCurrencyIDR(data.net_change)}`}
           </div>

@@ -41,7 +41,8 @@ Saat halaman membuka modal dialog apapun, gunakan `FullScreenModal` atau daftark
    - **Solusi Permanen:**
      - Selalu gunakan `flex flex-wrap items-center justify-between gap-3` pada setiap baris header, banner informasi, dan toolbar tabel.
      - Selalu tambahkan `min-w-0` pada setiap kolom grid (`lg:col-span-8 min-w-0`, `lg:col-span-4 min-w-0`) dan sub-kartu di dalamnya.
-     - Untuk toolbar tabel yang memiliki banyak tab filter (seperti filter kuadran BCG), pisahkan baris **Judul + Kontrol Search/Export** di baris atas dan **Filter Tab Pills** di baris bawah (`space-y-3`) agar tidak pernah bertabrakan secara horizontal.
+     - Untuk toolbar tabel yang memiliki banyak tab filter (seperti filter kuadran BCG atau 7 tab status di `/orders/invoices`), pisahkan baris **Judul + Kontrol Search/Export** di baris atas dan **Filter Tab Pills** di baris bawah (`space-y-3` atau `flex-col 2xl:flex-row`) agar tidak pernah bertabrakan secara horizontal.
+     - Pada layar tablet landscape & laptop ≤ 14 inci (`1024px–1279px`), sidebar permanen `240px` menyisakan lebar efektif `728px–980px`. Gunakan `sm:grid-cols-2 xl:grid-cols-4` (bukan `lg:grid-cols-4`) untuk deretan 4 kartu KPI Rupiah penuh, serta padukan `min-w-0 overflow-hidden` dengan tipografi adaptif (`text-xl 2xl:text-2xl tabular-nums truncate` + `title`) agar string `Rp\u00A0...` (*non-breaking space*) tidak pernah meluber keluar kartu atau menimpa kolom di sebelahnya.
 
 3. **Token Spacing Internal Kartu & Tabel:**
    - **Card Header:** `px-5 py-4`

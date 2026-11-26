@@ -872,10 +872,10 @@ export default function OrdersReportPage() {
 
           {/* 4-Column Granularity Averages Strip */}
           <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs p-5 grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div>
-                <div className="text-[11px] text-slate-500">Net {granLabel}</div>
-                <div className="text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap">
-                  <span>{formatIDR(summary.net_sales / bucketDivisor)}</span>
+              <div className="min-w-0">
+                <div className="text-[11px] text-slate-500 truncate">Net {granLabel}</div>
+                <div className="text-xs sm:text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap min-w-0">
+                  <span className="tabular-nums truncate" title={formatIDR(summary.net_sales / bucketDivisor)}>{formatIDR(summary.net_sales / bucketDivisor)}</span>
                   <DeltaBadge
                     curr={summary.net_sales / bucketDivisor}
                     prev={prevSummary.net_sales / prevBucketDivisor}
@@ -883,10 +883,10 @@ export default function OrdersReportPage() {
                   />
                 </div>
               </div>
-              <div>
-                <div className="text-[11px] text-slate-500">Gross {granLabel}</div>
-                <div className="text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap">
-                  <span>{formatIDR(summary.gross_sales / bucketDivisor)}</span>
+              <div className="min-w-0">
+                <div className="text-[11px] text-slate-500 truncate">Gross {granLabel}</div>
+                <div className="text-xs sm:text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap min-w-0">
+                  <span className="tabular-nums truncate" title={formatIDR(summary.gross_sales / bucketDivisor)}>{formatIDR(summary.gross_sales / bucketDivisor)}</span>
                   <DeltaBadge
                     curr={summary.gross_sales / bucketDivisor}
                     prev={prevSummary.gross_sales / prevBucketDivisor}
@@ -894,10 +894,10 @@ export default function OrdersReportPage() {
                   />
                 </div>
               </div>
-              <div>
-                <div className="text-[11px] text-slate-500">Orders {granLabel}</div>
-                <div className="text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap">
-                  <span>{formatInt(summary.orders / bucketDivisor)}</span>
+              <div className="min-w-0">
+                <div className="text-[11px] text-slate-500 truncate">Orders {granLabel}</div>
+                <div className="text-xs sm:text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap min-w-0">
+                  <span className="tabular-nums">{formatInt(summary.orders / bucketDivisor)}</span>
                   <DeltaBadge
                     curr={summary.orders / bucketDivisor}
                     prev={prevSummary.orders / prevBucketDivisor}
@@ -905,10 +905,10 @@ export default function OrdersReportPage() {
                   />
                 </div>
               </div>
-              <div>
-                <div className="text-[11px] text-slate-500">Items {granLabel}</div>
-                <div className="text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap">
-                  <span>{formatInt(summary.items / bucketDivisor)}</span>
+              <div className="min-w-0">
+                <div className="text-[11px] text-slate-500 truncate">Items {granLabel}</div>
+                <div className="text-xs sm:text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap min-w-0">
+                  <span className="tabular-nums">{formatInt(summary.items / bucketDivisor)}</span>
                   <DeltaBadge
                     curr={summary.items / bucketDivisor}
                     prev={prevSummary.items / prevBucketDivisor}
@@ -921,26 +921,26 @@ export default function OrdersReportPage() {
 
           {/* Right: 2 Stacked KPI Cards */}
           <div className="lg:col-span-4 min-w-0 flex flex-col gap-4">
-            <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs p-5 space-y-4">
+            <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs p-5 space-y-4 min-w-0 overflow-hidden">
               <div className="grid grid-cols-2 gap-4">
-                <div>
+                <div className="min-w-0">
                   <div className="text-xs text-slate-500 flex items-center gap-1.5">
-                    <span>Net Sales</span>
-                    <span className="w-2 h-2 rounded-full bg-violet-600" />
+                    <span className="truncate">Net Sales</span>
+                    <span className="w-2 h-2 rounded-full bg-violet-600 shrink-0" />
                   </div>
-                  <div className="text-base font-bold text-slate-900 mt-0.5">
+                  <div className="text-xs sm:text-sm xl:text-base font-bold text-slate-900 mt-0.5 tabular-nums truncate" title={formatIDR(summary.net_sales)}>
                     {formatIDR(summary.net_sales)}
                   </div>
                   <div className="mt-1">
                     <DeltaBadge curr={summary.net_sales} prev={prevSummary.net_sales} show={hasComparison} />
                   </div>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div className="text-xs text-slate-500 flex items-center gap-1.5">
-                    <span>Gross Sales</span>
-                    <span className="w-2 h-2 rounded-full bg-blue-600" />
+                    <span className="truncate">Gross Sales</span>
+                    <span className="w-2 h-2 rounded-full bg-blue-600 shrink-0" />
                   </div>
-                  <div className="text-base font-bold text-slate-900 mt-0.5">
+                  <div className="text-xs sm:text-sm xl:text-base font-bold text-slate-900 mt-0.5 tabular-nums truncate" title={formatIDR(summary.gross_sales)}>
                     {formatIDR(summary.gross_sales)}
                   </div>
                   <div className="mt-1">
@@ -950,44 +950,44 @@ export default function OrdersReportPage() {
               </div>
 
               <div className="border-t border-slate-100 pt-3 grid grid-cols-2 gap-4">
-                <div>
+                <div className="min-w-0">
                   <div className="text-xs text-slate-500">Orders</div>
-                  <div className="text-base font-bold text-slate-900 mt-0.5 flex items-center gap-1.5">
-                    <span>{formatInt(summary.orders)}</span>
+                  <div className="text-sm xl:text-base font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                    <span className="tabular-nums">{formatInt(summary.orders)}</span>
                     <DeltaBadge curr={summary.orders} prev={prevSummary.orders} show={hasComparison} />
                   </div>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div className="text-xs text-slate-500">Items</div>
-                  <div className="text-base font-bold text-slate-900 mt-0.5 flex items-center gap-1.5">
-                    <span>{formatInt(summary.items)}</span>
+                  <div className="text-sm xl:text-base font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                    <span className="tabular-nums">{formatInt(summary.items)}</span>
                     <DeltaBadge curr={summary.items} prev={prevSummary.items} show={hasComparison} />
                   </div>
                 </div>
               </div>
 
               <div className="border-t border-slate-100 pt-3 grid grid-cols-3 gap-2">
-                <div>
-                  <div className="text-[11px] text-slate-500">Average net</div>
-                  <div className="text-xs font-bold text-slate-900 mt-0.5">
+                <div className="min-w-0">
+                  <div className="text-[11px] text-slate-500 truncate">Average net</div>
+                  <div className="text-xs font-bold text-slate-900 mt-0.5 tabular-nums truncate" title={formatIDR(summary.avg_net)}>
                     {formatIDR(summary.avg_net)}
                   </div>
                   <div className="mt-1">
                     <DeltaBadge curr={summary.avg_net} prev={prevSummary.avg_net} show={hasComparison} />
                   </div>
                 </div>
-                <div>
-                  <div className="text-[11px] text-slate-500">Average gross</div>
-                  <div className="text-xs font-bold text-slate-900 mt-0.5">
+                <div className="min-w-0">
+                  <div className="text-[11px] text-slate-500 truncate">Average gross</div>
+                  <div className="text-xs font-bold text-slate-900 mt-0.5 tabular-nums truncate" title={formatIDR(summary.avg_gross)}>
                     {formatIDR(summary.avg_gross)}
                   </div>
                   <div className="mt-1">
                     <DeltaBadge curr={summary.avg_gross} prev={prevSummary.avg_gross} show={hasComparison} />
                   </div>
                 </div>
-                <div>
-                  <div className="text-[11px] text-slate-500">Average items</div>
-                  <div className="text-xs font-bold text-slate-900 mt-0.5">
+                <div className="min-w-0">
+                  <div className="text-[11px] text-slate-500 truncate">Average items</div>
+                  <div className="text-xs font-bold text-slate-900 mt-0.5 tabular-nums truncate">
                     {formatDec(summary.avg_items, 1)}
                   </div>
                   <div className="mt-1">
@@ -997,11 +997,11 @@ export default function OrdersReportPage() {
               </div>
             </div>
 
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 grid grid-cols-2 gap-4">
-              <div>
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 grid grid-cols-2 gap-4 min-w-0 overflow-hidden">
+              <div className="min-w-0">
                 <div className="text-xs text-slate-500">Refunds</div>
-                <div className="text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5">
-                  <span>{formatIDR(summary.refunds)}</span>
+                <div className="text-xs sm:text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap min-w-0">
+                  <span className="tabular-nums truncate" title={formatIDR(summary.refunds)}>{formatIDR(summary.refunds)}</span>
                   <DeltaBadge
                     curr={summary.refunds}
                     prev={prevSummary.refunds}
@@ -1010,31 +1010,31 @@ export default function OrdersReportPage() {
                   />
                 </div>
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs text-slate-500">Discounts</div>
-                <div className="text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5">
-                  <span>{formatIDR(summary.discounts)}</span>
+                <div className="text-xs sm:text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap min-w-0">
+                  <span className="tabular-nums truncate" title={formatIDR(summary.discounts)}>{formatIDR(summary.discounts)}</span>
                   <DeltaBadge curr={summary.discounts} prev={prevSummary.discounts} show={hasComparison} />
                 </div>
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs text-slate-500">Taxes</div>
-                <div className="text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5">
-                  <span>{formatIDR(summary.taxes)}</span>
+                <div className="text-xs sm:text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap min-w-0">
+                  <span className="tabular-nums truncate" title={formatIDR(summary.taxes)}>{formatIDR(summary.taxes)}</span>
                   <DeltaBadge curr={summary.taxes} prev={prevSummary.taxes} show={hasComparison} />
                 </div>
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs text-slate-500">Shipping</div>
-                <div className="text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5">
-                  <span>{formatIDR(summary.shipping)}</span>
+                <div className="text-xs sm:text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap min-w-0">
+                  <span className="tabular-nums truncate" title={formatIDR(summary.shipping)}>{formatIDR(summary.shipping)}</span>
                   <DeltaBadge curr={summary.shipping} prev={prevSummary.shipping} show={hasComparison} />
                 </div>
               </div>
-              <div className="col-span-2 border-t border-slate-100 pt-2">
+              <div className="col-span-2 border-t border-slate-100 pt-2 min-w-0">
                 <div className="text-xs text-slate-500">Fees</div>
-                <div className="text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5">
-                  <span>{formatIDR(summary.fees)}</span>
+                <div className="text-xs sm:text-sm font-bold text-slate-900 mt-0.5 flex items-center gap-1.5 flex-wrap min-w-0">
+                  <span className="tabular-nums truncate" title={formatIDR(summary.fees)}>{formatIDR(summary.fees)}</span>
                   <DeltaBadge curr={summary.fees} prev={prevSummary.fees} show={hasComparison} />
                 </div>
               </div>

@@ -799,9 +799,9 @@ export default function DashboardPage() {
       </section>
 
       {/* Charts Skeleton */}
-      <section className="grid gap-4 lg:grid-cols-3">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {/* Segmentation skeleton */}
-        <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5">
+        <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5 min-w-0">
           <div className="space-y-1.5">
             <div className="h-4 w-36 bg-slate-200 rounded animate-pulse" />
             <div className="h-3 w-48 bg-slate-100 rounded animate-pulse" />
@@ -825,7 +825,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Revenue sources skeleton */}
-        <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5">
+        <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5 min-w-0">
           <div className="space-y-1.5">
             <div className="h-4 w-32 bg-slate-200 rounded animate-pulse" />
             <div className="h-3 w-52 bg-slate-100 rounded animate-pulse" />
@@ -846,7 +846,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Health trend skeleton */}
-        <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5">
+        <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5 min-w-0 md:col-span-2 xl:col-span-1">
           <div className="space-y-1.5">
             <div className="h-4 w-40 bg-slate-200 rounded animate-pulse" />
             <div className="h-3 w-44 bg-slate-100 rounded animate-pulse" />
@@ -898,7 +898,7 @@ export default function DashboardPage() {
   )
 
   return (
-    <div className="space-y-6 text-[#1C1C1A] su-fade-in relative">
+    <div className="w-full max-w-full min-w-0 space-y-6 text-[#1C1C1A] su-fade-in relative">
       {/* Background sync thin progress bar (silent sync only, not stale) */}
       {isSyncing && !isStaleRefresh && (
         <div className="fixed top-0 left-0 right-0 z-50 h-[3px] bg-blue-500/20">
@@ -961,10 +961,10 @@ export default function DashboardPage() {
             return (
               <section key={item.id} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                 {/* KPI Card 1: Revenue */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors min-w-0 overflow-hidden">
                   <div>
                     <span className="text-xs font-medium text-slate-500">Revenue</span>
-                    <h3 className="text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums">
+                    <h3 className="text-xl xl:text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums truncate">
                       {loading ? (
                         <div className="h-7 w-28 bg-slate-200 animate-pulse rounded" />
                       ) : (
@@ -972,7 +972,7 @@ export default function DashboardPage() {
                       )}
                     </h3>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     {loading ? (
                       <div className="h-4 w-12 bg-slate-200 animate-pulse rounded" />
                     ) : compMode !== 'none' ? (
@@ -984,7 +984,7 @@ export default function DashboardPage() {
                     ) : (
                       <span className="text-[10px] text-slate-400 font-medium">Omzet Kotor</span>
                     )}
-                    <div className="w-16 h-5">
+                    <div className="w-16 h-5 shrink-0">
                       {loading ? (
                         <div className="w-full h-full bg-slate-100 animate-pulse rounded" />
                       ) : revenueSparklinePath ? (
@@ -999,10 +999,10 @@ export default function DashboardPage() {
                 </div>
 
                 {/* KPI Card 2: Total Customers */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors min-w-0 overflow-hidden">
                   <div>
                     <span className="text-xs font-medium text-slate-500">Total Customer</span>
-                    <h3 className="text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums">
+                    <h3 className="text-xl xl:text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums truncate">
                       {loading ? (
                         <div className="h-7 w-16 bg-slate-200 animate-pulse rounded" />
                       ) : (
@@ -1010,7 +1010,7 @@ export default function DashboardPage() {
                       )}
                     </h3>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     {loading ? (
                       <div className="h-4 w-12 bg-slate-200 animate-pulse rounded" />
                     ) : compMode !== 'none' ? (
@@ -1027,10 +1027,10 @@ export default function DashboardPage() {
                 </div>
 
                 {/* KPI Card 3: Repeat Customer Rate */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors min-w-0 overflow-hidden">
                   <div>
                     <span className="text-xs font-medium text-slate-500">Repeat Customer Rate</span>
-                    <h3 className="text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums">
+                    <h3 className="text-xl xl:text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums truncate">
                       {loading ? (
                         <div className="h-7 w-20 bg-slate-200 animate-pulse rounded" />
                       ) : (
@@ -1038,8 +1038,8 @@ export default function DashboardPage() {
                       )}
                     </h3>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-slate-500 tabular-nums">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-slate-500 tabular-nums truncate">
                       {loading ? (
                         <span className="inline-block h-3.5 w-16 bg-slate-100 animate-pulse rounded" />
                       ) : (
@@ -1050,10 +1050,10 @@ export default function DashboardPage() {
                 </div>
 
                 {/* KPI Card 4: Repeat Revenue Rate */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors min-w-0 overflow-hidden">
                   <div>
                     <span className="text-xs font-medium text-slate-500">Repeat Revenue Rate</span>
-                    <h3 className="text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums">
+                    <h3 className="text-xl xl:text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums truncate">
                       {loading ? (
                         <div className="h-7 w-20 bg-slate-200 animate-pulse rounded" />
                       ) : (
@@ -1061,8 +1061,8 @@ export default function DashboardPage() {
                       )}
                     </h3>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-slate-500 tabular-nums">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-slate-500 tabular-nums truncate">
                       {loading ? (
                         <span className="inline-block h-3.5 w-16 bg-slate-100 animate-pulse rounded" />
                       ) : (
@@ -1073,10 +1073,10 @@ export default function DashboardPage() {
                 </div>
 
                 {/* KPI Card 5: CLV */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 hover:border-slate-300 transition-colors min-w-0 overflow-hidden">
                   <div>
                     <span className="text-xs font-medium text-slate-500">Customer Lifetime Value</span>
-                    <h3 className="text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums">
+                    <h3 className="text-xl xl:text-2xl font-bold text-slate-900 tracking-tight mt-1 tabular-nums truncate">
                       {loading ? (
                         <div className="h-7 w-24 bg-slate-200 animate-pulse rounded" />
                       ) : (
@@ -1084,7 +1084,7 @@ export default function DashboardPage() {
                       )}
                     </h3>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     {loading ? (
                       <div className="h-4 w-12 bg-slate-200 animate-pulse rounded" />
                     ) : compMode !== 'none' ? (
@@ -1106,9 +1106,9 @@ export default function DashboardPage() {
           // Customer Charts Section
           if (item.id === 'customer_charts') {
             return (
-              <section key={item.id} className="grid gap-4 lg:grid-cols-3">
+              <section key={item.id} className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {/* Column 1: Customer Segmentation */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5 min-w-0 overflow-hidden">
                   <div>
                     <h2 className="text-sm font-bold text-slate-800">Segmentasi Customer</h2>
                     <p className="text-xs text-slate-500 mt-0.5">Klasifikasi berdasarkan frekuensi beli.</p>
@@ -1166,7 +1166,7 @@ export default function DashboardPage() {
                 </div>
 
                 {/* Column 2: Revenue Sources */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-5 min-w-0 overflow-hidden flex flex-col justify-between">
                   <div>
                     <h2 className="text-sm font-bold text-slate-800">Sumber Revenue</h2>
                     <p className="text-xs text-slate-500 mt-0.5">Kontribusi Customer Baru vs Repeat Customer.</p>
@@ -1174,41 +1174,43 @@ export default function DashboardPage() {
 
                   <div className="flex justify-center items-center py-2">
                     {loading ? (
-                      <div className="w-32 h-32 rounded-full bg-slate-100 animate-pulse flex items-center justify-center text-slate-300 text-xs">Loading...</div>
+                      <div className="w-36 h-36 rounded-full bg-slate-100 animate-pulse flex items-center justify-center text-slate-300 text-xs">Loading...</div>
                     ) : (
-                      <div className="w-32 h-32 rounded-full relative flex items-center justify-center shadow-sm" style={{
+                      <div className="w-36 h-36 rounded-full relative flex items-center justify-center shadow-sm shrink-0" style={{
                         background: `conic-gradient(#2563eb ${revenueSources.repeatPercent}%, #06b6d4 0%)`
                       }}>
-                        <div className="w-24 h-24 rounded-full bg-white flex flex-col items-center justify-center shadow-inner">
-                          <span className="text-xs font-medium text-slate-500">Total</span>
-                          <span className="text-sm font-bold text-slate-800 mt-0.5 tabular-nums">{formatCompactIDR(metrics.revenue)}</span>
+                        <div className="w-[106px] h-[106px] rounded-full bg-white flex flex-col items-center justify-center text-center px-1.5 shadow-inner">
+                          <span className="text-[11px] font-medium text-slate-500 leading-tight">Total</span>
+                          <span className="text-xs sm:text-[13px] font-extrabold text-slate-800 mt-0.5 tabular-nums whitespace-nowrap" title={formatIDR(metrics.revenue)}>
+                            {formatCompactIDR(metrics.revenue)}
+                          </span>
                         </div>
                       </div>
                     )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 border-t border-[#E2E2DC] pt-3.5">
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded-sm bg-blue-600 inline-block" />
-                        <span className="text-xs font-semibold text-slate-700">Repeat Customer</span>
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-2.5 h-2.5 rounded-sm bg-blue-600 inline-block shrink-0" />
+                        <span className="text-xs font-semibold text-slate-700 truncate">Repeat Customer</span>
                       </div>
-                      <p className="text-sm font-bold text-slate-900 tabular-nums">{loading ? '--' : formatCompactIDR(revenueSources.repeatRevenue)}</p>
+                      <p className="text-sm font-bold text-slate-900 tabular-nums truncate">{loading ? '--' : formatCompactIDR(revenueSources.repeatRevenue)}</p>
                       <p className="text-xs font-medium text-slate-500 tabular-nums">{loading ? '--' : `${revenueSources.repeatPercent.toFixed(1)}%`}</p>
                     </div>
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded-sm bg-cyan-500 inline-block" />
-                        <span className="text-xs font-semibold text-slate-700">Customer Baru</span>
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="w-2.5 h-2.5 rounded-sm bg-cyan-500 inline-block shrink-0" />
+                        <span className="text-xs font-semibold text-slate-700 truncate">Customer Baru</span>
                       </div>
-                      <p className="text-sm font-bold text-slate-900 tabular-nums">{loading ? '--' : formatCompactIDR(revenueSources.newRevenue)}</p>
+                      <p className="text-sm font-bold text-slate-900 tabular-nums truncate">{loading ? '--' : formatCompactIDR(revenueSources.newRevenue)}</p>
                       <p className="text-xs font-medium text-slate-500 tabular-nums">{loading ? '--' : `${revenueSources.newPercent.toFixed(1)}%`}</p>
                     </div>
                   </div>
                 </div>
 
                 {/* Column 3: Customer Health Trend */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 min-w-0 overflow-hidden md:col-span-2 xl:col-span-1">
                   <div>
                     <h2 className="text-sm font-bold text-slate-800">Customer Health Trend</h2>
                     <p className="text-xs text-slate-500 mt-0.5">Perkembangan segmentasi pelanggan 6 bulan terakhir.</p>
@@ -1261,9 +1263,9 @@ export default function DashboardPage() {
           // Customer Details & Actions
           if (item.id === 'bottom_details') {
             return (
-              <section key={item.id} className="grid gap-4 lg:grid-cols-[1.25fr_1fr_0.75fr]">
+              <section key={item.id} className="grid gap-4 xl:grid-cols-[1.25fr_1fr_0.75fr]">
                 {/* Top Pelanggan */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 min-w-0 overflow-hidden">
                   <div>
                     <h2 className="text-sm font-bold text-slate-800">Top Pelanggan (CLV)</h2>
                     <p className="text-xs text-slate-500 mt-0.5">Pelanggan dengan kontribusi revenue tertinggi.</p>
@@ -1290,9 +1292,9 @@ export default function DashboardPage() {
                         ) : (
                           topCustomers.map((cust) => (
                             <tr key={cust.customer_id} className="text-xs font-medium text-slate-700 hover:bg-[#F7F7F5]/50">
-                              <td className="py-2.5 max-w-[120px] truncate">{cust.name || 'Tanpa Nama'}</td>
+                              <td className="py-2.5 max-w-[140px] truncate">{cust.name || 'Tanpa Nama'}</td>
                               <td className="py-2.5 tabular-nums">{cust.total_order_count}</td>
-                              <td className="py-2.5 text-right font-semibold text-blue-600 tabular-nums">{formatIDR(cust.ltv)}</td>
+                              <td className="py-2.5 text-right font-semibold text-blue-600 tabular-nums whitespace-nowrap">{formatIDR(cust.ltv)}</td>
                             </tr>
                           ))
                         )}
@@ -1314,49 +1316,49 @@ export default function DashboardPage() {
                 </div>
 
                 {/* Customer yang Perlu Diperhatikan */}
-                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="bg-white border border-[#E2E2DC] rounded-2xl p-5 shadow-sm space-y-4 min-w-0 overflow-hidden">
                   <div>
                     <h2 className="text-sm font-bold text-slate-800">Customer yang Perlu Diperhatikan</h2>
                     <p className="text-xs text-slate-500 mt-0.5">Segmen pelanggan dengan tanda-tanda churn.</p>
                   </div>
 
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between p-3 bg-rose-50/50 border border-rose-100 rounded-xl">
-                      <div className="space-y-0.5">
+                    <div className="flex items-center justify-between gap-2 p-3 bg-rose-50/50 border border-rose-100 rounded-xl">
+                      <div className="space-y-0.5 min-w-0">
                         <p className="text-xs font-bold text-rose-800">Customer Hilang (&gt;90 hari)</p>
                         <p className="text-xs text-rose-600 font-normal">Pelanggan tidak bertransaksi &gt; 90 hari.</p>
                       </div>
-                      <span className="text-xs font-bold text-rose-800 bg-rose-100/60 px-2.5 py-1 rounded-lg tabular-nums">
+                      <span className="text-xs font-bold text-rose-800 bg-rose-100/60 px-2.5 py-1 rounded-lg tabular-nums shrink-0">
                         {loading ? '--' : attentionItems.inactive90}
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between p-3 bg-amber-50/50 border border-amber-100 rounded-xl">
-                      <div className="space-y-0.5">
+                    <div className="flex items-center justify-between gap-2 p-3 bg-amber-50/50 border border-amber-100 rounded-xl">
+                      <div className="space-y-0.5 min-w-0">
                         <p className="text-xs font-bold text-amber-800">Mulai Hilang (60-90 hari)</p>
                         <p className="text-xs text-amber-700 font-normal">Pelanggan mulai masuk masa risiko.</p>
                       </div>
-                      <span className="text-xs font-bold text-amber-800 bg-amber-100/60 px-2.5 py-1 rounded-lg tabular-nums">
+                      <span className="text-xs font-bold text-amber-800 bg-amber-100/60 px-2.5 py-1 rounded-lg tabular-nums shrink-0">
                         {loading ? '--' : attentionItems.inactive60_90}
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between p-3 bg-blue-50/50 border border-blue-100 rounded-xl">
-                      <div className="space-y-0.5">
+                    <div className="flex items-center justify-between gap-2 p-3 bg-blue-50/50 border border-blue-100 rounded-xl">
+                      <div className="space-y-0.5 min-w-0">
                         <p className="text-xs font-bold text-blue-800">Pembeli 1-Kali (One-time)</p>
                         <p className="text-xs text-blue-600 font-normal">Pelanggan baru sekali belanja.</p>
                       </div>
-                      <span className="text-xs font-bold text-blue-800 bg-blue-100/60 px-2.5 py-1 rounded-lg tabular-nums">
+                      <span className="text-xs font-bold text-blue-800 bg-blue-100/60 px-2.5 py-1 rounded-lg tabular-nums shrink-0">
                         {loading ? '--' : attentionItems.oneTimeBuyers}
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between p-3 bg-purple-50/50 border border-purple-100 rounded-xl">
-                      <div className="space-y-0.5">
+                    <div className="flex items-center justify-between gap-2 p-3 bg-purple-50/50 border border-purple-100 rounded-xl">
+                      <div className="space-y-0.5 min-w-0">
                         <p className="text-xs font-bold text-purple-800">High CLV Potential</p>
                         <p className="text-xs text-purple-600 font-normal">Pelanggan dengan LTV tinggi &ge; Rp2jt.</p>
                       </div>
-                      <span className="text-xs font-bold text-purple-800 bg-purple-100/60 px-2.5 py-1 rounded-lg tabular-nums">
+                      <span className="text-xs font-bold text-purple-800 bg-purple-100/60 px-2.5 py-1 rounded-lg tabular-nums shrink-0">
                         {loading ? '--' : attentionItems.highClv}
                       </span>
                     </div>
@@ -1364,7 +1366,7 @@ export default function DashboardPage() {
                 </div>
 
                 {/* Nilai Potensi */}
-                <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
+                <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4 min-w-0 overflow-hidden">
                   <div className="space-y-2">
                     <span className="text-xs font-semibold text-amber-800">Nilai Potensi Hilang</span>
                     <h2 className="text-base font-bold text-slate-900">LTV Terancam (Risk Value)</h2>
@@ -1373,9 +1375,9 @@ export default function DashboardPage() {
                     </p>
                   </div>
 
-                  <div className="space-y-1">
+                  <div className="space-y-1 min-w-0">
                     <p className="text-xs font-medium text-amber-800">Total Potensi</p>
-                    <div className="text-2xl font-bold text-amber-700 tracking-tight tabular-nums">
+                    <div className="text-xl sm:text-2xl font-bold text-amber-700 tracking-tight tabular-nums truncate" title={loading ? undefined : formatIDR(potentialLoss)}>
                       {loading ? (
                         <div className="h-8 w-36 bg-amber-200/50 animate-pulse rounded" />
                       ) : (

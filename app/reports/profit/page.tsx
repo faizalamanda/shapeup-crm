@@ -601,7 +601,7 @@ export default function ProfitDashboardPage() {
 
       {/* ─── Section 1: Active Business & Channel Breakdown Strip ──────────── */}
       <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden min-w-0">
-        <div className="p-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 border-b border-slate-100">
+        <div className="p-5 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4 border-b border-slate-100">
           <div className="min-w-0">
             <div className="text-[11px] font-semibold text-slate-500">Bisnis Aktif</div>
             <div className="text-base font-extrabold text-slate-900 mt-1 truncate">
@@ -614,7 +614,7 @@ export default function ProfitDashboardPage() {
 
           <div className="min-w-0">
             <div className="text-[11px] font-semibold text-slate-500">Orders</div>
-            <div className="text-lg font-extrabold text-slate-900 mt-1">
+            <div className="text-lg font-extrabold text-slate-900 mt-1 tabular-nums truncate">
               {loading ? '...' : formatInt(s.orders)}
             </div>
             <div className="mt-1">
@@ -624,7 +624,7 @@ export default function ProfitDashboardPage() {
 
           <div className="min-w-0">
             <div className="text-[11px] font-semibold text-slate-500">Revenue</div>
-            <div className="text-lg font-extrabold text-slate-900 mt-1 truncate">
+            <div className="text-lg font-extrabold text-slate-900 mt-1 tabular-nums truncate" title={loading ? undefined : formatIDR(s.net_revenue)}>
               {loading ? '...' : formatIDR(s.net_revenue)}
             </div>
             <div className="mt-1">
@@ -634,7 +634,7 @@ export default function ProfitDashboardPage() {
 
           <div className="min-w-0">
             <div className="text-[11px] font-semibold text-slate-500">Total Costs</div>
-            <div className="text-lg font-extrabold text-slate-900 mt-1 truncate">
+            <div className="text-lg font-extrabold text-slate-900 mt-1 tabular-nums truncate" title={loading ? undefined : formatCostIDR(s.total_costs)}>
               {loading ? '...' : formatCostIDR(s.total_costs)}
             </div>
             <div className="mt-1">
@@ -650,9 +650,10 @@ export default function ProfitDashboardPage() {
           <div className="min-w-0">
             <div className="text-[11px] font-semibold text-slate-500">Net Profit</div>
             <div
-              className={`text-lg font-extrabold mt-1 truncate ${
+              className={`text-lg font-extrabold mt-1 tabular-nums truncate ${
                 s.net_profit >= 0 ? 'text-slate-900' : 'text-rose-600'
               }`}
+              title={loading ? undefined : formatIDR(s.net_profit)}
             >
               {loading ? '...' : formatIDR(s.net_profit)}
             </div>
@@ -663,7 +664,7 @@ export default function ProfitDashboardPage() {
 
           <div className="min-w-0">
             <div className="text-[11px] font-semibold text-slate-500">Net Profit Margin</div>
-            <div className="text-lg font-extrabold text-slate-900 mt-1">
+            <div className="text-lg font-extrabold text-slate-900 mt-1 tabular-nums truncate">
               {loading ? '...' : formatPct(s.net_profit_margin)}
             </div>
             <div className="mt-1">
@@ -764,13 +765,14 @@ export default function ProfitDashboardPage() {
 
       {/* ─── Section 2: Hero Net Profit & Cost Sub-Metrics Card ─────────────── */}
       <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden min-w-0">
-        <div className="p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 border-b border-slate-100">
-          <div className="min-w-0">
+        <div className="p-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 border-b border-slate-100">
+          <div className="min-w-0 overflow-hidden">
             <div className="text-xs font-semibold text-slate-500">Net Profit</div>
             <div
-              className={`text-2xl sm:text-3xl font-extrabold tracking-tight mt-1 ${
+              className={`text-xl sm:text-2xl xl:text-xl 2xl:text-2xl font-extrabold tracking-tight tabular-nums truncate mt-1 ${
                 s.net_profit >= 0 ? 'text-slate-900' : 'text-rose-600'
               }`}
+              title={loading ? undefined : formatIDR(s.net_profit)}
             >
               {loading ? '...' : formatIDR(s.net_profit)}
             </div>
@@ -784,9 +786,12 @@ export default function ProfitDashboardPage() {
             </div>
           </div>
 
-          <div className="min-w-0">
+          <div className="min-w-0 overflow-hidden">
             <div className="text-xs font-semibold text-slate-500">Revenue (Net Sales)</div>
-            <div className="text-xl font-bold text-slate-900 mt-1.5">
+            <div
+              className="text-lg sm:text-xl xl:text-lg 2xl:text-xl font-bold text-slate-900 tabular-nums truncate mt-1.5"
+              title={loading ? undefined : formatIDR(s.net_revenue)}
+            >
               {loading ? '...' : formatIDR(s.net_revenue)}
             </div>
             <div className="mt-2">
@@ -794,9 +799,12 @@ export default function ProfitDashboardPage() {
             </div>
           </div>
 
-          <div className="min-w-0">
+          <div className="min-w-0 overflow-hidden">
             <div className="text-xs font-semibold text-slate-500">Total Costs</div>
-            <div className="text-xl font-bold text-slate-900 mt-1.5">
+            <div
+              className="text-lg sm:text-xl xl:text-lg 2xl:text-xl font-bold text-slate-900 tabular-nums truncate mt-1.5"
+              title={loading ? undefined : formatCostIDR(s.total_costs)}
+            >
               {loading ? '...' : formatCostIDR(s.total_costs)}
             </div>
             <div className="mt-2">
@@ -809,9 +817,9 @@ export default function ProfitDashboardPage() {
             </div>
           </div>
 
-          <div className="min-w-0">
+          <div className="min-w-0 overflow-hidden">
             <div className="text-xs font-semibold text-slate-500">Net Profit Margin</div>
-            <div className="text-xl font-bold text-slate-900 mt-1.5">
+            <div className="text-lg sm:text-xl xl:text-lg 2xl:text-xl font-bold text-slate-900 tabular-nums truncate mt-1.5">
               {loading ? '...' : formatPct(s.net_profit_margin)}
             </div>
             <div className="mt-2">
@@ -825,10 +833,10 @@ export default function ProfitDashboardPage() {
         </div>
 
         {/* 5 Cost Sub-Metrics from COA */}
-        <div className="p-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 bg-slate-50/40">
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-slate-500">COGS / HPP</div>
-            <div className="text-base font-bold text-slate-900 mt-1">
+        <div className="p-5 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-4 bg-slate-50/40">
+          <div className="min-w-0 overflow-hidden">
+            <div className="text-xs font-semibold text-slate-500 truncate">COGS / HPP</div>
+            <div className="text-sm sm:text-base font-bold text-slate-900 tabular-nums truncate mt-1" title={loading ? undefined : formatCostIDR(s.cogs)}>
               {loading ? '...' : formatCostIDR(s.cogs)}
             </div>
             <div className="mt-1.5">
@@ -836,9 +844,9 @@ export default function ProfitDashboardPage() {
             </div>
           </div>
 
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-slate-500">Gaji &amp; Upah</div>
-            <div className="text-base font-bold text-slate-900 mt-1">
+          <div className="min-w-0 overflow-hidden">
+            <div className="text-xs font-semibold text-slate-500 truncate">Gaji &amp; Upah</div>
+            <div className="text-sm sm:text-base font-bold text-slate-900 tabular-nums truncate mt-1" title={loading ? undefined : formatCostIDR(s.payroll)}>
               {loading ? '...' : formatCostIDR(s.payroll)}
             </div>
             <div className="mt-1.5">
@@ -851,9 +859,9 @@ export default function ProfitDashboardPage() {
             </div>
           </div>
 
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-slate-500">Transportasi &amp; Kirim</div>
-            <div className="text-base font-bold text-slate-900 mt-1">
+          <div className="min-w-0 overflow-hidden">
+            <div className="text-xs font-semibold text-slate-500 truncate">Transportasi &amp; Kirim</div>
+            <div className="text-sm sm:text-base font-bold text-slate-900 tabular-nums truncate mt-1" title={loading ? undefined : formatCostIDR(s.shipping_cost)}>
               {loading ? '...' : formatCostIDR(s.shipping_cost)}
             </div>
             <div className="mt-1.5">
@@ -866,9 +874,9 @@ export default function ProfitDashboardPage() {
             </div>
           </div>
 
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-slate-500">Biaya Bank &amp; Transaksi</div>
-            <div className="text-base font-bold text-slate-900 mt-1">
+          <div className="min-w-0 overflow-hidden">
+            <div className="text-xs font-semibold text-slate-500 truncate">Biaya Bank &amp; Transaksi</div>
+            <div className="text-sm sm:text-base font-bold text-slate-900 tabular-nums truncate mt-1" title={loading ? undefined : formatCostIDR(s.transaction_fees)}>
               {loading ? '...' : formatCostIDR(s.transaction_fees)}
             </div>
             <div className="mt-1.5">
@@ -881,9 +889,9 @@ export default function ProfitDashboardPage() {
             </div>
           </div>
 
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-slate-500">Operasional &amp; Lainnya</div>
-            <div className="text-base font-bold text-slate-900 mt-1">
+          <div className="min-w-0 overflow-hidden">
+            <div className="text-xs font-semibold text-slate-500 truncate">Operasional &amp; Lainnya</div>
+            <div className="text-sm sm:text-base font-bold text-slate-900 tabular-nums truncate mt-1" title={loading ? undefined : formatCostIDR(s.operational_cost)}>
               {loading ? '...' : formatCostIDR(s.operational_cost)}
             </div>
             <div className="mt-1.5">

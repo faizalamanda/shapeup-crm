@@ -314,7 +314,7 @@ export default function InvoicesPage() {
   }, [filteredInvoices, displayLimit])
 
   return (
-    <div className="space-y-6 text-[#1C1C1A] px-2 py-4">
+    <div className="w-full max-w-full min-w-0 space-y-5 text-[#1C1C1A] su-fade-in">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
@@ -323,44 +323,52 @@ export default function InvoicesPage() {
         </div>
         <Link
           href="/orders/invoices/new"
-          className="inline-flex items-center justify-center px-4 py-2 text-sm font-bold text-white bg-[#1E40AF] hover:bg-[#1D4ED8] rounded-xl shadow-sm transition-all duration-200"
+          className="inline-flex items-center justify-center px-4 py-2 text-sm font-bold text-white bg-[#1E40AF] hover:bg-[#1D4ED8] rounded-xl shadow-sm transition-all duration-200 shrink-0"
         >
           ➕ Buat Invoice Baru
         </Link>
       </div>
 
       {/* Metric Cards (Wave Apps Concept) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-5 rounded-2xl bg-white border border-[#EBEBEA] shadow-sm hover:border-[#1E40AF]/30 transition-all">
-          <p className="text-xs font-semibold uppercase tracking-wider text-rose-600">Jatuh Tempo (Overdue)</p>
-          <p className="text-2xl font-black mt-2 text-rose-700">{formatIDR(metrics.overdue)}</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="p-5 rounded-2xl bg-white border border-[#EBEBEA] shadow-sm hover:border-[#1E40AF]/30 transition-all min-w-0 overflow-hidden">
+          <p className="text-xs font-semibold uppercase tracking-wider text-rose-600 truncate">Jatuh Tempo (Overdue)</p>
+          <p className="text-xl 2xl:text-2xl font-black mt-2 text-rose-700 tabular-nums truncate" title={formatIDR(metrics.overdue)}>
+            {formatIDR(metrics.overdue)}
+          </p>
           <p className="text-[10px] text-[#70706E] mt-1">Sisa tagihan melewati tenggat waktu</p>
         </div>
 
-        <div className="p-5 rounded-2xl bg-white border border-[#EBEBEA] shadow-sm hover:border-[#1E40AF]/30 transition-all">
-          <p className="text-xs font-semibold uppercase tracking-wider text-blue-600">Belum Lunas (Outstanding)</p>
-          <p className="text-2xl font-black mt-2 text-blue-800">{formatIDR(metrics.outstanding)}</p>
+        <div className="p-5 rounded-2xl bg-white border border-[#EBEBEA] shadow-sm hover:border-[#1E40AF]/30 transition-all min-w-0 overflow-hidden">
+          <p className="text-xs font-semibold uppercase tracking-wider text-blue-600 truncate">Belum Lunas (Outstanding)</p>
+          <p className="text-xl 2xl:text-2xl font-black mt-2 text-blue-800 tabular-nums truncate" title={formatIDR(metrics.outstanding)}>
+            {formatIDR(metrics.outstanding)}
+          </p>
           <p className="text-[10px] text-[#70706E] mt-1">Total piutang tagihan aktif</p>
         </div>
 
-        <div className="p-5 rounded-2xl bg-white border border-[#EBEBEA] shadow-sm hover:border-[#1E40AF]/30 transition-all">
-          <p className="text-xs font-semibold uppercase tracking-wider text-amber-600">Draft</p>
-          <p className="text-2xl font-black mt-2 text-amber-700">{formatIDR(metrics.draft)}</p>
+        <div className="p-5 rounded-2xl bg-white border border-[#EBEBEA] shadow-sm hover:border-[#1E40AF]/30 transition-all min-w-0 overflow-hidden">
+          <p className="text-xs font-semibold uppercase tracking-wider text-amber-600 truncate">Draft</p>
+          <p className="text-xl 2xl:text-2xl font-black mt-2 text-amber-700 tabular-nums truncate" title={formatIDR(metrics.draft)}>
+            {formatIDR(metrics.draft)}
+          </p>
           <p className="text-[10px] text-[#70706E] mt-1">Faktur belum resmi diterbitkan</p>
         </div>
 
-        <div className="p-5 rounded-2xl bg-white border border-[#EBEBEA] shadow-sm hover:border-[#1E40AF]/30 transition-all">
-          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">Terbayar (30 Hari Terakhir)</p>
-          <p className="text-2xl font-black mt-2 text-emerald-800">{formatIDR(metrics.paid30Days)}</p>
+        <div className="p-5 rounded-2xl bg-white border border-[#EBEBEA] shadow-sm hover:border-[#1E40AF]/30 transition-all min-w-0 overflow-hidden">
+          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600 truncate">Terbayar (30 Hari Terakhir)</p>
+          <p className="text-xl 2xl:text-2xl font-black mt-2 text-emerald-800 tabular-nums truncate" title={formatIDR(metrics.paid30Days)}>
+            {formatIDR(metrics.paid30Days)}
+          </p>
           <p className="text-[10px] text-[#70706E] mt-1">Uang masuk dari penagihan invoice</p>
         </div>
       </div>
 
       {/* Main Container */}
-      <div className="bg-white rounded-2xl border border-[#EBEBEA] shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-[#EBEBEA] shadow-sm overflow-hidden min-w-0">
         {/* Filters bar */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 border-b border-[#EBEBEA] bg-[#FAFAFA]">
-          <div className="flex flex-wrap gap-1 bg-[#F0F0EF] p-1 rounded-xl w-fit">
+        <div className="flex flex-col 2xl:flex-row 2xl:items-center justify-between gap-3 p-4 border-b border-[#EBEBEA] bg-[#FAFAFA]">
+          <div className="flex flex-wrap gap-1 bg-[#F0F0EF] p-1 rounded-xl w-fit max-w-full">
             {[
               { id: 'all', label: 'Semua' },
               { id: 'unpaid', label: 'Belum Lunas' },
@@ -373,7 +381,7 @@ export default function InvoicesPage() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'bg-white text-[#1C1C1A] shadow-sm'
                     : 'text-[#70706E] hover:text-[#1C1C1A]'
@@ -384,12 +392,12 @@ export default function InvoicesPage() {
             ))}
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+          <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 w-full 2xl:w-auto">
             {/* Filter Kanal Sumber Dropdown */}
             <select
               value={selectedChannel}
               onChange={e => setSelectedChannel(e.target.value)}
-              className="px-3 py-1.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white text-[#1C1C1A] focus:outline-none focus:ring-2 focus:ring-[#1E40AF]/20 focus:border-[#1E40AF] transition-all"
+              className="px-3 py-1.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white text-[#1C1C1A] focus:outline-none focus:ring-2 focus:ring-[#1E40AF]/20 focus:border-[#1E40AF] transition-all shrink-0"
             >
               <option value="all">Semua Kanal</option>
               {channelsList.map(ch => (
@@ -403,7 +411,7 @@ export default function InvoicesPage() {
             <select
               value={selectedCreatorId}
               onChange={e => setSelectedCreatorId(e.target.value)}
-              className="px-3 py-1.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white text-[#1C1C1A] focus:outline-none focus:ring-2 focus:ring-[#1E40AF]/20 focus:border-[#1E40AF] transition-all"
+              className="px-3 py-1.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white text-[#1C1C1A] focus:outline-none focus:ring-2 focus:ring-[#1E40AF]/20 focus:border-[#1E40AF] transition-all shrink-0"
             >
               <option value="all">Semua Pembuat</option>
               {creatorsList.map(creator => (
@@ -413,7 +421,7 @@ export default function InvoicesPage() {
               ))}
             </select>
 
-            <div className="relative w-full md:w-72">
+            <div className="relative flex-1 sm:min-w-[220px] 2xl:w-72 2xl:flex-initial">
               <input
                 type="text"
                 placeholder="Cari nomor, pelanggan, ref..."
@@ -441,18 +449,18 @@ export default function InvoicesPage() {
             </div>
           ) : (
             <>
-              <table className="w-full text-left border-collapse">
+              <table className="w-full text-left border-collapse min-w-[820px]">
                 <thead>
                   <tr className="border-b border-[#EBEBEA] text-xs font-bold uppercase tracking-wider text-[#70706E] bg-[#FAFAFA]">
-                    <th className="p-4">No. Invoice</th>
-                    <th className="p-4">Pelanggan</th>
-                    <th className="p-4">Sumber Pesanan</th>
-                    <th className="p-4">Pembuat</th>
-                    <th className="p-4">Tgl & Jatuh Tempo</th>
-                    <th className="p-4 text-right">Total & Sisa</th>
-                    <th className="p-4">Status Dokumen</th>
-                    <th className="p-4">Pembayaran</th>
-                    <th className="p-4 text-center">Aksi</th>
+                    <th className="py-3.5 px-4 whitespace-nowrap">No. Invoice</th>
+                    <th className="py-3.5 px-4 whitespace-nowrap">Pelanggan</th>
+                    <th className="py-3.5 px-4 whitespace-nowrap">Sumber Pesanan</th>
+                    <th className="py-3.5 px-4 whitespace-nowrap">Pembuat</th>
+                    <th className="py-3.5 px-4 whitespace-nowrap">Tgl &amp; Jatuh Tempo</th>
+                    <th className="py-3.5 px-4 text-right whitespace-nowrap">Total &amp; Sisa</th>
+                    <th className="py-3.5 px-4 whitespace-nowrap">Status Dokumen</th>
+                    <th className="py-3.5 px-4 whitespace-nowrap">Pembayaran</th>
+                    <th className="py-3.5 px-4 text-center whitespace-nowrap">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#EBEBEA] text-sm text-[#1C1C1A]">
