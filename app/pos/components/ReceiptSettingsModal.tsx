@@ -86,6 +86,7 @@ export default function ReceiptSettingsModal({
   const [paperSize, setPaperSize] = useState<PaperSize>('58mm')
   const [paperAlignment, setPaperAlignment] = useState<PaperAlignment>('auto')
   const [paperOffsetMm, setPaperOffsetMm] = useState<string>('0')
+  const [paperTopOffsetMm, setPaperTopOffsetMm] = useState<string>('0')
   const [isCustomPaperMode, setIsCustomPaperMode] = useState(false)
   const [customWidthInput, setCustomWidthInput] = useState<string>('58')
   const [customUnit, setCustomUnit] = useState<PaperWidthUnit>('mm')
@@ -222,6 +223,7 @@ export default function ReceiptSettingsModal({
       setPaperSize(s.paperSize)
       setPaperAlignment(s.paperAlignment || 'auto')
       setPaperOffsetMm(String(s.paperOffsetMm ?? 0))
+      setPaperTopOffsetMm(String(s.paperTopOffsetMm ?? 0))
       const dims = resolvePaperDimensions(s.paperSize)
       if (dims.isCustom) {
         setIsCustomPaperMode(true)
@@ -485,9 +487,14 @@ export default function ReceiptSettingsModal({
     return Number.isFinite(n) && n >= 0 ? Math.min(80, Number(n.toFixed(1))) : 0
   }, [paperOffsetMm])
 
+  const parsedTopOffsetMm = useMemo(() => {
+    const n = parseFloat(paperTopOffsetMm)
+    return Number.isFinite(n) && n >= 0 ? Math.min(80, Number(n.toFixed(1))) : 0
+  }, [paperTopOffsetMm])
+
   const resolvedAlignmentSpec = useMemo(() => {
-    return resolveEffectivePaperAlignment(resolvedPaperDims, paperAlignment, parsedOffsetMm)
-  }, [resolvedPaperDims, paperAlignment, parsedOffsetMm])
+    return resolveEffectivePaperAlignment(resolvedPaperDims, paperAlignment, parsedOffsetMm, parsedTopOffsetMm)
+  }, [resolvedPaperDims, paperAlignment, parsedOffsetMm, parsedTopOffsetMm])
 
   // Switch unit seamlessly by converting current canonical widthMm to the newly selected unit
   const handleSwitchCustomUnit = (nextUnit: PaperWidthUnit) => {
@@ -537,6 +544,7 @@ export default function ReceiptSettingsModal({
       paperSize: effectivePaperSize,
       paperAlignment,
       paperOffsetMm: parsedOffsetMm,
+      paperTopOffsetMm: parsedTopOffsetMm,
       customPaperWidth: isCustomPaperMode && Number.isFinite(numVal) ? numVal : undefined,
       customPaperUnit: isCustomPaperMode ? customUnit : undefined,
       customPrintableWidthMm: isCustomPaperMode ? resolvedPaperDims.printableWidthMm : undefined,
@@ -586,6 +594,7 @@ export default function ReceiptSettingsModal({
       paperSize: effectivePaperSize,
       paperAlignment,
       paperOffsetMm: parsedOffsetMm,
+      paperTopOffsetMm: parsedTopOffsetMm,
       connectionType,
       autoPrintAfterPayment,
       showItemNumbering,
@@ -605,6 +614,7 @@ export default function ReceiptSettingsModal({
     effectivePaperSize,
     paperAlignment,
     parsedOffsetMm,
+    parsedTopOffsetMm,
     connectionType,
     autoPrintAfterPayment,
     showItemNumbering,
@@ -1253,7 +1263,7 @@ export default function ReceiptSettingsModal({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 items-end pt-1">
                   <div className="sm:col-span-2">
                     <label className="block text-[11px] font-bold text-slate-700 mb-1">
                       Perataan Posisi Kertas Horizontal
@@ -1294,6 +1304,28 @@ export default function ReceiptSettingsModal({
                         placeholder="0"
                         title="Jarak geser dari tepi samping kertas (misal 5mm untuk melewati lubang traktor)"
                         className="w-full px-3 py-2 pr-10 rounded-xl border border-slate-200 bg-white font-bold text-slate-800 text-xs focus:ring-2 focus:ring-indigo-500 outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                      />
+                      <span className="absolute right-3 text-[11px] font-bold text-slate-400 select-none">
+                        mm
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Geser Margin Atas (mm)
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        max="80"
+                        value={paperTopOffsetMm}
+                        onChange={(e) => setPaperTopOffsetMm(e.target.value)}
+                        placeholder="0"
+                        title="Tambahan jarak dari batas sobekan atas kertas (misal 3mm–5mm jika bagian atas nama toko pada LX-310 terlalu dekat dengan garis perforasi)"
+                        className="w-full px-3 py-2 pr-10 rounded-xl border border-slate-200 bg-white font-bold text-slate-800 text-xs focus:ring-2 focus:ring-indigo-500 outline-none"
                       />
                       <span className="absolute right-3 text-[11px] font-bold text-slate-400 select-none">
                         mm

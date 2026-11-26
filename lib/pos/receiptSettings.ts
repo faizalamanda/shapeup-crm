@@ -9,6 +9,7 @@ export interface ReceiptSettings {
   paperSize: PaperSize
   paperAlignment?: PaperAlignment
   paperOffsetMm?: number
+  paperTopOffsetMm?: number
   customPaperWidth?: number
   customPaperUnit?: PaperWidthUnit
   customPrintableWidthMm?: number
@@ -75,6 +76,10 @@ export function getStoredReceiptSettings(defaultBusinessName: string = 'ShapeUp 
         paperOffsetMm:
           parsed.paperOffsetMm !== undefined && Number.isFinite(Number(parsed.paperOffsetMm))
             ? Number(parsed.paperOffsetMm)
+            : 0,
+        paperTopOffsetMm:
+          parsed.paperTopOffsetMm !== undefined && Number.isFinite(Number(parsed.paperTopOffsetMm))
+            ? Math.max(0, Number(parsed.paperTopOffsetMm))
             : 0,
         customPaperWidth: parsed.customPaperWidth ? Number(parsed.customPaperWidth) : undefined,
         customPaperUnit: parsed.customPaperUnit || undefined,

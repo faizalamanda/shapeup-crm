@@ -256,7 +256,7 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
       cssContainerWidth: '63mm',
       cssFontSize: '12px',
       cssKitchenFontSize: '13px',
-      cssPadding: '3mm 1.5mm',
+      cssPadding: '5.5mm 1.5mm 3mm 1.5mm',
       previewIframeWidthPx: 304,
       displayLabel: 'Impact/Thermal 76mm'
     }
@@ -303,7 +303,7 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
       cssContainerWidth: '100mm',
       cssFontSize: '12px',
       cssKitchenFontSize: '13px',
-      cssPadding: '2.5mm 2mm',
+      cssPadding: '6mm 2mm 2.5mm 2mm',
       previewIframeWidthPx: 430,
       displayLabel: 'LX-310 NCR 4.75" (12cm Samping)'
     }
@@ -328,7 +328,7 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
       cssContainerWidth: '120mm',
       cssFontSize: '12.5px',
       cssKitchenFontSize: '13.5px',
-      cssPadding: '3mm 2.5mm',
+      cssPadding: '6mm 2.5mm 3mm 2.5mm',
       previewIframeWidthPx: 465,
       displayLabel: 'LX-310 Setengah 5.5" (14cm Samping)'
     }
@@ -353,7 +353,7 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
       cssContainerWidth: '203mm',
       cssFontSize: '12.5px',
       cssKitchenFontSize: '14px',
-      cssPadding: '4mm 5mm',
+      cssPadding: '6mm 5mm 4mm 5mm',
       previewIframeWidthPx: 540,
       displayLabel: 'LX-310 Faktur 9.5"×5.5" (Setengah)'
     }
@@ -421,7 +421,7 @@ export function resolvePaperDimensions(paperSize?: PaperSize): ResolvedPaperDime
   const cssFontSize = `${fontPx}px`
   const cssKitchenFontSize = `${kitchenFontPx}px`
   const cssPadding = isDotMatrixContinuous
-    ? '4mm 4mm'
+    ? '6mm 4mm 4mm 4mm'
     : isPageSheet
     ? '12mm 8mm'
     : widthMm <= 62
@@ -519,6 +519,7 @@ export interface ReceiptData {
   paperSize?: PaperSize
   paperAlignment?: PaperAlignment
   paperOffsetMm?: number
+  paperTopOffsetMm?: number
   receiptTitle?: string
   queueNumber?: string | number
   showQueueNumber?: boolean
@@ -573,16 +574,19 @@ function escapeHtml(str: string = ''): string {
 export function resolveEffectivePaperAlignment(
   dims: ResolvedPaperDimensions,
   requestedAlignment?: PaperAlignment,
-  requestedOffsetMm?: number
+  requestedOffsetMm?: number,
+  requestedTopOffsetMm?: number
 ): {
   alignment: 'left' | 'center' | 'right'
   offsetMm: number
+  topOffsetMm: number
   cssMargin: string
 } {
   let rawAlign: PaperAlignment | undefined = requestedAlignment
   let rawOffset: number | undefined = requestedOffsetMm
+  let rawTopOffset: number | undefined = requestedTopOffsetMm
 
-  if ((rawAlign === undefined || rawOffset === undefined) && typeof window !== 'undefined') {
+  if ((rawAlign === undefined || rawOffset === undefined || rawTopOffset === undefined) && typeof window !== 'undefined') {
     try {
       const storedRaw = localStorage.getItem('shapeup_pos_receipt_settings')
       if (storedRaw) {
@@ -592,6 +596,9 @@ export function resolveEffectivePaperAlignment(
         }
         if (rawOffset === undefined && parsed.paperOffsetMm !== undefined) {
           rawOffset = Number(parsed.paperOffsetMm)
+        }
+        if (rawTopOffset === undefined && parsed.paperTopOffsetMm !== undefined) {
+          rawTopOffset = Number(parsed.paperTopOffsetMm)
         }
       }
     } catch {}
@@ -611,20 +618,32 @@ export function resolveEffectivePaperAlignment(
       ? Math.min(80, Number(Number(rawOffset).toFixed(1)))
       : 0
 
+  const topOffsetMm =
+    rawTopOffset !== undefined && Number.isFinite(Number(rawTopOffset)) && Number(rawTopOffset) >= 0
+      ? Math.min(80, Number(Number(rawTopOffset).toFixed(1)))
+      : 0
+
   const cssMargin =
     alignment === 'left'
-      ? `0 auto 0 ${offsetMm}mm`
+      ? `${topOffsetMm}mm auto 0 ${offsetMm}mm`
       : alignment === 'right'
-      ? `0 ${offsetMm}mm 0 auto`
+      ? `${topOffsetMm}mm ${offsetMm}mm 0 auto`
+      : topOffsetMm > 0
+      ? `${topOffsetMm}mm auto 0 auto`
       : '0 auto'
 
-  return { alignment, offsetMm, cssMargin }
+  return { alignment, offsetMm, topOffsetMm, cssMargin }
 }
 
 export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize): string {
   const effectivePaperSize = paperSize || receipt.paperSize || '58mm'
   const dims = resolvePaperDimensions(effectivePaperSize)
-  const alignSpec = resolveEffectivePaperAlignment(dims, receipt.paperAlignment, receipt.paperOffsetMm)
+  const alignSpec = resolveEffectivePaperAlignment(
+    dims,
+    receipt.paperAlignment,
+    receipt.paperOffsetMm,
+    receipt.paperTopOffsetMm
+  )
 
   // On Epson LX-310 tractor/sideways half-size paper (isDotMatrixContinuous) with side alignment ('left' / 'right'),
   // use '@page { size: auto; margin: 0; }' so Windows GDI / Chromium does NOT center a narrow 120mm/140mm virtual page
@@ -637,6 +656,14 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
   const fontSize = dims.cssFontSize
   const containerPadding = dims.cssPadding
   const containerMargin = alignSpec.cssMargin
+  const hasVisibleLogo = Boolean(receipt.showLogo && (receipt.logoBase64 || receipt.logoUrl))
+  const isFullPageSheet = dims.isPageSheet && !dims.isDotMatrixContinuous
+  // Hardware Top-Margin Anti-Clip Guard for Epson LX-310 / System GDI Printers:
+  // Epson LX-310 has a 4.2mm (0.17") unprintable top margin zone near the tear-off perforation.
+  // When printing without a logo, ensure at least 5.5mm–6mm top padding so the store name on line 1 is never sliced in half.
+  const safeTopPaddingOverride = !hasVisibleLogo && !isFullPageSheet
+    ? (dims.isDotMatrixContinuous ? '6mm' : '5.5mm')
+    : null
   const fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
   // On 9-pin Impact Dot-Matrix printers (Epson LX-310 / TM-U220), gray colors (#444/#555) and #f7f7f7 shading
   // cause slow multi-pass pin dithering. Force 100% pure black (#000) & transparent background on dot-matrix sizes.
@@ -841,7 +868,7 @@ export function generateReceiptHtml(receipt: ReceiptData, paperSize?: PaperSize)
       width: ${containerWidth};
       max-width: ${containerWidth};
       margin: ${containerMargin};
-      padding: ${containerPadding};
+      padding: ${containerPadding};${safeTopPaddingOverride ? `\n      padding-top: ${safeTopPaddingOverride};` : ''}
       box-sizing: border-box;
     }
     .divider {

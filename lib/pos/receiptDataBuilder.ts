@@ -182,7 +182,8 @@ export function buildReceiptDataFromOrder(order: any, options: ReceiptBuildOptio
     orderNote: extractedNote || undefined,
     paperSize: options.paperSize || settings.paperSize || '58mm',
     paperAlignment: settings.paperAlignment || 'auto',
-    paperOffsetMm: settings.paperOffsetMm ?? 0
+    paperOffsetMm: settings.paperOffsetMm ?? 0,
+    paperTopOffsetMm: settings.paperTopOffsetMm ?? 0
   }
 }
 
@@ -242,7 +243,8 @@ export function buildSampleReceiptData(settings: ReceiptSettings): ReceiptData {
     note: settings.footerNote || 'Terima kasih atas kunjungan Anda!\nBarang yang sudah dibeli tidak dapat ditukar/dikembalikan.',
     paperSize: settings.paperSize || '58mm',
     paperAlignment: settings.paperAlignment || 'auto',
-    paperOffsetMm: settings.paperOffsetMm ?? 0
+    paperOffsetMm: settings.paperOffsetMm ?? 0,
+    paperTopOffsetMm: settings.paperTopOffsetMm ?? 0
   }
 }
 
@@ -340,7 +342,8 @@ export function buildReturnReceiptData(
     note: settings.footerNote || 'Nota bukti retur / penukaran barang resmi.',
     paperSize: options.paperSize || settings.paperSize || '58mm',
     paperAlignment: settings.paperAlignment || 'auto',
-    paperOffsetMm: settings.paperOffsetMm ?? 0
+    paperOffsetMm: settings.paperOffsetMm ?? 0,
+    paperTopOffsetMm: settings.paperTopOffsetMm ?? 0
   }
 }
 
@@ -427,7 +430,8 @@ export function buildHoldOrderReceiptData(
     note: '* INI BUKAN BUKTI PEMBAYARAN SAH *\nSilakan bawa nota ini ke kasir untuk menyelesaikan pembayaran.',
     paperSize: options.paperSize || settings.paperSize || '58mm',
     paperAlignment: settings.paperAlignment || 'auto',
-    paperOffsetMm: settings.paperOffsetMm ?? 0
+    paperOffsetMm: settings.paperOffsetMm ?? 0,
+    paperTopOffsetMm: settings.paperTopOffsetMm ?? 0
   }
 }
 
@@ -482,7 +486,8 @@ export function buildHeldOrdersSummaryReceiptData(
     note: 'Laporan audit internal kasir.\nHarap periksa dan selesaikan pesanan tertahan sebelum pergantian/penutupan shift.',
     paperSize: options.paperSize || settings.paperSize || '58mm',
     paperAlignment: settings.paperAlignment || 'auto',
-    paperOffsetMm: settings.paperOffsetMm ?? 0
+    paperOffsetMm: settings.paperOffsetMm ?? 0,
+    paperTopOffsetMm: settings.paperTopOffsetMm ?? 0
   }
 }
 
