@@ -4,6 +4,7 @@ import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { extractPosOrderNumberAudit } from '@/lib/pos/orderNumberHelper'
 import { supabase } from '@/lib/supabase'
 import { formatDisplayDate, DEFAULT_TIMEZONE } from '@/lib/timeUtils'
+import { CreateRmaModal } from '@/app/orders/rma/components/CreateRmaModal'
 
 export function OrderDetailModal({
   order,
@@ -22,6 +23,7 @@ export function OrderDetailModal({
   const [transactions, setTransactions] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
   const [loadingPayments, setLoadingPayments] = useState(false)
+  const [showRmaModal, setShowRmaModal] = useState(false)
 
   const fetchJournal = useCallback(async (targetOrderId: string) => {
     if (!targetOrderId) return
@@ -183,8 +185,12 @@ export function OrderDetailModal({
   const { courier, resi } = getCourierAndResi()
   const rawAddress = getAddressFromRaw()
   const posNumAudit = extractPosOrderNumberAudit(order)
+  const canCreateRma =
+    order.status &&
+    !['cancelled', 'failed', 'pending'].includes(String(order.status).toLowerCase())
 
   return (
+    <>
     <FullScreenModal
       isOpen={Boolean(order)}
       onClose={onClose}
@@ -244,6 +250,15 @@ export function OrderDetailModal({
             )}
           </div>
           <div className="flex items-center gap-2">
+            {canCreateRma && (
+              <button
+                type="button"
+                onClick={() => setShowRmaModal(true)}
+                className="px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-extrabold rounded-xl text-xs transition cursor-pointer"
+              >
+                🔄 Ajukan Retur / RMA
+              </button>
+            )}
             <button 
               type="button"
               onClick={onClose} 
@@ -539,6 +554,12 @@ export function OrderDetailModal({
                   <span className="font-mono">-{formatIDR(order.discount_amount)}</span>
                 </div>
               )}
+              {Number(order.returned_total) > 0 && (
+                <div className="flex justify-between items-center text-rose-600 font-bold">
+                  <span>Dikurangi Retur / RMA</span>
+                  <span className="font-mono">-{formatIDR(order.returned_total)}</span>
+                </div>
+              )}
               <div className="pt-2 border-t border-slate-200 flex justify-between items-center">
                 <span className="text-xs font-black text-slate-900 uppercase">Grand Total</span>
                 <span className="text-base font-black text-blue-700 font-mono">{formatIDR(grandTotal)}</span>
@@ -626,5 +647,17 @@ export function OrderDetailModal({
 
       </div>
     </FullScreenModal>
+
+    <CreateRmaModal
+      isOpen={showRmaModal}
+      onClose={() => setShowRmaModal(false)}
+      order={order}
+      onSuccess={() => {
+        fetchJournal(order.id)
+        fetchPayments(order.id)
+        onOrderUpdated?.()
+      }}
+    />
+    </>
   )
 }

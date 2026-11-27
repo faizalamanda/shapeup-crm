@@ -148,6 +148,8 @@ export interface QuarantineReturnItem {
   move_id: string
   business_id: string
   product_id: string
+  variant_id?: string | null
+  variant_name?: string | null
   reference: string
   return_qty: number
   return_date: string
@@ -155,7 +157,7 @@ export interface QuarantineReturnItem {
   product_sku: string | null
   product_unit: string
   cost_price: number
-  status: 'pending' | 'received' | 'lost'
+  status: 'pending' | 'received' | 'lost' | 'rtv'
   status_label: string
   resolved_at: string | null
   resolution_reference: string | null

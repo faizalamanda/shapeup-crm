@@ -175,9 +175,10 @@ const menuItems: MenuItem[] = [
   {
     name: 'Pemasukan',    href: '/orders',            icon: Icons.pemasukan,
     children: [
-      { name: 'Orders',   href: '/orders' },
-      { name: 'Invoices', href: '/orders/invoices' },
-      { name: 'POS',      href: '/pos' },
+      { name: 'Orders',       href: '/orders' },
+      { name: 'Invoices',     href: '/orders/invoices' },
+      { name: 'Retur & RMA',  href: '/orders/rma' },
+      { name: 'POS',          href: '/pos' },
     ],
   },
   {

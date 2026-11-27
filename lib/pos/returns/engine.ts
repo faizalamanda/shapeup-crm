@@ -438,7 +438,89 @@ export interface AccountIds {
   sales: string
   cogs: string
   inventory: string
+  quarantineInventory?: string
+  returnLoss?: string
+  payable?: string
   storeCredit: string
+}
+
+export type ExtendedDisposition =
+  | ReturnDisposition
+  | 'rtv_vendor'
+  | 'lost_in_transit'
+  | 'pending'
+
+/**
+ * Single Source of Truth ("Sekali Edit, Berubah Semua") for Inventory & COPQ Accounting
+ * across BOTH Countertop POS Returns/Exchanges AND Omnichannel RMA / Warehouse QC:
+ * - restock: Dr 102000 Persediaan Rak Utama (netted against replacement COGS) / Cr 501000 HPP
+ * - quarantine: Dr 102100 Persediaan Karantina (Right-to-Recover Asset, PSAK 115) / Cr 501000 HPP
+ * - writeoff / lost_in_transit: Dr 502100 Beban Kerusakan Retur (IAS 2 Par. 34 COPQ) / Cr 501000 HPP
+ * - rtv_vendor: Dr 201000 Hutang Usaha (Supplier Claim) / Cr 501000 HPP
+ */
+export function buildDispositionInventoryLines(params: {
+  items: Array<{ qty: number; unitCost: number; disposition: ExtendedDisposition }>
+  accounts: Pick<
+    AccountIds,
+    'inventory' | 'quarantineInventory' | 'returnLoss' | 'payable' | 'cogs'
+  >
+  exchangeCost?: number
+}): JournalLine[] {
+  const { items, accounts, exchangeCost = 0 } = params
+  const out: JournalLine[] = []
+  const dr = (account_id: string | undefined, amount: number) => {
+    if (account_id && amount > 0.001) out.push({ account_id, debit: round(amount), credit: 0 })
+  }
+  const cr = (account_id: string | undefined, amount: number) => {
+    if (account_id && amount > 0.001) out.push({ account_id, debit: 0, credit: round(amount) })
+  }
+
+  let restockCost = 0
+  let quarantineCost = 0
+  let writeoffCost = 0
+  let rtvCost = 0
+
+  for (const i of items) {
+    const lineCost = round(num(i.unitCost) * num(i.qty))
+    if (lineCost <= 0) continue
+    if (i.disposition === 'restock') restockCost += lineCost
+    else if (i.disposition === 'quarantine') quarantineCost += lineCost
+    else if (i.disposition === 'rtv_vendor') rtvCost += lineCost
+    else if (i.disposition === 'writeoff' || i.disposition === 'lost_in_transit') {
+      writeoffCost += lineCost
+    }
+  }
+
+  const quarantineAcc = accounts.quarantineInventory || accounts.inventory
+  if (quarantineCost > 0) dr(quarantineAcc, quarantineCost)
+
+  if (writeoffCost > 0 && accounts.returnLoss) {
+    dr(accounts.returnLoss, writeoffCost)
+  }
+
+  const rtvTargetAcc = accounts.payable || quarantineAcc
+  if (rtvCost > 0 && rtvTargetAcc) {
+    dr(rtvTargetAcc, rtvCost)
+  }
+
+  const totalReversedFromCogs =
+    restockCost +
+    quarantineCost +
+    rtvCost +
+    (accounts.returnLoss ? writeoffCost : 0)
+  const exCostRounded = round(exchangeCost)
+
+  // Net active shelf inventory (102000) movement: +restockCost - exchangeCost
+  const netShelfInventory = restockCost - exCostRounded
+  if (netShelfInventory > 0) dr(accounts.inventory, netShelfInventory)
+  else if (netShelfInventory < 0) cr(accounts.inventory, -netShelfInventory)
+
+  // Net COGS (501000) movement: +exchangeCost - totalReversedFromCogs
+  const netCogs = exCostRounded - totalReversedFromCogs
+  if (netCogs > 0) dr(accounts.cogs, netCogs)
+  else if (netCogs < 0) cr(accounts.cogs, -netCogs)
+
+  return out
 }
 
 const isCashMethod = (m: string) => {
@@ -570,18 +652,13 @@ export function buildReturnJournal(params: {
   cr(accounts.otherIncome, quote.restockingFee)
   cr(accounts.sales, quote.exchangeTotal)
 
-  // Inventory / COGS: restock & quarantine come back at cost; write-off keeps the COGS as loss.
-  const returnedCost = quote.items
-    .filter((i) => i.disposition !== 'writeoff')
-    .reduce((s, i) => s + i.unitCost * i.qty, 0)
-  const net = round(returnedCost) - round(exchangeCost)
-  if (net > 0) {
-    dr(accounts.inventory, net)
-    cr(accounts.cogs, net)
-  } else if (net < 0) {
-    dr(accounts.cogs, -net)
-    cr(accounts.inventory, -net)
-  }
+  // Shared Single-Core Inventory & COPQ Journal Lines (used by both POS & Omnichannel RMA)
+  const invLines = buildDispositionInventoryLines({
+    items: quote.items,
+    accounts,
+    exchangeCost
+  })
+  lines.push(...invLines)
 
   for (const l of refundLines) cr(l.accountId || accounts.cashDefault, l.amount)
   for (const l of paymentInLines) dr(l.accountId || accounts.cashDefault, l.amount)

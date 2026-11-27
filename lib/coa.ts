@@ -7,6 +7,7 @@ export const DEFAULT_COA_TEMPLATE = [
   { code: '101200', name: 'Bank / QRIS POS', type: 'ASSET', sub_type: 'bank_cash' },
   { code: '101300', name: 'Kas Kecil / Petty Cash', type: 'ASSET', sub_type: 'bank_cash' },
   { code: '102000', name: 'Persediaan Barang Dagangan', type: 'ASSET', sub_type: 'current_assets' },
+  { code: '102100', name: 'Persediaan Karantina & Retur', type: 'ASSET', sub_type: 'current_assets' },
   { code: '103000', name: 'Piutang Usaha', type: 'ASSET', sub_type: 'receivable' },
   { code: '105000', name: 'Beban Dibayar di Muka', type: 'ASSET', sub_type: 'current_assets' },
   { code: '120000', name: 'Peralatan & Inventaris Kantor', type: 'ASSET', sub_type: 'fixed_assets' },
@@ -32,6 +33,7 @@ export const DEFAULT_COA_TEMPLATE = [
   // EXPENSE (500000 - 599999)
   { code: '501000', name: 'Harga Pokok Penjualan (HPP)', type: 'EXPENSE', sub_type: 'cogs' },
   { code: '502000', name: 'Penyesuaian Persediaan', type: 'EXPENSE', sub_type: 'expense' },
+  { code: '502100', name: 'Beban Kerusakan & Penyusutan Retur', type: 'EXPENSE', sub_type: 'expense' },
   { code: '503000', name: 'Beban Operasional', type: 'EXPENSE', sub_type: 'expense' },
   { code: '503100', name: 'Beban Pemasaran, Iklan & Promosi', type: 'EXPENSE', sub_type: 'expense' },
   { code: '503200', name: 'Beban Utilitas (Listrik/Air/Internet)', type: 'EXPENSE', sub_type: 'expense' },

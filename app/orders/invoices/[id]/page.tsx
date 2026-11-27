@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { useUserContext } from '@/components/UserContext'
 import { formatDisplayDate } from '@/lib/timeUtils'
 import { resolvePaymentAccountFromCOA } from '@/lib/coa'
+import { CreateRmaModal } from '@/app/orders/rma/components/CreateRmaModal'
 
 type Customer = {
   id: string
@@ -75,6 +76,8 @@ type Invoice = {
   status: 'pending' | 'processing' | 'shipped' | 'completed' | 'cancelled'
   payment_status?: 'unpaid' | 'partial' | 'paid'
   amount_paid?: number
+  returned_total?: number
+  return_status?: string
   source_platform?: string
   payment_method: string | null
   items_json: InvoiceItem[] | null
@@ -275,6 +278,7 @@ export default function InvoiceDetailPage() {
   // Stock Moves State
   const [stockMoves, setStockMoves] = useState<any[]>([])
   const [loadingStockMoves, setLoadingStockMoves] = useState<boolean>(false)
+  const [showRmaModal, setShowRmaModal] = useState<boolean>(false)
 
   // Shipping Label print state
   const [labelShopName, setLabelShopName] = useState<string>('')
@@ -424,36 +428,75 @@ export default function InvoiceDetailPage() {
     }
   }, [invoiceId, supabase])
 
-  // Fetch Stock Moves
+  // Fetch Stock Moves (Includes both Invoice outbound moves & linked RMA return moves!)
   const fetchStockMoves = useCallback(async () => {
     setLoadingStockMoves(true)
     try {
-      const { data, error } = await supabase
-        .from('v_stock_moves_ledger')
-        .select(`
-          id,
-          created_at,
-          type,
-          qty,
-          system_stock,
-          reference,
-          variant_id,
-          products (
+      const selectCols = `
+        id,
+        created_at,
+        type,
+        qty,
+        bucket,
+        system_stock,
+        reference,
+        variant_id,
+        products (
+          name,
+          sku,
+          product_variants (
+            id,
             name,
-            sku,
-            product_variants (
-              id,
-              name,
-              sku
-            )
-          ),
-          origin_location_id
-        `)
-        .eq('source_id', invoiceId)
-        .order('created_at', { ascending: false })
+            sku
+          )
+        ),
+        origin_location_id
+      `
 
-      if (error) throw error
-      setStockMoves(data || [])
+      const [directRes, rmaListRes] = await Promise.all([
+        supabase
+          .from('v_stock_moves_ledger')
+          .select(selectCols)
+          .eq('source_id', invoiceId)
+          .order('created_at', { ascending: false }),
+        Promise.resolve(
+          supabase
+            .from('rma_requests')
+            .select('rma_number')
+            .eq('order_id', invoiceId)
+        ).catch(() => ({ data: null }))
+      ])
+
+      if (directRes.error) throw directRes.error
+      let combinedMoves: any[] = directRes.data || []
+
+      const rmaNumbers = (rmaListRes.data || [])
+        .map((r: any) => String(r.rma_number || '').trim())
+        .filter(Boolean)
+
+      if (rmaNumbers.length > 0) {
+        const orClauses = rmaNumbers.map((num: string) => `reference.ilike.${num}%`).join(',')
+        const { data: rmaMoves } = await supabase
+          .from('v_stock_moves_ledger')
+          .select(selectCols)
+          .or(orClauses)
+          .order('created_at', { ascending: false })
+
+        if (Array.isArray(rmaMoves) && rmaMoves.length > 0) {
+          const seen = new Set(combinedMoves.map((m) => m.id))
+          for (const rm of rmaMoves) {
+            if (!seen.has(rm.id)) {
+              combinedMoves.push(rm)
+              seen.add(rm.id)
+            }
+          }
+          combinedMoves.sort(
+            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          )
+        }
+      }
+
+      setStockMoves(combinedMoves)
     } catch (e) {
       console.error('Error fetching stock moves:', e)
     } finally {
@@ -1487,8 +1530,28 @@ export default function InvoiceDetailPage() {
                   </div>
                 )}
 
+                {Number(invoice.returned_total) > 0 && (() => {
+                  const baseBeforeReturn =
+                    Number(invoice.subtotal || 0) -
+                    Number(invoice.discount_amount || 0) +
+                    Number(invoice.shipping_cost || 0) +
+                    Number(invoice.other_fees || 0)
+                  const exactDeduction = Math.max(
+                    0,
+                    baseBeforeReturn > Number(invoice.grand_total || 0)
+                      ? baseBeforeReturn - Number(invoice.grand_total || 0)
+                      : Number(invoice.returned_total || 0)
+                  )
+                  return (
+                    <div className="py-2.5 flex justify-between text-rose-700 font-bold">
+                      <span>Dikurangi Retur / Nota Kredit</span>
+                      <span>-{formatIDR(exactDeduction)}</span>
+                    </div>
+                  )
+                })()}
+
                 <div className="py-3 flex justify-between text-base font-black text-[#1C1C1A] border-t-2 border-slate-800">
-                  <span>Total Tagihan</span>
+                  <span>{Number(invoice.returned_total) > 0 ? 'Total Tagihan Bersih' : 'Total Tagihan'}</span>
                   <span className={`${activeTheme.text}`}>{formatIDR(invoice.grand_total)}</span>
                 </div>
 
@@ -1560,8 +1623,14 @@ export default function InvoiceDetailPage() {
 
               {/* Financial Balance Summary */}
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-xs">
+                {Number(invoice.returned_total) > 0 && (
+                  <div className="flex justify-between font-bold text-rose-600">
+                    <span>Potongan Nota Kredit / RMA:</span>
+                    <span>-{formatIDR(Number(invoice.returned_total))}</span>
+                  </div>
+                )}
                 <div className="flex justify-between font-bold text-slate-600">
-                  <span>Grand Total:</span>
+                  <span>{Number(invoice.returned_total) > 0 ? 'Tagihan Bersih:' : 'Grand Total:'}</span>
                   <span className="text-slate-900 font-extrabold">{formatIDR(invoice.grand_total)}</span>
                 </div>
                 <div className="flex justify-between font-bold text-emerald-700">
@@ -1673,6 +1742,17 @@ export default function InvoiceDetailPage() {
                     className="w-full py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-all cursor-pointer"
                   >
                     💰 Catat Pembayaran / DP / Pelunasan
+                  </button>
+                )}
+
+                {/* RMA / Credit Memo Action for published active invoices */}
+                {canEdit && ['processing', 'shipped', 'completed'].includes(invoice.status) && (
+                  <button
+                    type="button"
+                    onClick={() => setShowRmaModal(true)}
+                    className="w-full py-2.5 text-xs font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-xl shadow-2xs transition-all cursor-pointer"
+                  >
+                    🔄 Ajukan Retur / Nota Kredit (RMA)
                   </button>
                 )}
 
@@ -2562,6 +2642,23 @@ export default function InvoiceDetailPage() {
       <iframe
         id="print-label-iframe"
         style={{ display: 'none', width: 0, height: 0, border: 'none' }}
+      />
+
+      {/* RMA & Credit Memo Modal */}
+      <CreateRmaModal
+        isOpen={showRmaModal}
+        onClose={() => setShowRmaModal(false)}
+        order={invoice}
+        defaultExpressMode={true}
+        onSuccess={async (res) => {
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('shapeup_invoices_cache')
+          }
+          setSuccessMessage(
+            res?.message || 'Retur / Nota Kredit berhasil diproses dan saldo faktur telah diperbarui.'
+          )
+          await Promise.all([fetchInvoiceDetails(true), fetchLedger(), fetchStockMoves()])
+        }}
       />
     </div>
   )

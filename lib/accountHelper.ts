@@ -71,15 +71,20 @@ export async function getOrCreateDefaultAccounts(
     { code: '101000', name: 'Kas POS (Tunai)', type: 'ASSET', business_id: businessId },
     { code: '101100', name: 'Kas Utama / Rekening Bank Utama', type: 'ASSET', business_id: businessId },
     { code: '101200', name: 'Bank / QRIS POS', type: 'ASSET', business_id: businessId },
+    { code: '102000', name: 'Persediaan Barang', type: 'ASSET', business_id: businessId },
+    { code: '102100', name: 'Persediaan Karantina & Retur', type: 'ASSET', business_id: businessId },
     { code: '103000', name: 'Piutang Usaha', type: 'ASSET', business_id: businessId },
+    { code: '201000', name: 'Hutang Usaha', type: 'LIABILITY', business_id: businessId },
+    { code: '202000', name: 'Pendapatan Diterima di Muka / Kredit Pelanggan', type: 'LIABILITY', business_id: businessId },
     { code: '301000', name: 'Modal Pemilik', type: 'EQUITY', business_id: businessId },
     { code: '401000', name: 'Pendapatan Penjualan POS', type: 'REVENUE', business_id: businessId },
     { code: '401100', name: 'Potongan Penjualan / Diskon', type: 'REVENUE', business_id: businessId },
     { code: '402000', name: 'Pendapatan Ongkir', type: 'REVENUE', business_id: businessId },
     { code: '403000', name: 'Pendapatan Lain-lain / Admin', type: 'REVENUE', business_id: businessId },
     { code: '501000', name: 'Harga Pokok Penjualan (HPP)', type: 'EXPENSE', business_id: businessId },
-    { code: '503000', name: 'Beban Selisih Kas / Operasional Lainnya', type: 'EXPENSE', business_id: businessId },
-    { code: '102000', name: 'Persediaan Barang', type: 'ASSET', business_id: businessId }
+    { code: '502000', name: 'Penyesuaian Persediaan', type: 'EXPENSE', business_id: businessId },
+    { code: '502100', name: 'Beban Kerusakan & Penyusutan Retur', type: 'EXPENSE', business_id: businessId },
+    { code: '503000', name: 'Beban Selisih Kas / Operasional Lainnya', type: 'EXPENSE', business_id: businessId }
   ]
 
   // Fetch existing accounts for this business to respect multi-tenant unique constraint on (business_id, code)
@@ -120,7 +125,7 @@ export async function getOrCreateDefaultAccounts(
     }
 
     if (insAccErr && !insAccErr.message.includes('duplicate key')) {
-      throw new Error(`Failed to create default accounts: ${insAccErr.message}`)
+      console.warn('[AccountHelper] Non-fatal warning seeding missing default accounts:', insAccErr.message)
     }
   }
 
@@ -159,13 +164,38 @@ export async function getOrCreateDefaultAccounts(
     accountMap[a.code] = a.id
   })
 
-  // Ensure all required accounts are resolved
-  for (const code of targetCodes) {
+  const coreCodes = [
+    '101000',
+    '101100',
+    '101200',
+    '102000',
+    '103000',
+    '301000',
+    '401000',
+    '401100',
+    '402000',
+    '403000',
+    '501000',
+    '503000'
+  ]
+
+  // Ensure core required accounts are resolved; extended RMA/AP accounts fall back gracefully so existing flows never break
+  for (const code of coreCodes) {
     if (!accountMap[code]) {
       throw new Error(`Account mapping failed for code ${code}`)
     }
   }
 
-  accountCache[businessId] = accountMap
+  const hasDedicatedRmaAccounts = Boolean(accountMap['102100'] && accountMap['502100'])
+
+  if (!accountMap['102100']) accountMap['102100'] = accountMap['102000']
+  if (!accountMap['502000']) accountMap['502000'] = accountMap['503000']
+  if (!accountMap['502100']) accountMap['502100'] = accountMap['502000']
+  if (!accountMap['202000'] && accountMap['201000']) accountMap['202000'] = accountMap['201000']
+
+  // Only cache permanently when dedicated RMA accounts (102100 & 502100) are genuinely present in DB
+  if (hasDedicatedRmaAccounts) {
+    accountCache[businessId] = accountMap
+  }
   return accountMap
 }

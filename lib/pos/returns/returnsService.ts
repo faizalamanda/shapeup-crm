@@ -88,10 +88,26 @@ export async function quoteReturnService(
     throw new ReturnError('Order ID tidak valid.', 'INVALID_ORDER_ID', 400)
   }
 
-  // 1. Fetch Order & Payment rows
-  const [orderRes, paymentsRes] = await Promise.all([
+  // 1. Parallel Snapshot Fetch (Order, Payments, Policy, POS Returns, & Active RMAs in 1 RTT)
+  const [orderRes, paymentsRes, policy, prItemsRes, rmaItemsRes] = await Promise.all([
     supabase.from('orders').select('*').eq('id', orderId).eq('business_id', businessId).single(),
-    supabase.from('order_payments').select('*').eq('order_id', orderId).eq('business_id', businessId)
+    supabase.from('order_payments').select('*').eq('order_id', orderId).eq('business_id', businessId),
+    getReturnPolicy(businessId, supabase),
+    Promise.resolve(
+      supabase
+        .from('pos_return_items')
+        .select('order_item_ref, qty, line_refund')
+        .eq('order_id', orderId)
+        .eq('business_id', businessId)
+    ).catch(() => ({ data: null, error: null })),
+    Promise.resolve(
+      supabase
+        .from('rma_items')
+        .select('order_item_ref, qty, line_refund, rma_requests!inner(fulfillment_stage)')
+        .eq('order_id', orderId)
+        .eq('business_id', businessId)
+        .not('rma_requests.fulfillment_stage', 'in', '("rejected","cancelled")')
+    ).catch(() => ({ data: null, error: null }))
   ])
 
   const order = orderRes.data
@@ -113,9 +129,6 @@ export async function quoteReturnService(
   }))
   const tenders = groupTenders(paymentRows)
 
-  // 2. Fetch Policy & Return History
-  const policy = await getReturnPolicy(businessId, supabase)
-
   // Policy: Return Window check
   if (policy.return_window_days > 0 && order.order_date_utc) {
     const orderTime = new Date(order.order_date_utc).getTime()
@@ -129,24 +142,24 @@ export async function quoteReturnService(
     }
   }
 
-  // Fetch previous return items from pos_return_items (if table exists)
-  let previousReturns: PreviousReturnItem[] = []
-  try {
-    const { data: prItems, error: prErr } = await supabase
-      .from('pos_return_items')
-      .select('order_item_ref, qty, line_refund')
-      .eq('order_id', orderId)
-      .eq('business_id', businessId)
-
-    if (!prErr && Array.isArray(prItems)) {
-      previousReturns = prItems.map((r) => ({
+  const previousReturns: PreviousReturnItem[] = []
+  if (!prItemsRes.error && Array.isArray(prItemsRes.data)) {
+    for (const r of prItemsRes.data) {
+      previousReturns.push({
         order_item_ref: r.order_item_ref,
         qty: Number(r.qty || 0),
         line_refund: Number(r.line_refund || 0)
-      }))
+      })
     }
-  } catch {
-    previousReturns = []
+  }
+  if (!rmaItemsRes.error && Array.isArray(rmaItemsRes.data)) {
+    for (const rm of rmaItemsRes.data) {
+      previousReturns.push({
+        order_item_ref: rm.order_item_ref,
+        qty: Number(rm.qty || 0),
+        line_refund: Number(rm.line_refund || 0)
+      })
+    }
   }
 
   // 3. Compute returnable lines
@@ -252,13 +265,15 @@ export async function quoteReturnService(
   const accounts: AccountIds = {
     salesReturns: accountMap['401100'] || accountMap['401000'],
     sales: accountMap['401000'],
-    otherIncome: accountMap['402000'] || accountMap['801000'] || accountMap['401000'],
+    otherIncome: accountMap['403000'] || accountMap['402000'] || accountMap['401000'],
     receivable: accountMap['103000'],
     inventory: accountMap['102000'],
+    quarantineInventory: accountMap['102100'] || accountMap['102000'],
+    returnLoss: accountMap['502100'] || accountMap['502000'],
     cogs: accountMap['501000'],
     cashDefault: accountMap['101000'],
     bankDefault: accountMap['101200'],
-    storeCredit: accountMap['202000'] || accountMap['202100'] || accountMap['201000']
+    storeCredit: accountMap['202000'] || accountMap['201000']
   }
 
   // 7. Approval Requirement check
@@ -605,7 +620,9 @@ export async function executeReturnService(
     order_update: {
       grand_total: quote.newGrandTotal,
       returned_total: Number(order.returned_total || 0) + quote.grossRefund,
+      returned_total_delta: quote.grossRefund,
       exchanged_in_total: Number(order.exchanged_in_total || 0) + quote.exchangeTotal,
+      exchanged_in_total_delta: quote.exchangeTotal,
       return_status: quote.returnStatus,
       status: quote.isFull && order.status !== 'cancelled' ? order.status : order.status
     },
