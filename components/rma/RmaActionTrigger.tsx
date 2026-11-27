@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { CreateRmaModal } from '@/app/orders/rma/components/CreateRmaModal'
+import { CreateRmaModal } from './CreateRmaModal'
 
 type RmaActionTriggerProps = {
   order: any

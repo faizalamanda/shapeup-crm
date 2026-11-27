@@ -175,10 +175,9 @@ const menuItems: MenuItem[] = [
   {
     name: 'Pemasukan',    href: '/orders',            icon: Icons.pemasukan,
     children: [
-      { name: 'Orders',       href: '/orders' },
-      { name: 'Invoices',     href: '/orders/invoices' },
-      { name: 'Retur & RMA',  href: '/orders/rma' },
-      { name: 'POS',          href: '/pos' },
+      { name: 'Orders',   href: '/orders' },
+      { name: 'Invoices', href: '/orders/invoices' },
+      { name: 'POS',      href: '/pos' },
     ],
   },
   {
@@ -196,6 +195,7 @@ const menuItems: MenuItem[] = [
       { name: 'Daftar Produk', href: '/products' },
       { name: 'Pembelian',     href: '/purchases' },
       { name: 'Stock Opname',  href: '/stock-opname' },
+      { name: 'Retur & RMA',   href: '/products/rma' },
       { name: 'Laporan Stok (Inventory)', href: '/inventory/reports' },
     ],
   },

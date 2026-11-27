@@ -8,7 +8,7 @@ import { formatDisplayDate, DEFAULT_TIMEZONE } from '@/lib/timeUtils'
 import { exportJsonToFile } from '@/lib/fileExporter'
 import PendingReturnsTab from '@/plugins/inventory-reports/components/PendingReturnsTab'
 import { RMA_REASON_MAP, RmaRequestRecord } from '@/lib/rma/types'
-import { RmaDetailModal } from './components/RmaDetailModal'
+import { RmaDetailModal } from '@/components/rma/RmaDetailModal'
 
 type StageTab =
   | 'all'

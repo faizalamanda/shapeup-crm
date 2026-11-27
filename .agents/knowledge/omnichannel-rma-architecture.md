@@ -21,9 +21,10 @@ Seluruh saluran penjualan (POS Kasir, Faktur B2B `/orders/invoices`, Pesanan Omn
    - Mengecek kuota retur gabungan lintas `pos_return_items` DAN `rma_items` dalam 1 `Promise.all` paralel sehingga item yang sudah diajukan RMA tidak pernah bisa diretur ganda di kasir POS (dan sebaliknya).
    - Mengeksekusi mutasi database melalui 1-roundtrip Semi-Modular ACID RPC (`process_rma_transition_v1` & `process_quarantine_batch_v1` pada [20261127093000_create_omnichannel_rma_engine.sql](file:///home/faiz-jazuli/shapeup-crm/supabase/migrations/20261127093000_create_omnichannel_rma_engine.sql)).
 
-3. **Lapis 3 — Plug-and-Play UI Components:**
+3. **Lapis 3 — Plug-and-Play UI Components (`@/components/rma/*` & `/products/rma`):**
+   - Halaman terpadu **Pusat Retur & RMA** berada di `/products/rma` ([page.tsx](file:///home/faiz-jazuli/shapeup-crm/app/products/rma/page.tsx)) di bawah menu **Products**, dengan hak akses gabungan untuk Staf Gudang (`manage_products`) maupun Admin Penjualan/Invoice (`manage_invoices`).
    - `<RmaActionTrigger order={order} onCompleted={...} />` ([RmaActionTrigger.tsx](file:///home/faiz-jazuli/shapeup-crm/components/rma/RmaActionTrigger.tsx)): Komponen tombol + modal 1 baris yang dapat dipasang di halaman mana pun (Order, Invoice, Profil Customer, Sidebar Chat WABA, atau Kanban Pipeline).
-   - `<CreateRmaModal />` & `<RmaDetailModal />`: Patuh penuh pada `FullScreenModal`, *Unconditional Hooks*, dan `prevIsOpenRef` *One-Time Transition Guard*.
+   - `<CreateRmaModal />` & `<RmaDetailModal />`: Berada di `components/rma/`, patuh penuh pada `FullScreenModal`, *Unconditional Hooks*, dan `prevIsOpenRef` *One-Time Transition Guard*.
 
 ---
 

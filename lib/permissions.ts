@@ -100,6 +100,16 @@ export function canAccessPath(href: string, context: AccessContext): boolean {
     )
   }
 
+  // 9b. Pusat Retur & RMA (Accessible by both Warehouse/Product Staff AND Sales/Invoice Staff)
+  if (href.startsWith('/products/rma')) {
+    return (
+      permissions.includes('manage_products') ||
+      permissions.includes('manage_purchases') ||
+      permissions.includes('manage_invoices') ||
+      permissions.includes('view_financials_no_salary')
+    )
+  }
+
   // 10. Products, Inventory Reports & Stock Opname
   if (href.startsWith('/products') || href.startsWith('/stock-opname') || href.startsWith('/inventory')) {
     return (

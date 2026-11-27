@@ -7,7 +7,7 @@ import Link from 'next/link'
 import { useUserContext } from '@/components/UserContext'
 import { formatDisplayDate } from '@/lib/timeUtils'
 import { resolvePaymentAccountFromCOA } from '@/lib/coa'
-import { CreateRmaModal } from '@/app/orders/rma/components/CreateRmaModal'
+import { CreateRmaModal } from '@/components/rma/CreateRmaModal'
 
 type Customer = {
   id: string

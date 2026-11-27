@@ -4,7 +4,7 @@ import { FullScreenModal } from '@/components/ui/FullScreenModal'
 import { extractPosOrderNumberAudit } from '@/lib/pos/orderNumberHelper'
 import { supabase } from '@/lib/supabase'
 import { formatDisplayDate, DEFAULT_TIMEZONE } from '@/lib/timeUtils'
-import { CreateRmaModal } from '@/app/orders/rma/components/CreateRmaModal'
+import { CreateRmaModal } from '@/components/rma/CreateRmaModal'
 
 export function OrderDetailModal({
   order,
