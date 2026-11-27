@@ -86,18 +86,32 @@ export function ProductSelectCombobox({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [selectedProductId, onChangeCustomName, onClearProduct])
 
+  // Filter products: if query contains space, match only by name to avoid SKU collisions
   const filteredProducts = products.filter(p => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return true
-    return (
-      (p.name || '').toLowerCase().includes(q) ||
+    // When query has spaces, prioritize name match only
+    if (q.includes(' ')) {
+      return (p.name || '').toLowerCase().includes(q)
+    }
+    // Single token: match name or SKU
+    return (p.name || '').toLowerCase().includes(q) ||
       (p.sku && p.sku.toLowerCase().includes(q))
-    )
+  })
+
+    // Sort results: prioritize name matches over SKU matches
+  const sortedProducts = filteredProducts.sort((a, b) => {
+    const q = searchQuery.trim().toLowerCase()
+    const aName = (a.name || '').toLowerCase().includes(q)
+    const bName = (b.name || '').toLowerCase().includes(q)
+    if (aName && !bName) return -1
+    if (!aName && bName) return 1
+    return 0
   })
 
   // DOM Windowing: Limit rendered nodes to 50 items for 0ms dropdown open latency on > 1,000 products
   const MAX_VISIBLE_ITEMS = 50
-  const visibleProducts = filteredProducts.slice(0, MAX_VISIBLE_ITEMS)
+  const visibleProducts = sortedProducts.slice(0, MAX_VISIBLE_ITEMS)
 
   const hasSelection = Boolean(selectedProduct || selectedProductName)
 
