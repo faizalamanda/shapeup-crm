@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { parseProductSearchQuery, scoreProductMatch } from '@/lib/productSearchHelper'
 import VariantSelectorModal from './VariantSelectorModal'
 import CashPaymentModal, { type PaymentResult } from './CashPaymentModal'
 import { getPosTendersCache, setPosTendersCache, type POSTender } from '@/lib/pos/tenderResolver'
@@ -474,56 +475,49 @@ export default function POSWorkspace({
     ])
   }, [businessId, refreshCatalog, loadSecondaryData])
 
-  // Smart Exact-Match vs Tokenized Matches Separation (Option B: Smart Focus with Expansion)
+  // Smart Exact-Match vs Weighted BM25F Matches Separation (Universal Product Search Engine)
   const { exactMatches, otherMatches, hasExactMatch } = useMemo(() => {
     const list = (Array.isArray(products) ? products : []).filter((p) => p && p.is_sellable !== false)
-    const rawQ = (debouncedSearch || '').trim()
-    const cleanQ = rawQ.toLowerCase().replace(/\s+/g, ' ')
+    const parsed = parseProductSearchQuery(debouncedSearch)
 
-    if (!cleanQ) {
+    if (!parsed.clean) {
       const baseList = selectedCategoryId
         ? list.filter((p) => p && p.category_id === selectedCategoryId)
         : list
       return { exactMatches: [], otherMatches: baseList, hasExactMatch: false }
     }
 
-    const tokens = cleanQ.split(/\s+/).filter(Boolean)
     const exactList: any[] = []
-    const otherList: any[] = []
+    const scoredOthers: { item: any; score: number }[] = []
 
     for (const p of list) {
       if (!p) continue
       if (selectedCategoryId && p.category_id !== selectedCategoryId) continue
 
-      const pName = (p.name || '').trim().toLowerCase().replace(/\s+/g, ' ')
-      const pSku = (p.sku || '').trim().toLowerCase()
-      const variants = Array.isArray(p.product_variants) ? p.product_variants : []
+      const matchRes = scoreProductMatch(p, parsed)
+      if (!matchRes.matched) continue
 
-      // Check Exact SKU Match (Case A) or Exact Name Match (Case B - min 2 chars)
-      const isExactSku = pSku === cleanQ || variants.some((v: any) => (v?.sku || '').trim().toLowerCase() === cleanQ)
-      const isExactName = cleanQ.length >= 2 && pName === cleanQ
-
-      if (isExactSku || isExactName) {
-        exactList.push({ ...p, _isExactMatch: true })
-        continue
-      }
-
-      // Check Tokenized Substring Match
-      const variantTexts = variants.map((v: any) => `${(v?.name || '').toLowerCase()} ${(v?.sku || '').toLowerCase()}`)
-      const isTokenMatch = tokens.every((t) =>
-        pName.includes(t) ||
-        pSku.includes(t) ||
-        variantTexts.some((vt) => vt.includes(t))
-      )
-
-      if (isTokenMatch) {
-        otherList.push({ ...p, _isExactMatch: false })
+      if (matchRes.isExactMatch) {
+        exactList.push({ ...p, _isExactMatch: true, _searchScore: matchRes.score })
+      } else {
+        scoredOthers.push({
+          item: { ...p, _isExactMatch: false, _searchScore: matchRes.score },
+          score: matchRes.score
+        })
       }
     }
 
+    scoredOthers.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score
+      return String(a.item.name || '').localeCompare(String(b.item.name || ''), 'id', {
+        sensitivity: 'base',
+        numeric: true
+      })
+    })
+
     return {
       exactMatches: exactList,
-      otherMatches: otherList,
+      otherMatches: scoredOthers.map((s) => s.item),
       hasExactMatch: exactList.length > 0
     }
   }, [products, debouncedSearch, selectedCategoryId])

@@ -1,12 +1,11 @@
 "use client"
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { supabase } from '@/lib/supabase'
 import ProductModal from './components/ProductModal'
 import { useUserContext } from '@/components/UserContext'
 import Link from 'next/link'
 import { Pagination } from '@/app/components/Pagination'
 import { invalidatePosCatalogCache, PosPriceTiers } from '@/lib/posCatalogStore'
-import { fetchAllSupabaseRows } from '@/lib/chunkedQueryHelper'
+import { parseProductSearchQuery } from '@/lib/productSearchHelper'
 
 type Category = {
   id: string
@@ -35,13 +34,6 @@ type Product = {
   product_modifiers?: any[]
 }
 
-type ProductCachePayload = {
-  products: Product[]
-  categories: Category[]
-  ts: number
-  businessId: string
-}
-
 type SortField = 'sku' | 'name' | 'category' | 'type' | 'stock_type' | 'stock_quantity' | 'cost_price' | 'price'
 type SortOrder = 'asc' | 'desc' | null
 
@@ -59,22 +51,49 @@ interface DeleteModalState {
   confirmText: string
 }
 
-const CACHE_TTL_MS = 5 * 60 * 1000 // 5 menit
-const STALE_RECHECK = 2 * 60 * 1000 // 2 menit
+interface ProductPageCacheEntry {
+  products: Product[]
+  totalCount: number
+  overallTotalCount: number
+  ts: number
+}
+
+// L1 In-Memory SWR Cache for instant 0ms back/forth pagination & repeated searches
+const l1PageQueryCache = new Map<string, ProductPageCacheEntry>()
+const l1CategoryCache = new Map<string, { categories: Category[]; ts: number }>()
+const PAGE_CACHE_TTL_MS = 3 * 60 * 1000 // 3 minutes
+const STALE_RECHECK_MS = 60 * 1000 // 1 minute
+
+function clearBusinessProductPageCache(businessId: string) {
+  for (const key of Array.from(l1PageQueryCache.keys())) {
+    if (key.startsWith(`${businessId}|`)) {
+      l1PageQueryCache.delete(key)
+    }
+  }
+  l1CategoryCache.delete(businessId)
+  if (typeof window !== 'undefined') {
+    try {
+      sessionStorage.removeItem(`su_products_data_${businessId}`)
+    } catch {}
+  }
+}
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([])
+  const [totalFilteredCount, setTotalFilteredCount] = useState<number>(0)
+  const [overallTotalCount, setOverallTotalCount] = useState<number>(0)
   const [categories, setCategories] = useState<Category[]>([])
   const [activeBizId, setActiveBizId] = useState<string | null>(null)
   const [activeBizName, setActiveBizName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isSearching, setIsSearching] = useState(false)
+  const [selectingAllFiltered, setSelectingAllFiltered] = useState(false)
+
   const latestBizIdRef = useRef<string | null>(null)
   const lastFetchTsRef = useRef<number>(0)
-  const lastFallbackAttemptRef = useRef<string | null>(null)
   const isMutatingRef = useRef<boolean>(false)
   const lastLocalMutationTsRef = useRef<number>(0)
-  const productsRef = useRef<Product[]>([])
-  productsRef.current = products
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   // Filters State
   const [searchQuery, setSearchQuery] = useState('')
@@ -87,11 +106,11 @@ export default function ProductsPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(25)
 
-  // Debounce search input (250ms)
+  // Debounce search input (220ms) — preserves trailing space so "SRJ " deactivates SKU matching
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchQuery)
-    }, 250)
+    }, 220)
     return () => clearTimeout(timer)
   }, [searchQuery])
 
@@ -104,9 +123,31 @@ export default function ProductsPage() {
     setCurrentPage(1)
   }, [debouncedSearch, selectedCategory, selectedType, selectedStockType, sortField, sortOrder])
 
+  const parsedSearchMeta = useMemo(
+    () => parseProductSearchQuery(debouncedSearch),
+    [debouncedSearch]
+  )
+
   // Selection State for Bulk Actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [selectedProductsMap, setSelectedProductsMap] = useState<Map<string, Product>>(new Map())
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null)
+
+  // Keep a map of selected product objects so the Delete Preview Modal works across pages
+  useEffect(() => {
+    if (products.length === 0) return
+    setSelectedProductsMap(prev => {
+      let changed = false
+      const next = new Map(prev)
+      for (const p of products) {
+        if (selectedIds.has(p.id) && !next.has(p.id)) {
+          next.set(p.id, p)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [products, selectedIds])
 
   // Add/Edit Product Modal Control
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -134,225 +175,166 @@ export default function ProductsPage() {
     }
   }, [])
 
-  // Cache functions
-  const readCache = (bid: string): ProductCachePayload | null => {
-    try {
-      const raw = sessionStorage.getItem(`su_products_data_${bid}`)
-      if (!raw) return null
-      const parsed: ProductCachePayload = JSON.parse(raw)
-      if (Date.now() - parsed.ts > CACHE_TTL_MS) return null
-      return parsed
-    } catch {
-      return null
-    }
-  }
+  const buildQueryCacheKey = useCallback(
+    (
+      bid: string,
+      qRaw: string,
+      catId: string,
+      typeVal: string,
+      stockVal: string,
+      sField: SortField | null,
+      sOrder: SortOrder,
+      pageNum: number,
+      limitNum: number
+    ) => {
+      const parsed = parseProductSearchQuery(qRaw)
+      return `${bid}|q:${parsed.clean}|sp:${parsed.hasSpace ? 1 : 0}|cat:${catId}|type:${typeVal}|stock:${stockVal}|sort:${sField || ''}:${sOrder || ''}|p:${pageNum}|l:${limitNum}`
+    },
+    []
+  )
 
-  const writeCache = (bid: string, prods: Product[], cats: Category[]) => {
-    try {
-      // Don't bloat sessionStorage if catalogue is large (> 2000 items) to prevent QuotaExceededError
-      if (prods.length > 2000) {
-        sessionStorage.removeItem(`su_products_data_${bid}`)
-        return
+  // Modular Server-Side Search & Paginated Fetch (/api/products/search)
+  const fetchProductPage = useCallback(
+    async (
+      businessId: string,
+      options?: {
+        background?: boolean
+        forceRefresh?: boolean
       }
-      const payload: ProductCachePayload = {
-        products: prods,
-        categories: cats,
-        ts: Date.now(),
-        businessId: bid
-      }
-      sessionStorage.setItem(`su_products_data_${bid}`, JSON.stringify(payload))
-    } catch {
-      // ignore silently if storage is full
-    }
-  }
+    ) => {
+      if (!businessId) return
+      const background = Boolean(options?.background)
+      const forceRefresh = Boolean(options?.forceRefresh)
 
-  // Fetch Products & Categories (Bypassing PostgREST 1000 Row Limit)
-  const fetchProductsAndCategories = useCallback(async (businessId: string, background = false) => {
-    if (!background) setLoading(true)
-    try {
-      // 1. Fetch categories
-      const { data: catData, error: catErr } = await supabase
-        .from('categories')
-        .select('*')
-        .eq('business_id', businessId)
-        .order('name', { ascending: true })
+      const cacheKey = buildQueryCacheKey(
+        businessId,
+        debouncedSearch,
+        selectedCategory,
+        selectedType,
+        selectedStockType,
+        sortField,
+        sortOrder,
+        currentPage,
+        pageSize
+      )
 
-      if (catErr) throw catErr
-      const fetchedCats = catData || []
-      setCategories(fetchedCats)
-
-      // 2. Fetch all products in chunks of 1000 to bypass PostgREST max-rows limit (parallelized after chunk 0)
-      const CHUNK_SIZE = 1000
-      let allProducts: Product[] = []
-      let selectClause = '*, categories(id, name), product_variants(*), product_modifiers(*)'
-
-      // Chunk 0: discover working selectClause + total count (with deterministic id tie-breaker)
-      let { data: firstChunk, count: totalProdCount, error: prodErr } = await supabase
-        .from('products')
-        .select(selectClause, { count: 'exact' })
-        .eq('business_id', businessId)
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: true })
-        .range(0, CHUNK_SIZE - 1)
-
-      if (prodErr && selectClause === '*, categories(id, name), product_variants(*), product_modifiers(*)') {
-        selectClause = '*, categories(id, name), product_variants(*)'
-        const retryWithVars = await supabase
-          .from('products')
-          .select(selectClause, { count: 'exact' })
-          .eq('business_id', businessId)
-          .order('created_at', { ascending: false })
-          .order('id', { ascending: true })
-          .range(0, CHUNK_SIZE - 1)
-        firstChunk = retryWithVars.data
-        totalProdCount = retryWithVars.count
-        prodErr = retryWithVars.error
+      const cachedCats = l1CategoryCache.get(businessId)
+      if (cachedCats && Date.now() - cachedCats.ts < PAGE_CACHE_TTL_MS) {
+        setCategories(cachedCats.categories)
       }
 
-      if (prodErr && selectClause !== '*, categories(id, name)') {
-        selectClause = '*, categories(id, name)'
-        const fallbackRes = await supabase
-          .from('products')
-          .select(selectClause, { count: 'exact' })
-          .eq('business_id', businessId)
-          .order('created_at', { ascending: false })
-          .order('id', { ascending: true })
-          .range(0, CHUNK_SIZE - 1)
-        firstChunk = fallbackRes.data
-        totalProdCount = fallbackRes.count
-        prodErr = fallbackRes.error
-      }
-
-      if (prodErr) throw prodErr
-      if (latestBizIdRef.current && latestBizIdRef.current !== businessId) return
-
-      if (firstChunk && firstChunk.length > 0) {
-        allProducts = allProducts.concat(firstChunk as unknown as Product[])
-
-        // Progressive rendering: show newest 1,000 products immediately while remaining chunks load
-        if (!background && (totalProdCount || 0) > CHUNK_SIZE) {
-          setProducts(firstChunk as unknown as Product[])
+      if (!forceRefresh) {
+        const cachedPage = l1PageQueryCache.get(cacheKey)
+        if (cachedPage && Date.now() - cachedPage.ts < PAGE_CACHE_TTL_MS) {
+          setProducts(cachedPage.products)
+          setTotalFilteredCount(cachedPage.totalCount)
+          setOverallTotalCount(cachedPage.overallTotalCount)
           setLoading(false)
-        }
+          setIsSearching(false)
 
-        const fetchChunkWithRetry = async (offset: number) => {
-          let lastRes: any = null
-          for (let attempt = 0; attempt < 2; attempt++) {
-            lastRes = await supabase
-              .from('products')
-              .select(selectClause)
-              .eq('business_id', businessId)
-              .order('created_at', { ascending: false })
-              .order('id', { ascending: true })
-              .range(offset, offset + CHUNK_SIZE - 1)
-            if (!lastRes.error) return lastRes
+          if (Date.now() - cachedPage.ts < STALE_RECHECK_MS) {
+            return
           }
-          return lastRes
+          // Otherwise continue in background to revalidate silently (SWR)
+        }
+      }
+
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+      const controller = new AbortController()
+      abortControllerRef.current = controller
+
+      const hasCachedDisplay = l1PageQueryCache.has(cacheKey) && !forceRefresh
+      if (!background && !hasCachedDisplay) {
+        if (products.length === 0) {
+          setLoading(true)
+        } else {
+          setIsSearching(true)
+        }
+      }
+
+      try {
+        const needCats = !cachedCats || forceRefresh
+        const params = new URLSearchParams()
+        params.set('business_id', businessId)
+        if (debouncedSearch) params.set('search', debouncedSearch)
+        if (selectedCategory) params.set('category_id', selectedCategory)
+        if (selectedType) params.set('type', selectedType)
+        if (selectedStockType) params.set('stock_type', selectedStockType)
+        if (sortField && sortOrder) {
+          params.set('sort_field', sortField)
+          params.set('sort_order', sortOrder)
+        }
+        params.set('page', String(currentPage))
+        params.set('limit', String(pageSize))
+        if (needCats) params.set('include_categories', 'true')
+
+        const res = await fetch(`/api/products/search?${params.toString()}`, {
+          headers: { 'x-business-id': businessId },
+          signal: controller.signal
+        })
+
+        const data = await res.json().catch(() => null)
+        if (!res.ok || !data) {
+          throw new Error(data?.error || `Gagal memuat produk (${res.status})`)
         }
 
-        if (firstChunk.length === CHUNK_SIZE) {
-          const total = totalProdCount || 0
-          if (total > CHUNK_SIZE) {
-            const offsets: number[] = []
-            for (let offset = CHUNK_SIZE; offset < total; offset += CHUNK_SIZE) {
-              offsets.push(offset)
-            }
-            const CONCURRENCY = 3
-            for (let i = 0; i < offsets.length; i += CONCURRENCY) {
-              if (latestBizIdRef.current && latestBizIdRef.current !== businessId) return
-              const wave = offsets.slice(i, i + CONCURRENCY)
-              const waveResults = await Promise.all(
-                wave.map(offset => fetchChunkWithRetry(offset))
-              )
-              for (const res of waveResults) {
-                if (res.error) {
-                  console.warn('[ProductsPage] Chunk fetch warning:', res.error)
-                  continue
-                }
-                if (res.data && res.data.length > 0) {
-                  allProducts = allProducts.concat(res.data as unknown as Product[])
-                }
-              }
-            }
-          } else if (!totalProdCount) {
-            // Fallback sequential loop if count was not returned
-            let from = CHUNK_SIZE
-            while (true) {
-              if (latestBizIdRef.current && latestBizIdRef.current !== businessId) return
-              const { data: chunk, error: nextErr } = await fetchChunkWithRetry(from)
-              if (nextErr) {
-                console.warn('[ProductsPage] Sequential chunk fetch warning:', nextErr)
-                break
-              }
-              if (!chunk || chunk.length === 0) break
-              allProducts = allProducts.concat(chunk as unknown as Product[])
-              if (chunk.length < CHUNK_SIZE) break
-              from += CHUNK_SIZE
-            }
+        if (latestBizIdRef.current && latestBizIdRef.current !== businessId) return
+
+        const fetchedProducts: Product[] = Array.isArray(data.products) ? data.products : []
+        const fetchedTotal = Number.isFinite(Number(data.totalCount))
+          ? Number(data.totalCount)
+          : fetchedProducts.length
+        const fetchedOverall = Number.isFinite(Number(data.overallTotalCount))
+          ? Number(data.overallTotalCount)
+          : fetchedTotal
+
+        if (Array.isArray(data.categories)) {
+          setCategories(data.categories)
+          l1CategoryCache.set(businessId, {
+            categories: data.categories,
+            ts: Date.now()
+          })
+        }
+
+        const now = Date.now()
+        lastFetchTsRef.current = now
+        l1PageQueryCache.set(cacheKey, {
+          products: fetchedProducts,
+          totalCount: fetchedTotal,
+          overallTotalCount: fetchedOverall,
+          ts: now
+        })
+
+        setProducts(fetchedProducts)
+        setTotalFilteredCount(fetchedTotal)
+        setOverallTotalCount(fetchedOverall)
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return
+        console.error('[ProductsPage] Error fetching product page:', err)
+      } finally {
+        if (!controller.signal.aborted) {
+          if (!latestBizIdRef.current || latestBizIdRef.current === businessId) {
+            setLoading(false)
+            setIsSearching(false)
           }
         }
       }
-
-      if (latestBizIdRef.current && latestBizIdRef.current !== businessId) return
-
-      // Self-healing chunked direct table hydration if embedded join fell back
-      if (allProducts.length > 0 && allProducts[0].product_variants === undefined) {
-        try {
-          const directVars = await fetchAllSupabaseRows<any>((from, to) =>
-            supabase
-              .from('product_variants')
-              .select('*')
-              .eq('business_id', businessId)
-              .order('id', { ascending: true })
-              .range(from, to)
-          )
-          if (directVars) {
-            const vMap = new Map<string, any[]>()
-            for (const v of directVars) {
-              if (!vMap.has(v.product_id)) vMap.set(v.product_id, [])
-              vMap.get(v.product_id)!.push(v)
-            }
-            allProducts = allProducts.map(p => ({
-              ...p,
-              product_variants: vMap.get(p.id) || []
-            }))
-          }
-        } catch {}
-      }
-
-      if (latestBizIdRef.current && latestBizIdRef.current !== businessId) return
-
-      // Deterministic deduplication by id across chunks
-      const dedupedMap = new Map<string, Product>()
-      for (const p of allProducts) {
-        if (p?.id && !dedupedMap.has(p.id)) {
-          dedupedMap.set(p.id, p)
-        }
-      }
-      const finalProducts = Array.from(dedupedMap.values())
-
-      lastFetchTsRef.current = Date.now()
-      setProducts(prev => {
-        if (prev.length === 0 || isMutatingRef.current) return finalProducts
-        const finalIdSet = new Set(finalProducts.map(p => p.id))
-        const preservedFromSearch = prev.filter(
-          p => p?.id && p.business_id === businessId && !finalIdSet.has(p.id)
-        )
-        return preservedFromSearch.length > 0
-          ? [...preservedFromSearch, ...finalProducts]
-          : finalProducts
-      })
-
-      // Save to cache (safely guarded against quota exhaustion)
-      writeCache(businessId, finalProducts, fetchedCats)
-    } catch (err) {
-      console.error('Error fetching data:', err)
-    } finally {
-      if (!latestBizIdRef.current || latestBizIdRef.current === businessId) {
-        setLoading(false)
-      }
-    }
-  }, [supabase])
+    },
+    [
+      buildQueryCacheKey,
+      debouncedSearch,
+      selectedCategory,
+      selectedType,
+      selectedStockType,
+      sortField,
+      sortOrder,
+      currentPage,
+      pageSize,
+      products.length
+    ]
+  )
 
   const { activeBusiness, bizLoading, isOwner, currentUserRole, currentUserPermissions } = useUserContext()
 
@@ -367,40 +349,42 @@ export default function ProductsPage() {
 
   const canPurgeAllProducts = isAdmin
 
-  // Fetch initial profile & active business ID from UserContext
+  // Track active business changes
   useEffect(() => {
     if (bizLoading) return
     if (activeBusiness?.id) {
       const businessId = activeBusiness.id
       const prevBizId = latestBizIdRef.current
       latestBizIdRef.current = businessId
+      if (prevBizId && prevBizId !== businessId) {
+        setProducts([])
+        setTotalFilteredCount(0)
+        setOverallTotalCount(0)
+        setSelectedIds(new Set())
+        setSelectedProductsMap(new Map())
+        setLoading(true)
+      }
       setActiveBizId(businessId)
       setActiveBizName(activeBusiness.name || 'Bisnis Saya')
-
-      // Cache-first strategy
-      const cached = readCache(businessId)
-      if (cached) {
-        lastFetchTsRef.current = cached.ts
-        setProducts(cached.products)
-        setCategories(cached.categories)
-        setLoading(false)
-
-        // Revalidate in background if stale or if legacy cache lacked product_variants array
-        const age = Date.now() - cached.ts
-        const missingVariantsRel = cached.products.length > 0 && cached.products[0].product_variants === undefined
-        if (age > STALE_RECHECK || missingVariantsRel) {
-          fetchProductsAndCategories(businessId, true)
-        }
-      } else {
-        // Clear previous business products immediately so stale items never bleed across stores
-        if (prevBizId && prevBizId !== businessId) {
-          setProducts([])
-        }
-        // No cache - full fetch
-        fetchProductsAndCategories(businessId, false)
-      }
     }
-  }, [activeBusiness, bizLoading, fetchProductsAndCategories])
+  }, [activeBusiness, bizLoading])
+
+  // Fetch products whenever activeBizId, search, filters, sorting, or pagination change
+  useEffect(() => {
+    if (!activeBizId || isMutatingRef.current) return
+    fetchProductPage(activeBizId)
+  }, [
+    activeBizId,
+    debouncedSearch,
+    selectedCategory,
+    selectedType,
+    selectedStockType,
+    sortField,
+    sortOrder,
+    currentPage,
+    pageSize,
+    fetchProductPage
+  ])
 
   // Cross-tab catalog sync (BroadcastChannel + CustomEvent) & throttled window focus revalidation
   useEffect(() => {
@@ -409,7 +393,8 @@ export default function ProductsPage() {
     const triggerBackgroundSync = (targetBizId?: string) => {
       if (targetBizId && targetBizId !== activeBizId) return
       if (isMutatingRef.current || Date.now() - lastLocalMutationTsRef.current < 3000) return
-      fetchProductsAndCategories(activeBizId, true)
+      clearBusinessProductPageCache(activeBizId)
+      fetchProductPage(activeBizId, { background: true, forceRefresh: true })
     }
 
     const handleCustomEvent = (e: Event) => {
@@ -434,8 +419,8 @@ export default function ProductsPage() {
 
     const handleFocusOrVisible = () => {
       if (isMutatingRef.current || Date.now() - lastLocalMutationTsRef.current < 3000) return
-      if (document.visibilityState === 'visible' && Date.now() - lastFetchTsRef.current > 30_000) {
-        fetchProductsAndCategories(activeBizId, true)
+      if (document.visibilityState === 'visible' && Date.now() - lastFetchTsRef.current > 45_000) {
+        fetchProductPage(activeBizId, { background: true, forceRefresh: true })
       }
     }
 
@@ -450,7 +435,7 @@ export default function ProductsPage() {
         try { bc.close() } catch {}
       }
     }
-  }, [activeBizId, fetchProductsAndCategories])
+  }, [activeBizId, fetchProductPage])
 
   // Formatting price helper
   const formatPrice = useCallback((val: number) => {
@@ -471,7 +456,8 @@ export default function ProductsPage() {
   const refreshData = () => {
     if (activeBizId) {
       lastLocalMutationTsRef.current = Date.now()
-      fetchProductsAndCategories(activeBizId, false)
+      clearBusinessProductPageCache(activeBizId)
+      fetchProductPage(activeBizId, { forceRefresh: true })
     }
   }
 
@@ -520,211 +506,25 @@ export default function ProductsPage() {
     )
   }
 
-  // Hybrid Server-Side Search Fallback (0-Result Guard for 5,000+ SKU / Cross-Session Imports)
+  // Products returned by server are already filtered, weighted/sorted, and sliced to currentPage
+  const paginatedProducts = products
+
+  // Auto-clamp currentPage if totalFilteredCount reduces
   useEffect(() => {
-    const cleanQ = debouncedSearch.trim().replace(/[,()]/g, '')
-    if (!activeBizId || loading || isMutatingRef.current || cleanQ.length < 2) return
-
-    const qLower = cleanQ.toLowerCase()
-    const attemptKey = `${activeBizId}:${qLower}:${lastFetchTsRef.current}`
-    if (lastFallbackAttemptRef.current === attemptKey) return
-
-    const currentProds = productsRef.current
-    const hasLocalMatch = currentProds.some(
-      p =>
-        (p.name || '').toLowerCase().includes(qLower) ||
-        (p.sku || '').toLowerCase().includes(qLower) ||
-        (p.description || '').toLowerCase().includes(qLower) ||
-        (Array.isArray(p.product_variants) &&
-          p.product_variants.some(
-            (v: any) =>
-              (v?.name || '').toLowerCase().includes(qLower) ||
-              (v?.sku || '').toLowerCase().includes(qLower)
-          ))
-    )
-
-    if (hasLocalMatch) return
-
-    let cancelled = false
-    const targetBizId = activeBizId
-
-    ;(async () => {
-      try {
-        const selectClauses = [
-          '*, categories(id, name), product_variants(*), product_modifiers(*)',
-          '*, categories(id, name), product_variants(*)',
-          '*, categories(id, name)'
-        ]
-        let found: any[] | null = null
-        let activeClause = selectClauses[0]
-
-        for (const clause of selectClauses) {
-          const { data, error } = await supabase
-            .from('products')
-            .select(clause)
-            .eq('business_id', targetBizId)
-            .or(`name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`)
-            .order('created_at', { ascending: false })
-            .order('id', { ascending: true })
-            .limit(50)
-
-          if (!error) {
-            found = data || []
-            activeClause = clause
-            break
-          }
-        }
-
-        // Also search product_variants by name or sku if parent product didn't match directly
-        try {
-          const { data: matchedVars } = await supabase
-            .from('product_variants')
-            .select('product_id')
-            .eq('business_id', targetBizId)
-            .or(`name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`)
-            .limit(50)
-
-          const existingFoundIds = new Set((found || []).map((p: any) => p.id))
-          const parentIds = Array.from(
-            new Set(
-              (matchedVars || [])
-                .map((v: any) => v.product_id)
-                .filter((id: string) => id && !existingFoundIds.has(id))
-            )
-          )
-
-          if (parentIds.length > 0) {
-            const { data: extraProds } = await supabase
-              .from('products')
-              .select(activeClause)
-              .eq('business_id', targetBizId)
-              .in('id', parentIds)
-            if (extraProds && extraProds.length > 0) {
-              found = [...(found || []), ...extraProds]
-            }
-          }
-        } catch {}
-
-        if (cancelled || isMutatingRef.current || latestBizIdRef.current !== targetBizId) return
-        lastFallbackAttemptRef.current = attemptKey
-
-        if (!found || found.length === 0) return
-
-        setProducts(prev => {
-          const existingIds = new Set(prev.map(p => p.id))
-          const newItems = (found as unknown as Product[]).filter(p => p?.id && !existingIds.has(p.id))
-          if (newItems.length === 0) return prev
-          return [...newItems, ...prev]
-        })
-      } catch {}
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [debouncedSearch, activeBizId, loading, supabase])
-
-  // Filtered & Sorted Products list
-  const filteredProducts = useMemo(() => {
-    const q = debouncedSearch.trim().toLowerCase()
-    const filtered = products.filter(p => {
-      const matchesVariant = Array.isArray(p.product_variants) && p.product_variants.some(
-        (v: any) => (v?.name || '').toLowerCase().includes(q) || (v?.sku || '').toLowerCase().includes(q)
-      )
-      const matchesSearch = !q ||
-        (p.name || '').toLowerCase().includes(q) ||
-        (p.sku || '').toLowerCase().includes(q) ||
-        (p.description || '').toLowerCase().includes(q) ||
-        matchesVariant
-
-      const matchesCategory = selectedCategory ? p.category_id === selectedCategory : true
-      const matchesType = selectedType ? p.type === selectedType : true
-      const matchesStockType = selectedStockType ? p.stock_type === selectedStockType : true
-
-      return matchesSearch && matchesCategory && matchesType && matchesStockType
-    })
-
-    if (!sortField || !sortOrder) {
-      return filtered
-    }
-
-    return [...filtered].sort((a, b) => {
-      let comparison = 0
-
-      switch (sortField) {
-        case 'sku': {
-          const skuA = (a.sku || '').trim().toLowerCase()
-          const skuB = (b.sku || '').trim().toLowerCase()
-          if (!skuA && !skuB) comparison = 0
-          else if (!skuA) comparison = 1
-          else if (!skuB) comparison = -1
-          else comparison = skuA.localeCompare(skuB, 'id', { numeric: true, sensitivity: 'base' })
-          break
-        }
-        case 'name': {
-          comparison = (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' })
-          break
-        }
-        case 'category': {
-          const catA = getCategoryName(a).toLowerCase()
-          const catB = getCategoryName(b).toLowerCase()
-          comparison = catA.localeCompare(catB, 'id', { sensitivity: 'base' })
-          break
-        }
-        case 'type': {
-          comparison = a.type.localeCompare(b.type)
-          break
-        }
-        case 'stock_type': {
-          // Sort order preference: tracked -> available -> unavailable
-          const stockTypePriority: Record<string, number> = { tracked: 1, available: 2, unavailable: 3 }
-          const prioA = stockTypePriority[a.stock_type] || 99
-          const prioB = stockTypePriority[b.stock_type] || 99
-          comparison = prioA - prioB
-          break
-        }
-        case 'stock_quantity': {
-          const qtyA = a.stock_type === 'tracked' ? a.stock_quantity : -Infinity
-          const qtyB = b.stock_type === 'tracked' ? b.stock_quantity : -Infinity
-          comparison = qtyA - qtyB
-          break
-        }
-        case 'cost_price': {
-          comparison = a.cost_price - b.cost_price
-          break
-        }
-        case 'price': {
-          comparison = a.price - b.price
-          break
-        }
-        default:
-          comparison = 0
-      }
-
-      return sortOrder === 'asc' ? comparison : -comparison
-    })
-  }, [products, debouncedSearch, selectedCategory, selectedType, selectedStockType, sortField, sortOrder, getCategoryName])
-
-  // Paginated Products slice for performance
-  const paginatedProducts = useMemo(() => {
-    const startIdx = (currentPage - 1) * pageSize
-    return filteredProducts.slice(startIdx, startIdx + pageSize)
-  }, [filteredProducts, currentPage, pageSize])
-
-  // Auto-clamp currentPage if filteredProducts reduces
-  useEffect(() => {
-    const maxPage = Math.max(1, Math.ceil(filteredProducts.length / pageSize))
+    if (loading) return
+    const maxPage = Math.max(1, Math.ceil(totalFilteredCount / pageSize))
     if (currentPage > maxPage) {
       setCurrentPage(1)
     }
-  }, [filteredProducts.length, pageSize, currentPage])
+  }, [totalFilteredCount, pageSize, currentPage, loading])
 
   // ─── Selection Helpers ─────────────────────────────────────────────────────
 
   const allFilteredSelected = useMemo(() => {
-    if (filteredProducts.length === 0) return false
-    return filteredProducts.every(p => selectedIds.has(p.id))
-  }, [filteredProducts, selectedIds])
+    if (totalFilteredCount === 0) return false
+    if (selectedIds.size < totalFilteredCount) return false
+    return paginatedProducts.every(p => selectedIds.has(p.id))
+  }, [totalFilteredCount, paginatedProducts, selectedIds])
 
   const allPageSelected = useMemo(() => {
     if (paginatedProducts.length === 0) return false
@@ -770,21 +570,50 @@ export default function ProductsPage() {
     }
   }
 
-  const toggleSelectAllFiltered = () => {
+  const toggleSelectAllFiltered = async () => {
     if (allFilteredSelected) {
-      // Unselect all filtered items
+      setSelectedIds(new Set())
+      return
+    }
+
+    // If all filtered results fit on the current page, select them immediately in 0ms
+    if (totalFilteredCount <= paginatedProducts.length) {
       setSelectedIds(prev => {
         const next = new Set(prev)
-        filteredProducts.forEach(p => next.delete(p.id))
+        paginatedProducts.forEach(p => next.add(p.id))
         return next
       })
-    } else {
-      // Select all filtered items
-      setSelectedIds(prev => {
-        const next = new Set(prev)
-        filteredProducts.forEach(p => next.add(p.id))
-        return next
+      return
+    }
+
+    if (!activeBizId || selectingAllFiltered) return
+    setSelectingAllFiltered(true)
+    try {
+      const params = new URLSearchParams()
+      params.set('business_id', activeBizId)
+      params.set('ids_only', 'true')
+      if (debouncedSearch) params.set('search', debouncedSearch)
+      if (selectedCategory) params.set('category_id', selectedCategory)
+      if (selectedType) params.set('type', selectedType)
+      if (selectedStockType) params.set('stock_type', selectedStockType)
+
+      const res = await fetch(`/api/products/search?${params.toString()}`, {
+        headers: { 'x-business-id': activeBizId }
       })
+      const data = await res.json().catch(() => null)
+      if (res.ok && Array.isArray(data?.ids)) {
+        setSelectedIds(prev => {
+          const next = new Set(prev)
+          for (const id of data.ids) {
+            if (id) next.add(id)
+          }
+          return next
+        })
+      }
+    } catch (e) {
+      console.error('[ProductsPage] Error selecting all filtered IDs:', e)
+    } finally {
+      setSelectingAllFiltered(false)
     }
   }
 
@@ -836,13 +665,15 @@ export default function ProductsPage() {
         ? Array.from(selectedIds)
         : [] // for mode 'all'
 
-    const targetCount = mode === 'all' ? products.length : targetIds.length
+    const targetCount = mode === 'all' ? overallTotalCount : targetIds.length
 
     // 1. Immediately close modal for zero perceived lag
     setDeleteModal(prev => ({ ...prev, isOpen: false }))
 
     // 2. Snapshot current state for optimistic rollback if network fails
     const previousProducts = [...products]
+    const previousFilteredCount = totalFilteredCount
+    const previousOverallCount = overallTotalCount
     const targetIdSet = new Set(targetIds)
 
     // 3. Optimistic local state update (instant UI reaction)
@@ -850,9 +681,11 @@ export default function ProductsPage() {
     lastLocalMutationTsRef.current = Date.now()
     const nextProducts = mode === 'all' ? [] : products.filter(p => !targetIdSet.has(p.id))
     setProducts(nextProducts)
+    setTotalFilteredCount(mode === 'all' ? 0 : Math.max(0, totalFilteredCount - targetIds.length))
+    setOverallTotalCount(mode === 'all' ? 0 : Math.max(0, overallTotalCount - targetIds.length))
     clearSelection()
     if (activeBizId) {
-      writeCache(activeBizId, nextProducts, categories)
+      clearBusinessProductPageCache(activeBizId)
       invalidatePosCatalogCache(activeBizId, true)
     }
 
@@ -873,16 +706,7 @@ export default function ProductsPage() {
       const data = await res.json()
 
       if (!res.ok || data.success === false) {
-        // If server reported blocked products due to stock movements
         if (data.blocked_count > 0 && Array.isArray(data.blocked_products)) {
-          const blockedIdsSet = new Set(data.blocked_products.map((p: any) => p.id))
-          // Restore only blocked products back into local state
-          const restored = previousProducts.filter(
-            p => blockedIdsSet.has(p.id) || nextProducts.some(np => np.id === p.id)
-          )
-          setProducts(restored)
-          if (activeBizId) writeCache(activeBizId, restored, categories)
-
           showToast(
             data.message || `${data.blocked_count} produk tidak dapat dihapus karena memiliki riwayat stok.`,
             'warning',
@@ -891,33 +715,28 @@ export default function ProductsPage() {
         } else {
           // Total rollback
           setProducts(previousProducts)
-          if (activeBizId) writeCache(activeBizId, previousProducts, categories)
+          setTotalFilteredCount(previousFilteredCount)
+          setOverallTotalCount(previousOverallCount)
           showToast(data.error || data.message || 'Gagal menghapus produk.', 'error', 5000)
+          return
         }
-        return
-      }
-
-      // Fully or partially successful
-      showToast(data.message || `${targetCount} produk berhasil dihapus.`, 'success', 4000)
-
-      // If some were blocked in mixed deletion, restore them
-      if (data.blocked_count > 0 && Array.isArray(data.blocked_products)) {
-        const blockedIdsSet = new Set(data.blocked_products.map((p: any) => p.id))
-        const restored = previousProducts.filter(p => blockedIdsSet.has(p.id))
-        setProducts(prev => [...prev, ...restored])
-        if (activeBizId) writeCache(activeBizId, [...nextProducts, ...restored], categories)
+      } else {
+        showToast(data.message || `${targetCount} produk berhasil dihapus.`, 'success', 4000)
       }
     } catch (err: any) {
       console.error('[BulkDelete] Network error:', err)
-      // Rollback on network failure
       setProducts(previousProducts)
-      if (activeBizId) writeCache(activeBizId, previousProducts, categories)
+      setTotalFilteredCount(previousFilteredCount)
+      setOverallTotalCount(previousOverallCount)
       showToast(`Terjadi kesalahan jaringan: ${err.message}. Data dikembalikan.`, 'error', 5000)
+      return
     } finally {
       lastLocalMutationTsRef.current = Date.now()
       isMutatingRef.current = false
       if (activeBizId) {
+        clearBusinessProductPageCache(activeBizId)
         invalidatePosCatalogCache(activeBizId, true)
+        fetchProductPage(activeBizId, { forceRefresh: true })
       }
     }
   }
@@ -943,8 +762,15 @@ export default function ProductsPage() {
     if (deleteModal.mode === 'single' && deleteModal.singleProduct) {
       return [deleteModal.singleProduct]
     }
-    return products.filter(p => selectedIds.has(p.id))
-  }, [deleteModal.mode, deleteModal.singleProduct, products, selectedIds])
+    const list: Product[] = []
+    for (const id of selectedIds) {
+      const fromPage = products.find(p => p.id === id)
+      const fromMap = selectedProductsMap.get(id)
+      if (fromPage) list.push(fromPage)
+      else if (fromMap) list.push(fromMap)
+    }
+    return list
+  }, [deleteModal.mode, deleteModal.singleProduct, products, selectedIds, selectedProductsMap])
 
   const isDeleteAllConfirmed =
     deleteModal.mode !== 'all' ||
@@ -975,7 +801,7 @@ export default function ProductsPage() {
         </div>
 
         <div className="flex flex-wrap sm:flex-nowrap gap-2 w-full md:w-auto">
-          {canPurgeAllProducts && products.length > 0 && (
+          {canPurgeAllProducts && overallTotalCount > 0 && (
             <button
               onClick={openDeleteAllModal}
               className="px-3.5 py-2.5 bg-white hover:bg-red-50 border border-red-200 text-red-600 hover:text-red-700 font-bold text-xs uppercase tracking-wider rounded-lg shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-98 cursor-pointer"
@@ -1008,11 +834,26 @@ export default function ProductsPage() {
             <input
               type="text"
               placeholder="Cari nama, SKU, atau deskripsi..."
-              className="w-full p-2.5 pl-8 border border-gray-300 rounded-lg text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 placeholder:text-gray-400"
+              className="w-full p-2.5 pl-8 pr-7 border border-gray-300 rounded-lg text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 placeholder:text-gray-400"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
             />
-            <span className="absolute left-3 top-3.5 text-gray-400 text-xs">🔍</span>
+            <span className={`absolute left-3 top-3 text-xs ${isSearching ? 'animate-spin text-blue-600' : 'text-gray-400'}`}>
+              {isSearching ? '🔄' : '🔍'}
+            </span>
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('')
+                  setDebouncedSearch('')
+                }}
+                className="absolute right-2.5 top-2.5 text-gray-400 hover:text-gray-600 text-xs font-bold cursor-pointer"
+                title="Bersihkan pencarian"
+              >
+                ✕
+              </button>
+            )}
           </div>
 
           {/* Category Filter */}
@@ -1063,8 +904,15 @@ export default function ProductsPage() {
           <div className="flex justify-between items-center pt-2 border-t border-gray-100 flex-wrap gap-2">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                Ditemukan {filteredProducts.length} produk hasil filter
+                {isSearching
+                  ? 'Mencari di seluruh database...'
+                  : `Ditemukan ${totalFilteredCount.toLocaleString('id-ID')} produk hasil filter`}
               </span>
+              {parsedSearchMeta.clean && parsedSearchMeta.hasSpace && (
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+                  <span>🎯 Fokus Nama Produk (Spasi: Bobot SKU Non-Aktif)</span>
+                </span>
+              )}
               {sortField && (
                 <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 flex items-center gap-1">
                   <span>Urutan:</span>
@@ -1184,7 +1032,7 @@ export default function ProductsPage() {
       {/* Products Display */}
       {(!loading || products.length > 0) && (
         <>
-          {filteredProducts.length === 0 ? (
+          {paginatedProducts.length === 0 ? (
             <div className="bg-white border border-gray-200 rounded-xl p-12 text-center shadow-xs">
               <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-1">
                 Tidak ada produk ditemukan
@@ -1196,10 +1044,10 @@ export default function ProductsPage() {
           ) : (
             <>
               {/* Top Pagination */}
-              {!loading && filteredProducts.length > 0 && (
+              {!loading && totalFilteredCount > 0 && (
                 <Pagination
                   currentPage={currentPage}
-                  totalCount={filteredProducts.length}
+                  totalCount={totalFilteredCount}
                   pageSize={pageSize}
                   onPageChange={page => setCurrentPage(page)}
                   onPageSizeChange={newSize => {
@@ -1513,10 +1361,10 @@ export default function ProductsPage() {
               </div>
 
               {/* Bottom Pagination */}
-              {!loading && filteredProducts.length > 0 && (
+              {!loading && totalFilteredCount > 0 && (
                 <Pagination
                   currentPage={currentPage}
-                  totalCount={filteredProducts.length}
+                  totalCount={totalFilteredCount}
                   pageSize={pageSize}
                   onPageChange={page => setCurrentPage(page)}
                   onPageSizeChange={newSize => {
@@ -1541,9 +1389,9 @@ export default function ProductsPage() {
               <span className="text-xs font-extrabold tracking-wide text-gray-100">
                 {selectedIds.size} Produk Terpilih
               </span>
-              {products.length > selectedIds.size && (
+              {overallTotalCount > selectedIds.size && (
                 <span className="text-[10px] text-gray-400 font-medium hidden sm:inline">
-                  (dari {products.length} total)
+                  (dari {overallTotalCount.toLocaleString('id-ID')} total)
                 </span>
               )}
             </div>
@@ -1551,12 +1399,15 @@ export default function ProductsPage() {
             <div className="h-4 w-px bg-gray-700 hidden sm:block" />
 
             <div className="flex items-center gap-2">
-              {filteredProducts.length > selectedIds.size && (
+              {totalFilteredCount > selectedIds.size && (
                 <button
                   onClick={toggleSelectAllFiltered}
-                  className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-bold rounded-lg border border-gray-600/60 transition-all cursor-pointer"
+                  disabled={selectingAllFiltered}
+                  className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-200 text-xs font-bold rounded-lg border border-gray-600/60 transition-all cursor-pointer"
                 >
-                  Pilih Hasil Filter ({filteredProducts.length})
+                  {selectingAllFiltered
+                    ? 'Memilih...'
+                    : `Pilih Hasil Filter (${totalFilteredCount.toLocaleString('id-ID')})`}
                 </button>
               )}
 
@@ -1598,7 +1449,7 @@ export default function ProductsPage() {
                 </h3>
                 <p className="text-xs text-gray-500 mt-1">
                   {deleteModal.mode === 'all'
-                    ? `Perhatian: Seluruh ${products.length} produk di unit bisnis "${activeBizName}" akan dihapus permanen.`
+                    ? `Perhatian: Seluruh ${overallTotalCount.toLocaleString('id-ID')} produk di unit bisnis "${activeBizName}" akan dihapus permanen.`
                     : 'Tindakan ini permanen dan akan menghapus data varian serta resep HPP produk terkait.'}
                 </p>
               </div>

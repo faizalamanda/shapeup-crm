@@ -71,75 +71,123 @@ export async function fetchAllBusinessProducts<T = any>(
 ): Promise<T[]> {
   if (!businessId) return []
 
-  const selectWithVariants =
-    options?.selectWithVariants ||
-    'id, name, price, sku, unit, pricing_type, wholesale_tiers, cost_price, stock_quantity, stock_type, product_variants(id, name, sku, price, wholesale_tiers, cost_price, stock_quantity)'
-  const selectVariantsOnly =
-    options?.selectVariantsOnly ||
-    'id, name, price, sku, cost_price, stock_quantity, stock_type, product_variants(id, name, sku, price, cost_price, stock_quantity)'
-  const selectFallback =
-    options?.selectFallback ||
-    'id, name, price, sku, cost_price, stock_quantity, stock_type'
+  // Strip embedded product_variants(...) and product_modifiers(...) from base products query
+  // to avoid PostgreSQL 8s lateral-join RLS statement_timeout (code 57014) on > 5,000 products.
+  // Variants and modifiers are hydrated in parallel via direct indexed table queries (~200ms).
+  const stripEmbeddedRelations = (clause: string) =>
+    clause
+      .replace(/,\s*product_variants\s*\([^)]*\)/g, '')
+      .replace(/,\s*product_modifiers\s*\([^)]*\)/g, '')
+      .trim()
 
-  let rows: T[] = []
-  try {
-    rows = await fetchAllSupabaseRows<T>((from, to) =>
-      supabaseClient
-        .from('products')
-        .select(selectWithVariants)
-        .eq('business_id', businessId)
-        .order('name', { ascending: true })
-        .order('id', { ascending: true })
-        .range(from, to)
-    )
-  } catch (err1) {
-    if (selectVariantsOnly && selectVariantsOnly !== selectWithVariants) {
+  const primaryBaseSelect = stripEmbeddedRelations(
+    options?.selectWithVariants ||
+      'id, name, price, sku, unit, pricing_type, wholesale_tiers, cost_price, stock_quantity, stock_type'
+  )
+  const secondaryBaseSelect = stripEmbeddedRelations(
+    options?.selectVariantsOnly ||
+      'id, name, price, sku, cost_price, stock_quantity, stock_type'
+  )
+  const selectFallback = stripEmbeddedRelations(
+    options?.selectFallback ||
+      'id, name, price, sku, cost_price, stock_quantity, stock_type'
+  )
+
+  const wantsModifiers = Boolean(
+    options?.selectWithVariants && options.selectWithVariants.includes('product_modifiers')
+  )
+
+  const [rows, directVars, directMods] = await Promise.all([
+    (async () => {
+      let fetched: T[] = []
       try {
-        rows = await fetchAllSupabaseRows<T>((from, to) =>
+        fetched = await fetchAllSupabaseRows<T>((from, to) =>
           supabaseClient
             .from('products')
-            .select(selectVariantsOnly)
+            .select(primaryBaseSelect)
             .eq('business_id', businessId)
             .order('name', { ascending: true })
             .order('id', { ascending: true })
             .range(from, to)
         )
-      } catch (err2) {}
-    }
-    if (rows.length === 0) {
-      rows = await fetchAllSupabaseRows<T>((from, to) =>
-        supabaseClient
-          .from('products')
-          .select(selectFallback)
-          .eq('business_id', businessId)
-          .order('name', { ascending: true })
-          .order('id', { ascending: true })
-          .range(from, to)
-      )
-    }
-  }
-
-  // Self-healing direct table hydration: if embedded join fell back and product_variants is missing,
-  // hydrate variants directly from product_variants table so variants NEVER disappear or return empty.
-  if (rows.length > 0 && (rows[0] as any)?.product_variants === undefined) {
-    try {
-      const { data: directVars } = await supabaseClient
-        .from('product_variants')
-        .select('*')
-        .eq('business_id', businessId)
-        .order('name', { ascending: true })
-      if (directVars) {
-        const vMap = new Map<string, any[]>()
-        for (const v of directVars) {
-          if (!vMap.has(v.product_id)) vMap.set(v.product_id, [])
-          vMap.get(v.product_id)!.push(v)
+      } catch {
+        if (secondaryBaseSelect && secondaryBaseSelect !== primaryBaseSelect) {
+          try {
+            fetched = await fetchAllSupabaseRows<T>((from, to) =>
+              supabaseClient
+                .from('products')
+                .select(secondaryBaseSelect)
+                .eq('business_id', businessId)
+                .order('name', { ascending: true })
+                .order('id', { ascending: true })
+                .range(from, to)
+            )
+          } catch {}
         }
-        for (const r of rows as any[]) {
-          r.product_variants = vMap.get(r.id) || []
+        if (fetched.length === 0) {
+          fetched = await fetchAllSupabaseRows<T>((from, to) =>
+            supabaseClient
+              .from('products')
+              .select(selectFallback)
+              .eq('business_id', businessId)
+              .order('name', { ascending: true })
+              .order('id', { ascending: true })
+              .range(from, to)
+          )
         }
       }
-    } catch {
-      // ignore if product_variants table does not exist
+      return fetched
+    })(),
+    (async () => {
+      try {
+        return await fetchAllSupabaseRows<any>((from, to) =>
+          supabaseClient
+            .from('product_variants')
+            .select('*')
+            .eq('business_id', businessId)
+            .order('name', { ascending: true })
+            .order('id', { ascending: true })
+            .range(from, to)
+        )
+      } catch {
+        return []
+      }
+    })(),
+    (async () => {
+      if (!wantsModifiers) return []
+      try {
+        return await fetchAllSupabaseRows<any>((from, to) =>
+          supabaseClient
+            .from('product_modifiers')
+            .select('*')
+            .eq('business_id', businessId)
+            .order('id', { ascending: true })
+            .range(from, to)
+        )
+      } catch {
+        return []
+      }
+    })()
+  ])
+
+  if (rows.length > 0) {
+    const vMap = new Map<string, any[]>()
+    for (const v of directVars || []) {
+      if (!vMap.has(v.product_id)) vMap.set(v.product_id, [])
+      vMap.get(v.product_id)!.push(v)
+    }
+
+    const mMap = new Map<string, any[]>()
+    for (const m of directMods || []) {
+      if (!mMap.has(m.product_id)) mMap.set(m.product_id, [])
+      mMap.get(m.product_id)!.push(m)
+    }
+
+    for (const r of rows as any[]) {
+      r.product_variants = vMap.get(r.id) || []
+      if (wantsModifiers) {
+        r.product_modifiers = mMap.get(r.id) || []
+      }
     }
   }
 

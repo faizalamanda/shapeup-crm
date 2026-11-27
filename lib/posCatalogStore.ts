@@ -14,6 +14,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { fetchAllSupabaseRows, fetchAllBusinessProducts } from '@/lib/chunkedQueryHelper'
 import { WholesaleTier } from '@/lib/pricing/wholesalePricing'
+import { parseProductSearchQuery, rankProductsByQuery } from '@/lib/productSearchHelper'
 
 // ─── Types & Constants ───────────────────────────────────────────────────────
 
@@ -486,58 +487,82 @@ export async function searchPosCatalogServer(
   businessId: string,
   query: string
 ): Promise<PosCatalogItem[]> {
-  if (!businessId || !query.trim()) return []
-  const cleanQ = query.trim().replace(/[,()]/g, '')
+  const parsed = parseProductSearchQuery(query)
+  if (!businessId || !parsed.clean) return []
+  const cleanQ = parsed.postgrestSafe
   if (!cleanQ) return []
 
   try {
-    // 1. Search products by name or sku
-    const { data: matchedProds, error: pErr } = await supabaseClient
+    // 1. Search products by name (and SKU only if query has no spaces) without slow lateral joins
+    const firstToken = (parsed.tokens[0] || cleanQ).replace(/[,()]/g, '')
+    const orFilter = parsed.skuActive
+      ? `name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`
+      : `name.ilike.%${firstToken}%`
+
+    const { data: matchedProds } = await supabaseClient
       .from('products')
-      .select(POS_SLIM_PRODUCT_SELECT_VARIANTS)
+      .select('*')
       .eq('business_id', businessId)
-      .or(`name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`)
+      .or(orFilter)
       .order('name', { ascending: true })
-      .limit(60)
+      .limit(120)
 
     let prods: any[] = matchedProds || []
-    if (pErr) {
-      const { data: fallbackProds } = await supabaseClient
-        .from('products')
-        .select(POS_SLIM_PRODUCT_SELECT_FALLBACK)
-        .eq('business_id', businessId)
-        .or(`name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`)
-        .order('name', { ascending: true })
-        .limit(60)
-      prods = fallbackProds || []
-    }
 
-    // 2. Also search variants by name or sku
+    // 2. Also search variants by name (or sku if skuActive)
     try {
+      const varOrFilter = parsed.skuActive
+        ? `name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`
+        : `name.ilike.%${firstToken}%`
       const { data: matchedVars } = await supabaseClient
         .from('product_variants')
-        .select('product_id')
+        .select('*')
         .eq('business_id', businessId)
-        .or(`name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`)
-        .limit(60)
+        .or(varOrFilter)
+        .limit(120)
 
-      const parentIds = (matchedVars || [])
-        .map((v: any) => v.product_id)
-        .filter((id: string) => !prods.some((p: any) => p.id === id))
+      const parentIds = Array.from(
+        new Set(
+          (matchedVars || [])
+            .map((v: any) => v.product_id)
+            .filter((id: string) => id && !prods.some((p: any) => p.id === id))
+        )
+      )
 
       if (parentIds.length > 0) {
         const { data: extraProds } = await supabaseClient
           .from('products')
-          .select(POS_SLIM_PRODUCT_SELECT_VARIANTS)
+          .select('*')
           .eq('business_id', businessId)
           .in('id', parentIds)
         if (extraProds && extraProds.length > 0) {
           prods = [...prods, ...extraProds]
         }
       }
+
+      // Hydrate variants for all matched products via direct indexed query
+      const allFoundIds = prods.map((p: any) => p.id).filter(Boolean)
+      if (allFoundIds.length > 0) {
+        const { data: allVars } = await supabaseClient
+          .from('product_variants')
+          .select('*')
+          .eq('business_id', businessId)
+          .in('product_id', allFoundIds)
+        const vMap = new Map<string, any[]>()
+        for (const v of allVars || []) {
+          if (!vMap.has(v.product_id)) vMap.set(v.product_id, [])
+          vMap.get(v.product_id)!.push(v)
+        }
+        prods = prods.map((p: any) => ({
+          ...p,
+          product_variants: vMap.get(p.id) || []
+        }))
+      }
     } catch {}
 
-    const cleanFound: PosCatalogItem[] = prods.map((p: any) => ({
+    const ranked = rankProductsByQuery(prods, query)
+
+    const cleanFound: PosCatalogItem[] = ranked.map((p: any) => ({
       ...p,
       has_variants: Boolean((Array.isArray(p.product_variants) && p.product_variants.length > 0) || p.has_variants)
     }))
