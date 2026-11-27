@@ -39,6 +39,16 @@ type PaymentAccountOption = {
   name: string
 }
 
+type OtherUnpaidOrderOption = {
+  id: string
+  order_number: string
+  grand_total: number
+  amount_paid: number
+  remaining_balance: number
+  payment_status: string
+  order_date: string
+}
+
 type CreateRmaModalProps = {
   isOpen: boolean
   onClose: () => void
@@ -79,6 +89,8 @@ export function CreateRmaModal({
   const [settlementMethod, setSettlementMethod] = useState<RmaSettlementMethod>('credit_memo')
   const [paymentAccounts, setPaymentAccounts] = useState<PaymentAccountOption[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState<string>('')
+  const [otherUnpaidOrders, setOtherUnpaidOrders] = useState<OtherUnpaidOrderOption[]>([])
+  const [selectedTargetOrderId, setSelectedTargetOrderId] = useState<string>('')
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [createdResult, setCreatedResult] = useState<any | null>(null)
@@ -155,6 +167,12 @@ export function CreateRmaModal({
         if (Array.isArray(json.paymentAccounts) && json.paymentAccounts.length > 0) {
           setPaymentAccounts(json.paymentAccounts)
           setSelectedAccountId((prevId) => prevId || json.paymentAccounts[0].id)
+        }
+        if (Array.isArray(json.otherUnpaidOrders)) {
+          setOtherUnpaidOrders(json.otherUnpaidOrders)
+          if (json.otherUnpaidOrders.length > 0) {
+            setSelectedTargetOrderId((prevId) => prevId || json.otherUnpaidOrders[0].id)
+          }
         }
       })
       .catch(() => {})
@@ -263,7 +281,9 @@ export function CreateRmaModal({
           express_complete: flowMode === 'express',
           settlement_method: settlementMethod,
           refund_account_id: settlementMethod === 'refund' ? selectedAccountId || null : null,
-          refund_method_label: settlementMethod === 'refund' ? selectedAcc?.name || null : null
+          refund_method_label: settlementMethod === 'refund' ? selectedAcc?.name || null : null,
+          target_order_id:
+            settlementMethod === 'apply_other_invoice' ? selectedTargetOrderId || null : null
         })
       })
 
@@ -723,8 +743,75 @@ export function CreateRmaModal({
                               🪙 Masukkan ke Saldo Kredit Pelanggan (Direkomendasikan)
                             </div>
                             <div className="text-[11px] text-slate-500">
-                              Kas bank tetap utuh; saldo dapat dipakai belanja berikutnya oleh pelanggan.
+                              Kas bank tetap utuh; saldo dapat dipakai memotong tagihan/belanja berikutnya kapan saja.
                             </div>
+                          </div>
+                        </label>
+                      )}
+
+                      {hasNamedCustomer && otherUnpaidOrders.length > 0 && (
+                        <label
+                          className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer text-xs ${
+                            settlementMethod === 'apply_other_invoice'
+                              ? 'border-emerald-600 bg-emerald-50/50 ring-1 ring-emerald-500/20'
+                              : 'border-slate-200'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="rmaSettlement"
+                            checked={settlementMethod === 'apply_other_invoice'}
+                            onChange={() => {
+                              setSettlementMethod('apply_other_invoice')
+                              if (!selectedTargetOrderId && otherUnpaidOrders[0]) {
+                                setSelectedTargetOrderId(otherUnpaidOrders[0].id)
+                              }
+                            }}
+                            className="mt-0.5"
+                          />
+                          <div className="flex-1 min-w-0 space-y-2">
+                            <div>
+                              <div className="font-extrabold text-slate-900 flex items-center gap-1.5 flex-wrap">
+                                <span>📄 Potongkan Langsung ke Piutang Nota Lain</span>
+                                <span className="px-1.5 py-0.5 text-[10px] font-black rounded bg-emerald-100 text-emerald-800">
+                                  {otherUnpaidOrders.length} Nota Belum Lunas
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                Langsung mengurangi sisa tagihan pada faktur/pesanan pelanggan yang belum lunas dalam 1 klik.
+                              </div>
+                            </div>
+
+                            {settlementMethod === 'apply_other_invoice' && (
+                              <div className="space-y-1.5">
+                                <select
+                                  value={selectedTargetOrderId}
+                                  onChange={(e) => setSelectedTargetOrderId(e.target.value)}
+                                  className="w-full text-xs font-bold border border-emerald-300 rounded-lg px-2.5 py-2 bg-white text-slate-900"
+                                >
+                                  {otherUnpaidOrders.map((uo) => (
+                                    <option key={uo.id} value={uo.id}>
+                                      #{uo.order_number} — Sisa Tagihan: {formatIDR(uo.remaining_balance)}
+                                    </option>
+                                  ))}
+                                </select>
+                                {(() => {
+                                  const targetObj = otherUnpaidOrders.find((u) => u.id === selectedTargetOrderId)
+                                  if (!targetObj) return null
+                                  const cutAmt = Math.min(instantCalc.refundOut, targetObj.remaining_balance)
+                                  const leftoverCredit = Math.max(0, instantCalc.refundOut - cutAmt)
+                                  return (
+                                    <div className="text-[11px] text-emerald-800 bg-emerald-100/70 px-2.5 py-1.5 rounded-lg font-semibold">
+                                      ⚡ Nota <strong>#{targetObj.order_number}</strong> akan langsung terpotong{' '}
+                                      <strong>{formatIDR(cutAmt)}</strong>
+                                      {leftoverCredit > 0
+                                        ? ` (Sisa lebih ${formatIDR(leftoverCredit)} otomatis tersimpan di Saldo Kredit Pelanggan).`
+                                        : '.'}
+                                    </div>
+                                  )
+                                })()}
+                              </div>
+                            )}
                           </div>
                         </label>
                       )}

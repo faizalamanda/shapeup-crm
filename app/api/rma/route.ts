@@ -245,7 +245,8 @@ export async function POST(req: Request) {
           expressComplete: Boolean(body?.express_complete),
           settlementMethod: (body?.settlement_method as RmaSettlementMethod) || 'credit_memo',
           refundAccountId: isUuid(body?.refund_account_id) ? body.refund_account_id : null,
-          refundMethodLabel: body?.refund_method_label ? String(body.refund_method_label) : null
+          refundMethodLabel: body?.refund_method_label ? String(body.refund_method_label) : null,
+          targetOrderId: isUuid(body?.target_order_id) ? body.target_order_id : null
         },
         supabase,
         supabaseAdmin
@@ -301,7 +302,8 @@ export async function POST(req: Request) {
           refundMethodLabel: body?.refund_method_label ? String(body.refund_method_label) : null,
           restockingFeeOverride:
             body?.restocking_fee !== undefined ? Number(body.restocking_fee) : undefined,
-          shiftId: isUuid(body?.shift_id) ? body.shift_id : null
+          shiftId: isUuid(body?.shift_id) ? body.shift_id : null,
+          targetOrderId: isUuid(body?.target_order_id) ? body.target_order_id : null
         },
         supabase,
         supabaseAdmin

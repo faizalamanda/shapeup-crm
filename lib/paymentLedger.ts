@@ -152,7 +152,7 @@ export async function recordOrderPayment(params: RecordPaymentParams): Promise<P
   // 1. Fetch order
   const { data: order, error: orderErr } = await supabase
     .from('orders')
-    .select('id, order_number, grand_total, amount_paid, payment_status, status')
+    .select('id, order_number, customer_id, grand_total, amount_paid, payment_status, status')
     .eq('id', orderId)
     .eq('business_id', businessId)
     .single()
@@ -180,11 +180,66 @@ export async function recordOrderPayment(params: RecordPaymentParams): Promise<P
   // 2. Resolve Chart of Accounts
   const accountMap = await getOrCreateDefaultAccounts(businessId, supabase)
   const accPiutang = accountMap['103000'] // Piutang Usaha
+  const accStoreCredit = accountMap['202000'] // Saldo Kredit Pelanggan
 
   let payAccId = isUuid(paymentMethodAccountId) ? paymentMethodAccountId : null
-  const isCash = String(paymentMethod).toLowerCase() === 'cash' || String(paymentMethod).toLowerCase().includes('tunai')
+  const lowerMethod = String(paymentMethod || '').toLowerCase()
+  const isStoreCredit =
+    lowerMethod === 'store_credit' ||
+    lowerMethod.includes('saldo kredit') ||
+    (Boolean(payAccId) && Boolean(accStoreCredit) && payAccId === accStoreCredit)
+  const isCash =
+    !isStoreCredit && (lowerMethod === 'cash' || lowerMethod.includes('tunai'))
 
-  if (!payAccId) {
+  if (isStoreCredit) {
+    if (!isUuid(order.customer_id)) {
+      throw new Error('Saldo Kredit Pelanggan hanya dapat digunakan pada pesanan milik pelanggan terdaftar.')
+    }
+    payAccId = accStoreCredit || accountMap['201000']
+
+    // Deduct Customer Store Credit atomically via row-locked RPC (with fallback)
+    const { error: scRpcErr } = await supabase.rpc('redeem_store_credit_v1', {
+      p_business_id: businessId,
+      p_customer_id: order.customer_id,
+      p_amount: numAmount,
+      p_order_id: order.id,
+      p_actor_id: null,
+      p_description: notes || `Potong tagihan #${order.order_number} dengan Saldo Kredit`
+    })
+
+    if (scRpcErr) {
+      // Fallback / direct balance check if RPC requires actor_id or isn't applied
+      const { data: scRow } = await supabase
+        .from('customer_store_credits')
+        .select('balance')
+        .eq('business_id', businessId)
+        .eq('customer_id', order.customer_id)
+        .maybeSingle()
+
+      const currentBal = Number(scRow?.balance || 0)
+      if (currentBal < numAmount - 0.01) {
+        throw new Error(
+          `Saldo Kredit Pelanggan tidak mencukupi (Tersedia: Rp ${currentBal.toLocaleString('id-ID')}).`
+        )
+      }
+      const nextBal = Math.max(0, currentBal - numAmount)
+      await supabase
+        .from('customer_store_credits')
+        .update({ balance: nextBal, updated_at: new Date().toISOString() })
+        .eq('business_id', businessId)
+        .eq('customer_id', order.customer_id)
+
+      await supabase.from('store_credit_ledger').insert({
+        business_id: businessId,
+        customer_id: order.customer_id,
+        entry_type: 'redeemed',
+        amount: -numAmount,
+        balance_after: nextBal,
+        order_id: order.id,
+        description: notes || `Potong tagihan #${order.order_number} dengan Saldo Kredit`
+      })
+    }
+  } else if (!payAccId) {
     if (isCash && shiftId) {
       // Check if shift has register account
       const { data: shiftData } = await supabase
@@ -238,9 +293,9 @@ export async function recordOrderPayment(params: RecordPaymentParams): Promise<P
       transaction_id: payTxId,
       date: resolvedDateOnly,
       amount: numAmount,
-      payment_method: isCash ? 'cash' : (paymentMethod || 'bank'),
+      payment_method: isStoreCredit ? 'Saldo Kredit Pelanggan' : (isCash ? 'cash' : (paymentMethod || 'bank')),
       payment_method_account_id: isUuid(payAccId) ? payAccId : null,
-      cash_received: isCash ? Number(cashReceived || numAmount) : numAmount,
+      cash_received: isStoreCredit ? 0 : (isCash ? Number(cashReceived || numAmount) : numAmount),
       change_amount: isCash ? Number(changeAmount || 0) : 0,
       reference_number: referenceNumber || null,
       notes: notes || `Pembayaran Pesanan #${order.order_number}`,
@@ -324,7 +379,7 @@ export async function voidOrderPayment(params: VoidPaymentParams): Promise<Payme
   // Fetch associated order for order_number & grand_total context
   const { data: orderData } = await supabase
     .from('orders')
-    .select('id, order_number, grand_total, source_platform, raw_source_data')
+    .select('id, order_number, customer_id, grand_total, source_platform, raw_source_data')
     .eq('id', targetPay.order_id)
     .single()
 
@@ -342,9 +397,17 @@ export async function voidOrderPayment(params: VoidPaymentParams): Promise<Payme
     getActivePaymentAccounts(businessId, supabase)
   ])
   const accPiutang = accountMap['103000']
+  const accStoreCredit = accountMap['202000']
 
   let payAccId = isUuid(targetPay.payment_method_account_id) ? targetPay.payment_method_account_id : null
-  if (!payAccId) {
+  const isVoidStoreCredit =
+    String(targetPay.payment_method || '').toLowerCase() === 'store_credit' ||
+    String(targetPay.payment_method || '').toLowerCase().includes('saldo kredit') ||
+    (Boolean(payAccId) && Boolean(accStoreCredit) && payAccId === accStoreCredit)
+
+  if (isVoidStoreCredit && accStoreCredit) {
+    payAccId = accStoreCredit
+  } else if (!payAccId) {
     const matched = resolvePaymentAccountFromCOA(activePaymentAccounts, targetPay.payment_method, null)
     const isCash = String(targetPay.payment_method || '').toLowerCase() === 'cash' || String(targetPay.payment_method || '').toLowerCase().includes('tunai')
     payAccId = matched?.id || (isCash ? accountMap['101000'] : accountMap['101200'])
@@ -406,6 +469,44 @@ export async function voidOrderPayment(params: VoidPaymentParams): Promise<Payme
 
   if (insVoidErr) {
     throw new Error('Gagal mencatat event void: ' + insVoidErr.message)
+  }
+
+  // Restore customer store credit balance if the voided payment used Store Credit
+  if (isVoidStoreCredit && isUuid(orderData?.customer_id)) {
+    try {
+      const voidAmt = Number(targetPay.amount || 0)
+      const { data: scRow } = await supabase
+        .from('customer_store_credits')
+        .select('balance')
+        .eq('business_id', businessId)
+        .eq('customer_id', orderData.customer_id)
+        .maybeSingle()
+
+      const nextBal = Number(scRow?.balance || 0) + voidAmt
+      await supabase
+        .from('customer_store_credits')
+        .upsert(
+          {
+            business_id: businessId,
+            customer_id: orderData.customer_id,
+            balance: nextBal,
+            updated_at: new Date().toISOString()
+          },
+          { onConflict: 'business_id,customer_id' }
+        )
+
+      await supabase.from('store_credit_ledger').insert({
+        business_id: businessId,
+        customer_id: orderData.customer_id,
+        entry_type: 'reversed',
+        amount: voidAmt,
+        balance_after: nextBal,
+        order_id: targetPay.order_id,
+        description: `Pemulihan Saldo Kredit dari Void Pembayaran ${effectiveSourceLabel} (${cleanReason})`
+      })
+    } catch (scErr) {
+      console.warn('[voidOrderPayment] Failed to restore store credit balance:', scErr)
+    }
   }
 
   // 5. Recalculate order paid amount & payment status

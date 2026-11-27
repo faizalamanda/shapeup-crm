@@ -50,6 +50,10 @@ export function RmaDetailModal({ isOpen, onClose, rma, onUpdated }: Props) {
   const [settlementMethod, setSettlementMethod] = useState<RmaSettlementMethod>('credit_memo')
   const [paymentAccounts, setPaymentAccounts] = useState<Array<{ id: string; code: string; name: string }>>([])
   const [selectedAccountId, setSelectedAccountId] = useState('')
+  const [otherUnpaidOrders, setOtherUnpaidOrders] = useState<
+    Array<{ id: string; order_number: string; remaining_balance: number }>
+  >([])
+  const [selectedTargetOrderId, setSelectedTargetOrderId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
@@ -114,6 +118,12 @@ export function RmaDetailModal({ isOpen, onClose, rma, onUpdated }: Props) {
           setPaymentAccounts(json.paymentAccounts)
           setSelectedAccountId((prev) => prev || json.paymentAccounts[0].id)
         }
+        if (Array.isArray(json?.otherUnpaidOrders)) {
+          setOtherUnpaidOrders(json.otherUnpaidOrders)
+          if (json.otherUnpaidOrders.length > 0) {
+            setSelectedTargetOrderId((prev) => prev || json.otherUnpaidOrders[0].id)
+          }
+        }
       })
       .catch(() => {})
   }, [isOpen, rma?.order_id, rma?.settlement_stage, businessId])
@@ -169,12 +179,19 @@ export function RmaDetailModal({ isOpen, onClose, rma, onUpdated }: Props) {
 
     async function fetchFinancials() {
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from('transactions')
           .select('id, date, description, journal_lines(id, debit, credit, accounts(code, name))')
-          .eq('order_id', currentOrderId)
           .ilike('description', `%${currentRmaNumber}%`)
           .order('date', { ascending: true })
+
+        if (businessId) {
+          query = query.eq('business_id', businessId)
+        } else {
+          query = query.eq('order_id', currentOrderId)
+        }
+
+        const { data, error } = await query
 
         if (!error && data) {
           journalSwrCache.set(currentRmaId!, data)
@@ -186,7 +203,7 @@ export function RmaDetailModal({ isOpen, onClose, rma, onUpdated }: Props) {
       }
     }
     fetchFinancials()
-  }, [isOpen, activeTab, rma?.id, rma?.order_id, rma?.rma_number])
+  }, [isOpen, activeTab, rma?.id, rma?.order_id, rma?.rma_number, businessId])
 
   const handleInspectSubmit = async () => {
     if (!rma) return
@@ -248,7 +265,9 @@ export function RmaDetailModal({ isOpen, onClose, rma, onUpdated }: Props) {
           rma_id: rma.id,
           settlement_method: settlementMethod,
           refund_account_id: settlementMethod === 'refund' ? selectedAccountId || null : null,
-          refund_method_label: settlementMethod === 'refund' ? acc?.name || null : null
+          refund_method_label: settlementMethod === 'refund' ? acc?.name || null : null,
+          target_order_id:
+            settlementMethod === 'apply_other_invoice' ? selectedTargetOrderId || null : null
         })
       })
 
@@ -552,31 +571,71 @@ export function RmaDetailModal({ isOpen, onClose, rma, onUpdated }: Props) {
                     <strong>Nota Kredit Pemotong Tagihan (`103000 Piutang Usaha`)</strong> secara otomatis.
                   </p>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {Boolean(rma.customer_id || rma.orders?.customers?.id) && (
+                  <div className="space-y-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {Boolean(rma.customer_id || rma.orders?.customers?.id) && (
+                        <button
+                          type="button"
+                          onClick={() => setSettlementMethod('store_credit')}
+                          className={`p-3 rounded-xl border text-left text-xs cursor-pointer ${
+                            settlementMethod === 'store_credit'
+                              ? 'border-blue-600 bg-blue-50/60 font-bold'
+                              : 'border-slate-200'
+                          }`}
+                        >
+                          🪙 Masukkan ke Saldo Kredit Toko ({formatIDR(refundEligible)})
+                        </button>
+                      )}
+                      {Boolean(rma.customer_id || rma.orders?.customers?.id) &&
+                        otherUnpaidOrders.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSettlementMethod('apply_other_invoice')
+                              if (!selectedTargetOrderId && otherUnpaidOrders[0]) {
+                                setSelectedTargetOrderId(otherUnpaidOrders[0].id)
+                              }
+                            }}
+                            className={`p-3 rounded-xl border text-left text-xs cursor-pointer ${
+                              settlementMethod === 'apply_other_invoice'
+                                ? 'border-emerald-600 bg-emerald-50/60 font-bold'
+                                : 'border-slate-200'
+                            }`}
+                          >
+                            📄 Potong Piutang Nota Lain ({otherUnpaidOrders.length} Nota Aktif)
+                          </button>
+                        )}
                       <button
                         type="button"
-                        onClick={() => setSettlementMethod('store_credit')}
+                        onClick={() => setSettlementMethod('refund')}
                         className={`p-3 rounded-xl border text-left text-xs cursor-pointer ${
-                          settlementMethod === 'store_credit'
+                          settlementMethod === 'refund'
                             ? 'border-blue-600 bg-blue-50/60 font-bold'
                             : 'border-slate-200'
                         }`}
                       >
-                        🪙 Masukkan ke Saldo Kredit Toko ({formatIDR(refundEligible)})
+                        💸 Transfer Refund Bank / Kas ({formatIDR(refundEligible)})
                       </button>
+                    </div>
+
+                    {settlementMethod === 'apply_other_invoice' && otherUnpaidOrders.length > 0 && (
+                      <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-1.5">
+                        <label className="block text-[11px] font-bold text-emerald-900">
+                          Pilih Nota Belum Lunas yang Akan Dipotong:
+                        </label>
+                        <select
+                          value={selectedTargetOrderId}
+                          onChange={(e) => setSelectedTargetOrderId(e.target.value)}
+                          className="w-full text-xs font-bold border border-emerald-300 rounded-lg px-3 py-2 bg-white"
+                        >
+                          {otherUnpaidOrders.map((uo) => (
+                            <option key={uo.id} value={uo.id}>
+                              #{uo.order_number} — Sisa Tagihan: {formatIDR(uo.remaining_balance)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => setSettlementMethod('refund')}
-                      className={`p-3 rounded-xl border text-left text-xs cursor-pointer ${
-                        settlementMethod === 'refund'
-                          ? 'border-blue-600 bg-blue-50/60 font-bold'
-                          : 'border-slate-200'
-                      }`}
-                    >
-                      💸 Transfer Refund Bank / Kas ({formatIDR(refundEligible)})
-                    </button>
                   </div>
                 )}
 

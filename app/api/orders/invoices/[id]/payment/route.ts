@@ -243,9 +243,18 @@ export async function POST(
         return NextResponse.json({ error: 'Baris pembayaran asal tidak ditemukan.' }, { status: 404 })
       }
 
-      const matchedAcc = resolvePaymentAccountFromCOA(paymentAccounts, payment_method, validAccountId)
-      const resolvedAccountId = matchedAcc?.id || validAccountId
-      const resolvedPaymentMethod = matchedAcc?.name || payment_method || 'Bank Transfer'
+      const mNormReplace = String(payment_method || '').toLowerCase()
+      const isStoreCreditReplace =
+        mNormReplace === 'store_credit' ||
+        mNormReplace.includes('saldo kredit') ||
+        mNormReplace.includes('store credit')
+      const matchedAcc = isStoreCreditReplace
+        ? null
+        : resolvePaymentAccountFromCOA(paymentAccounts, payment_method, validAccountId)
+      const resolvedAccountId = isStoreCreditReplace ? validAccountId : (matchedAcc?.id || validAccountId)
+      const resolvedPaymentMethod = isStoreCreditReplace
+        ? 'Saldo Kredit Pelanggan'
+        : (matchedAcc?.name || payment_method || 'Bank Transfer')
 
       // Step 2A: Void the old payment (reversal journal posted on original payment date)
       const voidRes = await voidOrderPayment({
@@ -297,9 +306,18 @@ export async function POST(
       }, { status: 400 })
     }
 
-    const matchedAcc = resolvePaymentAccountFromCOA(paymentAccounts, payment_method, validAccountId)
-    const resolvedAccountId = matchedAcc?.id || validAccountId
-    const resolvedPaymentMethod = matchedAcc?.name || payment_method || 'Bank Transfer'
+    const mNormRecord = String(payment_method || '').toLowerCase()
+    const isStoreCreditRecord =
+      mNormRecord === 'store_credit' ||
+      mNormRecord.includes('saldo kredit') ||
+      mNormRecord.includes('store credit')
+    const matchedAcc = isStoreCreditRecord
+      ? null
+      : resolvePaymentAccountFromCOA(paymentAccounts, payment_method, validAccountId)
+    const resolvedAccountId = isStoreCreditRecord ? validAccountId : (matchedAcc?.id || validAccountId)
+    const resolvedPaymentMethod = isStoreCreditRecord
+      ? 'Saldo Kredit Pelanggan'
+      : (matchedAcc?.name || payment_method || 'Bank Transfer')
 
     const grandTotal = Number(invoice.grand_total) || 0
     const currentPaid = Number(invoice.amount_paid) || 0

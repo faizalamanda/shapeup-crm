@@ -460,9 +460,12 @@ DECLARE
   v_ou jsonb := payload->'order_update';
   v_inv_jr jsonb := payload->'inventory_journal';
   v_fin_jr jsonb := payload->'settlement_journal';
+  v_dep_jr jsonb := payload->'deposit_transfer_journal';
+  v_alloc jsonb := payload->'cross_invoice_allocation';
   v_sc jsonb := payload->'store_credit';
   v_existing record;
   v_order record;
+  v_target_order record;
   v_rma record;
   v_rma_number text;
   v_item jsonb;
@@ -472,6 +475,13 @@ DECLARE
   v_disp text;
   v_inv_tx_id uuid := NULL;
   v_fin_tx_id uuid := NULL;
+  v_dep_tx_id uuid := NULL;
+  v_alloc_tx_id uuid := NULL;
+  v_alloc_amt numeric := 0;
+  v_alloc_target_id uuid := NULL;
+  v_alloc_target_num text := NULL;
+  v_target_new_paid numeric := 0;
+  v_target_pay_status text := NULL;
   v_debit numeric;
   v_credit numeric;
   v_pay jsonb;
@@ -522,6 +532,15 @@ BEGIN
     FROM jsonb_to_recordset(v_fin_jr->'lines') AS x(account_id uuid, debit numeric, credit numeric);
     IF ABS(v_debit - v_credit) > 0.5 THEN
       RAISE EXCEPTION 'JOURNAL_UNBALANCED (Settlement): debit % <> kredit %', v_debit, v_credit USING ERRCODE = 'P0001';
+    END IF;
+  END IF;
+
+  IF v_dep_jr IS NOT NULL AND jsonb_array_length(COALESCE(v_dep_jr->'lines', '[]'::jsonb)) > 0 THEN
+    SELECT COALESCE(SUM(COALESCE(x.debit, 0)), 0), COALESCE(SUM(COALESCE(x.credit, 0)), 0)
+    INTO v_debit, v_credit
+    FROM jsonb_to_recordset(v_dep_jr->'lines') AS x(account_id uuid, debit numeric, credit numeric);
+    IF ABS(v_debit - v_credit) > 0.5 THEN
+      RAISE EXCEPTION 'JOURNAL_UNBALANCED (DepositTransfer): debit % <> kredit %', v_debit, v_credit USING ERRCODE = 'P0001';
     END IF;
   END IF;
 
@@ -788,6 +807,21 @@ BEGIN
       WHERE COALESCE(x.debit, 0) + COALESCE(x.credit, 0) > 0;
     END IF;
 
+    -- Optional Deposit Transfer Journal (Dr 103000 / Cr 202000 on source order so Cash-Basis P&L nets cleanly to 0)
+    IF v_dep_jr IS NOT NULL AND jsonb_array_length(COALESCE(v_dep_jr->'lines', '[]'::jsonb)) > 0 THEN
+      INSERT INTO public.transactions (business_id, order_id, date, description)
+      VALUES (
+        v_business, v_order_id,
+        COALESCE(NULLIF(v_dep_jr->>'date', '')::timestamptz, v_now),
+        v_dep_jr->>'description'
+      ) RETURNING id INTO v_dep_tx_id;
+
+      INSERT INTO public.journal_lines (transaction_id, account_id, debit, credit)
+      SELECT v_dep_tx_id, x.account_id, COALESCE(x.debit, 0), COALESCE(x.credit, 0)
+      FROM jsonb_to_recordset(v_dep_jr->'lines') AS x(account_id uuid, debit numeric, credit numeric)
+      WHERE COALESCE(x.debit, 0) + COALESCE(x.credit, 0) > 0;
+    END IF;
+
     -- Append-only Cash / Bank movements in order_payments
     FOR v_pay IN SELECT * FROM jsonb_array_elements(COALESCE(payload->'payments', '[]'::jsonb)) LOOP
       INSERT INTO public.order_payments (
@@ -812,10 +846,13 @@ BEGIN
 
     -- Store Credit Issuance (Append-Only Ledger)
     IF v_sc IS NOT NULL AND COALESCE((v_sc->>'amount')::numeric, 0) > 0 AND NULLIF(v_sc->>'customer_id', '') IS NOT NULL THEN
-      INSERT INTO public.customer_store_credits (business_id, customer_id, balance, updated_at)
-      VALUES (v_business, (v_sc->>'customer_id')::uuid, (v_sc->>'amount')::numeric, v_now)
+      INSERT INTO public.customer_store_credits (business_id, customer_id, balance, lifetime_issued, updated_at)
+      VALUES (v_business, (v_sc->>'customer_id')::uuid, (v_sc->>'amount')::numeric, (v_sc->>'amount')::numeric, v_now)
       ON CONFLICT (business_id, customer_id)
-      DO UPDATE SET balance = public.customer_store_credits.balance + EXCLUDED.balance, updated_at = v_now
+      DO UPDATE SET
+        balance = public.customer_store_credits.balance + EXCLUDED.balance,
+        lifetime_issued = public.customer_store_credits.lifetime_issued + EXCLUDED.lifetime_issued,
+        updated_at = v_now
       RETURNING balance INTO v_sc_balance;
 
       INSERT INTO public.store_credit_ledger (
@@ -826,6 +863,88 @@ BEGIN
         v_rma_id, v_order_id,
         COALESCE(v_sc->>'description', 'Saldo kredit dari RMA ' || v_rma_number), v_actor
       );
+    END IF;
+
+    -- Zoho-Style 1-Click Direct Allocation to Another Unpaid Invoice (1-Roundtrip Atomic!)
+    IF v_alloc IS NOT NULL AND NULLIF(v_alloc->>'target_order_id', '') IS NOT NULL THEN
+      SELECT id, order_number, grand_total, amount_paid, status
+      INTO v_target_order
+      FROM public.orders
+      WHERE id = (v_alloc->>'target_order_id')::uuid AND business_id = v_business
+      FOR UPDATE;
+
+      IF FOUND AND v_target_order.status <> 'cancelled' THEN
+        v_alloc_amt := LEAST(
+          COALESCE((v_alloc->>'amount')::numeric, 0),
+          GREATEST(0, COALESCE(v_target_order.grand_total, 0) - COALESCE(v_target_order.amount_paid, 0))
+        );
+
+        IF v_alloc_amt > 0.01 THEN
+          v_alloc_target_id := v_target_order.id;
+          v_alloc_target_num := v_target_order.order_number;
+
+          -- 1. Post Payment Journal on Target Invoice (Dr 202000 Saldo Kredit / Cr 103000 Piutang Usaha)
+          -- Note: Description intentionally uses "RMA" (not "Retur") so Cash-Basis Case 2 recognizes payment on Target Invoice
+          INSERT INTO public.transactions (business_id, order_id, date, description)
+          VALUES (
+            v_business, v_target_order.id, v_now,
+            'Pembayaran Invoice #' || v_target_order.order_number || ' via Saldo Kredit RMA ' || v_rma_number
+          ) RETURNING id INTO v_alloc_tx_id;
+
+          INSERT INTO public.journal_lines (transaction_id, account_id, debit, credit)
+          VALUES
+            (v_alloc_tx_id, (v_alloc->>'store_credit_account_id')::uuid, v_alloc_amt, 0),
+            (v_alloc_tx_id, (v_alloc->>'receivable_account_id')::uuid, 0, v_alloc_amt);
+
+          -- 2. Record in order_payments of Target Invoice
+          INSERT INTO public.order_payments (
+            business_id, order_id, transaction_id, date, amount, payment_method,
+            payment_method_account_id, cash_received, change_amount, reference_number,
+            notes, payment_kind, rma_id
+          ) VALUES (
+            v_business, v_target_order.id, v_alloc_tx_id, current_date, v_alloc_amt,
+            'Saldo Kredit Pelanggan', (v_alloc->>'store_credit_account_id')::uuid,
+            0, 0, v_rma_number,
+            'Potong tagihan dari Saldo Kredit RMA ' || v_rma_number,
+            'payment', v_rma_id
+          );
+
+          -- 3. Deduct from customer_store_credits & log redemption in store_credit_ledger
+          IF NULLIF(v_alloc->>'customer_id', '') IS NOT NULL THEN
+            UPDATE public.customer_store_credits
+            SET balance = GREATEST(0, balance - v_alloc_amt),
+                lifetime_redeemed = lifetime_redeemed + v_alloc_amt,
+                updated_at = v_now
+            WHERE business_id = v_business AND customer_id = (v_alloc->>'customer_id')::uuid
+            RETURNING balance INTO v_sc_balance;
+
+            INSERT INTO public.store_credit_ledger (
+              business_id, customer_id, entry_type, amount, balance_after,
+              rma_id, order_id, description, created_by
+            ) VALUES (
+              v_business, (v_alloc->>'customer_id')::uuid, 'redeemed', -v_alloc_amt, COALESCE(v_sc_balance, 0),
+              v_rma_id, v_target_order.id,
+              'Alokasi langsung ke piutang #' || v_target_order.order_number || ' dari RMA ' || v_rma_number,
+              v_actor
+            );
+          END IF;
+
+          -- 4. Update Target Invoice amount_paid & payment_status
+          v_target_new_paid := COALESCE(v_target_order.amount_paid, 0) + v_alloc_amt;
+          v_target_pay_status := CASE
+            WHEN v_target_new_paid >= COALESCE(v_target_order.grand_total, 0) - 0.01 THEN 'paid'
+            WHEN v_target_new_paid > 0 THEN 'partial'
+            ELSE 'unpaid'
+          END;
+
+          UPDATE public.orders
+          SET amount_paid = v_target_new_paid,
+              payment_status = v_target_pay_status,
+              payment_method = 'Saldo Kredit Pelanggan',
+              updated_at = v_now
+          WHERE id = v_target_order.id;
+        END IF;
+      END IF;
     END IF;
 
     -- Update Order / Invoice Balances Automatically (1:1 Parity with AR Ledger 103000)
@@ -882,10 +1001,14 @@ BEGIN
     'rma_number', v_rma_number,
     'inventory_transaction_id', v_inv_tx_id,
     'settlement_transaction_id', v_fin_tx_id,
+    'deposit_transfer_transaction_id', v_dep_tx_id,
     'new_grand_total', v_new_grand,
     'new_amount_paid', v_new_paid,
     'payment_status', v_pay_status,
-    'store_credit_balance', v_sc_balance
+    'store_credit_balance', v_sc_balance,
+    'allocated_amount', v_alloc_amt,
+    'allocated_target_order_id', v_alloc_target_id,
+    'allocated_target_order_number', v_alloc_target_num
   );
 END;
 $$;

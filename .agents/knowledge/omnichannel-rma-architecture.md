@@ -34,6 +34,26 @@ Seluruh saluran penjualan (POS Kasir, Faktur B2B `/orders/invoices`, Pesanan Omn
 2. **Isolasi Sumber Karantina Historis (`source_type = 'order'` vs `'rma_receipt'`):**
    - Mutasi karantina dari pembatalan order biasa (`orderLedger.ts`, `source_type = 'order'`) tetap mengkredit `102000` saat dihapusbukukan (`hilang`) dan tidak menjurnal ganda saat diterima (`terima`).
    - Mutasi karantina baru dari RMA/POS (`rma_receipt`, `pos_return`, `order_return`) direklasifikasi secara presisi dari `102100` ke `102000` saat diterima ke rak utama.
-3. **Kompatibilitas Laporan *Cash Basis* & *AP/AR Summary*:**
+3. **Kompatibilitas Laporan *Cash Basis* & *AP/AR Summary* (2-Journal Bridge untuk Saldo Kredit & Potong Piutang Lintas Invoice):**
    - Seluruh deskripsi jurnal RMA mempertahankan kata kunci `'Retur'` agar `get_ledger_balances` (*Cash Basis*) tidak pernah salah mengenali Nota Kredit piutang belum lunas sebagai penerimaan kas.
+   - Ketika pesanan/invoice yang **sudah lunas** diretur ke **Saldo Kredit Pelanggan (`202000`)** atau langsung **Dipotongkan ke Piutang Nota Lain (`apply_other_invoice`)**, sistem membuat **2-Journal Bridge**:
+     1. `settlement_journal` (berkata `'Retur'`): `Dr 401100 Retur Penjualan / Cr 103000 Piutang Usaha`
+     2. `deposit_transfer_journal` (deskripsi `'Alokasi Deposit Saldo Kredit ...'`, tanpa kata `'Retur'` atau `'Pembayaran'`): `Dr 103000 Piutang Usaha / Cr 202000 Saldo Kredit Pelanggan`
+     3. Saat Saldo Kredit dipakai memotong Nota Lain (`#INV-B`), `recordOrderPayment` atau `process_rma_transition_v1` memposting: `Dr 202000 Saldo Kredit Pelanggan / Cr 103000 Piutang Usaha` pada `#INV-B`.
+   - Jembatan 2 jurnal ini menjamin akun `103000` pada `#INV-A` bersaldo bersih `0` di *Accrual Basis*, membalik pendapatan kas pada `#INV-A` di *Cash Basis*, dan mengakui pelunasan kas pada `#INV-B` tanpa *double-counting*.
+
+---
+
+## 3. Dual-Layer Store Credit Sub-Ledger & Cross-Invoice AR Allocation (Zoho Books + Odoo ERP Hybrid)
+
+1. **Lapis 1 — Customer Sub-Ledger (`customer_store_credits` & `store_credit_ledger`):**
+   - `public.customer_store_credits`: Menyimpan saldo kredit aktif per pelanggan (`balance`, `lifetime_issued`, `lifetime_redeemed`, `UNIQUE(business_id, customer_id)`).
+   - `public.store_credit_ledger`: Buku besar pembantu *append-only* per pelanggan (`entry_type IN ('issued', 'redeemed', 'reversed', 'adjusted')`, `amount`, `balance_after`, `return_id`, `rma_id`, `order_id`).
+2. **Lapis 2 — General Ledger COA (`202000 Saldo Kredit Pelanggan`):**
+   - Total `SUM(balance)` seluruh pelanggan di `customer_store_credits` wajib selalu 1:1 dengan saldo kredit akun `[202000] Saldo Kredit Pelanggan` (`LIABILITY`) di Neraca Akuntansi.
+3. **2 Jalur Pemotongan Piutang Lintas Invoice (`0ms` Extra Latency + 1-Roundtrip ACID RPC):**
+   - **Jalur A (Saat Retur — Ala Zoho Books):** Jika pelanggan memiliki nota lain yang belum lunas (`otherUnpaidOrders` dari `getOrderRmaPreview`), pengguna dapat memilih **`📄 Potongkan Langsung ke Piutang Nota Lain`** (`settlement_method = 'apply_other_invoice'`, `target_order_id`). RPC `process_rma_transition_v1` menerbitkan saldo kredit dari nota asal dan langsung memotong piutang nota tujuan dalam 1 transaksi database atomik.
+   - **Jalur B (Saat Buka Nota Belum Lunas — Ala Odoo ERP):** Endpoint `GET /api/orders/invoices/[id]` memuat `customer_store_credit_balance` di dalam `Promise.all` utama (`0ms` extra latency). Jika saldo $> 0$, halaman detail invoice menampilkan banner hijau **`🪙 Saldo Kredit Pelanggan Tersedia`** dengan tombol 1-klik **`⚡ Gunakan Saldo Kredit (Potong Tagihan Ini)`** yang memanggil `recordOrderPayment()` (`Dr 202000 / Cr 103000`). Jika pembayaran ini di-*Void*, `voidOrderPayment()` otomatis mengembalikan saldo ke `customer_store_credits` dan mencatat `entry_type = 'reversed'` di `store_credit_ledger`.
+
+
 

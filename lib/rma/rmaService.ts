@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getOrCreateDefaultAccounts, getActivePaymentAccounts, resolvePaymentAccountFromCOA } from '@/lib/accountHelper'
 import { postJournalTransaction } from '@/lib/journalHelper'
+import { recordOrderPayment } from '@/lib/paymentLedger'
 import { recordStockMovements, StockMoveInput } from '@/lib/stockLedger'
 import {
   buildDispositionInventoryLines,
@@ -45,6 +46,7 @@ export interface CreateRmaParams {
   settlementMethod?: RmaSettlementMethod
   refundAccountId?: string | null
   refundMethodLabel?: string | null
+  targetOrderId?: string | null
 }
 
 export interface InspectRmaParams {
@@ -69,6 +71,7 @@ export interface SettleRmaParams {
   refundMethodLabel?: string | null
   restockingFeeOverride?: number
   shiftId?: string | null
+  targetOrderId?: string | null
 }
 
 /**
@@ -135,13 +138,75 @@ export async function getOrderRmaPreview(
 
   const { lines: returnableLines } = computeReturnableLines(order, prevItems)
 
+  // Fast parallel fetch of customer's other open unpaid/partial invoices & current Store Credit balance
+  let otherUnpaidOrders: Array<{
+    id: string
+    order_number: string
+    grand_total: number
+    amount_paid: number
+    remaining_balance: number
+    payment_status: string
+    status: string
+    order_date: string
+  }> = []
+  let customerStoreCreditBalance = 0
+
+  if (isUuid(order.customer_id)) {
+    const [unpaidRes, scRes] = await Promise.all([
+      Promise.resolve(
+        supabase
+          .from('orders')
+          .select('id, order_number, grand_total, amount_paid, payment_status, status, order_date')
+          .eq('business_id', businessId)
+          .eq('customer_id', order.customer_id)
+          .neq('id', orderId)
+          .not('status', 'in', '("cancelled","pending")')
+          .in('payment_status', ['unpaid', 'partial'])
+          .order('created_at', { ascending: false })
+          .limit(20)
+      ).catch(() => ({ data: null })),
+      Promise.resolve(
+        supabase
+          .from('customer_store_credits')
+          .select('balance')
+          .eq('business_id', businessId)
+          .eq('customer_id', order.customer_id)
+          .maybeSingle()
+      ).catch(() => ({ data: null }))
+    ])
+
+    if (Array.isArray(unpaidRes?.data)) {
+      otherUnpaidOrders = unpaidRes.data
+        .map((o: any) => {
+          const grand = Math.max(0, round(Number(o.grand_total || 0)))
+          const paid = Math.max(0, round(Number(o.amount_paid || 0)))
+          const rem = Math.max(0, grand - paid)
+          return {
+            id: o.id,
+            order_number: o.order_number || o.id,
+            grand_total: grand,
+            amount_paid: paid,
+            remaining_balance: rem,
+            payment_status: o.payment_status || 'unpaid',
+            status: o.status || 'processing',
+            order_date: o.order_date
+          }
+        })
+        .filter((o) => o.remaining_balance > 0)
+    }
+
+    customerStoreCreditBalance = Math.max(0, round(Number((scRes as any)?.data?.balance || 0)))
+  }
+
   return {
     order,
     returnableLines,
     policy,
     paymentAccounts,
     existingRmas: rmaReqsRes.data || [],
-    payments: paymentsRes.data || []
+    payments: paymentsRes.data || [],
+    otherUnpaidOrders,
+    customerStoreCreditBalance
   }
 }
 
@@ -227,28 +292,55 @@ function computeSettlementAccounting(params: {
 
   let refundPaidAmount = 0
   let storeCreditIssued = 0
+  const depositTransferLines: Array<{ account_id: string; debit: number; credit: number }> = []
 
   if (refundEligible > 0) {
-    if (settlementMethod === 'store_credit') {
+    if (settlementMethod === 'store_credit' || settlementMethod === 'apply_other_invoice') {
       if (!isUuid(order.customer_id)) {
         throw new ReturnError(
-          'Saldo Kredit Pelanggan hanya tersedia untuk pelanggan terdaftar (bukan tamu).',
+          'Saldo Kredit Pelanggan & Potong Piutang Nota Lain hanya tersedia untuk pelanggan terdaftar (bukan tamu).',
           'STORE_CREDIT_NEEDS_CUSTOMER',
           400
         )
       }
       storeCreditIssued = refundEligible
-      lines.push({ account_id: storeCreditAcc, debit: 0, credit: refundEligible })
+      // 2-Journal Bridge for 100% Accrual + Cash-Basis P&L + AP/AR Summary reconciliation:
+      // 1) Settlement Return Journal (has "Retur" in description) credits 103000 Receivable
+      // 2) Deposit Transfer Journal (no "Retur" in description) debits 103000 Receivable & credits 202000 Store Credit
+      //    -> Accrual 103000 nets to 0 on source order, while Cash-Basis RPC reverses source order cash revenue (-refundEligible)
+      lines.push({ account_id: arAcc, debit: 0, credit: refundEligible })
+      depositTransferLines.push(
+        { account_id: arAcc, debit: refundEligible, credit: 0 },
+        { account_id: storeCreditAcc, debit: 0, credit: refundEligible }
+      )
+      payments.push({
+        amount: refundEligible,
+        method: 'Saldo Kredit Pelanggan',
+        account_id: storeCreditAcc,
+        kind: 'refund',
+        notes: `Alokasi Kelebihan Bayar ke Saldo Kredit Pelanggan (#${order.order_number})`
+      })
     } else if (settlementMethod === 'credit_memo' && refundEligible > 0 && !refundAccountId) {
       // If user explicitly chose Credit Memo on an overpaid invoice and has a named customer, park excess in Store Credit; otherwise credit AR
       if (isUuid(order.customer_id)) {
         storeCreditIssued = refundEligible
-        lines.push({ account_id: storeCreditAcc, debit: 0, credit: refundEligible })
+        lines.push({ account_id: arAcc, debit: 0, credit: refundEligible })
+        depositTransferLines.push(
+          { account_id: arAcc, debit: refundEligible, credit: 0 },
+          { account_id: storeCreditAcc, debit: 0, credit: refundEligible }
+        )
+        payments.push({
+          amount: refundEligible,
+          method: 'Saldo Kredit Pelanggan',
+          account_id: storeCreditAcc,
+          kind: 'refund',
+          notes: `Alokasi Kelebihan Bayar ke Saldo Kredit Pelanggan (#${order.order_number})`
+        })
       } else {
         lines.push({ account_id: arAcc, debit: 0, credit: refundEligible })
       }
     } else {
-      // Cash / Bank Refund
+      // Cash / Bank Refund (Also routed via 2-Journal Bridge so partial-DP + cash-refund works in both Accrual & Cash Basis!)
       const resolvedBank = resolvePaymentAccountFromCOA(
         paymentAccounts,
         refundMethodLabel || order.payment_method,
@@ -258,13 +350,17 @@ function computeSettlementAccounting(params: {
       const payoutLabel = refundMethodLabel || resolvedBank?.name || 'Transfer Refund'
 
       refundPaidAmount = refundEligible
-      lines.push({ account_id: payoutAccId, debit: 0, credit: refundEligible })
+      lines.push({ account_id: arAcc, debit: 0, credit: refundEligible })
+      depositTransferLines.push(
+        { account_id: arAcc, debit: refundEligible, credit: 0 },
+        { account_id: payoutAccId, debit: 0, credit: refundEligible }
+      )
       payments.push({
         amount: refundEligible,
         method: payoutLabel,
         account_id: payoutAccId,
         kind: 'refund',
-        notes: `Refund Retur Pesanan #${order.order_number}`
+        notes: `Pengembalian Dana Pesanan #${order.order_number}`
       })
     }
   }
@@ -283,6 +379,9 @@ function computeSettlementAccounting(params: {
     refundPaidAmount,
     storeCreditIssued,
     journalLines: lines,
+    depositTransferLines,
+    storeCreditAcc,
+    arAcc,
     payments
   }
 }
@@ -311,7 +410,8 @@ export async function createRmaService(
     expressComplete = false,
     settlementMethod = 'credit_memo',
     refundAccountId = null,
-    refundMethodLabel = null
+    refundMethodLabel = null,
+    targetOrderId = null
   } = params
 
   if (!items || items.length === 0) {
@@ -408,6 +508,8 @@ export async function createRmaService(
 
   let invJournalPayload: any = null
   let finJournalPayload: any = null
+  let depositTransferJournalPayload: any = null
+  let crossInvoiceAllocationPayload: any = null
   let orderUpdatePayload: any = null
   let paymentsPayload: any[] = []
   let storeCreditPayload: any = null
@@ -465,6 +567,18 @@ export async function createRmaService(
       lines: fin.journalLines
     }
 
+    if (fin.depositTransferLines.length > 0) {
+      // IMPORTANT: Must NOT contain "Retur", "Refund", or "Pembayaran" so Cash-Basis Case 2 reverses source order cash revenue!
+      depositTransferJournalPayload = {
+        date: new Date().toISOString(),
+        description:
+          fin.refundPaidAmount > 0
+            ? `Pencairan Kelebihan Bayar #${order.order_number} (${rmaNumber})`
+            : `Alokasi Deposit Saldo Kredit #${order.order_number} (${rmaNumber})`,
+        lines: fin.depositTransferLines
+      }
+    }
+
     orderUpdatePayload = {
       grand_total: fin.newGrandTotal,
       return_status: quote.returnStatus,
@@ -478,6 +592,17 @@ export async function createRmaService(
         customer_id: order.customer_id,
         amount: fin.storeCreditIssued,
         description: `Saldo kredit dari retur ${rmaNumber} (#${order.order_number})`
+      }
+
+      if (settlementMethod === 'apply_other_invoice' && isUuid(targetOrderId)) {
+        crossInvoiceAllocationPayload = {
+          target_order_id: targetOrderId,
+          customer_id: order.customer_id,
+          amount: fin.storeCreditIssued,
+          store_credit_account_id: fin.storeCreditAcc,
+          receivable_account_id: fin.arAcc,
+          cashier_name: actorName
+        }
       }
     }
   }
@@ -514,9 +639,11 @@ export async function createRmaService(
     items: preparedItems,
     inventory_journal: invJournalPayload,
     settlement_journal: finJournalPayload,
+    deposit_transfer_journal: depositTransferJournalPayload,
     order_update: orderUpdatePayload,
     payments: paymentsPayload,
-    store_credit: storeCreditPayload
+    store_credit: storeCreditPayload,
+    cross_invoice_allocation: crossInvoiceAllocationPayload
   }
 
   const { data: rpcRes, error: rpcErr } = await admin.rpc('process_rma_transition_v1', {
@@ -540,9 +667,13 @@ export async function createRmaService(
       rmaNumber: rpcRes.rma_number,
       newGrandTotal: rpcRes.new_grand_total ?? Number(order.grand_total || 0),
       paymentStatus: rpcRes.payment_status ?? order.payment_status,
+      allocatedAmount: Number(rpcRes.allocated_amount || 0),
+      allocatedTargetOrderId: rpcRes.allocated_target_order_id || null,
       expressComplete,
       message: expressComplete
-        ? `RMA ${rpcRes.rma_number} selesai diproses: stok gudang, jurnal akuntansi, dan saldo pesanan/invoice telah diperbarui otomatis.`
+        ? Number(rpcRes.allocated_amount || 0) > 0
+          ? `RMA ${rpcRes.rma_number} selesai: stok & jurnal diperbarui, dan kredit Rp ${Number(rpcRes.allocated_amount).toLocaleString('id-ID')} otomatis memotong piutang nota tujuan.`
+          : `RMA ${rpcRes.rma_number} selesai diproses: stok gudang, jurnal akuntansi, dan saldo pesanan/invoice telah diperbarui otomatis.`
         : `Tiket ${rpcRes.rma_number} berhasil diterbitkan. Stok & jurnal keuangan aman tertahan hingga paket tiba di gudang.`
     }
   }
@@ -661,12 +792,14 @@ export async function settleRmaService(
   const {
     businessId,
     actorId,
+    actorName,
     rmaId,
     settlementMethod,
     refundAccountId,
     refundMethodLabel,
     restockingFeeOverride,
-    shiftId
+    shiftId,
+    targetOrderId = null
   } = params
 
   if (!isUuid(rmaId)) {
@@ -741,6 +874,17 @@ export async function settleRmaService(
           : `Penyelesaian Retur Penjualan #${order.order_number} (${rma.rma_number})`,
       lines: fin.journalLines
     },
+    deposit_transfer_journal:
+      fin.depositTransferLines.length > 0
+        ? {
+            date: new Date().toISOString(),
+            description:
+              fin.refundPaidAmount > 0
+                ? `Pencairan Kelebihan Bayar #${order.order_number} (${rma.rma_number})`
+                : `Alokasi Deposit Saldo Kredit #${order.order_number} (${rma.rma_number})`,
+            lines: fin.depositTransferLines
+          }
+        : null,
     order_update: {
       grand_total: fin.newGrandTotal,
       return_status:
@@ -755,6 +899,20 @@ export async function settleRmaService(
             customer_id: order.customer_id,
             amount: fin.storeCreditIssued,
             description: `Saldo kredit dari RMA ${rma.rma_number} (#${order.order_number})`
+          }
+        : null,
+    cross_invoice_allocation:
+      settlementMethod === 'apply_other_invoice' &&
+      fin.storeCreditIssued > 0 &&
+      isUuid(order.customer_id) &&
+      isUuid(targetOrderId)
+        ? {
+            target_order_id: targetOrderId,
+            customer_id: order.customer_id,
+            amount: fin.storeCreditIssued,
+            store_credit_account_id: fin.storeCreditAcc,
+            receivable_account_id: fin.arAcc,
+            cashier_name: actorName
           }
         : null
   }
@@ -787,8 +945,12 @@ export async function settleRmaService(
     arCutAmount: fin.arCutAmount,
     refundPaidAmount: fin.refundPaidAmount,
     storeCreditIssued: fin.storeCreditIssued,
+    allocatedAmount: Number(rpcRes?.allocated_amount || 0),
+    allocatedTargetOrderId: rpcRes?.allocated_target_order_id || null,
     message:
-      fin.arCutAmount > 0 && fin.refundPaidAmount === 0
+      Number(rpcRes?.allocated_amount || 0) > 0
+        ? `Penyelesaian RMA ${rma.rma_number} berhasil: kredit Rp ${Number(rpcRes.allocated_amount).toLocaleString('id-ID')} otomatis memotong piutang nota tujuan.`
+        : fin.arCutAmount > 0 && fin.refundPaidAmount === 0
         ? `Nota Kredit ${rma.rma_number} berhasil memotong tagihan #${order.order_number} sebesar Rp ${fin.arCutAmount.toLocaleString('id-ID')}.`
         : `Penyelesaian RMA ${rma.rma_number} berhasil diposting ke Buku Besar.`
   }
@@ -852,6 +1014,56 @@ async function executeRmaNodeFallback(
       admin,
       true
     )
+  }
+
+  if (rpcPayload.deposit_transfer_journal?.lines?.length > 0) {
+    await postJournalTransaction(
+      businessId,
+      orderId,
+      nowIso,
+      rpcPayload.deposit_transfer_journal.description,
+      rpcPayload.deposit_transfer_journal.lines,
+      admin,
+      true
+    )
+  }
+
+  if (rpcPayload.store_credit?.amount > 0 && isUuid(rpcPayload.store_credit.customer_id)) {
+    const sc = rpcPayload.store_credit
+    const { data: curSc } = await admin
+      .from('customer_store_credits')
+      .select('balance, lifetime_issued')
+      .eq('business_id', businessId)
+      .eq('customer_id', sc.customer_id)
+      .maybeSingle()
+
+    const nextBal = Number(curSc?.balance || 0) + Number(sc.amount)
+    const nextLife = Number(curSc?.lifetime_issued || 0) + Number(sc.amount)
+
+    await admin.from('customer_store_credits').upsert(
+      {
+        business_id: businessId,
+        customer_id: sc.customer_id,
+        balance: nextBal,
+        lifetime_issued: nextLife,
+        updated_at: nowIso
+      },
+      { onConflict: 'business_id,customer_id' }
+    )
+
+    if (rpcPayload.cross_invoice_allocation?.target_order_id) {
+      const alloc = rpcPayload.cross_invoice_allocation
+      await recordOrderPayment({
+        businessId,
+        orderId: alloc.target_order_id,
+        amount: Number(alloc.amount || 0),
+        paymentMethod: 'Saldo Kredit Pelanggan',
+        paymentMethodAccountId: alloc.store_credit_account_id || null,
+        notes: `Alokasi Otomatis Saldo Kredit dari RMA ${hdr.rma_number}`,
+        cashierName: alloc.cashier_name || hdr.created_by_name || 'Sistem RMA',
+        supabase: admin
+      }).catch(() => {})
+    }
   }
 
   if (rpcPayload.order_update) {

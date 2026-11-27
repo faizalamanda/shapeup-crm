@@ -10,7 +10,13 @@ export type RmaFulfillmentStage =
 
 export type RmaSettlementStage = 'pending' | 'settled' | 'not_applicable'
 
-export type RmaSettlementMethod = 'credit_memo' | 'refund' | 'store_credit' | 'exchange' | 'none'
+export type RmaSettlementMethod =
+  | 'credit_memo'
+  | 'refund'
+  | 'store_credit'
+  | 'apply_other_invoice'
+  | 'exchange'
+  | 'none'
 
 export type RmaDisposition =
   | 'pending'

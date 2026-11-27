@@ -166,3 +166,26 @@ $$\text{Sisa Piutang (Outstanding)} = \text{Grand Total} - \sum(\text{order\_pay
    - Setiap baris item di `orders.items_json` menyimpan `product_id`, `variant_id` (tersanitasi via `isUuid()`), dan `cost_price` varian.
    - Saat faktur memicu pemotongan stok & HPP (`syncOrderToLedger()` $\rightarrow$ `applyStockMovement()` & `generateItemizedHppJournalLines()`), mutasi kartu stok dicatat tepat pada partisi `variant_id` terkait di `v_stock_moves_ledger`, dan jurnal HPP (`501000`) menggunakan `cost_price` serta label nama/SKU spesifik variasi tersebut.
    - Tab **History Perpindahan Stok** pada halaman detail invoice (`/orders/invoices/[id]`) melakukan join ke `products(..., product_variants(id, name, sku))` dan `variant_id` untuk menampilkan nama serta SKU variasi yang akurat.
+
+---
+
+## 6. Omnichannel RMA, Credit Memo (Nota Kredit), & Cross-Invoice Store Credit Allocation (PSAK 115 & PSAK 202)
+
+1. **Integrasi Satu Inti (`@/lib/rma` & `lib/pos/returns/engine.ts`):**
+   - Seluruh pengajuan retur/komplain dan Nota Kredit pada faktur terbit (`processing`, `shipped`, `completed`) dijalankan melalui `<CreateRmaModal />` (`/orders/invoices/[id]`, `/orders`, dan pusat `/products/rma`) yang memanggil `POST /api/rma` $\rightarrow$ `process_rma_transition_v1`.
+   - Kuota barang yang bisa diretur dihitung secara gabungan lintas `pos_return_items` dan `rma_items` (`getOrderRmaPreview`) sehingga mustahil terjadi retur ganda.
+2. **Hierarki Penyelesaian Piutang (Settlement Identity):**
+   - **Potong Sisa Piutang Nota Asal Terlebih Dahulu (`arCutAmount`):** Jika faktur asal belum lunas (`unpaid` / `partial`), nilai retur otomatis memotong `103000 Piutang Usaha` dan menurunkan `orders.grand_total` tanpa mengeluarkan kas.
+   - **Hak Kelebihan Bayar (`refundEligible = max(0, paidBefore - newGrandTotal)`):** Jika faktur asal sudah lunas atau DP melebihi tagihan bersih baru, kelebihan bayar dapat diselesaikan melalui 3 opsi:
+     1. **`store_credit` (`🪙 Saldo Kredit Pelanggan`):** Disimpan di sub-ledger `customer_store_credits` + `store_credit_ledger` dan akun COA `202000 Saldo Kredit Pelanggan`.
+     2. **`apply_other_invoice` (`📄 Potongkan Langsung ke Piutang Nota Lain` — Ala Zoho Books):** Dalam 1-roundtrip RPC `process_rma_transition_v1`, kelebihan bayar langsung dialokasikan untuk melunasi/memotong nota pelanggan lain yang masih `unpaid`/`partial` (`Dr 202000 / Cr 103000` pada nota tujuan).
+     3. **`refund` (`💸 Transfer Refund Bank / Kas`):** Mencatat pengembalian dana dari akun Kas/Bank COA terpilih.
+3. **2-Journal Bridge (Keselamatan Laba Rugi *Accrual Basis*, *Cash Basis*, & `get_ap_ar_summary`):**
+   - Saat nota yang sudah memiliki pembayaran diretur ke Saldo Kredit (`202000`) atau Refund Kas/Bank (`101xxx`), sistem selalu memposting 2 transaksi berpasangan pada nota asal:
+     - **Jurnal 1 (`settlement_journal`, deskripsi mengandung kata `'Retur'`):** `Dr 401100 Retur Penjualan / Cr 103000 Piutang Usaha`
+     - **Jurnal 2 (`deposit_transfer_journal`, deskripsi `'Alokasi Deposit Saldo Kredit...'` atau `'Pencairan Kelebihan Bayar...'` tanpa kata `'Retur'`/`'Refund'`/`'Pembayaran'`):** `Dr 103000 Piutang Usaha / Cr 202000 (atau 101xxx)`
+   - Sekaligus menyisipkan baris `payment_kind = 'refund'` pada `order_payments` nota asal agar `orders.amount_paid` turun seimbang dengan `orders.grand_total` (`unreconciled_amount = Rp 0` di `get_ap_ar_summary`).
+4. **Banner 1-Klik Penggunaan Saldo Kredit pada Invoice Belum Lunas (Ala Odoo ERP):**
+   - Endpoint `GET /api/orders/invoices/[id]` memuat `customer_store_credit_balance` dan `store_credit_account_id` (`202000`) di dalam `Promise.all` utama (`0ms` extra latency).
+   - Jika pelanggan memiliki `customer_store_credit_balance > 0` pada invoice yang belum lunas, panel kanan `/orders/invoices/[id]` menampilkan banner hijau **`⚡ Gunakan Saldo Kredit (Potong Tagihan Ini)`** dan opsi `[202000] Saldo Kredit Pelanggan` di modal Catat Pembayaran.
+   - Pembatalan (*Void*) pembayaran yang menggunakan Saldo Kredit via `voidOrderPayment()` otomatis memulihkan saldo `customer_store_credits` pelanggan dan mencatat `entry_type = 'reversed'` di `store_credit_ledger`.

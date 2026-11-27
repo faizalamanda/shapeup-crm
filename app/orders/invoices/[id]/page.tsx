@@ -113,6 +113,8 @@ type Invoice = {
   } | null
   payments?: PaymentRecord[]
   payment_history?: PaymentRecord[]
+  customer_store_credit_balance?: number
+  store_credit_account_id?: string | null
 }
 
 type JournalLine = {
@@ -521,17 +523,34 @@ export default function InvoiceDetailPage() {
   }, [activeTab, ledgerTransactions.length, stockMoves.length, fetchLedger, fetchStockMoves])
 
   // Helper to open Record / Replace / Void Payment Modal
-  const openRecordPaymentModal = () => {
+  const openRecordPaymentModal = (useStoreCredit = false) => {
     if (!invoice) return
     const today = new Date().toISOString().split('T')[0]
     const remaining = Math.max(0, Number(invoice.grand_total || 0) - Number(invoice.amount_paid || 0))
+    const scBal = Math.max(0, Number(invoice.customer_store_credit_balance || 0))
+    const scAccId = invoice.store_credit_account_id || ''
+
     setPaymentModalMode('record')
     setTargetPaymentForAction(null)
     setVoidReasonInput('')
     setPaymentDate(today)
-    setPaymentAmountInput(remaining)
-    setIsFullSettlement(true)
-    setPaymentNotesInput('')
+
+    if (useStoreCredit && scBal > 0) {
+      const allocAmt = Math.min(remaining, scBal)
+      setPaymentAccountId(scAccId || 'store_credit')
+      setPaymentMethod('Saldo Kredit Pelanggan')
+      setIsFullSettlement(allocAmt >= remaining - 0.01)
+      setPaymentAmountInput(allocAmt)
+      setPaymentNotesInput('Potong Piutang dari Saldo Kredit Pelanggan')
+    } else {
+      if (paymentAccounts.length > 0 && (paymentMethod === 'Saldo Kredit Pelanggan' || !paymentAccountId)) {
+        setPaymentAccountId(paymentAccounts[0].id)
+        setPaymentMethod(paymentAccounts[0].name)
+      }
+      setPaymentAmountInput(remaining)
+      setIsFullSettlement(true)
+      setPaymentNotesInput('')
+    }
     setShowPaymentModal(true)
   }
 
@@ -908,7 +927,15 @@ export default function InvoiceDetailPage() {
     }
 
     const remaining = Math.max(0, Number(invoice.grand_total || 0) - Number(invoice.amount_paid || 0))
-    const amountToPay = isFullSettlement ? remaining : Math.min(remaining, Math.max(1, Number(paymentAmountInput)))
+    const isUsingStoreCredit =
+      paymentMethod === 'Saldo Kredit Pelanggan' ||
+      paymentAccountId === (invoice.store_credit_account_id || 'store_credit')
+    const maxPayable = isUsingStoreCredit
+      ? Math.min(remaining, Math.max(0, Number(invoice.customer_store_credit_balance || 0)))
+      : remaining
+    const amountToPay = isFullSettlement
+      ? maxPayable
+      : Math.min(maxPayable, Math.max(1, Number(paymentAmountInput)))
 
     if (amountToPay <= 0) {
       setErrorMessage('Nominal pembayaran harus lebih besar dari 0.')
@@ -1734,11 +1761,41 @@ export default function InvoiceDetailPage() {
                   </div>
                 )}
 
+                {/* Odoo-Style Customer Store Credit Banner if unpaid/partial & customer has active Store Credit */}
+                {canEdit &&
+                  invoice.payment_status !== 'paid' &&
+                  invoice.status !== 'cancelled' &&
+                  Number(invoice.customer_store_credit_balance || 0) > 0 && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2 text-xs">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-extrabold text-emerald-950 flex items-center gap-1">
+                            <span>🪙 Saldo Kredit Pelanggan Tersedia</span>
+                          </div>
+                          <p className="text-[11px] text-emerald-800 mt-0.5 leading-snug">
+                            <strong>{invoice.customers?.name || 'Pelanggan'}</strong> memiliki deposit kredit retur sebesar{' '}
+                            <strong className="tabular-nums">
+                              {formatIDR(Number(invoice.customer_store_credit_balance || 0))}
+                            </strong>
+                            .
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openRecordPaymentModal(true)}
+                        className="w-full py-2 px-3 text-xs font-extrabold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-2xs transition-all cursor-pointer"
+                      >
+                        ⚡ Gunakan Saldo Kredit (Potong Tagihan Ini)
+                      </button>
+                    </div>
+                  )}
+
                 {/* Record Payment button if not paid and not cancelled */}
                 {invoice.payment_status !== 'paid' && invoice.status !== 'cancelled' && (
                   <button
                     type="button"
-                    onClick={openRecordPaymentModal}
+                    onClick={() => openRecordPaymentModal(false)}
                     className="w-full py-2.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-all cursor-pointer"
                   >
                     💰 Catat Pembayaran / DP / Pelunasan
@@ -2406,9 +2463,16 @@ export default function InvoiceDetailPage() {
             ? Math.min(Number(invoice.grand_total || 0), currentRemaining + oldPayAmount)
             : currentRemaining
 
+        const isUsingStoreCreditModal =
+          paymentMethod === 'Saldo Kredit Pelanggan' ||
+          paymentAccountId === (invoice.store_credit_account_id || 'store_credit')
+        const maxModalPayable = isUsingStoreCreditModal
+          ? Math.min(remainingBalance, Math.max(0, Number(invoice.customer_store_credit_balance || 0)))
+          : remainingBalance
+
         const effectiveAmount = isFullSettlement
-          ? remainingBalance
-          : Math.min(remainingBalance, Math.max(1, Number(paymentAmountInput || 0)))
+          ? maxModalPayable
+          : Math.min(maxModalPayable, Math.max(1, Number(paymentAmountInput || 0)))
         const nextRemaining = Math.max(0, remainingBalance - effectiveAmount)
 
         const oldAccountLabel = targetPaymentForAction?.payment_account
@@ -2547,18 +2611,33 @@ export default function InvoiceDetailPage() {
                     <label className="text-xs font-bold text-[#70706E]">
                       {paymentModalMode === 'replace'
                         ? 'Akun Kas/Bank COA Pengganti (Baru)'
-                        : 'Metode Pembayaran (Akun Kas/Bank COA)'}
+                        : 'Metode Pembayaran (Akun Kas/Bank / Saldo Kredit COA)'}
                     </label>
                     <select
                       value={paymentAccountId}
                       onChange={e => {
                         const accId = e.target.value
                         setPaymentAccountId(accId)
-                        const matched = paymentAccounts.find(a => a.id === accId)
-                        if (matched) setPaymentMethod(matched.name)
+                        const scAccId = invoice.store_credit_account_id || 'store_credit'
+                        if (accId === scAccId || accId === 'store_credit') {
+                          setPaymentMethod('Saldo Kredit Pelanggan')
+                          const scBal = Math.max(0, Number(invoice.customer_store_credit_balance || 0))
+                          if (scBal > 0 && scBal < remainingBalance) {
+                            setIsFullSettlement(false)
+                            setPaymentAmountInput(scBal)
+                          }
+                        } else {
+                          const matched = paymentAccounts.find(a => a.id === accId)
+                          if (matched) setPaymentMethod(matched.name)
+                        }
                       }}
                       className="w-full p-2.5 text-xs font-bold rounded-xl border border-[#EBEBEA] bg-white focus:outline-none"
                     >
+                      {Number(invoice.customer_store_credit_balance || 0) > 0 && (
+                        <option value={invoice.store_credit_account_id || 'store_credit'}>
+                          🪙 [202000] Saldo Kredit Pelanggan (Tersedia: {formatIDR(Number(invoice.customer_store_credit_balance || 0))})
+                        </option>
+                      )}
                       {paymentAccounts.length > 0 ? (
                         paymentAccounts.map(acc => (
                           <option key={acc.id} value={acc.id}>

@@ -1,5 +1,5 @@
 import { getApiContext } from '@/lib/apiContext'
-import { getActivePaymentAccounts, resolvePaymentAccountFromCOA } from '@/lib/accountHelper'
+import { getActivePaymentAccounts, getOrCreateDefaultAccounts, resolvePaymentAccountFromCOA } from '@/lib/accountHelper'
 import { resolveOrCreateCustomer } from '@/lib/customerHelper'
 import { recordOrderPayment, voidOrderPayment } from '@/lib/paymentLedger'
 import { syncOrderToLedger } from '@/lib/orderLedger'
@@ -39,16 +39,30 @@ export async function GET(
       return NextResponse.json({ error: 'Invoice tidak ditemukan' }, { status: 404 })
     }
 
-    // Fetch active Cash/Bank COA accounts of this business, order_payments, and custom options in parallel
-    const [{ data: allOrderPays }, paymentAccounts, customOptions] = await Promise.all([
+    // Fetch active Cash/Bank COA accounts of this business, order_payments, custom options, and Customer Store Credit in parallel (0ms extra latency)
+    const [{ data: allOrderPays }, paymentAccounts, customOptions, scRes, accountMap] = await Promise.all([
       supabaseAdmin
         .from('order_payments')
         .select('*')
         .eq('order_id', id)
         .order('created_at', { ascending: true }),
       getActivePaymentAccounts(businessId, supabaseAdmin),
-      getBusinessCustomInvoiceOptions(businessId, supabaseAdmin)
+      getBusinessCustomInvoiceOptions(businessId, supabaseAdmin),
+      isUuid(invoice.customer_id)
+        ? Promise.resolve(
+            supabaseAdmin
+              .from('customer_store_credits')
+              .select('balance')
+              .eq('business_id', businessId)
+              .eq('customer_id', invoice.customer_id)
+              .maybeSingle()
+          ).catch(() => ({ data: null }))
+        : Promise.resolve({ data: null }),
+      getOrCreateDefaultAccounts(businessId, supabaseAdmin)
     ])
+
+    const storeCreditAccId = accountMap['202000'] || null
+    const customerStoreCreditBalance = Math.max(0, Math.round(Number((scRes as any)?.data?.balance || 0)))
 
     const voidByTargetId = new Map<string, any>()
     for (const p of allOrderPays || []) {
@@ -58,11 +72,24 @@ export async function GET(
     }
 
     const enrichPaymentRow = (p: any) => {
-      const resolvedAcc = resolvePaymentAccountFromCOA(
-        paymentAccounts,
-        p.payment_method,
-        p.payment_method_account_id
-      )
+      const mNorm = String(p.payment_method || '').toLowerCase()
+      const isStoreCredit =
+        mNorm === 'store_credit' ||
+        mNorm.includes('saldo kredit') ||
+        mNorm.includes('store credit') ||
+        (storeCreditAccId && p.payment_method_account_id === storeCreditAccId)
+
+      const resolvedAcc = isStoreCredit
+        ? {
+            id: storeCreditAccId || p.payment_method_account_id || '202000',
+            code: '202000',
+            name: 'Saldo Kredit Pelanggan'
+          }
+        : resolvePaymentAccountFromCOA(
+            paymentAccounts,
+            p.payment_method,
+            p.payment_method_account_id
+          )
       const reversalEntry = voidByTargetId.get(p.id) || null
       return {
         ...p,
@@ -112,7 +139,9 @@ export async function GET(
         amount_paid: normalizedAmountPaid,
         creator,
         payments: enrichedPayments,
-        payment_history: enrichedAllPayments
+        payment_history: enrichedAllPayments,
+        customer_store_credit_balance: customerStoreCreditBalance,
+        store_credit_account_id: storeCreditAccId
       }
     })
   } catch (err: any) {

@@ -500,10 +500,31 @@ Pahami pemisahan tanggung jawab antara **`syncOrderToLedger()`** dan **`lib/paym
 2. **`lib/paymentLedger.ts` (Subsequent Payment & Void Specialist):**
    - **Kapan Digunakan:** Saat pesanan sudah ada di sistem sebelumnya (stok dan penjualan sudah diakui di masa lalu), lalu ada transaksi keuangan lanjutan.
    - **Fungsi Utama:**
-     - `recordOrderPayment()`: Pelunasan cicilan / DP susulan (murni Debit Kas/Bank `101000`/`101200` dan Kredit Piutang Usaha `103000` tanpa memicu mutasi stok ulang).
-     - `voidOrderPayment()`: Pembatalan satu baris pembayaran yang salah tender/akun secara *append-only* (Debit Piutang `103000`, Kredit Kas/Bank COA asal) pada tanggal efektif pembayaran asal (*PSAK 225 Same-Date Reversal*). Digunakan baik di Kasir POS (`POST /api/pos/order/payment-void`) maupun di Modul Invoice (`POST /api/orders/invoices/[id]/payment` dengan `action: 'void' | 'replace'`, serta saat koreksi pembayaran di `PUT /api/orders/invoices/[id]`).
+     - `recordOrderPayment()`: Pelunasan cicilan / DP susulan (murni Debit Kas/Bank `101000`/`101200` atau `202000 Saldo Kredit Pelanggan` dan Kredit Piutang Usaha `103000` tanpa memicu mutasi stok ulang). Jika metode bayar adalah `store_credit` / `Saldo Kredit Pelanggan`, fungsi otomatis memotong saldo di `customer_store_credits` dan mencatat `entry_type = 'redeemed'` di `store_credit_ledger`.
+     - `voidOrderPayment()`: Pembatalan satu baris pembayaran yang salah tender/akun secara *append-only* (Debit Piutang `103000`, Kredit Kas/Bank COA asal atau `202000 Saldo Kredit Pelanggan`) pada tanggal efektif pembayaran asal (*PSAK 225 Same-Date Reversal*). Jika pembayaran yang di-void menggunakan Saldo Kredit Pelanggan, fungsi otomatis mengembalikan saldo ke `customer_store_credits` dan mencatat `entry_type = 'reversed'` di `store_credit_ledger`. Digunakan baik di Kasir POS (`POST /api/pos/order/payment-void`) maupun di Modul Invoice (`POST /api/orders/invoices/[id]/payment` dengan `action: 'void' | 'replace'`, serta saat koreksi pembayaran di `PUT /api/orders/invoices/[id]`).
      - `voidPosCashMovement()`: Pembatalan mutasi kas keluar/masuk (*petty cash*) pada sesi shift POS aktif via jurnal pembalik kompensasi berpasangan (*Compensating Reversal*).
      - `recalculateOrderPaymentStatus()`: Sinkronisasi ulang `amount_paid`, `payment_status` (`unpaid`, `partial`, `paid`), dan `payment_method` (mengikuti metode pembayaran aktif terakhir atau `null` jika `unpaid`).
+
+---
+
+### 14b. `lib/rma/index.ts` & `lib/pos/returns/engine.ts` — Unified Omnichannel RMA, Credit Memo & Store Credit Engine
+
+Modul reusable 3-lapis untuk seluruh alur Retur, Tukar Barang, Nota Kredit (*Credit Memo*), Alokasi Saldo Kredit Lintas Invoice, dan Karantina Gudang (`/api/rma`, `/api/pos/returns`, `/api/inventory/returns`, `/products/rma`):
+
+```typescript
+import {
+  getOrderRmaPreview,
+  createRmaService,
+  inspectRmaService,
+  settleRmaService
+} from '@/lib/rma'
+import { buildDispositionInventoryLines, computeReturnableLines, quoteReturn } from '@/lib/pos/returns/engine'
+```
+
+- **Single Pure Accounting Core (`buildDispositionInventoryLines`):** Dipakai bersama oleh POS Return/Exchange dan Omnichannel RMA untuk memetakan disposisi fisik ke COA (`restock` $\rightarrow$ `102000`, `quarantine` $\rightarrow$ `102100`, `writeoff`/`lost_in_transit` $\rightarrow$ `502100`, `rtv_vendor` $\rightarrow$ `201000`).
+- **Cross-Channel Quota Protection (`getOrderRmaPreview`):** Menggabungkan riwayat `pos_return_items` dan `rma_items` dalam 1 `Promise.all` paralel beserta `otherUnpaidOrders` dan `customerStoreCreditBalance`.
+- **1-Roundtrip ACID RPC (`process_rma_transition_v1` & `process_quarantine_batch_v1`):** Mengeksekusi pembuatan tiket RMA, QC gudang, Nota Kredit pemotong piutang, penerbitan Saldo Kredit (`202000`), hingga pemotongan langsung ke piutang nota lain (`apply_other_invoice`) dalam 1 transaksi database.
+- Baca dokumentasi lengkap di [omnichannel-rma-architecture.md](../../knowledge/omnichannel-rma-architecture.md).
 
 ---
 

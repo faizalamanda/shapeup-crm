@@ -560,6 +560,19 @@
       - *Fast Burst Mode* (Struk pendek $\le 1.280\text{ bytes}$ tanpa logo): Dikirim dengan jeda `10ms` per `64 bytes` di PWA BLE (`0ms` *single-shot* di APK Android).
       - *Motor-Matched Anti-Clip Mode* (Struk panjang $> 1.280\text{ bytes}$ atau dengan bitmap logo): Wajib memisahkan logo dengan jeda `400ms–450ms`, menggunakan ritme motor `40ms` per `64 bytes`, dan memberikan jeda pengurasan buffer `220ms` setiap `1.024 bytes` (`140ms` per `1 KB` di APK Android).
 
+36. **Unified Omnichannel RMA, Credit Memo, Dual-Layer Store Credit Sub-Ledger & Variant-Aware Quarantine Standards (Skills `invoice-ledger`, `inventory-ledger`, & `api-modules`):**
+    - **Arsitektur 3-Lapis Lintas Saluran (`lib/pos/returns/engine.ts` & `lib/rma/*`):**
+      - Seluruh perhitungan kuota retur, prorata diskon, dan jurnal disposisi fisik (`buildDispositionInventoryLines`) berbagi 1 mesin murni yang sama untuk POS Kasir, Invoice B2B (`/orders/invoices`), Pesanan Omnichannel (`/orders`), dan Pusat Retur & RMA (`/products/rma`).
+      - Pengecekan kuota retur wajib menggabungkan `pos_return_items` dan `rma_items` secara paralel agar item yang sama tidak pernah diretur dua kali lintas modul.
+    - **Pemisahan Valuasi Karantina & Kerugian Retur (PSAK 115 & PSAK 202 Par. 34):**
+      - Barang masuk karantina dijurnal ke `102100 Persediaan Karantina & Retur` (tidak mencemari `102000 Persediaan Barang Dagangan` di rak aktif), barang rusak/hilang direklasifikasi ke `502100 Beban Kerusakan & Penyusutan Retur` (COPQ), dan barang cacat pabrik yang diklaim ke pemasok (*RTV*) dijurnal ke `201000 Hutang Usaha`.
+      - Resolusi akun baru `102100` dan `502100` di `lib/accountHelper.ts` wajib bersifat *non-fatal* dengan *emergency fallback* ke `102000` dan `502000`/`503000`, serta RPC `process_quarantine_batch_v1` wajib membedakan mutasi karantina lama (`source_type = 'order'` yang mengkredit `102000`) dari mutasi karantina RMA/POS baru (`102100`).
+    - **Dual-Layer Store Credit Sub-Ledger & 2-Journal Bridge (100% Accrual + Cash Basis + AP/AR Parity):**
+      - Saldo kredit pelanggan disimpan secara sinkron 1:1 di sub-ledger pelanggan (`customer_store_credits` + `store_credit_ledger`) dan akun COA `202000 Saldo Kredit Pelanggan`.
+      - Saat pesanan/faktur yang sudah memiliki pembayaran diretur ke Saldo Kredit (`202000`), dipotongkan langsung ke piutang nota lain (`apply_other_invoice`), atau di-*refund* kas/bank (`101xxx`), sistem **WAJIB** menggunakan **2-Journal Bridge** pada nota asal (`settlement_journal` berkata `'Retur'` yang mengkredit `103000`, dipasangkan dengan `deposit_transfer_journal` tanpa kata `'Retur'`/`'Refund'`/`'Pembayaran'` yang mendebit `103000` dan mengkredit `202000`/`101xxx`) serta mencatat baris `payment_kind = 'refund'` di `order_payments` nota asal agar Laba Rugi *Cash Basis* (`get_ledger_balances`) membalik pendapatan kas secara akurat dan `unreconciled_amount` di `get_ap_ar_summary` tetap `Rp 0`.
+      - Saat memotong piutang nota tujuan (`#INV-B`), deskripsi transaksi pembayaran wajib menggunakan istilah `'RMA'` (tanpa kata `'Retur'`) agar *Cash Basis* mengakui pelunasan pada `#INV-B`.
+
+
 
 
 
