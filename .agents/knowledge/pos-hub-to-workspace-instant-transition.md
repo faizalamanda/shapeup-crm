@@ -36,8 +36,8 @@ Sebelum optimasi ini, perpindahan dari `POSHub` ke `POSWorkspace` mengalami penu
 
 ### Pilar 2: 3-Tier Reactive POS Catalog Store (`lib/posCatalogStore.ts`)
 - **L1 RAM Cache:** Akses $0\text{ms}$ instan per `businessId` di RAM browser.
-- **L2 `sessionStorage`:** Persistensi instan saat browser di-refresh (`su_pos_cat_v1_${businessId}`) dengan *quota guard*.
-- **BroadcastChannel:** Menjaga keselarasan data antar-tab (`shapeup_pos_catalog_sync_v1`).
+- **L2 `sessionStorage`:** Persistensi instan saat browser di-refresh (`su_pos_cat_v2_${businessId}`) dengan *quota guard*.
+- **BroadcastChannel:** Menjaga keselarasan data antar-tab (`shapeup_pos_catalog_sync_v2`).
 - **Optimistic Local Stock Mutation:** Fungsi `updateLocalStock` langsung memotong saldo fisik produk dan varian yang terjual di memori seketika (0ms) setelah checkout berhasil.
 
 ### Pilar 3: Speculative Idle Prefetching di `POSHub.tsx`

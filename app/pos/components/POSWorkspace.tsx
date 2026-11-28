@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { parseProductSearchQuery, scoreProductMatch } from '@/lib/productSearchHelper'
@@ -91,10 +91,13 @@ export default function POSWorkspace({
     categories,
     loading: catalogLoading,
     isSyncing: catalogSyncing,
+    lastSyncedAt,
     refresh: refreshCatalog,
     updateLocalStock,
     searchServer: searchProductsServer
   } = usePosCatalog(supabase, activeBusiness?.id)
+
+  const lastServerSearchRef = useRef<Map<string, number>>(new Map())
 
   // Data State (Hydrated from session handoff if available)
   const [customers, setCustomers] = useState<any[]>([])
@@ -476,7 +479,7 @@ export default function POSWorkspace({
   }, [businessId, refreshCatalog, loadSecondaryData])
 
   // Smart Exact-Match vs Weighted BM25F Matches Separation (Universal Product Search Engine)
-  const { exactMatches, otherMatches, hasExactMatch } = useMemo(() => {
+  const { exactMatches, otherMatches, hasExactMatch, nameMatchCount } = useMemo(() => {
     const list = (Array.isArray(products) ? products : []).filter((p) => p && p.is_sellable !== false)
     const parsed = parseProductSearchQuery(debouncedSearch)
 
@@ -484,11 +487,12 @@ export default function POSWorkspace({
       const baseList = selectedCategoryId
         ? list.filter((p) => p && p.category_id === selectedCategoryId)
         : list
-      return { exactMatches: [], otherMatches: baseList, hasExactMatch: false }
+      return { exactMatches: [], otherMatches: baseList, hasExactMatch: false, nameMatchCount: baseList.length }
     }
 
     const exactList: any[] = []
     const scoredOthers: { item: any; score: number }[] = []
+    let matchedByNameCount = 0
 
     for (const p of list) {
       if (!p) continue
@@ -496,6 +500,10 @@ export default function POSWorkspace({
 
       const matchRes = scoreProductMatch(p, parsed)
       if (!matchRes.matched) continue
+
+      if (matchRes.score >= 420) {
+        matchedByNameCount++
+      }
 
       if (matchRes.isExactMatch) {
         exactList.push({ ...p, _isExactMatch: true, _searchScore: matchRes.score })
@@ -509,7 +517,10 @@ export default function POSWorkspace({
 
     scoredOthers.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score
-      return String(a.item.name || '').localeCompare(String(b.item.name || ''), 'id', {
+      const nameA = String(a.item.name || '').trim()
+      const nameB = String(b.item.name || '').trim()
+      if (nameA.length !== nameB.length) return nameA.length - nameB.length
+      return nameA.localeCompare(nameB, 'id', {
         sensitivity: 'base',
         numeric: true
       })
@@ -518,7 +529,8 @@ export default function POSWorkspace({
     return {
       exactMatches: exactList,
       otherMatches: scoredOthers.map((s) => s.item),
-      hasExactMatch: exactList.length > 0
+      hasExactMatch: exactList.length > 0,
+      nameMatchCount: matchedByNameCount
     }
   }, [products, debouncedSearch, selectedCategoryId])
 
@@ -533,21 +545,30 @@ export default function POSWorkspace({
     return otherMatches
   }, [hasExactMatch, showAllSimilarMatches, exactMatches, otherMatches])
 
-  // Hybrid Server Search Fallback (Debounced 250ms jika hasil lokal < 5 dan belum ada exact match)
+  // Hybrid Server Search Fallback (Debounced 250ms):
+  // Berjalan jika hasil cocok NAMA (score >= 420) < 5 ATAU katalog lokal sudah > 60 detik,
+  // dengan cooldown 30 detik per query dan hanya saat online.
   useEffect(() => {
     const q = (debouncedSearch || '').trim()
     if (!q || q.length < 2) return
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
 
     // Jika sudah ada exact match, tidak perlu search server lagi
     if (hasExactMatch) return
 
-    if (filteredProducts.length < 5) {
-      setIsSearchingServer(true)
-      searchProductsServer(q).finally(() => {
-        setIsSearchingServer(false)
-      })
-    }
-  }, [debouncedSearch, filteredProducts.length, hasExactMatch, searchProductsServer])
+    const isCatalogStale = !lastSyncedAt || Date.now() - lastSyncedAt > 60_000
+    if (nameMatchCount >= 5 && !isCatalogStale) return
+
+    const cacheKey = q.toLowerCase()
+    const lastFetched = lastServerSearchRef.current.get(cacheKey) || 0
+    if (Date.now() - lastFetched < 30_000) return
+
+    lastServerSearchRef.current.set(cacheKey, Date.now())
+    setIsSearchingServer(true)
+    searchProductsServer(q).finally(() => {
+      setIsSearchingServer(false)
+    })
+  }, [debouncedSearch, nameMatchCount, hasExactMatch, lastSyncedAt, searchProductsServer])
 
   // Windowed Products for DOM Performance (Pilar 4: DOM Windowing)
   useEffect(() => {
@@ -1847,6 +1868,24 @@ export default function POSWorkspace({
                   </button>
                 )}
               </div>
+
+              {/* Always-visible Catalog Sync Button */}
+              <button
+                type="button"
+                onClick={() => refreshCatalog()}
+                disabled={catalogSyncing}
+                title={
+                  lastSyncedAt
+                    ? `Sinkron Katalog (Terakhir: ${new Date(lastSyncedAt).toLocaleTimeString('id-ID', {
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })})`
+                    : 'Sinkron Katalog Produk'
+                }
+                className="px-2.5 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 text-slate-600 hover:text-indigo-600 text-xs font-semibold transition shrink-0 cursor-pointer disabled:opacity-60"
+              >
+                <span className={catalogSyncing ? 'animate-spin inline-block' : 'inline-block'}>🔄</span>
+              </button>
 
               {/* View Mode Toggle */}
               <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200 shrink-0">

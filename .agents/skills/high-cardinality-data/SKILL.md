@@ -130,4 +130,24 @@ Penambahan kolom baru (seperti `price_tiers`, `min_stock_alert`, `external_id`) 
    - Setiap kali produk ditambah, diedit (`ProductModal.tsx`), dihapus (`/products/page.tsx`), atau diimpor massal (`/products/import/page.tsx`), klien **WAJIB** memanggil `invalidatePosCatalogCache(businessId, true)` dari `@/lib/posCatalogStore.ts` selain membersihkan `su_products_data_${businessId}`.
    - Jika cache lama di `sessionStorage` terdeteksi belum memiliki properti `product_variants` (`cached.products[0]?.product_variants === undefined`), halaman wajib langsung memicu revalidasi latar belakang (*background revalidation*).
 
+---
+
+## 6. Product Search Ranking (BM25F Name vs SKU) & POS Catalog Freshness (`su_pos_cat_v2_*`)
+
+1. **Hirarki Pembobotan Nama vs SKU (`lib/productSearchHelper.ts`):**
+   - Gunakan `scoreProductMatch()` dan `rankProductsByQuery()` secara konsisten di seluruh modul produk dan kasir POS.
+   - Urutan prioritas: Exact Name (`1000`) > Exact SKU (`950`) > First-Word Name (`850`) > Name Prefix (`780`) > Whole-Word Name (`700`) > Word-Prefix Name (`620`) > Name Substring (`520`) > Variant Name (`420`) > Description (`220`) > Partial SKU (`60–90`).
+   - Jika query mengandung spasi (`hasSpace = true`, termasuk trailing space), pencocokan SKU dinonaktifkan 100% (`skuWeight = 0`).
+   - Tie-breaker untuk skor setara: nama produk lebih pendek menang, lalu `localeCompare(..., 'id', { sensitivity: 'base', numeric: true })`.
+2. **Split Name/SKU Server Fallback (`searchPosCatalogServer`):**
+   - Kueri pencarian server **DILARANG** menggabungkan `name.ilike` dan `sku.ilike` dalam satu `.or(...)` berbatas `.limit(120)` urut abjad, karena ribuan SKU berawalan sama (misal `SRJxxxx`) akan memotong produk yang cocok pada Nama sebelum ranking BM25F dijalankan.
+   - Wajib dipisah menjadi kueri Nama (`limit 120`) + kueri SKU (`limit 60`, hanya saat `skuActive`) + kueri Varian secara paralel, lalu digabung dan di-ranking dengan `rankProductsByQuery()`.
+3. **Trigger Hybrid Server Search di `POSWorkspace.tsx`:**
+   - Dihitung dari **`nameMatchCount`** (skor `>= 420`, hanya kecocokan nama/varian) — bukan total `filteredProducts.length`.
+   - Berjalan saat online jika `!hasExactMatch` dan (`nameMatchCount < 5` **atau** katalog lokal berusia `> 60 detik`), dengan cooldown 30 detik per query.
+4. **POS Catalog Freshness & Lifecycle Revalidation (`usePosCatalog`):**
+   - Cache L2 menggunakan kunci `su_pos_cat_v2_${businessId}` dengan channel `shapeup_pos_catalog_sync_v2`.
+   - `handleStoreChange` wajib langsung me-refetch di latar belakang ketika cache di-invalidate oleh tab/modal lain.
+   - `usePosCatalog` melakukan revalidasi otomatis saat `visibilitychange` (`visible`), `focus`, `online` (jika usia `>= 60 detik`), serta polling aktif tiap 3 menit ketika tab terlihat & online, ditambah tombol sinkron manual `🔄` yang selalu tersedia di bilah pencarian POS.
+
 

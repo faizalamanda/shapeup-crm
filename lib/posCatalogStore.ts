@@ -487,45 +487,65 @@ export async function searchPosCatalogServer(
   businessId: string,
   query: string
 ): Promise<PosCatalogItem[]> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return []
+
   const parsed = parseProductSearchQuery(query)
   if (!businessId || !parsed.clean) return []
   const cleanQ = parsed.postgrestSafe
   if (!cleanQ) return []
 
   try {
-    // 1. Search products by name (and SKU only if query has no spaces) without slow lateral joins
+    // 1. Split Name (priority) & SKU (secondary) queries so partial SKU matches
+    // never truncate Name matches before BM25F ranking.
     const firstToken = (parsed.tokens[0] || cleanQ).replace(/[,()]/g, '')
-    const orFilter = parsed.skuActive
-      ? `name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`
-      : `name.ilike.%${firstToken}%`
-
-    const { data: matchedProds } = await supabaseClient
+    const nameQuery = supabaseClient
       .from('products')
       .select('*')
       .eq('business_id', businessId)
-      .or(orFilter)
+      .ilike('name', `%${firstToken}%`)
       .order('name', { ascending: true })
       .limit(120)
 
-    let prods: any[] = matchedProds || []
+    const skuQuery = parsed.skuActive
+      ? supabaseClient
+          .from('products')
+          .select('*')
+          .eq('business_id', businessId)
+          .ilike('sku', `%${cleanQ}%`)
+          .order('name', { ascending: true })
+          .limit(60)
+      : Promise.resolve({ data: [] as any[] })
 
-    // 2. Also search variants by name (or sku if skuActive)
+    const varOrFilter = parsed.skuActive
+      ? `name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`
+      : `name.ilike.%${firstToken}%`
+
+    const varQuery = supabaseClient
+      .from('product_variants')
+      .select('*')
+      .eq('business_id', businessId)
+      .or(varOrFilter)
+      .limit(120)
+
+    const [nameRes, skuRes, varRes] = await Promise.all([nameQuery, skuQuery, varQuery])
+
+    const prodMap = new Map<string, any>()
+    for (const p of nameRes?.data || []) {
+      if (p?.id && !prodMap.has(p.id)) prodMap.set(p.id, p)
+    }
+    for (const p of skuRes?.data || []) {
+      if (p?.id && !prodMap.has(p.id)) prodMap.set(p.id, p)
+    }
+    let prods: any[] = Array.from(prodMap.values())
+
+    // 2. Hydrate parent products from matched variants & fetch all variants for matched products
     try {
-      const varOrFilter = parsed.skuActive
-        ? `name.ilike.%${cleanQ}%,sku.ilike.%${cleanQ}%`
-        : `name.ilike.%${firstToken}%`
-      const { data: matchedVars } = await supabaseClient
-        .from('product_variants')
-        .select('*')
-        .eq('business_id', businessId)
-        .or(varOrFilter)
-        .limit(120)
-
+      const matchedVars = varRes?.data || []
       const parentIds = Array.from(
         new Set(
-          (matchedVars || [])
+          matchedVars
             .map((v: any) => v.product_id)
-            .filter((id: string) => id && !prods.some((p: any) => p.id === id))
+            .filter((id: string) => id && !prodMap.has(id))
         )
       )
 
@@ -535,9 +555,12 @@ export async function searchPosCatalogServer(
           .select('*')
           .eq('business_id', businessId)
           .in('id', parentIds)
-        if (extraProds && extraProds.length > 0) {
-          prods = [...prods, ...extraProds]
+        for (const p of extraProds || []) {
+          if (p?.id && !prodMap.has(p.id)) {
+            prodMap.set(p.id, p)
+          }
         }
+        prods = Array.from(prodMap.values())
       }
 
       // Hydrate variants for all matched products via direct indexed query
@@ -606,20 +629,33 @@ export function usePosCatalog(
     categories: PosCategoryItem[]
     loading: boolean
     isSyncing: boolean
+    lastSyncedAt: number | null
   }>(() => {
     if (!resolvedBid) {
-      return { products: [], categories: [], loading: false, isSyncing: false }
+      return { products: [], categories: [], loading: false, isSyncing: false, lastSyncedAt: null }
     }
     const l1 = l1Store.get(resolvedBid)
     if (l1) {
-      return { products: l1.products, categories: l1.categories, loading: false, isSyncing: false }
+      return {
+        products: l1.products,
+        categories: l1.categories,
+        loading: false,
+        isSyncing: false,
+        lastSyncedAt: l1.ts
+      }
     }
     const l2 = readL2Cache(resolvedBid)
     if (l2) {
       l1Store.set(resolvedBid, l2)
-      return { products: l2.products, categories: l2.categories, loading: false, isSyncing: false }
+      return {
+        products: l2.products,
+        categories: l2.categories,
+        loading: false,
+        isSyncing: false,
+        lastSyncedAt: l2.ts
+      }
     }
-    return { products: [], categories: [], loading: true, isSyncing: false }
+    return { products: [], categories: [], loading: true, isSyncing: false, lastSyncedAt: null }
   })
 
   const mountedRef = useRef(true)
@@ -633,6 +669,31 @@ export function usePosCatalog(
   useEffect(() => {
     if (!resolvedBid || !enabled) return
 
+    const syncInBackground = () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+      if (mountedRef.current) {
+        setState((prev) => ({ ...prev, isSyncing: true }))
+      }
+      fetchPosCatalog(supabaseClient, resolvedBid, { forceRefresh: true })
+        .then((fresh) => {
+          if (mountedRef.current) {
+            const latestTs = l1Store.get(resolvedBid)?.ts || Date.now()
+            setState({
+              products: fresh.products,
+              categories: fresh.categories,
+              loading: false,
+              isSyncing: false,
+              lastSyncedAt: latestTs
+            })
+          }
+        })
+        .catch(() => {
+          if (mountedRef.current) {
+            setState((prev) => ({ ...prev, isSyncing: false, loading: false }))
+          }
+        })
+    }
+
     // Immediately hydrate from L1 or L2 if available
     const l1 = l1Store.get(resolvedBid) || readL2Cache(resolvedBid)
     if (l1) {
@@ -641,7 +702,8 @@ export function usePosCatalog(
         ...prev,
         products: l1.products,
         categories: l1.categories,
-        loading: false
+        loading: false,
+        lastSyncedAt: l1.ts
       }))
     }
 
@@ -654,15 +716,19 @@ export function usePosCatalog(
             ...prev,
             products: latest.products,
             categories: latest.categories,
-            loading: false
+            loading: false,
+            lastSyncedAt: latest.ts
           }))
+        } else {
+          // Cache was invalidated from another tab/modal -> immediately refetch in background
+          syncInBackground()
         }
       }
     }
 
     listeners.add(handleStoreChange)
 
-    // Check if stale or empty
+    // Check if stale or empty on mount/business change
     const isStale = !l1 || Date.now() - l1.ts >= L1_STALE_MS
     if (isStale) {
       if (!l1) {
@@ -671,20 +737,73 @@ export function usePosCatalog(
         setState((prev) => ({ ...prev, isSyncing: true }))
       }
 
-      fetchPosCatalog(supabaseClient, resolvedBid).then((fresh) => {
-        if (mountedRef.current) {
-          setState({
-            products: fresh.products,
-            categories: fresh.categories,
-            loading: false,
-            isSyncing: false
-          })
-        }
-      })
+      fetchPosCatalog(supabaseClient, resolvedBid)
+        .then((fresh) => {
+          if (mountedRef.current) {
+            const latestTs = l1Store.get(resolvedBid)?.ts || Date.now()
+            setState({
+              products: fresh.products,
+              categories: fresh.categories,
+              loading: false,
+              isSyncing: false,
+              lastSyncedAt: latestTs
+            })
+          }
+        })
+        .catch(() => {
+          if (mountedRef.current) {
+            setState((prev) => ({ ...prev, isSyncing: false, loading: false }))
+          }
+        })
     }
+
+    // Lifecycle revalidation: visibilitychange, focus, online + 3-minute active polling
+    const revalidateIfStale = () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+      const current = l1Store.get(resolvedBid)
+      if (!current || Date.now() - current.ts >= L1_STALE_MS) {
+        syncInBackground()
+      }
+    }
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        revalidateIfStale()
+      }
+    }
+
+    const handleWindowFocus = () => {
+      revalidateIfStale()
+    }
+
+    const handleOnline = () => {
+      revalidateIfStale()
+    }
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange)
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', handleWindowFocus)
+      window.addEventListener('online', handleOnline)
+    }
+
+    const intervalId = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+      syncInBackground()
+    }, 180_000)
 
     return () => {
       listeners.delete(handleStoreChange)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange)
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleWindowFocus)
+        window.removeEventListener('online', handleOnline)
+      }
+      clearInterval(intervalId)
     }
   }, [resolvedBid, enabled, supabaseClient])
 
@@ -694,11 +813,13 @@ export function usePosCatalog(
     try {
       const fresh = await fetchPosCatalog(supabaseClient, resolvedBid, { forceRefresh: true })
       if (mountedRef.current) {
+        const latestTs = l1Store.get(resolvedBid)?.ts || Date.now()
         setState({
           products: fresh.products,
           categories: fresh.categories,
           loading: false,
-          isSyncing: false
+          isSyncing: false,
+          lastSyncedAt: latestTs
         })
       }
       return fresh
@@ -729,6 +850,7 @@ export function usePosCatalog(
     categories: Array.isArray(state.categories) ? state.categories : [],
     loading: state.loading,
     isSyncing: state.isSyncing,
+    lastSyncedAt: state.lastSyncedAt,
     refresh,
     updateLocalStock,
     searchServer

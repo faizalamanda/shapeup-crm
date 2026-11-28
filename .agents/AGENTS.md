@@ -403,8 +403,9 @@
       - **DILARANG KERAS** membiarkan `POSWorkspace` melakukan *cold fetch* redundan atau membuat *two-stage sequential waterfall* (`await checkActiveShift()`) yang memblokir antarmuka kasir. Saat kembali ke Hub, state sesi kasir mutakhir dikembalikan secara simetris.
     - **3-Tier Reactive POS Catalog Store (`lib/posCatalogStore.ts`):**
       - Seluruh pembacaan katalog produk kasir POS **WAJIB** menggunakan `usePosCatalog()` dari `@/lib/posCatalogStore.ts`.
-      - Menggabungkan **L1 RAM Cache** ($0\text{ms}$ instan per `businessId`), **L2 `sessionStorage` Cache** (`su_pos_cat_v1_${bid}` dengan *quota guard*), dan sinkronisasi lintas tab via `BroadcastChannel` (`shapeup_pos_catalog_sync_v1`).
+      - Menggabungkan **L1 RAM Cache** ($0\text{ms}$ instan per `businessId`), **L2 `sessionStorage` Cache** (`su_pos_cat_v2_${bid}` dengan *quota guard*), dan sinkronisasi lintas tab via `BroadcastChannel` (`shapeup_pos_catalog_sync_v2`).
       - Menggunakan *Slim Column Projection* (`POS_SLIM_PRODUCT_SELECT_VARIANTS`) yang memangkas ukuran payload JSON $45\% - 65\%$ tanpa mengangkut deskripsi artikel panjang yang tidak diperlukan di meja kasir.
+      - **Lifecycle Revalidation & Split Search Fallback:** `usePosCatalog` otomatis me-refresh saat invalidasi lintas-tab, `visibilitychange`, `focus`, `online` (jika `>= 60s`), dan polling 3 menit saat tab aktif. Pencarian server di `POSWorkspace.tsx` dipicu berdasarkan `nameMatchCount < 5` (`score >= 420`) atau katalog `> 60s`, dan `searchPosCatalogServer()` memisah kueri Nama vs SKU sebelum ranking BM25F (`lib/productSearchHelper.ts`).
     - **Speculative Idle Prefetching di `POSHub.tsx` (`prefetchPosCatalog`):**
       - Memanfaatkan *think-time* kasir saat berada di Hub untuk mem-prefetch katalog produk dan kategori di latar belakang. Saat tombol **"Buka Register Kasir"** ditekan, data produk sudah $100\%$ siap di RAM L1.
     - **Instant App-Shell & Zero Black-Screen Standard:**
