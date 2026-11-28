@@ -326,7 +326,10 @@ export default function RmaHubPage() {
                             }`}
                           >
                             {r.settlement_stage === 'settled'
-                              ? r.credit_memo_amount > 0
+                              ? r.settlement_method === 'apply_other_invoice' ||
+                                (r as any).settlement_json?.requested_method === 'apply_other_invoice'
+                                ? '✓ Potong Nota Lain'
+                                : r.credit_memo_amount > 0
                                 ? '✓ Nota Kredit'
                                 : r.store_credit_issued > 0
                                 ? '✓ Saldo Kredit'

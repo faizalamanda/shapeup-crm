@@ -634,6 +634,15 @@ export async function createRmaService(
       refund_paid_amount: settlementMeta.refund_paid_amount,
       credit_memo_amount: settlementMeta.credit_memo_amount,
       store_credit_issued: settlementMeta.store_credit_issued,
+      settlement_json: expressComplete
+        ? {
+            requested_method: settlementMethod,
+            target_order_id: isUuid(targetOrderId) ? targetOrderId : null,
+            ar_cut_amount: settlementMeta.credit_memo_amount,
+            refund_paid_amount: settlementMeta.refund_paid_amount,
+            store_credit_issued: settlementMeta.store_credit_issued
+          }
+        : {},
       created_by_name: actorName
     },
     items: preparedItems,
@@ -646,9 +655,30 @@ export async function createRmaService(
     cross_invoice_allocation: crossInvoiceAllocationPayload
   }
 
-  const { data: rpcRes, error: rpcErr } = await admin.rpc('process_rma_transition_v1', {
+  let { data: rpcRes, error: rpcErr } = await admin.rpc('process_rma_transition_v1', {
     payload: rpcPayload
   })
+
+  // Zero-Downtime Defense: if live DB table still has old CHECK constraint without 'apply_other_invoice',
+  // retry atomically with header.settlement_method = 'store_credit' while preserving cross_invoice_allocation!
+  if (
+    rpcErr &&
+    settlementMethod === 'apply_other_invoice' &&
+    (rpcErr.code === '23514' || rpcErr.message?.includes('rma_requests_settlement_method_check'))
+  ) {
+    const compatPayload = {
+      ...rpcPayload,
+      header: {
+        ...rpcPayload.header,
+        settlement_method: 'store_credit'
+      }
+    }
+    const retryRes = await admin.rpc('process_rma_transition_v1', {
+      payload: compatPayload
+    })
+    rpcRes = retryRes.data
+    rpcErr = retryRes.error
+  }
 
   if (!rpcErr && rpcRes?.success) {
     invalidateInvoicesCache(businessId)
@@ -861,6 +891,8 @@ export async function settleRmaService(
       credit_memo_amount: fin.arCutAmount,
       store_credit_issued: fin.storeCreditIssued,
       settlement_json: {
+        requested_method: settlementMethod,
+        target_order_id: isUuid(targetOrderId) ? targetOrderId : null,
         ar_cut_amount: fin.arCutAmount,
         refund_paid_amount: fin.refundPaidAmount,
         store_credit_issued: fin.storeCreditIssued
@@ -917,9 +949,28 @@ export async function settleRmaService(
         : null
   }
 
-  const { data: rpcRes, error: rpcErr } = await admin.rpc('process_rma_transition_v1', {
+  let { data: rpcRes, error: rpcErr } = await admin.rpc('process_rma_transition_v1', {
     payload: rpcPayload
   })
+
+  if (
+    rpcErr &&
+    settlementMethod === 'apply_other_invoice' &&
+    (rpcErr.code === '23514' || rpcErr.message?.includes('rma_requests_settlement_method_check'))
+  ) {
+    const compatPayload = {
+      ...rpcPayload,
+      header: {
+        ...rpcPayload.header,
+        settlement_method: 'store_credit'
+      }
+    }
+    const retryRes = await admin.rpc('process_rma_transition_v1', {
+      payload: compatPayload
+    })
+    rpcRes = retryRes.data
+    rpcErr = retryRes.error
+  }
 
   if (rpcErr) {
     throw new ReturnError(rpcErr.message || 'Gagal menyelesaikan pembayaran/kredit RMA.', 'SETTLE_ERROR', 400)

@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS public.rma_requests (
   settlement_stage text NOT NULL DEFAULT 'pending'
     CHECK (settlement_stage IN ('pending', 'settled', 'not_applicable')),
   settlement_method text
-    CHECK (settlement_method IS NULL OR settlement_method IN ('credit_memo', 'refund', 'store_credit', 'exchange', 'none')),
+    CHECK (settlement_method IS NULL OR settlement_method IN ('credit_memo', 'refund', 'store_credit', 'apply_other_invoice', 'exchange', 'none')),
   reason_code text NOT NULL DEFAULT 'defective',
   reason_note text,
   return_courier text,
@@ -105,6 +105,17 @@ CREATE TABLE IF NOT EXISTS public.rma_requests (
   CONSTRAINT uq_rma_requests_number UNIQUE (business_id, rma_number),
   CONSTRAINT uq_rma_requests_idempotency UNIQUE (business_id, idempotency_key)
 );
+
+-- Ensure existing rma_requests tables allow 'apply_other_invoice' in settlement_method CHECK constraint
+ALTER TABLE public.rma_requests
+  DROP CONSTRAINT IF EXISTS rma_requests_settlement_method_check;
+
+ALTER TABLE public.rma_requests
+  ADD CONSTRAINT rma_requests_settlement_method_check
+  CHECK (
+    settlement_method IS NULL
+    OR settlement_method IN ('credit_memo', 'refund', 'store_credit', 'apply_other_invoice', 'exchange', 'none')
+  );
 
 CREATE INDEX IF NOT EXISTS idx_rma_requests_biz_created
   ON public.rma_requests (business_id, created_at DESC);

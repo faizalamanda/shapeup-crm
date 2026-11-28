@@ -170,6 +170,7 @@ export interface RmaRequestRecord {
   store_credit_issued: number
   exchange_total: number
   shortfall_collected: number
+  settlement_json?: Record<string, any> | null
   receipt_transaction_id?: string | null
   disposition_transaction_id?: string | null
   settlement_transaction_id?: string | null
