@@ -25,9 +25,9 @@
  *      yang memiliki prefix serupa (misal 5.083 SKU "SRJxxxx").
  * 2. Hirarki Bobot Field (Saat Tanpa Spasi / Single Token):
  *    - Tier 1 (1000): Exact Product Name Match (`name === q`)
- *    - Tier 2 (950):  Exact SKU Match (`sku === q` — untuk scan/input SKU utuh)
- *    - Tier 3 (850):  First-Word Exact Name Match (`name` diawali kata utuh `q`, misal "SRJ DASTER")
- *    - Tier 4 (780):  Name Prefix Match (`name.startsWith(q)`)
+ *    - Tier 2 (960):  First-Word Exact Name Match (`name` diawali kata utuh `q`, misal "SRJ DASTER")
+ *    - Tier 3 (920):  Exact SKU Match (`sku === q` — untuk scan/input SKU utuh)
+ *    - Tier 4 (820):  Name Prefix Match (`name.startsWith(q)`)
  *    - Tier 5 (700):  Whole-Word Match di dalam Nama Produk (misal "4097" pada "HAZEL KAOS 4097 28")
  *    - Tier 6 (620):  Word-Prefix Match di dalam Nama Produk
  *    - Tier 7 (520):  Substring Match di dalam Nama Produk (`name.includes(q)`)
@@ -157,7 +157,7 @@ export function scoreProductMatch(
 
     // 2. Name starts with the exact phrase on a word boundary (e.g. "SRJ " or "LUSH KAOS")
     if (pName.startsWith(clean + ' ')) {
-      return { matched: true, score: 880, isExactMatch: false, tier: 'name_first_word' }
+      return { matched: true, score: 960, isExactMatch: false, tier: 'name_first_word' }
     }
 
     // 3. Name starts with the exact phrase prefix
@@ -228,10 +228,10 @@ export function scoreProductMatch(
       isExactName = true
     } else if (nameWords[0] === clean) {
       // Kata pertama Nama Produk sama persis (contoh: ketik "SRJ" -> "SRJ DASTER BATIK", ketik "LUSH" -> "LUSH TANGTOP")
-      nameScore = 850
+      nameScore = 960
       nameTier = 'name_first_word'
     } else if (pName.startsWith(clean)) {
-      nameScore = 780
+      nameScore = 820
       nameTier = 'name_prefix'
     } else if (nameWords.includes(clean)) {
       // Kata utuh di tengah/akhir Nama Produk (contoh: ketik "4097" -> "HAZEL KAOS 4097 28")
@@ -266,7 +266,7 @@ export function scoreProductMatch(
     const exactVarSku = variants.some(v => String(v?.sku || '').trim().toLowerCase() === clean)
 
     if (exactMainSku || exactVarSku) {
-      skuScore = 950
+      skuScore = 920
       isExactSku = true
     } else {
       const prefixMainSku = Boolean(pSku && pSku.startsWith(clean))
@@ -287,12 +287,20 @@ export function scoreProductMatch(
     }
   }
 
-  // Prioritaskan Exact Name (1000) atau Exact SKU (950)
+  // Prioritaskan Exact Name (1000) > First-Word Name (960) > Exact SKU (920)
   if (isExactName) {
     return { matched: true, score: 1000, isExactMatch: true, tier: 'exact_name' }
   }
+  if (nameTier === 'name_first_word') {
+    return {
+      matched: true,
+      score: 960 + (isExactSku ? 20 : skuScore > 0 ? 15 : 0),
+      isExactMatch: false,
+      tier: 'name_first_word'
+    }
+  }
   if (isExactSku) {
-    return { matched: true, score: 950 + (nameScore > 0 ? 20 : 0), isExactMatch: true, tier: 'exact_sku' }
+    return { matched: true, score: 920 + (nameScore > 0 ? 20 : 0), isExactMatch: true, tier: 'exact_sku' }
   }
 
   // Jika cocok di Nama Produk, gunakan skor Nama Produk (+ bonus kecil jika SKU juga cocok)

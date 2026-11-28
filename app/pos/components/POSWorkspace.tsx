@@ -493,6 +493,8 @@ export default function POSWorkspace({
     const exactList: any[] = []
     const scoredOthers: { item: any; score: number }[] = []
     let matchedByNameCount = 0
+    let hasExactNameMatch = false
+    let hasFirstWordNameMatch = false
 
     for (const p of list) {
       if (!p) continue
@@ -504,6 +506,12 @@ export default function POSWorkspace({
       if (matchRes.score >= 420) {
         matchedByNameCount++
       }
+      if (matchRes.tier === 'exact_name') {
+        hasExactNameMatch = true
+      }
+      if (matchRes.tier === 'name_first_word') {
+        hasFirstWordNameMatch = true
+      }
 
       if (matchRes.isExactMatch) {
         exactList.push({ ...p, _isExactMatch: true, _searchScore: matchRes.score })
@@ -513,6 +521,19 @@ export default function POSWorkspace({
           score: matchRes.score
         })
       }
+    }
+
+    // Jika ada First-Word Name match (960) dan tidak ada Exact Name match (1000),
+    // jangan sembunyikan hasil First-Word Name di balik Smart Exact Match Collapse milik Exact SKU (920).
+    let finalExactList = exactList
+    if (hasFirstWordNameMatch && !hasExactNameMatch && exactList.length > 0) {
+      for (const ex of exactList) {
+        scoredOthers.push({
+          item: { ...ex, _isExactMatch: false },
+          score: ex._searchScore
+        })
+      }
+      finalExactList = []
     }
 
     scoredOthers.sort((a, b) => {
@@ -527,9 +548,9 @@ export default function POSWorkspace({
     })
 
     return {
-      exactMatches: exactList,
+      exactMatches: finalExactList,
       otherMatches: scoredOthers.map((s) => s.item),
-      hasExactMatch: exactList.length > 0,
+      hasExactMatch: finalExactList.length > 0,
       nameMatchCount: matchedByNameCount
     }
   }, [products, debouncedSearch, selectedCategoryId])

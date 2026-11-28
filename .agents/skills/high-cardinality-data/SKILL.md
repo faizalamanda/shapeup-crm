@@ -136,7 +136,7 @@ Penambahan kolom baru (seperti `price_tiers`, `min_stock_alert`, `external_id`) 
 
 1. **Hirarki Pembobotan Nama vs SKU (`lib/productSearchHelper.ts`):**
    - Gunakan `scoreProductMatch()` dan `rankProductsByQuery()` secara konsisten di seluruh modul produk dan kasir POS.
-   - Urutan prioritas: Exact Name (`1000`) > Exact SKU (`950`) > First-Word Name (`850`) > Name Prefix (`780`) > Whole-Word Name (`700`) > Word-Prefix Name (`620`) > Name Substring (`520`) > Variant Name (`420`) > Description (`220`) > Partial SKU (`60–90`).
+   - Urutan prioritas: Exact Name (`1000`) > First-Word Name (`960`) > Exact SKU (`920`) > Name Prefix (`820`) > Whole-Word Name (`700`) > Word-Prefix Name (`620`) > Name Substring (`520`) > Variant Name (`420`) > Description (`220`) > Partial SKU (`60–90`).
    - Jika query mengandung spasi (`hasSpace = true`, termasuk trailing space), pencocokan SKU dinonaktifkan 100% (`skuWeight = 0`).
    - Tie-breaker untuk skor setara: nama produk lebih pendek menang, lalu `localeCompare(..., 'id', { sensitivity: 'base', numeric: true })`.
 2. **Split Name/SKU Server Fallback (`searchPosCatalogServer`):**
