@@ -18,6 +18,7 @@ export interface RecordPaymentParams {
   notes?: string | null
   shiftId?: string | null
   cashierName?: string | null
+  actorId?: string | null
   supabase: SupabaseClient
 }
 
@@ -29,6 +30,7 @@ export interface VoidPaymentParams {
   sourceLabel?: string | null
   shiftId?: string | null
   cashierName?: string | null
+  actorId?: string | null
   supabase: SupabaseClient
 }
 
@@ -137,6 +139,7 @@ export async function recordOrderPayment(params: RecordPaymentParams): Promise<P
     notes,
     shiftId,
     cashierName = 'Kasir',
+    actorId = null,
     supabase
   } = params
 
@@ -197,13 +200,23 @@ export async function recordOrderPayment(params: RecordPaymentParams): Promise<P
     }
     payAccId = accStoreCredit || accountMap['201000']
 
+    let effectiveActorId = isUuid(actorId) ? actorId : null
+    if (!effectiveActorId) {
+      const { data: bizRow } = await supabase
+        .from('businesses')
+        .select('owner_id')
+        .eq('id', businessId)
+        .maybeSingle()
+      effectiveActorId = isUuid(bizRow?.owner_id) ? bizRow.owner_id : null
+    }
+
     // Deduct Customer Store Credit atomically via row-locked RPC (with fallback)
     const { error: scRpcErr } = await supabase.rpc('redeem_store_credit_v1', {
       p_business_id: businessId,
       p_customer_id: order.customer_id,
       p_amount: numAmount,
       p_order_id: order.id,
-      p_actor_id: null,
+      p_actor_id: effectiveActorId,
       p_description: notes || `Potong tagihan #${order.order_number} dengan Saldo Kredit`
     })
 
@@ -337,6 +350,7 @@ export async function voidOrderPayment(params: VoidPaymentParams): Promise<Payme
     sourceLabel,
     shiftId,
     cashierName = 'Kasir',
+    actorId = null,
     supabase
   } = params
 

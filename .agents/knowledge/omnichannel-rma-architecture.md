@@ -47,13 +47,24 @@ Seluruh saluran penjualan (POS Kasir, Faktur B2B `/orders/invoices`, Pesanan Omn
 ## 3. Dual-Layer Store Credit Sub-Ledger & Cross-Invoice AR Allocation (Zoho Books + Odoo ERP Hybrid)
 
 1. **Lapis 1 — Customer Sub-Ledger (`customer_store_credits` & `store_credit_ledger`):**
-   - `public.customer_store_credits`: Menyimpan saldo kredit aktif per pelanggan (`balance`, `lifetime_issued`, `lifetime_redeemed`, `UNIQUE(business_id, customer_id)`).
+   - `public.customer_store_credits`: Menyimpan saldo kredit aktif per pelanggan (`balance`, `lifetime_issued`, `lifetime_redeemed`, `UNIQUE(business_id, customer_id)`, diperkuat di [20261128120000_fix_rma_express_and_store_credit_schema.sql](file:///home/faiz-jazuli/shapeup-crm/supabase/migrations/20261128120000_fix_rma_express_and_store_credit_schema.sql)).
    - `public.store_credit_ledger`: Buku besar pembantu *append-only* per pelanggan (`entry_type IN ('issued', 'redeemed', 'reversed', 'adjusted')`, `amount`, `balance_after`, `return_id`, `rma_id`, `order_id`).
 2. **Lapis 2 — General Ledger COA (`202000 Saldo Kredit Pelanggan`):**
    - Total `SUM(balance)` seluruh pelanggan di `customer_store_credits` wajib selalu 1:1 dengan saldo kredit akun `[202000] Saldo Kredit Pelanggan` (`LIABILITY`) di Neraca Akuntansi.
 3. **2 Jalur Pemotongan Piutang Lintas Invoice (`0ms` Extra Latency + 1-Roundtrip ACID RPC):**
    - **Jalur A (Saat Retur — Ala Zoho Books):** Jika pelanggan memiliki nota lain yang belum lunas (`otherUnpaidOrders` dari `getOrderRmaPreview`), pengguna dapat memilih **`📄 Potongkan Langsung ke Piutang Nota Lain`** (`settlement_method = 'apply_other_invoice'`, `target_order_id`). RPC `process_rma_transition_v1` menerbitkan saldo kredit dari nota asal dan langsung memotong piutang nota tujuan dalam 1 transaksi database atomik.
-   - **Jalur B (Saat Buka Nota Belum Lunas — Ala Odoo ERP):** Endpoint `GET /api/orders/invoices/[id]` memuat `customer_store_credit_balance` di dalam `Promise.all` utama (`0ms` extra latency). Jika saldo $> 0$, halaman detail invoice menampilkan banner hijau **`🪙 Saldo Kredit Pelanggan Tersedia`** dengan tombol 1-klik **`⚡ Gunakan Saldo Kredit (Potong Tagihan Ini)`** yang memanggil `recordOrderPayment()` (`Dr 202000 / Cr 103000`). Jika pembayaran ini di-*Void*, `voidOrderPayment()` otomatis mengembalikan saldo ke `customer_store_credits` dan mencatat `entry_type = 'reversed'` di `store_credit_ledger`.
+   - **Jalur B (Saat Buka Nota Belum Lunas — Ala Odoo ERP):** Endpoint `GET /api/orders/invoices/[id]` memuat `customer_store_credit_balance` di dalam `Promise.all` utama (`0ms` extra latency). Jika saldo $> 0$, halaman detail invoice menampilkan banner hijau **`🪙 Saldo Kredit Pelanggan Tersedia`** dengan tombol 1-klik **`⚡ Gunakan Saldo Kredit (Potong Tagihan Ini)`** yang memanggil `recordOrderPayment()` $\rightarrow$ `redeem_store_credit_v1` (meneruskan `actorId` pengguna agar row-lock `FOR UPDATE` sukses dalam 1 RTT). Jika pembayaran ini di-*Void*, `voidOrderPayment()` otomatis mengembalikan saldo ke `customer_store_credits` dan mencatat `entry_type = 'reversed'` di `store_credit_ledger`.
+
+---
+
+## 4. Standar Keamanan PL/pgSQL, RBAC & Multi-Tenant RLS untuk RMA
+
+1. **PL/pgSQL `%ROWTYPE` & Nested `IF` Guard (`process_rma_transition_v1`):**
+   - Variabel header RMA wajib dideklarasikan sebagai `v_rma public.rma_requests%ROWTYPE` (bukan `record` tak bertipe) dan pengecekan `v_rma.settlement_stage = 'settled'` wajib berada di dalam *nested* `IF v_mode = 'settle' THEN` agar evaluasi parameter PL/pgSQL tidak pernah melempar `SQLSTATE 55000: record "v_rma" is not assigned yet` pada `mode = 'express'`.
+   - Cabang `mode = 'express'` mendukung kelima disposisi fisik (`restock`, `quarantine`, `writeoff`, `rtv_vendor`, `lost_in_transit`) secara identik dengan `mode = 'inspect'`.
+2. **In-Memory RBAC Guard (`verifyRmaAccess`) & Strict Client `business_id` Scoping:**
+   - Mutasi pada `POST /api/rma` dan `POST /api/inventory/returns` dilindungi oleh `verifyRmaAccess()` (di-cache 60 detik di memori, `0ms` overhead) yang selaras dengan `canAccessPath('/products/rma')`.
+   - Seluruh query client langsung ke `v_stock_moves_ledger` dan `rma_requests` wajib menyertakan `.eq('business_id', businessId)` untuk mengisolasi cabang multi-bisnis milik satu Owner dan memaksimalkan *B-Tree Index Scan*.
 
 
 

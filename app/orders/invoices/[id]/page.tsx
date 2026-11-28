@@ -66,6 +66,7 @@ type PaymentRecord = {
 
 type Invoice = {
   id: string
+  business_id?: string
   order_number: string
   order_date: string
   grand_total: number
@@ -455,18 +456,22 @@ export default function InvoiceDetailPage() {
         origin_location_id
       `
 
+      const activeBizId = activeBusiness?.id
+      let rmaQuery = supabase
+        .from('rma_requests')
+        .select('rma_number')
+        .eq('order_id', invoiceId)
+      if (activeBizId) {
+        rmaQuery = rmaQuery.eq('business_id', activeBizId)
+      }
+
       const [directRes, rmaListRes] = await Promise.all([
         supabase
           .from('v_stock_moves_ledger')
           .select(selectCols)
           .eq('source_id', invoiceId)
           .order('created_at', { ascending: false }),
-        Promise.resolve(
-          supabase
-            .from('rma_requests')
-            .select('rma_number')
-            .eq('order_id', invoiceId)
-        ).catch(() => ({ data: null }))
+        Promise.resolve(rmaQuery).catch(() => ({ data: null }))
       ])
 
       if (directRes.error) throw directRes.error
@@ -478,11 +483,15 @@ export default function InvoiceDetailPage() {
 
       if (rmaNumbers.length > 0) {
         const orClauses = rmaNumbers.map((num: string) => `reference.ilike.${num}%`).join(',')
-        const { data: rmaMoves } = await supabase
+        let rmaMovesQuery = supabase
           .from('v_stock_moves_ledger')
           .select(selectCols)
           .or(orClauses)
           .order('created_at', { ascending: false })
+        if (activeBizId) {
+          rmaMovesQuery = rmaMovesQuery.eq('business_id', activeBizId)
+        }
+        const { data: rmaMoves } = await rmaMovesQuery
 
         if (Array.isArray(rmaMoves) && rmaMoves.length > 0) {
           const seen = new Set(combinedMoves.map((m) => m.id))
@@ -504,7 +513,7 @@ export default function InvoiceDetailPage() {
     } finally {
       setLoadingStockMoves(false)
     }
-  }, [invoiceId, supabase])
+  }, [invoiceId, supabase, activeBusiness?.id])
 
   // Parallel initial fetch on mount (0ms tab switch for Ledger & Stock History)
   useEffect(() => {

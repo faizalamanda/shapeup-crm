@@ -144,11 +144,17 @@ export function RmaDetailModal({ isOpen, onClose, rma, onUpdated }: Props) {
 
     async function fetchMoves() {
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from('v_stock_moves_ledger')
           .select('*, products(name, sku)')
           .ilike('reference', `${currentRmaNumber}%`)
           .order('created_at', { ascending: false })
+
+        if (businessId) {
+          query = query.eq('business_id', businessId)
+        }
+
+        const { data, error } = await query
 
         if (!error && data) {
           stockMovesSwrCache.set(currentRmaId!, data)
@@ -160,7 +166,7 @@ export function RmaDetailModal({ isOpen, onClose, rma, onUpdated }: Props) {
       }
     }
     fetchMoves()
-  }, [isOpen, activeTab, rma?.id, rma?.rma_number])
+  }, [isOpen, activeTab, rma?.id, rma?.rma_number, businessId])
 
   // Lazy-load Tab 3: Jurnal Keuangan (SWR Pattern — inventory-ledger Rule)
   useEffect(() => {

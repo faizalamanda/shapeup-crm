@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getApiContext } from '@/lib/apiContext'
 import { getOrCreateDefaultAccounts } from '@/lib/accountHelper'
 import { postJournalTransaction } from '@/lib/journalHelper'
+import { verifyRmaAccess } from '@/lib/rma/rmaService'
 import { isUuid } from '@/lib/utils'
 
 export async function GET(request: Request) {
@@ -107,6 +108,14 @@ export async function POST(request: Request) {
   if (error) return error
 
   const admin = supabaseAdmin || supabase
+  const hasAccess = await verifyRmaAccess(businessId, user.id, admin)
+  if (!hasAccess) {
+    return NextResponse.json(
+      { error: 'Akses ditolak: Anda tidak memiliki izin kelola produk/retur gudang.' },
+      { status: 403 }
+    )
+  }
+
   const { moveId, moveIds, action } = body || {}
 
   // Normalize single moveId or bulk moveIds[] with strict UUID validation (AGENTS.md Rule 9)

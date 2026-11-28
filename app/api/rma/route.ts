@@ -6,7 +6,8 @@ import {
   createRmaService,
   getOrderRmaPreview,
   inspectRmaService,
-  settleRmaService
+  settleRmaService,
+  verifyRmaAccess
 } from '@/lib/rma/rmaService'
 import { RMA_DISPOSITION_MAP, RmaDisposition, RmaSettlementMethod } from '@/lib/rma/types'
 
@@ -201,6 +202,14 @@ export async function POST(req: Request) {
     const ctx = await getApiContext({ req, requestedBusinessId: reqBizId })
     if (ctx.error) return ctx.error
     const { user, businessId, supabase, supabaseAdmin } = ctx
+
+    const hasAccess = await verifyRmaAccess(businessId, user.id, supabaseAdmin)
+    if (!hasAccess) {
+      return NextResponse.json(
+        { error: 'Akses ditolak: Anda tidak memiliki izin untuk memproses Retur / RMA.' },
+        { status: 403 }
+      )
+    }
 
     const actorName =
       user.user_metadata?.full_name ||

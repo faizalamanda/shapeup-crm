@@ -23,6 +23,362 @@ import {
 
 const round = (n: number) => Math.round(Number.isFinite(n) ? n : 0)
 
+// 0ms In-Memory RBAC Cache for RMA & Quarantine Endpoints (TTL 60s)
+const rmaAccessCache = new Map<string, { allowed: boolean; expiresAt: number }>()
+const RMA_ACCESS_TTL_MS = 60_000
+const ALLOWED_RMA_STAFF_PERMS = new Set([
+  'full_access',
+  'manage_invoices',
+  'manage_products',
+  'manage_purchases',
+  'view_financials_no_salary'
+])
+
+export async function verifyRmaAccess(
+  businessId: string,
+  userId: string,
+  supabaseAdmin: SupabaseClient
+): Promise<boolean> {
+  if (!isUuid(businessId) || !isUuid(userId)) return false
+  const cacheKey = `${userId}:${businessId}`
+  const now = Date.now()
+  const cached = rmaAccessCache.get(cacheKey)
+  if (cached && cached.expiresAt > now) {
+    return cached.allowed
+  }
+
+  const [ownerRes, staffRes] = await Promise.all([
+    supabaseAdmin
+      .from('businesses')
+      .select('id')
+      .eq('id', businessId)
+      .eq('owner_id', userId)
+      .maybeSingle(),
+    supabaseAdmin
+      .from('business_staff')
+      .select('role, permissions')
+      .eq('business_id', businessId)
+      .eq('profile_id', userId)
+      .maybeSingle()
+  ])
+
+  const isOwner = Boolean(ownerRes.data?.id)
+  const staffRole = staffRes.data?.role
+  const staffPerms: string[] = Array.isArray(staffRes.data?.permissions)
+    ? staffRes.data.permissions
+    : []
+
+  const allowed =
+    isOwner ||
+    staffRole === 'admin' ||
+    staffPerms.some((p) => ALLOWED_RMA_STAFF_PERMS.has(p))
+
+  rmaAccessCache.set(cacheKey, { allowed, expiresAt: now + RMA_ACCESS_TTL_MS })
+  if (rmaAccessCache.size > 200) {
+    for (const [k, v] of rmaAccessCache.entries()) {
+      if (v.expiresAt <= now) rmaAccessCache.delete(k)
+    }
+  }
+  return allowed
+}
+
+async function applyLegacyStoreCreditCompat(
+  admin: SupabaseClient,
+  params: {
+    businessId: string
+    customerId: string
+    issuedAmount: number
+    redeemedAmount: number
+    rmaId: string | null
+    rmaNumber: string
+    sourceOrderId: string
+    targetOrderId?: string | null
+    targetOrderNumber?: string | null
+    actorId: string
+    description?: string
+  }
+) {
+  const {
+    businessId,
+    customerId,
+    issuedAmount,
+    redeemedAmount,
+    rmaId,
+    rmaNumber,
+    sourceOrderId,
+    targetOrderId,
+    targetOrderNumber,
+    actorId,
+    description
+  } = params
+  if (!isUuid(customerId) || issuedAmount <= 0) return null
+
+  const nowIso = new Date().toISOString()
+  const { data: curRow } = await admin
+    .from('customer_store_credits')
+    .select('balance')
+    .eq('business_id', businessId)
+    .eq('customer_id', customerId)
+    .maybeSingle()
+
+  const issuedBal = Math.max(0, round(Number(curRow?.balance || 0) + issuedAmount))
+  const finalBal = Math.max(0, round(issuedBal - redeemedAmount))
+
+  await admin.from('customer_store_credits').upsert(
+    {
+      business_id: businessId,
+      customer_id: customerId,
+      balance: finalBal,
+      updated_at: nowIso
+    },
+    { onConflict: 'business_id,customer_id' }
+  )
+
+  await admin.from('store_credit_ledger').insert({
+    business_id: businessId,
+    customer_id: customerId,
+    entry_type: 'issued',
+    amount: issuedAmount,
+    balance_after: issuedBal,
+    rma_id: isUuid(rmaId) ? rmaId : null,
+    order_id: sourceOrderId,
+    description: description || `Saldo kredit dari RMA ${rmaNumber}`,
+    created_by: isUuid(actorId) ? actorId : null
+  })
+
+  if (redeemedAmount > 0 && isUuid(targetOrderId)) {
+    await admin.from('store_credit_ledger').insert({
+      business_id: businessId,
+      customer_id: customerId,
+      entry_type: 'redeemed',
+      amount: -redeemedAmount,
+      balance_after: finalBal,
+      rma_id: isUuid(rmaId) ? rmaId : null,
+      order_id: targetOrderId,
+      description: `Alokasi langsung ke piutang #${targetOrderNumber || targetOrderId} dari RMA ${rmaNumber}`,
+      created_by: isUuid(actorId) ? actorId : null
+    })
+  }
+
+  return finalBal
+}
+
+function isMissingLifetimeColError(err: any): boolean {
+  if (!err) return false
+  const msg = String(err.message || '')
+  return (
+    err.code === '42703' ||
+    msg.includes('lifetime_issued') ||
+    msg.includes('lifetime_redeemed')
+  )
+}
+
+function isUnassignedVRmaError(err: any): boolean {
+  if (!err) return false
+  const msg = String(err.message || '')
+  return err.code === '55000' || msg.includes('v_rma')
+}
+
+async function runSettleWithSchemaCompat(settlePayload: any, admin: SupabaseClient) {
+  let { data, error } = await admin.rpc('process_rma_transition_v1', { payload: settlePayload })
+
+  if (
+    error &&
+    settlePayload.header?.settlement_method === 'apply_other_invoice' &&
+    (error.code === '23514' || error.message?.includes('rma_requests_settlement_method_check'))
+  ) {
+    settlePayload = {
+      ...settlePayload,
+      header: { ...settlePayload.header, settlement_method: 'store_credit' }
+    }
+    const r1 = await admin.rpc('process_rma_transition_v1', { payload: settlePayload })
+    data = r1.data
+    error = r1.error
+  }
+
+  if (error && isMissingLifetimeColError(error)) {
+    const origSc = settlePayload.store_credit
+    const origAlloc = settlePayload.cross_invoice_allocation
+    const strippedPayload = {
+      ...settlePayload,
+      store_credit: null,
+      cross_invoice_allocation: origAlloc ? { ...origAlloc, customer_id: null } : null
+    }
+    const r2 = await admin.rpc('process_rma_transition_v1', { payload: strippedPayload })
+    data = r2.data
+    error = r2.error
+
+    if (!error && data?.success && origSc?.amount > 0 && isUuid(origSc?.customer_id)) {
+      const allocAmt = Number(data?.allocated_amount || 0)
+      await applyLegacyStoreCreditCompat(admin, {
+        businessId: settlePayload.business_id,
+        customerId: origSc.customer_id,
+        issuedAmount: Number(origSc.amount || 0),
+        redeemedAmount: allocAmt,
+        rmaId: settlePayload.rma_id || data?.rma_id || null,
+        rmaNumber: data?.rma_number || settlePayload.header?.rma_number || '',
+        sourceOrderId: settlePayload.order_id,
+        targetOrderId: data?.allocated_target_order_id || origAlloc?.target_order_id || null,
+        targetOrderNumber: data?.allocated_target_order_number || null,
+        actorId: settlePayload.actor_id,
+        description: origSc.description
+      })
+    }
+  }
+
+  // Zero-Downtime Bridge for v1.0 RPC (commit 1a3c6a5) that did not yet know deposit_transfer_journal or cross_invoice_allocation:
+  if (!error && data?.success && !('deposit_transfer_transaction_id' in data)) {
+    const depJr = settlePayload.deposit_transfer_journal
+    if (depJr?.lines?.length > 0) {
+      await postJournalTransaction(
+        settlePayload.business_id,
+        settlePayload.order_id,
+        depJr.date || new Date().toISOString(),
+        depJr.description,
+        depJr.lines,
+        admin,
+        false
+      )
+    }
+
+    const alloc = settlePayload.cross_invoice_allocation
+    if (alloc?.target_order_id && Number(alloc.amount || 0) > 0) {
+      const { data: targetOrd } = await admin
+        .from('orders')
+        .select('id, order_number, grand_total, amount_paid, status')
+        .eq('id', alloc.target_order_id)
+        .eq('business_id', settlePayload.business_id)
+        .maybeSingle()
+
+      if (targetOrd && targetOrd.status !== 'cancelled') {
+        const rem = Math.max(
+          0,
+          round(Number(targetOrd.grand_total || 0) - Number(targetOrd.amount_paid || 0))
+        )
+        const cutAmt = Math.min(round(Number(alloc.amount || 0)), rem)
+        if (cutAmt > 0) {
+          const rmaNum = data.rma_number || settlePayload.header?.rma_number || 'RMA'
+          await recordOrderPayment({
+            businessId: settlePayload.business_id,
+            orderId: targetOrd.id,
+            amount: cutAmt,
+            paymentMethod: 'Saldo Kredit Pelanggan',
+            paymentMethodAccountId: alloc.store_credit_account_id || null,
+            referenceNumber: rmaNum,
+            notes: `Potong tagihan dari Saldo Kredit RMA ${rmaNum}`,
+            cashierName: alloc.cashier_name || 'Sistem RMA',
+            actorId: settlePayload.actor_id,
+            supabase: admin
+          })
+          data = {
+            ...data,
+            allocated_amount: cutAmt,
+            allocated_target_order_id: targetOrd.id,
+            allocated_target_order_number: targetOrd.order_number
+          }
+        }
+      }
+    }
+  }
+
+  return { data, error }
+}
+
+async function executeExpressViaStagedRpcCompat(rpcPayload: any, admin: SupabaseClient) {
+  // 1. Create ticket (v_rma not evaluated in 'create')
+  const createRes = await admin.rpc('process_rma_transition_v1', {
+    payload: {
+      mode: 'create',
+      business_id: rpcPayload.business_id,
+      actor_id: rpcPayload.actor_id,
+      order_id: rpcPayload.order_id,
+      idempotency_key: rpcPayload.idempotency_key,
+      header: {
+        ...rpcPayload.header,
+        fulfillment_stage: 'approved',
+        settlement_method: null
+      },
+      items: rpcPayload.items
+    }
+  })
+  if (createRes.error || !createRes.data?.rma_id) {
+    return createRes
+  }
+
+  const createdRmaId: string = createRes.data.rma_id
+  if (createRes.data.idempotent) {
+    const { data: existingRma } = await admin
+      .from('rma_requests')
+      .select('fulfillment_stage, settlement_stage')
+      .eq('id', createdRmaId)
+      .eq('business_id', rpcPayload.business_id)
+      .maybeSingle()
+
+    if (existingRma?.settlement_stage === 'settled') {
+      return createRes
+    }
+  }
+  const { data: createdItems } = await admin
+    .from('rma_items')
+    .select('id, order_item_ref, product_id, variant_id, qty, unit_cost, track_stock')
+    .eq('rma_id', createdRmaId)
+    .eq('business_id', rpcPayload.business_id)
+
+  const dispByRef = new Map<string, string>(
+    (rpcPayload.items || []).map((it: any) => [String(it.order_item_ref), it.disposition || 'restock'])
+  )
+
+  // 2. Inspect physical items & post inventory journal (v_rma IS assigned in 'inspect')
+  const inspectRes = await admin.rpc('process_rma_transition_v1', {
+    payload: {
+      mode: 'inspect',
+      business_id: rpcPayload.business_id,
+      actor_id: rpcPayload.actor_id,
+      order_id: rpcPayload.order_id,
+      rma_id: createdRmaId,
+      header: {
+        fulfillment_stage: rpcPayload.header?.fulfillment_stage || 'inspected',
+        return_courier: rpcPayload.header?.return_courier || null,
+        return_tracking_number: rpcPayload.header?.return_tracking_number || null
+      },
+      items: (createdItems || []).map((ci: any) => ({
+        rma_item_id: ci.id,
+        product_id: ci.product_id,
+        variant_id: ci.variant_id,
+        qty: Number(ci.qty || 0),
+        unit_cost: Number(ci.unit_cost || 0),
+        track_stock: Boolean(ci.track_stock),
+        disposition: dispByRef.get(String(ci.order_item_ref)) || 'restock'
+      })),
+      inventory_journal: rpcPayload.inventory_journal
+    }
+  })
+  if (inspectRes.error) {
+    return inspectRes
+  }
+
+  // 3. Settle financial journal, AR cut / Store Credit / Cross-Invoice allocation (v_rma IS assigned in 'settle')
+  return runSettleWithSchemaCompat(
+    {
+      mode: 'settle',
+      business_id: rpcPayload.business_id,
+      actor_id: rpcPayload.actor_id,
+      order_id: rpcPayload.order_id,
+      rma_id: createdRmaId,
+      expected_grand_total: rpcPayload.expected_grand_total,
+      expected_amount_paid: rpcPayload.expected_amount_paid,
+      header: rpcPayload.header,
+      settlement_journal: rpcPayload.settlement_journal,
+      deposit_transfer_journal: rpcPayload.deposit_transfer_journal,
+      order_update: rpcPayload.order_update,
+      payments: rpcPayload.payments,
+      store_credit: rpcPayload.store_credit,
+      cross_invoice_allocation: rpcPayload.cross_invoice_allocation
+    },
+    admin
+  )
+}
+
 export interface CreateRmaItemInput {
   ref: string
   qty: number
@@ -680,6 +1036,14 @@ export async function createRmaService(
     rpcErr = retryRes.error
   }
 
+  // Zero-Downtime Defense #2: if live Supabase DB still has pre-patch v_rma express bug or missing lifetime_issued column,
+  // seamlessly execute via staged create -> inspect -> settle RPCs without failing the user's request!
+  if (rpcErr && expressComplete && (isUnassignedVRmaError(rpcErr) || isMissingLifetimeColError(rpcErr))) {
+    const stagedRes = await executeExpressViaStagedRpcCompat(rpcPayload, admin)
+    rpcRes = stagedRes.data
+    rpcErr = stagedRes.error
+  }
+
   if (!rpcErr && rpcRes?.success) {
     invalidateInvoicesCache(businessId)
     if (expressComplete && quote.isFull && isUuid(order.customer_id)) {
@@ -949,28 +1313,7 @@ export async function settleRmaService(
         : null
   }
 
-  let { data: rpcRes, error: rpcErr } = await admin.rpc('process_rma_transition_v1', {
-    payload: rpcPayload
-  })
-
-  if (
-    rpcErr &&
-    settlementMethod === 'apply_other_invoice' &&
-    (rpcErr.code === '23514' || rpcErr.message?.includes('rma_requests_settlement_method_check'))
-  ) {
-    const compatPayload = {
-      ...rpcPayload,
-      header: {
-        ...rpcPayload.header,
-        settlement_method: 'store_credit'
-      }
-    }
-    const retryRes = await admin.rpc('process_rma_transition_v1', {
-      payload: compatPayload
-    })
-    rpcRes = retryRes.data
-    rpcErr = retryRes.error
-  }
+  const { data: rpcRes, error: rpcErr } = await runSettleWithSchemaCompat(rpcPayload, admin)
 
   if (rpcErr) {
     throw new ReturnError(rpcErr.message || 'Gagal menyelesaikan pembayaran/kredit RMA.', 'SETTLE_ERROR', 400)
@@ -1081,26 +1424,17 @@ async function executeRmaNodeFallback(
 
   if (rpcPayload.store_credit?.amount > 0 && isUuid(rpcPayload.store_credit.customer_id)) {
     const sc = rpcPayload.store_credit
-    const { data: curSc } = await admin
-      .from('customer_store_credits')
-      .select('balance, lifetime_issued')
-      .eq('business_id', businessId)
-      .eq('customer_id', sc.customer_id)
-      .maybeSingle()
-
-    const nextBal = Number(curSc?.balance || 0) + Number(sc.amount)
-    const nextLife = Number(curSc?.lifetime_issued || 0) + Number(sc.amount)
-
-    await admin.from('customer_store_credits').upsert(
-      {
-        business_id: businessId,
-        customer_id: sc.customer_id,
-        balance: nextBal,
-        lifetime_issued: nextLife,
-        updated_at: nowIso
-      },
-      { onConflict: 'business_id,customer_id' }
-    )
+    await applyLegacyStoreCreditCompat(admin, {
+      businessId,
+      customerId: sc.customer_id,
+      issuedAmount: Number(sc.amount || 0),
+      redeemedAmount: 0,
+      rmaId,
+      rmaNumber: hdr.rma_number,
+      sourceOrderId: orderId,
+      actorId: rpcPayload.actor_id,
+      description: sc.description
+    })
 
     if (rpcPayload.cross_invoice_allocation?.target_order_id) {
       const alloc = rpcPayload.cross_invoice_allocation
@@ -1112,6 +1446,7 @@ async function executeRmaNodeFallback(
         paymentMethodAccountId: alloc.store_credit_account_id || null,
         notes: `Alokasi Otomatis Saldo Kredit dari RMA ${hdr.rma_number}`,
         cashierName: alloc.cashier_name || hdr.created_by_name || 'Sistem RMA',
+        actorId: rpcPayload.actor_id,
         supabase: admin
       }).catch(() => {})
     }

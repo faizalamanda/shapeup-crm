@@ -281,6 +281,7 @@ export async function POST(
         paymentDate: effectiveNewDate,
         notes: notes || `Pengganti Pembayaran Invoice #${invoice.order_number} (${cleanVoidReason})`,
         cashierName: actorName,
+        actorId: user.id,
         supabase: supabaseAdmin
       })
 
@@ -342,6 +343,7 @@ export async function POST(
       paymentDate: payment_date || null,
       notes: notes || `Pembayaran Invoice #${invoice.order_number}`,
       cashierName: actorName,
+      actorId: user.id,
       supabase: supabaseAdmin
     })
 

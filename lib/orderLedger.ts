@@ -528,7 +528,16 @@ export async function syncOrderToLedger(
             console.warn('[orderLedger] Failed to record fallback order_payments entry:', payErr)
           }
         } else {
-          finalAmountPaid = existingOrderPays.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0)
+          const totalInflow = (allOrderPays || []).reduce(
+            (sum: number, p: any) => sum + (p.payment_kind === 'payment' ? Number(p.amount) || 0 : 0),
+            0
+          )
+          const totalOutflow = (allOrderPays || []).reduce(
+            (sum: number, p: any) =>
+              sum + (p.payment_kind === 'void' || p.payment_kind === 'refund' ? Number(p.amount) || 0 : 0),
+            0
+          )
+          finalAmountPaid = Math.max(0, totalInflow - totalOutflow)
         }
 
         // 6.4 SYNCHRONIZE orders.payment_status & orders.amount_paid

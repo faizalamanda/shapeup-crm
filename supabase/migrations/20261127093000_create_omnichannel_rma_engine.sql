@@ -168,6 +168,13 @@ ALTER TABLE public.order_payments
 ALTER TABLE public.store_credit_ledger
   ADD COLUMN IF NOT EXISTS rma_id uuid REFERENCES public.rma_requests(id) ON DELETE SET NULL;
 
+ALTER TABLE public.customer_store_credits
+  ADD COLUMN IF NOT EXISTS lifetime_issued numeric NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS lifetime_redeemed numeric NOT NULL DEFAULT 0;
+
+GRANT SELECT ON public.rma_requests, public.rma_items, public.customer_store_credits, public.store_credit_ledger TO authenticated;
+GRANT ALL ON public.rma_requests, public.rma_items, public.customer_store_credits, public.store_credit_ledger TO service_role;
+
 -- 3. Robust Multi-Tenant RLS Policies (AGENTS.md Rule 15 Union Clause)
 ALTER TABLE public.rma_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.rma_items ENABLE ROW LEVEL SECURITY;
@@ -477,7 +484,7 @@ DECLARE
   v_existing record;
   v_order record;
   v_target_order record;
-  v_rma record;
+  v_rma public.rma_requests%ROWTYPE;
   v_rma_number text;
   v_item jsonb;
   v_item_id uuid;
@@ -657,6 +664,41 @@ BEGIN
             'done', 'receipt', 'quarantine', 'rma_receipt', v_item_id, v_now
           ) RETURNING id INTO v_q_move_id;
           UPDATE public.rma_items SET quarantine_move_id = v_q_move_id WHERE id = v_item_id;
+
+        ELSIF v_disp IN ('writeoff', 'rtv_vendor', 'lost_in_transit') THEN
+          INSERT INTO public.stock_moves (
+            business_id, product_id, variant_id, reference, qty, unit_cost,
+            status, type, bucket, source_type, source_id, created_at
+          ) VALUES (
+            v_business, (v_item->>'product_id')::uuid, NULLIF(v_item->>'variant_id', '')::uuid,
+            v_rma_number || ' (Masuk QC)', (v_item->>'qty')::numeric, COALESCE((v_item->>'unit_cost')::numeric, 0),
+            'done', 'receipt', 'quarantine', 'rma_receipt', v_item_id, v_now
+          ) RETURNING id INTO v_q_move_id;
+
+          INSERT INTO public.stock_moves (
+            business_id, product_id, variant_id, reference, qty, unit_cost,
+            status, type, bucket, origin_location_id, source_type, source_id, created_at
+          ) VALUES (
+            v_business, (v_item->>'product_id')::uuid, NULLIF(v_item->>'variant_id', '')::uuid,
+            v_rma_number || CASE
+              WHEN v_disp = 'rtv_vendor' THEN ' (Klaim Supplier)'
+              WHEN v_disp = 'lost_in_transit' THEN ' (Hilang Kurir)'
+              ELSE ' (Rusak/Scrap)'
+            END,
+            (v_item->>'qty')::numeric, COALESCE((v_item->>'unit_cost')::numeric, 0),
+            'done',
+            CASE WHEN v_disp = 'rtv_vendor' THEN 'delivery' ELSE 'adjustment' END,
+            'quarantine',
+            CASE WHEN v_disp = 'rtv_vendor' THEN NULL ELSE v_dummy_origin END,
+            CASE WHEN v_disp = 'rtv_vendor' THEN 'rma_rtv' ELSE 'rma_loss' END,
+            v_q_move_id,
+            v_now + interval '1 millisecond'
+          ) RETURNING id INTO v_r_move_id;
+
+          UPDATE public.rma_items
+          SET quarantine_move_id = v_q_move_id,
+              resolution_move_id = v_r_move_id
+          WHERE id = v_item_id;
         END IF;
       END IF;
     END LOOP;
@@ -779,8 +821,10 @@ BEGIN
 
   -- STEP C: Financial Settlement & Order/Invoice Automatic Update (for 'settle' or 'express')
   IF v_mode IN ('settle', 'express') THEN
-    IF v_mode = 'settle' AND v_rma.settlement_stage = 'settled' THEN
-      RAISE EXCEPTION 'RMA_ALREADY_SETTLED: Hak pelanggan pada RMA ini sudah diselesaikan' USING ERRCODE = 'P0001';
+    IF v_mode = 'settle' THEN
+      IF v_rma.settlement_stage = 'settled' THEN
+        RAISE EXCEPTION 'RMA_ALREADY_SETTLED: Hak pelanggan pada RMA ini sudah diselesaikan' USING ERRCODE = 'P0001';
+      END IF;
     END IF;
 
     -- Optimistic concurrency check on Order snapshot
